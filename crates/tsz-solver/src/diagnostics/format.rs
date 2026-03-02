@@ -411,7 +411,28 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let type_str = self.format(prop.type_id);
-        format!("{readonly}{name}{optional}: {type_str}")
+        // tsc displays optional properties with `| undefined` appended to the type
+        // (when exactOptionalPropertyTypes is not enabled, which is the default).
+        // Our type system stores the raw type without undefined for optional properties,
+        // so we add it at display time to match tsc's output.
+        if prop.optional && !self.type_contains_undefined(prop.type_id) {
+            format!("{readonly}{name}{optional}: {type_str} | undefined")
+        } else {
+            format!("{readonly}{name}{optional}: {type_str}")
+        }
+    }
+
+    /// Check if a type already contains `undefined` (either is `undefined` itself
+    /// or is a union that includes `undefined` as a member).
+    fn type_contains_undefined(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::UNDEFINED {
+            return true;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return members.contains(&TypeId::UNDEFINED);
+        }
+        false
     }
 
     fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
@@ -454,7 +475,13 @@ impl<'a> TypeFormatter<'a> {
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
             let type_str = self.format(p.type_id);
-            rendered.push(format!("{rest}{name}{optional}: {type_str}"));
+            // tsc displays optional params with `| undefined` appended when the stored type
+            // doesn't already include undefined (e.g., interface member function types).
+            if p.optional && !self.type_contains_undefined(p.type_id) {
+                rendered.push(format!("{rest}{name}{optional}: {type_str} | undefined"));
+            } else {
+                rendered.push(format!("{rest}{name}{optional}: {type_str}"));
+            }
         }
 
         rendered
