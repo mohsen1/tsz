@@ -587,6 +587,24 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
+/// Resolve a type parameter to its base constraint for TS2344 checking.
+///
+/// If the type IS a `TypeParameter` with a constraint, returns the constraint.
+/// If it IS a `TypeParameter` without a constraint, returns `unknown`.
+/// Returns the type unchanged for anything else (including `Infer` types,
+/// composite types, etc.).
+///
+/// This is used for TS2344 constraint checking: when a type parameter `U extends number`
+/// is used as `T extends string`, tsc resolves `U` to `number` and checks `number <: string`.
+/// `Infer` types inside conditional types should NOT be resolved here — they are checked
+/// during conditional type evaluation, not at type argument validation time.
+pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info.constraint.unwrap_or(TypeId::UNKNOWN),
+        _ => type_id,
+    }
+}
+
 /// Get the callable shape for a callable type.
 ///
 /// Returns None if the type is not a Callable.
