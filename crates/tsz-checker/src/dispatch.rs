@@ -1110,12 +1110,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.contextual_type = Some(satisfies_type);
                         let expr_type = self.checker.get_type_of_node(paren.expression);
                         self.checker.ctx.contextual_type = prev_contextual_type;
-                        let _ = self.checker.check_satisfies_assignable_or_report(
-                            expr_type,
-                            satisfies_type,
-                            paren.expression,
-                            None,
-                        );
+                        // Ensure types are fully resolved (evaluate applications like
+                        // Record<K,V>, Partial<T>, etc.) before assignability checks.
+                        self.checker.ensure_relation_input_ready(expr_type);
+                        self.checker.ensure_relation_input_ready(satisfies_type);
+                        if !self.checker.type_contains_error(satisfies_type) {
+                            let _ = self.checker.check_satisfies_assignable_or_report(
+                                expr_type,
+                                satisfies_type,
+                                paren.expression,
+                                None,
+                            );
+                        }
                         expr_type
                     } else {
                         self.checker.get_type_of_node(paren.expression)
