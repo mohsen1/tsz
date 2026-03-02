@@ -1,21 +1,19 @@
 # tsserver Compatibility — Remaining Work
 
 ## Status
-tsz-server implements ~80% of tsserver's public commands. The fourslash test suite
-passes 2,540/2,540, but many commands return empty stubs rather than real results.
+tsz-server implements ~90% of tsserver's public commands. The fourslash test suite
+passes 2,540/2,540, but some commands return empty stubs rather than real results.
 
 ## P0 — Stubbed commands with existing infrastructure to support them
 
-These return empty today but tsz already has the underlying logic (or close to it).
-
-- [ ] `implementation` / `implementation-full` — returns `[]`. Should use definition/reference infrastructure to find implementations of interfaces/abstract members.
+- [x] `implementation` / `implementation-full` — already wired to `GoToImplementationProvider`.
 - [ ] `fileReferences` — returns `{"refs":[],"symbolName":""}`. Should scan project imports to find files that reference a given file.
-- [ ] `linkedEditingRange` — returns `None`. Should detect JSX tag pairs and return linked ranges for simultaneous rename.
-- [ ] `getSmartSelectionRange` — returns `[]`. Should walk AST to expand selection semantically (expression → statement → block → function).
-- [ ] `projectInfo` — returns `{"configFileName":"","fileNames":[]}`. Should return actual tsconfig path and file list.
-- [ ] `compilerOptionsForInferredProjects` — returns `true`. Should store options and apply them to inferred projects.
+- [x] `linkedEditingRange` — wired to `LinkedEditingProvider` for JSX tag pairs.
+- [x] `getSmartSelectionRange` — wired to `SelectionRangeProvider` (same as `selectionRange`).
+- [x] `projectInfo` — returns real tsconfig/jsconfig path via directory walk + open file list.
+- [x] `compilerOptionsForInferredProjects` — stores options and applies them.
 - [ ] `getCompilerOptionsDiagnostics` — returns `[]`. Should validate tsconfig options and report errors.
-- [ ] `applyCodeActionCommand` — returns `[]`. Should execute code action commands (e.g., add missing import).
+- [ ] `applyCodeActionCommand` — minimal stub. Should execute code action commands (e.g., add missing import).
 
 ## P1 — Stubbed commands needing new infrastructure
 
@@ -33,14 +31,13 @@ These return empty today but tsz already has the underlying logic (or close to i
 - [ ] `configurePlugin` — no-op. No plugin system.
 - [ ] `mapCode` — returns `[]`. Code mapping / source maps.
 
-## Missing commands (not dispatched at all)
+## Protocol commands (dispatched, minimal responses)
 
-- [ ] `reload` / `reloadProjects` — project reload.
-- [ ] `compileOnSaveAffectedFileList` / `compileOnSaveEmitFile` — compile-on-save workflow.
-- [ ] `saveto` — save file to location.
-- [ ] `status` — server status.
-- [ ] `applyChangedToOpenFiles` — batch file changes (older protocol).
-- [ ] `watchChange` — file watch event notification.
+- [x] `reload` / `reloadProjects` — clears caches, re-reads open files from disk.
+- [x] `status` — returns server version.
+- [x] `compileOnSaveAffectedFileList` / `compileOnSaveEmitFile` — stub responses (no emit pipeline).
+- [x] `saveto` — protocol-compatible no-op.
+- [x] `watchChange` — protocol-compatible no-op.
 
 ## Not planned
 
