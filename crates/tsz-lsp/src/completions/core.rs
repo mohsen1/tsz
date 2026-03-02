@@ -136,6 +136,11 @@ impl<'a> Completions<'a> {
             is_global_completion: !is_member,
             is_member_completion: is_member,
             is_new_identifier_location: is_new_id,
+            default_commit_characters: (!is_new_id).then_some(vec![
+                ".".to_string(),
+                ",".to_string(),
+                ";".to_string(),
+            ]),
             entries: items,
         })
     }
@@ -209,8 +214,11 @@ impl<'a> Completions<'a> {
         }
         if self.interner.is_some()
             && self.file_name.is_some()
-            && let Some(items) =
-                self.get_contextual_string_literal_completions(node_idx, type_cache.as_deref_mut())
+            && let Some(items) = self.get_contextual_string_literal_completions(
+                node_idx,
+                offset,
+                type_cache.as_deref_mut(),
+            )
         {
             return if items.is_empty() { None } else { Some(items) };
         }
@@ -295,6 +303,15 @@ impl<'a> Completions<'a> {
                             && let Some(param_type) = self.parameter_annotation_text(symbol)
                         {
                             item = item.with_detail(param_type);
+                        } else if matches!(
+                            kind,
+                            CompletionItemKind::Const
+                                | CompletionItemKind::Let
+                                | CompletionItemKind::Variable
+                        ) && let Some(detail) =
+                            self.variable_completion_type_detail(symbol, kind)
+                        {
+                            item = item.with_detail(detail);
                         } else if let Some(detail) = self.get_symbol_detail(symbol) {
                             item = item.with_detail(detail);
                         }
@@ -564,6 +581,61 @@ impl<'a> Completions<'a> {
         })
     }
 
+    fn variable_completion_type_detail(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        kind: CompletionItemKind,
+    ) -> Option<String> {
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let node = self.arena.get(decl)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(node)?;
+
+        if var_decl.type_annotation.is_some() {
+            let type_node = self.arena.get(var_decl.type_annotation)?;
+            let start = type_node.pos as usize;
+            let end = type_node.end.min(self.source_text.len() as u32) as usize;
+            if start < end {
+                return Some(self.source_text[start..end].trim().to_string());
+            }
+        }
+
+        if kind != CompletionItemKind::Const || !var_decl.initializer.is_some() {
+            return None;
+        }
+        let init_node = self.arena.get(var_decl.initializer)?;
+        let start = init_node.pos as usize;
+        let end = init_node.end.min(self.source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let init_text = self.source_text[start..end].trim();
+        let bytes = init_text.as_bytes();
+        if bytes.len() >= 2
+            && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+                || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+        {
+            return Some(init_text.to_string());
+        }
+        if init_text == "true" || init_text == "false" {
+            return Some(init_text.to_string());
+        }
+        if init_text
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '_' || ch == '.' || ch == '-' || ch == '+')
+            && init_text.chars().any(|ch| ch.is_ascii_digit())
+        {
+            return Some(init_text.to_string());
+        }
+        None
+    }
+
     /// Get detail information for a symbol (e.g., "const", "function", "class").
     pub(super) fn member_completion_target(
         &self,
@@ -688,6 +760,16 @@ impl<'a> Completions<'a> {
                 {
                     return Some(ext.parent);
                 }
+                return Some(current);
+            }
+            let ext = self.arena.get_extended(current)?;
+            current = ext.parent;
+        }
+
+        let mut current = find_node_at_offset(self.arena, ident_end.saturating_sub(1));
+        while current.is_some() {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && node.end == ident_end {
                 return Some(current);
             }
             let ext = self.arena.get_extended(current)?;

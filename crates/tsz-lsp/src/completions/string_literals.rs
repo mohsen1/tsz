@@ -7,11 +7,14 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::*;
+use tsz_binder::SymbolId;
+use tsz_parser::parser::node::CallExprData;
 
 impl<'a> Completions<'a> {
     pub(super) fn get_contextual_string_literal_completions(
         &self,
         node_idx: NodeIndex,
+        offset: u32,
         type_cache: Option<&mut Option<TypeCache>>,
     ) -> Option<Vec<CompletionItem>> {
         let interner = self.interner?;
@@ -74,16 +77,18 @@ impl<'a> Completions<'a> {
                 }
             }
         }
-        let expected = expected?;
         let mut visited = FxHashSet::default();
         let mut labels = FxHashSet::default();
-        self.collect_string_literal_candidates(
-            expected,
-            interner,
-            &mut checker,
-            &mut visited,
-            &mut labels,
-        );
+        if let Some(expected) = expected {
+            self.collect_string_literal_candidates(
+                expected,
+                interner,
+                &mut checker,
+                &mut visited,
+                &mut labels,
+            );
+        }
+        self.collect_string_constraint_labels_from_call(node_idx, offset, &mut labels);
         if let Some(cache) = cache_ref {
             *cache = Some(checker.extract_cache());
         }
@@ -101,6 +106,280 @@ impl<'a> Completions<'a> {
             .collect();
         items.sort_by(|a, b| a.label.cmp(&b.label));
         Some(items)
+    }
+
+    fn collect_string_constraint_labels_from_call(
+        &self,
+        node_idx: NodeIndex,
+        offset: u32,
+        labels: &mut FxHashSet<String>,
+    ) {
+        let Some(call_idx) = self.find_enclosing_call_expression(node_idx).or_else(|| {
+            self.find_enclosing_call_expression(crate::utils::find_node_at_offset(
+                self.arena, offset,
+            ))
+        }) else {
+            self.collect_string_constraint_labels_from_text_callsite(offset, labels);
+            return;
+        };
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return;
+        };
+        let Some(call) = self.arena.get_call_expr(call_node) else {
+            return;
+        };
+        let arg_index = self.resolve_call_argument_index(call, offset);
+
+        let callee_symbol = self
+            .resolve_member_target_symbol(call.expression)
+            .or_else(|| {
+                self.arena
+                    .get_identifier_text(call.expression)
+                    .and_then(|name| self.binder.file_locals.get(name))
+            });
+        let Some(callee_symbol) = callee_symbol else {
+            return;
+        };
+        self.collect_string_constraint_labels_for_callee(callee_symbol, arg_index, labels);
+    }
+
+    fn find_enclosing_call_expression(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        for _ in 0..25 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                return Some(current);
+            }
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent == current || !ext.parent.is_some() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    fn resolve_call_argument_index(&self, call: &CallExprData, offset: u32) -> usize {
+        let Some(args) = call.arguments.as_ref() else {
+            return 0;
+        };
+        if args.nodes.is_empty() {
+            return 0;
+        }
+
+        let mut seen_non_omitted = 0usize;
+        for (i, &arg_idx) in args.nodes.iter().enumerate() {
+            let Some(arg_node) = self.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let arg_start = arg_node.pos;
+            let arg_end = arg_node.end;
+            if offset <= arg_start {
+                return seen_non_omitted;
+            }
+            if offset <= arg_end {
+                return seen_non_omitted;
+            }
+            let next_start = args
+                .nodes
+                .iter()
+                .skip(i + 1)
+                .filter_map(|&next_idx| self.arena.get(next_idx))
+                .find(|next| next.kind != syntax_kind_ext::OMITTED_EXPRESSION)
+                .map(|next| next.pos);
+            if let Some(next_start) = next_start
+                && offset < next_start
+            {
+                return seen_non_omitted + 1;
+            }
+            seen_non_omitted += 1;
+        }
+        seen_non_omitted
+    }
+
+    fn collect_string_constraint_labels_from_text_callsite(
+        &self,
+        offset: u32,
+        labels: &mut FxHashSet<String>,
+    ) {
+        let source = self.source_text;
+        let end = (offset as usize).min(source.len());
+        let prefix = &source[..end];
+        let Some(open_paren_idx) = prefix.rfind('(') else {
+            return;
+        };
+        let arg_index = self.count_top_level_commas(open_paren_idx + 1, end);
+
+        let mut i = open_paren_idx;
+        while i > 0 && source.as_bytes()[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        let ident_end = i;
+        while i > 0 {
+            let ch = source.as_bytes()[i - 1];
+            if ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$' {
+                i -= 1;
+            } else {
+                break;
+            }
+        }
+        if i == ident_end {
+            return;
+        }
+        let callee_name = &source[i..ident_end];
+        let Some(callee_symbol) = self.binder.file_locals.get(callee_name) else {
+            return;
+        };
+        self.collect_string_constraint_labels_for_callee(callee_symbol, arg_index, labels);
+    }
+
+    fn count_top_level_commas(&self, start: usize, end: usize) -> usize {
+        if start >= end || end > self.source_text.len() {
+            return 0;
+        }
+        let bytes = self.source_text.as_bytes();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut commas = 0usize;
+        let mut i = start;
+        while i < end {
+            match bytes[i] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                    commas += 1;
+                }
+                b'"' | b'\'' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < end {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == quote {
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        commas
+    }
+
+    fn collect_string_constraint_labels_for_callee(
+        &self,
+        callee_symbol: SymbolId,
+        arg_index: usize,
+        labels: &mut FxHashSet<String>,
+    ) {
+        let Some(callee) = self.binder.symbols.get(callee_symbol) else {
+            return;
+        };
+        for &decl_idx in &callee.declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let Some(func) = self.arena.get_function(decl_node) else {
+                continue;
+            };
+            if arg_index >= func.parameters.nodes.len() {
+                continue;
+            }
+            let param_idx = func.parameters.nodes[arg_index];
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.type_annotation.is_some() {
+                continue;
+            }
+            let Some(param_type_node) = self.arena.get(param.type_annotation) else {
+                continue;
+            };
+            if param_type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.arena.get_type_ref(param_type_node)
+                && let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name)
+                && let Some(type_params) = func.type_parameters.as_ref()
+            {
+                for &type_param_idx in &type_params.nodes {
+                    let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                        continue;
+                    };
+                    let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                        continue;
+                    };
+                    let Some(type_param_name) = self.arena.get_identifier_text(type_param.name)
+                    else {
+                        continue;
+                    };
+                    if type_param_name != type_name || !type_param.constraint.is_some() {
+                        continue;
+                    }
+                    self.collect_string_literals_from_type_node(type_param.constraint, labels);
+                }
+            } else {
+                self.collect_string_literals_from_type_node(param.type_annotation, labels);
+            }
+        }
+    }
+
+    fn collect_string_literals_from_type_node(
+        &self,
+        type_node_idx: NodeIndex,
+        labels: &mut FxHashSet<String>,
+    ) {
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        let start = type_node.pos as usize;
+        let end = (type_node.end as usize).min(self.source_text.len());
+        if start >= end {
+            return;
+        }
+        let text = &self.source_text[start..end];
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let quote = bytes[i];
+            if quote != b'"' && quote != b'\'' {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'\\' {
+                    j += 2;
+                    continue;
+                }
+                if bytes[j] == quote {
+                    let lit = &text[i + 1..j];
+                    if !lit.is_empty() {
+                        labels.insert(lit.to_string());
+                    }
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+        }
     }
 
     pub(super) fn get_string_literal_completions(
