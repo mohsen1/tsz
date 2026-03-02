@@ -110,8 +110,14 @@ impl Server {
             .get("includeLinePosition")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
-            if let Some(content) = self.open_files.get(file_path).cloned() {
+            if let Some(content) = get_content(file_path, &self.open_files) {
                 let line_map = LineMap::build(&content);
                 let mut full_diags = self.get_semantic_diagnostics_full(file_path, &content);
                 let has_module_none_diagnostic = full_diags.iter().any(|d| {
@@ -179,8 +185,14 @@ impl Server {
             .get("includeLinePosition")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
-            if let Some(content) = self.open_files.get(file_path).cloned() {
+            if let Some(content) = get_content(file_path, &self.open_files) {
                 let line_map = LineMap::build(&content);
                 let mut parser = ParserState::new(file_path.to_string(), content.clone());
                 let _root = parser.parse_source_file();
@@ -323,8 +335,14 @@ impl Server {
             .get("includeLinePosition")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
-            if let Some(content) = self.open_files.get(file_path).cloned() {
+            if let Some(content) = get_content(file_path, &self.open_files) {
                 let line_map = LineMap::build(&content);
                 let mut diags = self.get_suggestion_diagnostics(file_path, &content);
                 if diags.iter().all(|d| d.code != 80004)
@@ -358,9 +376,15 @@ impl Server {
                 {
                     diags.push(diag);
                 }
+                let semantic_diags = self.get_semantic_diagnostics_full(file_path, &content);
+                let semantic_has_name_like_errors = semantic_diags.iter().any(|d| {
+                    d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                        || d.code == 18004
+                });
                 if diags
                     .iter()
                     .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                    && !semantic_has_name_like_errors
                     && let Some(diag) =
                         Self::synthetic_add_missing_const_diagnostic(file_path, &content)
                 {
