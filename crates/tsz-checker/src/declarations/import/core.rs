@@ -69,6 +69,17 @@ impl<'a> CheckerState<'a> {
             .map(|lc| std::sync::Arc::clone(&lc.binder))
             .collect();
 
+        // If the export= target is a type-only import (e.g., `import type * as X`),
+        // it's erased at runtime, so TS2497 should not apply.
+        if let Some(sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+            && sym.is_type_only
+        {
+            return false;
+        }
+
         // Resolve aliases to find the actual target symbol
         let resolved = if let Some(sym) = self
             .ctx
@@ -358,6 +369,7 @@ impl<'a> CheckerState<'a> {
         // targeting a class/function/interface are invalid — the user must use a
         // default import (`import X from "mod"`) instead.
         if (has_namespace_import || has_named_imports)
+            && !clause.is_type_only
             && let Some(ref table) = exports_table
             && table.has("export=")
             && self.export_equals_target_is_not_module_or_variable(table)

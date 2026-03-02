@@ -400,6 +400,7 @@ fn compile_resolves_node_modules_types() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -565,6 +566,7 @@ fn compile_resolves_node_modules_types_versions() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -614,6 +616,7 @@ fn compile_resolves_node_modules_types_versions_best_match() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -681,6 +684,7 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -742,6 +746,7 @@ fn compile_resolves_node_modules_types_versions_respects_cli_version_override() 
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -795,6 +800,7 @@ fn compile_resolves_node_modules_types_versions_respects_env_version_override() 
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -849,6 +855,7 @@ fn compile_resolves_node_modules_types_versions_respects_tsconfig_version_overri
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "7.1"
           },
@@ -913,6 +920,7 @@ fn compile_resolves_node_modules_types_versions_tsconfig_extends_inherits_overri
           "extends": "./config/base.json",
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -967,6 +975,7 @@ fn compile_resolves_node_modules_types_versions_env_overrides_tsconfig() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "6.0"
           },
@@ -1022,6 +1031,7 @@ fn compile_resolves_node_modules_types_versions_empty_env_uses_tsconfig() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "7.1"
           },
@@ -1077,6 +1087,7 @@ fn compile_resolves_node_modules_types_versions_cli_overrides_env_and_tsconfig()
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "6.0"
           },
@@ -1140,6 +1151,7 @@ fn compile_resolves_node_modules_types_versions_invalid_override_falls_back() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1193,6 +1205,7 @@ fn compile_resolves_node_modules_types_versions_invalid_env_falls_back() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1247,6 +1260,7 @@ fn compile_resolves_node_modules_types_versions_invalid_tsconfig_falls_back() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "not-a-version"
           },
@@ -1302,6 +1316,7 @@ fn compile_resolves_node_modules_types_versions_falls_back_to_wildcard() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1362,6 +1377,7 @@ fn compile_resolves_package_imports_wildcard() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node16",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1404,6 +1420,7 @@ fn compile_resolves_package_imports_prefers_types_condition() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node16",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
