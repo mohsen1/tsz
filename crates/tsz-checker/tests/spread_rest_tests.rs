@@ -713,3 +713,94 @@ f(42, "hello");
         "Plain tuple rest param should still reject mismatched args, got {ts2345_count} TS2345 errors"
     );
 }
+
+// ── Variadic tuple spread: no false TS2345 for rest elements ──
+// When spreading a variadic tuple (e.g., [number, string, ...boolean[]]) into a function
+// that expects a matching rest parameter, the rest element's array type (boolean[])
+// must be decomposed to its element type (boolean) rather than pushed as a whole array.
+
+#[test]
+fn test_variadic_tuple_spread_no_false_ts2345() {
+    // Spreading a variadic tuple into a function with a matching variadic rest parameter
+    // should produce zero errors.
+    let source = r#"
+declare const t1: [number, string, ...boolean[]];
+declare let f10: (...x: [number, string, ...boolean[]]) => void;
+f10(...t1);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Variadic tuple spread should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2345)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_variadic_tuple_partial_spread_no_false_ts2345() {
+    // Spreading only the rest portion of a variadic tuple alongside fixed args.
+    let source = r#"
+declare const t2: [string, ...boolean[]];
+declare const t3: [...boolean[]];
+declare let f10: (...x: [number, string, ...boolean[]]) => void;
+f10(42, ...t2);
+f10(42, "hello", ...t3);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Partial variadic tuple spread should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2345)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_variadic_tuple_spread_with_trailing_args() {
+    // Spreading an empty tuple followed by more arguments should work.
+    let source = r#"
+declare const t4: [];
+declare let f10: (...x: [number, string, ...boolean[]]) => void;
+f10(42, "hello", true, ...t4);
+f10(42, "hello", true, ...t4, false);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Empty tuple spread with trailing args should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2345)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_variadic_tuple_spread_wrong_rest_type_still_errors() {
+    // Spreading a variadic tuple whose rest element type doesn't match should still error.
+    let source = r#"
+declare const bad: [number, string, ...number[]];
+declare let f10: (...x: [number, string, ...boolean[]]) => void;
+f10(...bad);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert!(
+        ts2345_count >= 1,
+        "Mismatched variadic rest type should produce TS2345, got {ts2345_count}"
+    );
+}

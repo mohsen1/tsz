@@ -293,8 +293,42 @@ impl<'a> CheckerState<'a> {
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                         for elem in &elems {
-                            arg_types.push(elem.type_id);
-                            effective_index += 1;
+                            if elem.rest {
+                                // Rest element (e.g., `...boolean[]` in `[number, string, ...boolean[]]`).
+                                // Extract the array element type and push one representative
+                                // argument so the solver matches it against the rest parameter's
+                                // element type rather than the whole array type.
+                                if let Some(inner) =
+                                    array_element_type_for_type(self.ctx.types, elem.type_id)
+                                {
+                                    arg_types.push(inner);
+                                    effective_index += 1;
+                                } else if let Some(sub_elems) =
+                                    tuple_elements_for_type(self.ctx.types, elem.type_id)
+                                {
+                                    // Rest element is a nested tuple (variadic tuple spread).
+                                    // Expand its fixed elements; for nested rest elements,
+                                    // extract the array element type.
+                                    for sub in &sub_elems {
+                                        if sub.rest {
+                                            if let Some(inner) = array_element_type_for_type(
+                                                self.ctx.types,
+                                                sub.type_id,
+                                            ) {
+                                                arg_types.push(inner);
+                                                effective_index += 1;
+                                            }
+                                        } else {
+                                            arg_types.push(sub.type_id);
+                                            effective_index += 1;
+                                        }
+                                    }
+                                }
+                                // else: unknown rest type — skip (no args pushed)
+                            } else {
+                                arg_types.push(elem.type_id);
+                                effective_index += 1;
+                            }
                         }
                         continue;
                     }
