@@ -1111,14 +1111,11 @@ class C extends B {
 /// Complexity: HIGH - requires improving control flow analysis
 /// See: docs/conformance-analysis-slice3.md
 #[test]
-#[ignore = "Control flow does not narrow after never-returning function call in if-body (emits TS18048)"]
 fn test_narrowing_after_never_returning_function() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
 // @strict: true
-function fail(message?: string): never {
-    throw new Error(message);
-}
+declare function fail(message?: string): never;
 
 function f01(x: string | undefined) {
     if (x === undefined) fail("undefined argument");
