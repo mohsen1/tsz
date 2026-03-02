@@ -451,8 +451,11 @@ impl<'a> CheckerState<'a> {
         // construct signatures — those are skipped by contextual extraction but needed
         // for two-pass inference where we infer the type params ourselves.
         let constructor_shape_type = self.resolve_ref_type(constructor_type);
-        let constructor_shape =
-            call_checker::get_construct_signature(self.ctx.types, constructor_shape_type, args.len());
+        let constructor_shape = call_checker::get_construct_signature(
+            self.ctx.types,
+            constructor_shape_type,
+            args.len(),
+        );
         let is_generic_new = constructor_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())

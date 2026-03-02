@@ -111,7 +111,8 @@ impl<'a> CheckerState<'a> {
     /// to the `TypeEnvironment` resolver) to evaluate such types into concrete object types.
     pub(crate) fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
         let mut evaluate_leaf = |leaf_type: TypeId| self.judge_evaluate(leaf_type);
-        let evaluated = evaluate_contextual_structure_with(self.ctx.types, type_id, &mut evaluate_leaf);
+        let evaluated =
+            evaluate_contextual_structure_with(self.ctx.types, type_id, &mut evaluate_leaf);
         // Keep unresolved contextual shapes available when evaluation degrades
         // to UNKNOWN (common with partially-instantiated generic conditionals).
         if evaluated == TypeId::UNKNOWN {

@@ -35,8 +35,7 @@ impl<'a> CheckerState<'a> {
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type)
-        {
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type) {
             return Some(TypeId::UNKNOWN);
         }
 

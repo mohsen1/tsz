@@ -259,6 +259,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 }
+                // Handle Tuple sources against mapped types for reverse-mapped inference.
+                // Tuples like [string, number] have numeric keys "0", "1", etc.
+                // When target is { [K in keyof T]: ... }, we reverse through each element
+                // and infer T as a tuple type.
+                if let Some(TypeData::Tuple(s_elems)) = self.interner.lookup(source) {
+                    let s_elems = self.interner.tuple_list(s_elems);
+                    if !s_elems.is_empty()
+                        && let Some(keyof_target) =
+                            self.find_keyof_inference_target(mapped.constraint, var_map)
+                            && self.constrain_reverse_mapped_tuple(
+                                ctx,
+                                var_map,
+                                &s_elems,
+                                &mapped,
+                                keyof_target,
+                            )
+                        {
+                            return;
+                        }
+                }
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
@@ -1196,6 +1216,85 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         true
     }
 
+    /// Reverse-infer a tuple source through a homomorphic mapped type.
+    ///
+    /// When source is a tuple like `[Box<number>, Box<string>]` and the mapped type is
+    /// `{ [K in keyof T]: Box<T[K]> }`, this reverses each element through the template
+    /// to reconstruct T as a tuple `[number, string]`.
+    ///
+    /// Returns `true` if reverse inference succeeded, `false` if it should be abandoned.
+    fn constrain_reverse_mapped_tuple(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_elems: &[TupleElement],
+        mapped: &crate::types::MappedType,
+        target_placeholder: TypeId,
+    ) -> bool {
+        let template = mapped.template;
+        let iter_param_name = mapped.type_param.name;
+
+        let mut reverse_elements = Vec::with_capacity(source_elems.len());
+        let mut any_reversed = false;
+
+        for (i, elem) in source_elems.iter().enumerate() {
+            // Skip rest elements — they complicate reverse inference
+            if elem.rest {
+                return false;
+            }
+
+            // Substitute the iteration parameter K with the numeric key literal "0", "1", ...
+            let key_str = i.to_string();
+            let key_atom = self.interner.intern_string(&key_str);
+            let key_literal = self.interner.literal_string_atom(key_atom);
+            let mut subst = TypeSubstitution::new();
+            subst.insert(iter_param_name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, template, &subst);
+
+            // Reverse-infer through the template: find what T[K] should be.
+            let reversed_value = match self.reverse_infer_through_template(
+                elem.type_id,
+                instantiated_template,
+                target_placeholder,
+            ) {
+                Some(v) => {
+                    any_reversed = true;
+                    v
+                }
+                None => TypeId::UNKNOWN,
+            };
+
+            // Reverse mapped type modifiers (same as object case)
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => false,
+                Some(MappedModifier::Remove) => true,
+                None => elem.optional,
+            };
+
+            reverse_elements.push(TupleElement {
+                type_id: reversed_value,
+                name: elem.name,
+                optional,
+                rest: false,
+            });
+        }
+
+        if !any_reversed {
+            return false;
+        }
+
+        // Build the reverse tuple and constrain it against the placeholder T
+        let reverse_tuple = self.interner.tuple(reverse_elements);
+        self.constrain_types(
+            ctx,
+            var_map,
+            reverse_tuple,
+            target_placeholder,
+            crate::types::InferencePriority::HomomorphicMappedType,
+        );
+        true
+    }
+
     /// Reverse-infer a single property value through a mapped type template.
     ///
     /// Given `source_value` (e.g., `Box<number>`) and `template` (e.g., `Box<T["a"]>`),
@@ -1204,7 +1303,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Returns `None` if the template is too complex to reverse (e.g., function types,
     /// conditional types, etc.), signaling that reverse inference should be abandoned.
     fn reverse_infer_through_template(
-        &self,
+        &mut self,
         source_value: TypeId,
         template: TypeId,
         target_placeholder: TypeId,
@@ -1266,7 +1365,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
 
-            // Template is an Application but source doesn't match — can't reverse
+            // Template is an Application but source doesn't match.
+            // Evaluate the Application using the checker's resolver context
+            // (e.g., Identity<T[K]> → T[K], KeepLiteralStrings<T[K]> → mapped type).
+            // Type aliases often reduce to simpler forms that CAN be reversed.
+            let evaluated_template = self.checker.evaluate_type(template);
+            if evaluated_template != template {
+                return self.reverse_infer_through_template(
+                    source_value,
+                    evaluated_template,
+                    target_placeholder,
+                );
+            }
             return None;
         }
 
