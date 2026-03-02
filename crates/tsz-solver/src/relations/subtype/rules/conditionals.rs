@@ -128,35 +128,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
         // Compute the default constraint for deferred conditional types.
         //
-        // Deferred conditionals arise when the check_type is:
-        // - A naked type parameter (T extends U ? X : Y)
-        // - An index access with type params (TObj[K] extends U ? X : Y)
-        // - Other generic expressions containing type parameters
-        //
-        // For type parameter check types, compute inferred true = check & extends.
-        // For other generic check types, use the true type directly (can't intersect
-        // non-type-parameter check types meaningfully).
-        let is_type_param = matches!(
+        // Deferred conditionals arise when:
+        // - The check_type contains type parameters (T extends U ? X : Y)
+        // - The extends_type contains type parameters (X extends T ? X : Y)
+        // In either case the evaluator cannot pick a branch and the conditional
+        // remains deferred, so we need a constraint for assignability checks.
+        let is_check_type_param = matches!(
             self.interner.lookup(cond.check_type),
             Some(TypeData::TypeParameter(_))
         );
 
-        // For non-type-parameter, non-generic check types, the evaluator would have
-        // already picked a branch — no constraint needed.
-        if !is_type_param
-            && !crate::visitor::contains_type_parameters(self.interner, cond.check_type)
-        {
+        let check_has_params = is_check_type_param
+            || crate::visitor::contains_type_parameters(self.interner, cond.check_type);
+        let extends_has_params =
+            crate::visitor::contains_type_parameters(self.interner, cond.extends_type);
+
+        // If neither check_type nor extends_type contains type parameters,
+        // the evaluator would have already picked a branch — no constraint needed.
+        if !check_has_params && !extends_has_params {
             return None;
         }
 
         // Compute the "inferred true type": the true branch with the check type
         // replaced by check_type & extends_type.
-        let inferred_true = if cond.true_type == cond.check_type && is_type_param {
-            // Common case: Extract<T, U> = T extends U ? T : never
-            // Inferred true = T & U
+        let inferred_true = if cond.true_type == cond.check_type {
+            // Extract-like pattern: X extends U ? X : Y
+            // Inferred true = X & U
+            // This covers both:
+            // - Distributive: T extends U ? T : never (check_type is type param)
+            // - Non-distributive: string[] extends T ? string[] : never (extends_type is type param)
             self.interner
                 .intersection2(cond.check_type, cond.extends_type)
-        } else if is_type_param && self.type_references_check_type(cond.true_type, cond.check_type)
+        } else if is_check_type_param
+            && self.type_references_check_type(cond.true_type, cond.check_type)
         {
             // True branch references check_type but isn't identical to it.
             // We can't do full instantiation in the subtype checker, so

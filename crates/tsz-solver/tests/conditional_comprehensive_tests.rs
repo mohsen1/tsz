@@ -1075,3 +1075,103 @@ fn test_conditional_infer_non_matching_concrete_takes_false_branch() {
         "string extends (...args) => infer R should take false branch (any)"
     );
 }
+
+// =============================================================================
+// Deferred conditional with extends_type containing type parameters
+// =============================================================================
+
+#[test]
+fn test_concrete_check_type_extends_type_param_assignable_to_target() {
+    // string[] extends T ? string[] : never
+    // When extends_type (T) contains type params, the conditional is deferred.
+    // Constraint = (string[] & T) | never = string[] & T
+    // string[] & T <: T → true (intersection is subtype of its members)
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let string_array = interner.array(TypeId::STRING);
+
+    let cond = ConditionalType {
+        check_type: string_array,
+        extends_type: t_param,
+        true_type: string_array,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(cond_type, t_param),
+        "string[] extends T ? string[] : never should be assignable to T"
+    );
+}
+
+#[test]
+fn test_concrete_check_type_extends_type_param_with_non_never_false_branch() {
+    // string[] extends T ? string[] : number
+    // Constraint = (string[] & T) | number
+    // (string[] & T) | number <: T → false (number is not subtype of T)
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let string_array = interner.array(TypeId::STRING);
+
+    let cond = ConditionalType {
+        check_type: string_array,
+        extends_type: t_param,
+        true_type: string_array,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(cond_type, t_param),
+        "string[] extends T ? string[] : number should NOT be assignable to T"
+    );
+}
+
+#[test]
+fn test_concrete_check_type_extends_type_param_different_true_branch() {
+    // string extends T ? number : never
+    // Constraint = (string & T) | never = string & T
+    // true_type (number) != check_type (string), so inferred true = number
+    // number | never = number <: T → false
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: t_param,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(cond_type, t_param),
+        "string extends T ? number : never should NOT be assignable to T"
+    );
+}
