@@ -1096,3 +1096,80 @@ fn test_union_number_literal_ordering() {
         assert_eq!(members.len(), 3);
     }
 }
+
+/// Application types (generic instantiations) in unions should sort by their base
+/// type's DefId ordering, not by raw TypeId. This ensures that `I1<number> | I2<number>`
+/// displays in source declaration order (I1 before I2) matching tsc behavior.
+#[test]
+fn test_union_application_types_sort_by_base_def_id() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+
+    // Create two Lazy types with known DefIds — lower DefId = declared first in source
+    let def_i1 = DefId(10); // I1 declared first
+    let def_i2 = DefId(20); // I2 declared second
+    let lazy_i1 = interner.lazy(def_i1);
+    let lazy_i2 = interner.lazy(def_i2);
+
+    // Create Application types: I1<number> and I2<number>
+    let app_i1_num = interner.application(lazy_i1, vec![TypeId::NUMBER]);
+    let app_i2_num = interner.application(lazy_i2, vec![TypeId::NUMBER]);
+
+    // Create union in REVERSE order: I2<number> | I1<number>
+    let union_reversed = interner.union(vec![app_i2_num, app_i1_num]);
+
+    // The normalized union should sort I1<number> before I2<number> (lower DefId first)
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union_reversed) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 2, "Union should have 2 members");
+        assert_eq!(
+            members[0], app_i1_num,
+            "I1<number> (DefId=10) should come first in the union"
+        );
+        assert_eq!(
+            members[1], app_i2_num,
+            "I2<number> (DefId=20) should come second in the union"
+        );
+    } else {
+        panic!("Expected Union type");
+    }
+
+    // Union created in source order should produce the same TypeId
+    let union_ordered = interner.union(vec![app_i1_num, app_i2_num]);
+    assert_eq!(
+        union_reversed, union_ordered,
+        "Application union ordering should be deterministic regardless of input order"
+    );
+}
+
+/// Application types with the same base but different args should sort by args.
+#[test]
+fn test_union_application_types_same_base_sort_by_args() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(10);
+    let lazy_base = interner.lazy(def_id);
+
+    // Create Application types: Foo<number> and Foo<string>
+    let app_num = interner.application(lazy_base, vec![TypeId::NUMBER]);
+    let app_str = interner.application(lazy_base, vec![TypeId::STRING]);
+
+    // Create union in both orders — should normalize to same result
+    let union_a = interner.union(vec![app_num, app_str]);
+    let union_b = interner.union(vec![app_str, app_num]);
+    assert_eq!(
+        union_a, union_b,
+        "Same-base application unions should be order-independent"
+    );
+
+    // Verify it's a union (not collapsed)
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union_a) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 2, "Union should have 2 members");
+    } else {
+        panic!("Expected Union type");
+    }
+}
