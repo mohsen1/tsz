@@ -1161,14 +1161,14 @@ impl<'a> FlowAnalyzer<'a> {
         // (discriminant_property_info returns the full path from the root, which is wrong when
         //  target is not the root — e.g., returns path=["test","type"] base=this for `this.test.type`
         //  when we need path=["type"] base=this.test relative to target=this.test)
-        if let Some(literal) = self.literal_type_from_node(right)
+        if let Some(literal) = self.discriminant_literal_candidate(right)
             && let Some((rel_path, is_optional)) = self.relative_discriminant_path(left, target)
             && !rel_path.is_empty()
         {
             return Some((rel_path, literal, is_optional, target));
         }
 
-        if let Some(literal) = self.literal_type_from_node(left)
+        if let Some(literal) = self.discriminant_literal_candidate(left)
             && let Some((rel_path, is_optional)) = self.relative_discriminant_path(right, target)
             && !rel_path.is_empty()
         {
@@ -1189,6 +1189,35 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn discriminant_literal_candidate(&self, idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.skip_parenthesized(idx);
+        let node = self.arena.get(idx)?;
+
+        // Do not treat arbitrary identifiers as discriminant literals based on
+        // flow-inferred node_types. This can incorrectly narrow unrelated targets
+        // (e.g., `e === Ns.Enum.Member` while narrowing `Ns`).
+        //
+        // Keep two safe identifier cases:
+        // 1) enum members,
+        // 2) const aliases with literal initializers.
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(sym_id) = self.reference_symbol(idx)
+                && let Some(sym) = self.binder.get_symbol(sym_id)
+                && (sym.flags & symbol_flags::ENUM_MEMBER) != 0
+            {
+                return self.literal_type_from_node(idx);
+            }
+
+            if let Some((_sym, initializer)) = self.const_condition_initializer(idx) {
+                return self.literal_type_from_node(initializer);
+            }
+
+            return None;
+        }
+
+        self.literal_type_from_node(idx)
     }
 
     /// Try to extract a discriminant guard for an aliased condition.

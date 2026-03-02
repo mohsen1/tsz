@@ -246,13 +246,33 @@ impl<'a> FlowAnalyzer<'a> {
         let sym_b = self.reference_symbol(b);
         trace!(?sym_a, ?sym_b, "Symbol comparison");
         if sym_a.is_some() && sym_a == sym_b {
-            trace!("Matched: same symbol");
-            return true;
+            let member_like_a = self.is_member_like_reference(a);
+            let member_like_b = self.is_member_like_reference(b);
+            if !member_like_a && !member_like_b {
+                trace!("Matched: same symbol");
+                return true;
+            }
+            trace!(
+                ?a,
+                ?b,
+                member_like_a,
+                member_like_b,
+                "Same symbol but member-like refs require structural match"
+            );
         }
 
         let property_match = self.is_matching_property_reference(a, b);
         trace!(?property_match, "Property reference match result");
         property_match
+    }
+
+    fn is_member_like_reference(&self, idx: NodeIndex) -> bool {
+        let idx = self.skip_parens_and_assertions(idx);
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::QUALIFIED_NAME
+        })
     }
 
     pub(crate) fn is_matching_property_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
