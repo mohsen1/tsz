@@ -1552,6 +1552,13 @@ impl TypeInterner {
         mut properties: Vec<PropertyInfo>,
         flags: ObjectFlags,
     ) -> TypeId {
+        // Capture declaration order before sorting (for display purposes).
+        // declaration_order is excluded from Hash/Eq, so it doesn't affect identity.
+        for (i, prop) in properties.iter_mut().enumerate() {
+            if prop.declaration_order == 0 {
+                prop.declaration_order = (i + 1) as u32;
+            }
+        }
         // Sort by property name for consistent hashing
         properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
@@ -1572,6 +1579,12 @@ impl TypeInterner {
         flags: ObjectFlags,
         symbol: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
+        // Capture declaration order before sorting (for display purposes).
+        for (i, prop) in properties.iter_mut().enumerate() {
+            if prop.declaration_order == 0 {
+                prop.declaration_order = (i + 1) as u32;
+            }
+        }
         // Sort by property name for consistent hashing
         properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
@@ -1586,6 +1599,12 @@ impl TypeInterner {
 
     /// Intern an object type with index signatures.
     pub fn object_with_index(&self, mut shape: ObjectShape) -> TypeId {
+        // Capture declaration order before sorting (for display purposes).
+        for (i, prop) in shape.properties.iter_mut().enumerate() {
+            if prop.declaration_order == 0 {
+                prop.declaration_order = (i + 1) as u32;
+            }
+        }
         // Sort properties by name for consistent hashing
         shape.properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(shape);

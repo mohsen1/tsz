@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
         // Skip duplicate property checks for destructuring assignment targets.
         // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
         let skip_duplicate_check = self.ctx.in_destructuring_target;
-        let mut prop_order: u32 = 0;
+        let mut prop_order: u32 = 1;
 
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
@@ -1316,20 +1316,23 @@ impl<'a> CheckerState<'a> {
             // Apply any non-spread properties that were added after the union
             // spread(s) to each branch. Properties in `properties` override
             // branch properties (later properties win in object literals).
-            let post_spread_props: Vec<PropertyInfo> = properties.into_values().collect();
+            let mut post_spread_props: Vec<PropertyInfo> = properties.into_values().collect();
+            post_spread_props.sort_by_key(|p| p.declaration_order);
 
             let mut union_members: Vec<TypeId> = Vec::new();
             for mut branch in union_spread_branches {
                 for prop in &post_spread_props {
                     branch.insert(prop.name, prop.clone());
                 }
-                let branch_props: Vec<PropertyInfo> = branch.into_values().collect();
+                let mut branch_props: Vec<PropertyInfo> = branch.into_values().collect();
+                branch_props.sort_by_key(|p| p.declaration_order);
                 let obj = self.ctx.types.factory().object(branch_props);
                 union_members.push(obj);
             }
             self.ctx.types.factory().union(union_members)
         } else {
-            let properties: Vec<PropertyInfo> = properties.into_values().collect();
+            let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
+            properties.sort_by_key(|p| p.declaration_order);
             // Object literals with spreads are not fresh (no excess property checking)
 
             if string_index_types.is_empty() && number_index_types.is_empty() {

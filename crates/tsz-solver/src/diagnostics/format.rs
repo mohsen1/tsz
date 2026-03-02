@@ -368,15 +368,26 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
-        if props.len() > 3 {
-            let first_three: Vec<String> = props
+        // Sort by declaration_order to preserve source ordering for display.
+        // Properties are stored sorted by Atom ID for identity/hashing,
+        // but declaration_order captures the original source order.
+        let mut display_props: Vec<&PropertyInfo> = props.iter().collect();
+        let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
+        if has_decl_order {
+            display_props.sort_by_key(|p| p.declaration_order);
+        }
+        if display_props.len() > 3 {
+            let first_three: Vec<String> = display_props
                 .iter()
                 .take(3)
                 .map(|p| self.format_property(p))
                 .collect();
             return format!("{{ {}; ...; }}", first_three.join("; "));
         }
-        let formatted: Vec<String> = props.iter().map(|p| self.format_property(p)).collect();
+        let formatted: Vec<String> = display_props
+            .iter()
+            .map(|p| self.format_property(p))
+            .collect();
         format!("{{ {}; }}", formatted.join("; "))
     }
 
@@ -457,9 +468,16 @@ impl<'a> TypeFormatter<'a> {
         this_type: Option<TypeId>,
         return_type: TypeId,
         is_construct: bool,
+        is_abstract: bool,
         separator: &str,
     ) -> String {
-        let prefix = if is_construct { "new " } else { "" };
+        let prefix = if is_construct && is_abstract {
+            "abstract new "
+        } else if is_construct {
+            "new "
+        } else {
+            ""
+        };
         let type_params = self.format_type_params(type_params);
         let params = self.format_params(params, this_type);
         let return_str = if is_construct && return_type == TypeId::UNKNOWN {
@@ -500,7 +518,13 @@ impl<'a> TypeFormatter<'a> {
                 self.format(idx.value_type)
             ));
         }
-        for prop in &shape.properties {
+        // Sort properties by declaration_order for display (preserves source order)
+        let mut display_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
+        if has_decl_order {
+            display_props.sort_by_key(|p| p.declaration_order);
+        }
+        for prop in display_props {
             parts.push(self.format_property(prop));
         }
 
@@ -542,8 +566,33 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_intersection(&mut self, members: &[TypeId]) -> String {
-        let formatted: Vec<String> = members.iter().map(|&m| self.format(m)).collect();
+        // Re-sort members for display to approximate tsc's source-order display.
+        // Intersection members are stored sorted by TypeId for identity/canonicalization,
+        // but tsc preserves declaration order. For Lazy(DefId) types, DefId allocation
+        // follows declaration order, so sorting by DefId approximates source order.
+        let mut display_order: Vec<TypeId> = members.to_vec();
+        display_order.sort_by(|&a, &b| {
+            self.intersection_display_key(a)
+                .cmp(&self.intersection_display_key(b))
+        });
+        let formatted: Vec<String> = display_order.iter().map(|&m| self.format(m)).collect();
         formatted.join(" & ")
+    }
+
+    /// Compute a display sort key for an intersection member.
+    /// Lazy(DefId) types sort by DefId (approximating declaration order).
+    /// Other types sort by TypeId (preserving canonical order).
+    /// Compute a display sort key for an intersection member.
+    /// Lazy(DefId) types sort by DefId (approximating declaration order).
+    /// Other types sort by TypeId (preserving canonical order).
+    fn intersection_display_key(&self, id: TypeId) -> (u32, u32) {
+        // Use (category, sub_key) tuple:
+        // - Category 0 = non-Lazy types (sort by TypeId)
+        // - Category 1 = Lazy types (sort by DefId)
+        match self.interner.lookup(id) {
+            Some(TypeData::Lazy(def_id)) => (1, def_id.0),
+            _ => (0, id.0),
+        }
     }
 
     fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
@@ -571,6 +620,7 @@ impl<'a> TypeFormatter<'a> {
             shape.this_type,
             shape.return_type,
             shape.is_constructor,
+            false,
             " =>",
         )
     }
@@ -593,6 +643,7 @@ impl<'a> TypeFormatter<'a> {
                     sig.this_type,
                     sig.return_type,
                     false,
+                    false,
                     " =>",
                 );
             }
@@ -604,6 +655,7 @@ impl<'a> TypeFormatter<'a> {
                     sig.this_type,
                     sig.return_type,
                     true,
+                    shape.is_abstract,
                     " =>",
                 );
             }
@@ -611,10 +663,10 @@ impl<'a> TypeFormatter<'a> {
 
         let mut parts = Vec::new();
         for sig in &shape.call_signatures {
-            parts.push(self.format_call_signature(sig, false));
+            parts.push(self.format_call_signature(sig, false, false));
         }
         for sig in &shape.construct_signatures {
-            parts.push(self.format_call_signature(sig, true));
+            parts.push(self.format_call_signature(sig, true, shape.is_abstract));
         }
         if let Some(ref idx) = shape.string_index {
             parts.push(format!("[index: string]: {}", self.format(idx.value_type)));
@@ -639,13 +691,19 @@ impl<'a> TypeFormatter<'a> {
         format!("{{ {}; }}", parts.join("; "))
     }
 
-    fn format_call_signature(&mut self, sig: &CallSignature, is_construct: bool) -> String {
+    fn format_call_signature(
+        &mut self,
+        sig: &CallSignature,
+        is_construct: bool,
+        is_abstract: bool,
+    ) -> String {
         self.format_signature(
             &sig.type_params,
             &sig.params,
             sig.this_type,
             sig.return_type,
             is_construct,
+            is_abstract,
             ":",
         )
     }
