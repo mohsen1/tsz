@@ -869,6 +869,9 @@ impl<'a> Printer<'a> {
                             return true;
                         }
                     }
+                    if self.ctx.is_commonjs() {
+                        return !self.import_has_value_usage_after_node(node, clause);
+                    }
                 }
                 false
             }
