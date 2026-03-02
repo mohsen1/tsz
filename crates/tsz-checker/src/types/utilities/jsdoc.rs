@@ -1070,9 +1070,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text)
                     && (Self::jsdoc_contains_tag(&jsdoc, "augments")
                         || Self::jsdoc_contains_tag(&jsdoc, "extends"))
-                    {
-                        handled_comment_positions.push(node.pos);
-                    }
+                {
+                    handled_comment_positions.push(node.pos);
+                }
                 continue;
             }
 
