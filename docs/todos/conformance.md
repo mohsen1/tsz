@@ -3,6 +3,56 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9755/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02h — JSDoc @readonly (TS2540) and @extends/@augments validation (TS8022)
+
+### Fixed: JSDoc @readonly tag not recognized on class properties — Checker (class_type, enum_utils, jsdoc)
+
+**Area**: jsdoc (jsdocReadonly.ts, 60.6% pass rate → improved)
+
+**Root cause**: The checker only inspected AST modifiers (`readonly` keyword) when determining if a class property is readonly. JSDoc `/** @readonly */` annotations on class properties in `.js` files were completely ignored. Two code paths needed updating:
+1. `class_type/core.rs:221` — `PropertyInfo.readonly` was set only from `has_readonly_modifier()`, so the type system didn't know the property was readonly.
+2. `enum_utils.rs:is_class_property_readonly()` — the assignment check also only consulted AST modifiers, so `f.y = 12` didn't trigger TS2540.
+
+**Fix**: Three changes:
+1. Added `jsdoc_has_readonly_tag(idx)` and generic `jsdoc_contains_tag(jsdoc, tag_name)` helpers in `jsdoc.rs`.
+2. Updated `class_type/core.rs:221` to also call `jsdoc_has_readonly_tag(member_idx)`.
+3. Updated `enum_utils.rs:is_class_property_readonly()` to also call `jsdoc_has_readonly_tag(member_idx)`.
+
+**Tests**: 3 unit tests in `jsdoc_readonly_tests.rs`:
+- `test_jsdoc_readonly_property_assignment_emits_ts2540` — @readonly → TS2540
+- `test_jsdoc_readonly_property_assignment_in_constructor_ok` — constructor ok
+- `test_non_readonly_property_assignment_no_ts2540` — no @readonly → no TS2540
+
+**Impact**: +1 conformance test (jsdocReadonly.ts), 0 regressions.
+
+### Fixed: @extends/@augments on non-class declarations not emitting TS8022 — Checker (state_checking/core, jsdoc)
+
+**Area**: jsdoc (jsdocAugments_notAClass.ts)
+
+**Root cause**: No code path checked whether `@extends` or `@augments` JSDoc tags appeared on non-class declarations. TSC emits TS8022 ("JSDoc '@augments' is not attached to a class.") when these tags appear on functions, variables, etc.
+
+**Fix**: Two changes:
+1. Added `find_orphaned_extends_tags_for_statements(statements)` in `jsdoc.rs` that scans each top-level statement's leading JSDoc for @extends/@augments. If the statement is not a class declaration, it reports the tag. For function declarations, the error anchors at the function name (matching tsc).
+2. Added `check_orphaned_extends_tags()` in `state_checking/core.rs`, called from `check_source_file()` for JS files.
+
+**Tests**: 2 unit tests in `jsdoc_readonly_tests.rs`:
+- `test_jsdoc_augments_on_function_emits_ts8022` — @augments on function → TS8022
+- `test_jsdoc_extends_on_class_no_ts8022` — @extends on class → no TS8022
+
+**Impact**: +1 conformance test (jsdocAugments_notAClass.ts), 0 regressions.
+
+**Remaining JSDoc gaps**: extendsTag2.ts and extendsTag4.ts still fail — these involve dangling JSDoc comments (comments not attached to any statement) that require complex multi-file comment-to-statement correlation.
+
+**Files changed**:
+- `crates/tsz-checker/src/types/utilities/jsdoc.rs` — `jsdoc_has_readonly_tag`, `jsdoc_contains_tag`, `find_orphaned_extends_tags_for_statements`
+- `crates/tsz-checker/src/types/class_type/core.rs` — JSDoc readonly check
+- `crates/tsz-checker/src/types/utilities/enum_utils.rs` — JSDoc readonly check
+- `crates/tsz-checker/src/state/state_checking/core.rs` — `check_orphaned_extends_tags` + call site
+- `crates/tsz-checker/tests/jsdoc_readonly_tests.rs` — 5 new tests
+- `crates/tsz-checker/src/lib.rs` — module registration
+
+---
+
 ## Session 2026-03-02g — Check generic SFC spread attributes against IntrinsicAttributes
 
 ### Fixed: Generic SFCs skipped IntrinsicAttributes check for spread attributes — Checker (jsx_checker.rs)
