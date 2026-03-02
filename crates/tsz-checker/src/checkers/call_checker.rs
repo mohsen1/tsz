@@ -309,14 +309,14 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 spread_type,
                             )
-                            && (array_element_type_for_type(self.ctx.types, constraint).is_some()
-                                || tuple_elements_for_type(self.ctx.types, constraint).is_some())
-                            {
-                                // Push the spread type as-is (the solver will handle it)
-                                arg_types.push(spread_type);
-                                effective_index += 1;
-                                continue;
-                            }
+                        && (array_element_type_for_type(self.ctx.types, constraint).is_some()
+                            || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+                    {
+                        // Push the spread type as-is (the solver will handle it)
+                        arg_types.push(spread_type);
+                        effective_index += 1;
+                        continue;
+                    }
 
                     // If it's an array type, check if it's an array literal spread
                     // For array literals, we want to check each element individually
