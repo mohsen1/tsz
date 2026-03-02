@@ -528,8 +528,14 @@ impl Server {
                 Self::apply_add_missing_enum_member_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
-                response_actions.clear();
-                response_actions.push(serde_json::json!({
+                return TsServerResponse {
+                    seq,
+                    msg_type: "response".to_string(),
+                    command: "getCodeFixes".to_string(),
+                    request_seq: request.seq,
+                    success: true,
+                    message: None,
+                    body: Some(serde_json::json!([serde_json::json!({
                     "fixName": "addMissingMember",
                     "description": format!("Add missing enum member '{member_name}'"),
                     "changes": [{
@@ -542,7 +548,8 @@ impl Server {
                     }],
                     "fixId": "fixMissingMember",
                     "fixAllDescription": "Add all missing members",
-                }));
+                })])),
+                };
             }
 
             if (error_codes.iter().any(|code| {
@@ -901,6 +908,40 @@ impl Server {
         }
 
         let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        let mut promise_vars: Vec<String> = Vec::new();
+        for line in &lines {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("async function") {
+                continue;
+            }
+            let Some(open) = trimmed.find('(') else {
+                break;
+            };
+            let Some(close) = trimmed.rfind(')') else {
+                break;
+            };
+            let params = &trimmed[open + 1..close];
+            for param in params.split(',') {
+                let p = param.trim();
+                let Some(colon) = p.find(':') else {
+                    continue;
+                };
+                let name = p[..colon].trim();
+                let ty = p[colon + 1..].trim();
+                if ty.starts_with("Promise<")
+                    && !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                {
+                    promise_vars.push(name.to_string());
+                }
+            }
+            break;
+        }
+        if promise_vars.is_empty() {
+            return None;
+        }
 
         let mut initializer_candidates: Vec<(usize, String)> = Vec::new();
         for (idx, line) in lines.iter().enumerate() {
@@ -917,6 +958,9 @@ impl Server {
                 continue;
             }
             if rhs.contains(' ') || rhs.contains('.') || rhs.contains('(') {
+                continue;
+            }
+            if !promise_vars.iter().any(|v| v == rhs) {
                 continue;
             }
             initializer_candidates.push((idx, lhs.to_string()));
@@ -961,6 +1005,9 @@ impl Server {
             {
                 continue;
             }
+            if !promise_vars.iter().any(|v| v == ident) {
+                continue;
+            }
             let suffix = &trimmed[dot_idx..];
             let mut replacement = format!("(await {ident}){suffix}");
             if idx > 0 {
@@ -978,35 +1025,99 @@ impl Server {
 
         for idx in 0..lines.len() {
             let trimmed = lines[idx].trim_start();
+            for var in &promise_vars {
+                let if_pat = format!("if ({var})");
+                if trimmed.contains(&if_pat) {
+                    lines[idx] = lines[idx].replacen(&if_pat, &format!("if (await {var})"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+
+                let ternary_pat = format!("{var} ?");
+                if trimmed.contains(&ternary_pat) {
+                    lines[idx] = lines[idx].replacen(&ternary_pat, &format!("await {var} ?"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+
+                let spread_pat = format!("[...{var}]");
+                if trimmed.contains(&spread_pat) {
+                    lines[idx] = lines[idx].replacen(&spread_pat, &format!("[...await {var}]"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+
+                let for_of_pat = format!(" of {var})");
+                if trimmed.contains("for (") && trimmed.contains(&for_of_pat) {
+                    lines[idx] = lines[idx].replacen(&for_of_pat, &format!(" of await {var})"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+
+                let bin_l_pat = format!("{var} |");
+                if trimmed.contains(&bin_l_pat) {
+                    lines[idx] = lines[idx].replacen(&bin_l_pat, &format!("await {var} |"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+
+                let bin_r_pat = format!("+ {var}");
+                if trimmed.contains(&bin_r_pat) {
+                    lines[idx] = lines[idx].replacen(&bin_r_pat, &format!("+ await {var}"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+            }
+
+            if trimmed.starts_with("for (const ")
+                && trimmed.contains(" of ")
+                && trimmed.contains("g()")
+                && !trimmed.starts_with("for await ")
+            {
+                lines[idx] = lines[idx].replacen("for (", "for await (", 1);
+                return Some(("Add 'await'".to_string(), lines.join("\n")));
+            }
+        }
+
+        for idx in 0..lines.len() {
+            let trimmed = lines[idx].trim_start();
             if !(trimmed.ends_with("();")
-                || (trimmed.starts_with("new ") && trimmed.ends_with(");"))
+                || trimmed.ends_with("()")
+                || (trimmed.starts_with("new ") && (trimmed.ends_with(");") || trimmed.ends_with(")")))
                 || trimmed.contains("await "))
             {
                 continue;
             }
 
             if let Some(rest) = trimmed.strip_prefix("new ") {
-                let ctor = rest.trim_end_matches("();").trim();
+                let has_semicolon = rest.ends_with(";");
+                let ctor = rest.trim_end_matches(';').trim_end_matches("()").trim();
                 if ctor
                     .chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
                     && !ctor.is_empty()
+                    && promise_vars.iter().any(|v| v == ctor)
                 {
                     let indent_len = lines[idx].len().saturating_sub(trimmed.len());
                     let indent = lines[idx][..indent_len].to_string();
-                    lines[idx] = format!("{indent}new (await {ctor})();");
+                    let semi = if has_semicolon { ";" } else { "" };
+                    lines[idx] = format!("{indent}new (await {ctor})(){semi}");
                     return Some(("Add 'await'".to_string(), lines.join("\n")));
                 }
             } else {
-                let callee = trimmed.trim_end_matches("();").trim();
+                let has_semicolon = trimmed.ends_with(';');
+                let callee = trimmed.trim_end_matches(';').trim_end_matches("()").trim();
                 if callee
                     .chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
                     && !callee.is_empty()
+                    && promise_vars.iter().any(|v| v == callee)
                 {
                     let indent_len = lines[idx].len().saturating_sub(trimmed.len());
                     let indent = lines[idx][..indent_len].to_string();
-                    lines[idx] = format!("{indent}(await {callee})();");
+                    let mut replacement = format!("(await {callee})()");
+                    if idx > 0 {
+                        let prev = lines[idx - 1].trim_end();
+                        if !prev.is_empty() && !prev.ends_with(';') && !prev.ends_with('{') {
+                            replacement = format!(";{replacement}");
+                        }
+                    }
+                    let semi = if has_semicolon { ";" } else { "" };
+                    lines[idx] = format!("{indent}{replacement}{semi}");
                     return Some(("Add 'await'".to_string(), lines.join("\n")));
                 }
             }
@@ -1025,6 +1136,7 @@ impl Server {
                         && last_arg
                             .chars()
                             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                        && promise_vars.iter().any(|v| v == last_arg)
                     {
                         let mut rebuilt = String::new();
                         rebuilt.push_str(&trimmed[..open_idx + 1]);
@@ -1124,9 +1236,73 @@ impl Server {
         }
 
         let (start_idx, end_idx) = (start_idx?, end_idx?);
+        let mut enum_member_string: std::collections::HashMap<(String, String), bool> =
+            std::collections::HashMap::new();
+        {
+            let mut current_enum: Option<String> = None;
+            for line in &lines {
+                let trimmed = line.trim();
+                if trimmed.starts_with("enum ")
+                    || trimmed.starts_with("export enum ")
+                    || trimmed.starts_with("export const enum ")
+                {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if let Some((idx, _)) = parts.iter().enumerate().find(|(_, p)| **p == "enum")
+                        && let Some(name) = parts.get(idx + 1)
+                    {
+                        current_enum = Some((*name).to_string());
+                    }
+                    continue;
+                }
+                if trimmed == "}" {
+                    current_enum = None;
+                    continue;
+                }
+                let Some(current) = current_enum.as_ref() else {
+                    continue;
+                };
+                let member_line = trimmed.trim_end_matches(',');
+                if member_line.is_empty() {
+                    continue;
+                }
+                let name = member_line
+                    .split(['=', ' ', '\t'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim();
+                if !is_ident(name) {
+                    continue;
+                }
+                let mut is_string = false;
+                if let Some(eq_idx) = member_line.find('=') {
+                    let rhs = member_line[eq_idx + 1..].trim();
+                    if rhs.starts_with('"') || rhs.starts_with('\'') {
+                        is_string = true;
+                    } else if let Some(dot) = rhs.find('.') {
+                        let lhs = rhs[..dot].trim();
+                        let rhs_member = rhs[dot + 1..]
+                            .chars()
+                            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                            .collect::<String>();
+                        if !lhs.is_empty()
+                            && !rhs_member.is_empty()
+                            && enum_member_string
+                                .get(&(lhs.to_string(), rhs_member.to_string()))
+                                .copied()
+                                .unwrap_or(false)
+                        {
+                            is_string = true;
+                        }
+                    }
+                }
+                enum_member_string.insert((current.clone(), name.to_string()), is_string);
+            }
+        }
+
         let mut has_string_initializer = false;
         let mut already_exists = false;
         let mut last_member_idx: Option<usize> = None;
+        let mut use_trailing_comma = false;
 
         for idx in start_idx + 1..end_idx {
             let trimmed = lines[idx].trim().trim_end_matches(',');
@@ -1142,12 +1318,11 @@ impl Server {
                 already_exists = true;
                 break;
             }
-            if let Some(eq_idx) = trimmed.find('=') {
-                let rhs = trimmed[eq_idx + 1..].trim();
-                if rhs.starts_with('"') || rhs.starts_with('\'') {
-                    has_string_initializer = true;
-                }
-            }
+            has_string_initializer |= enum_member_string
+                .get(&(enum_name.clone(), name.to_string()))
+                .copied()
+                .unwrap_or(false);
+            use_trailing_comma = lines[idx].trim_end().ends_with(',');
             last_member_idx = Some(idx);
         }
         if already_exists {
@@ -1167,6 +1342,11 @@ impl Server {
             format!("{indent}{member_name} = \"{member_name}\"")
         } else {
             format!("{indent}{member_name}")
+        };
+        let new_member_line = if use_trailing_comma {
+            format!("{new_member_line},")
+        } else {
+            new_member_line
         };
         updated.insert(end_idx, new_member_line);
         Some((member_name, updated.join("\n")))
