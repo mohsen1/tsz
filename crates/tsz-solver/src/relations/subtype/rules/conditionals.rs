@@ -6,6 +6,7 @@
 //! - Branch compatibility checking
 
 use crate::types::{ConditionalType, TypeData, TypeId};
+use crate::visitor::type_param_info;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -102,6 +103,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return SubtypeResult::True;
         }
+
+        // Strategy 1.5: Distributive constraint evaluation.
+        //
+        // When the check_type is a distributive type parameter with a constraint,
+        // instantiate the conditional with T→constraint and evaluate. This distributes
+        // the conditional over the constraint union, producing a concrete type.
+        //
+        // Example: ZeroOf<T> where T extends number | string
+        //   ZeroOf<T> = T extends number ? 0 : T extends string ? "" : false
+        //   Instantiate T → number | string:
+        //   (number | string) extends number ? 0 : ...
+        //   Distribute: ZeroOf<number> | ZeroOf<string> = 0 | ""
+        //   0 | "" <: number | string ✓
+        //
+        // This matches tsc's getConstraintOfDistributiveConditionalType().
+        if cond.is_distributive
+            && let Some(param_info) = type_param_info(self.interner, cond.check_type)
+                && let Some(constraint) = param_info.constraint
+            {
+                use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+                let mut sub = TypeSubstitution::new();
+                sub.insert(param_info.name, constraint);
+                let cond_type_id = self.interner.conditional(cond.clone());
+                let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
+                if instantiated != cond_type_id {
+                    let evaluated = self.evaluate_type(instantiated);
+                    if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
 
         // Strategy 2: Both branches must be subtypes of target.
         if self.check_subtype(cond.true_type, target).is_true()
