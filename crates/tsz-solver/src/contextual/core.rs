@@ -651,6 +651,23 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
+            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
+                let cond = self.interner.conditional_type(cond_id);
+                let mut branch_elem_types = Vec::new();
+                for branch in [cond.true_type, cond.false_type] {
+                    // Guard against self-recursive aliases.
+                    if branch == expected {
+                        continue;
+                    }
+                    let ctx = ContextualTypeContext::with_expected(self.interner, branch);
+                    if let Some(ty) = ctx.get_tuple_element_type_inner(index, element_count) {
+                        branch_elem_types.push(ty);
+                    }
+                }
+                if let Some(resolved) = collect_single_or_union(self.interner, branch_elem_types) {
+                    return Some(resolved);
+                }
+            }
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
