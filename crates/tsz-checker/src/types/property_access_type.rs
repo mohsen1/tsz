@@ -1585,9 +1585,7 @@ impl<'a> CheckerState<'a> {
         let mut candidates = vec![object_type];
         if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
             let sym_type = self.get_type_of_symbol(sym_id);
-            if sym_type != TypeId::ERROR
-                && !candidates.contains(&sym_type)
-            {
+            if sym_type != TypeId::ERROR && !candidates.contains(&sym_type) {
                 candidates.push(sym_type);
             }
         }

@@ -84,7 +84,11 @@ impl<'a> CheckerState<'a> {
         if let TypeSymbolResolution::Type(sym_id) =
             self.resolve_identifier_symbol_in_type_position(name_idx)
         {
-            return Some(self.type_reference_symbol_type(sym_id));
+            let mut result = self.type_reference_symbol_type(sym_id);
+            if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
+                result = self.apply_module_augmentations(&module_specifier, name, result);
+            }
+            return Some(result);
         }
         // Fall back to lib contexts for global type resolution
         // BUT only if lib files are actually loaded (noLib is false)
@@ -93,6 +97,73 @@ impl<'a> CheckerState<'a> {
         {
             return Some(type_id);
         }
+        None
+    }
+
+    fn resolve_named_import_module_for_local_name(&self, local_name: &str) -> Option<String> {
+        let source_file = self.ctx.arena.source_files.first()?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if import_decl.import_clause.is_none() {
+                continue;
+            }
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.named_bindings.is_none() {
+                continue;
+            }
+
+            let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+                continue;
+            };
+            if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+                continue;
+            }
+            let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+                continue;
+            };
+
+            for &element_idx in &named_imports.elements.nodes {
+                let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+                let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                    continue;
+                };
+                let Some(local_ident) = self
+                    .ctx
+                    .arena
+                    .get(specifier.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                else {
+                    continue;
+                };
+                if local_ident.escaped_text.as_str() != local_name {
+                    continue;
+                }
+                let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
+                    continue;
+                };
+                let Some(module_literal) = self.ctx.arena.get_literal(module_node) else {
+                    continue;
+                };
+                return Some(module_literal.text.clone());
+            }
+        }
+
         None
     }
 

@@ -859,18 +859,41 @@ impl<'a> CheckerState<'a> {
         module_spec: &str,
         interface_name: &str,
     ) -> Vec<tsz_binder::ModuleAugmentation> {
-        self.ctx
-            .binder
-            .module_augmentations
-            .get(module_spec)
-            .map(|augmentations| {
-                augmentations
-                    .iter()
-                    .filter(|aug| aug.name == interface_name)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        let mut result = Vec::new();
+        let mut candidates = crate::module_resolution::module_specifier_candidates(module_spec);
+        if !candidates.iter().any(|c| c == module_spec) {
+            candidates.push(module_spec.to_string());
+        }
+
+        for candidate in &candidates {
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(candidate) {
+                result.extend(
+                    augmentations
+                        .iter()
+                        .filter(|aug| aug.name == interface_name)
+                        .cloned(),
+                );
+            }
+        }
+
+        if result.is_empty()
+            && let Some(all_binders) = self.ctx.all_binders.as_ref()
+        {
+            for binder in all_binders.iter() {
+                for candidate in &candidates {
+                    if let Some(augmentations) = binder.module_augmentations.get(candidate) {
+                        result.extend(
+                            augmentations
+                                .iter()
+                                .filter(|aug| aug.name == interface_name)
+                                .cloned(),
+                        );
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Get all module augmentation members for a given module specifier and interface name.
