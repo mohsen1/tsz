@@ -1555,3 +1555,110 @@ let p = <Comp x="hello" />;
         "TS2741 source type should include property types. Got: {ts2741_msgs:?}"
     );
 }
+
+// =============================================================================
+// Generic SFC spread IntrinsicAttributes checking
+// =============================================================================
+
+/// JSX namespace preamble with optional `IntrinsicAttributes` (standard React pattern).
+const JSX_PREAMBLE_WITH_IA: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+        span: any;
+    }
+    interface IntrinsicAttributes {
+        key?: string | number;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+"#;
+
+#[test]
+fn test_generic_sfc_spread_unconstrained_emits_ts2322() {
+    // <Component {...props} /> where Component<T>(props: T) and props: U (unconstrained)
+    // should emit TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'"
+    // because unconstrained U's constraint (unknown) is not assignable to IntrinsicAttributes.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_WITH_IA}
+declare function Component<T>(props: T): JSX.Element;
+const decorator = function <U>(props: U) {{
+    return <Component {{...props}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for unconstrained U not assignable to IntrinsicAttributes & U, got: {diags:?}"
+    );
+    // Verify the error message mentions IntrinsicAttributes
+    let ts2322_msgs: Vec<_> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(
+        ts2322_msgs
+            .iter()
+            .any(|m| m.contains("IntrinsicAttributes")),
+        "TS2322 message should mention IntrinsicAttributes. Got: {ts2322_msgs:?}"
+    );
+}
+
+#[test]
+fn test_generic_sfc_spread_constrained_no_error() {
+    // <Component {...props} /> where props: U extends {x: string}
+    // should NOT emit TS2322 because U's constraint ({x: string}) IS assignable
+    // to IntrinsicAttributes (which has all-optional properties).
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_WITH_IA}
+declare function Component<T>(props: T): JSX.Element;
+const decorator = function <U extends {{x: string}}>(props: U) {{
+    return <Component {{...props}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_about_ia: Vec<_> = diags
+        .iter()
+        .filter(|(c, m)| {
+            *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && m.contains("IntrinsicAttributes")
+        })
+        .collect();
+    assert!(
+        ts2322_about_ia.is_empty(),
+        "Should NOT emit TS2322 for constrained U that satisfies IntrinsicAttributes, got: {ts2322_about_ia:?}"
+    );
+}
+
+#[test]
+fn test_non_generic_sfc_no_spurious_intrinsic_attrs_check() {
+    // Non-generic SFC: <Greet name="world" /> should NOT get an IntrinsicAttributes error.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_WITH_IA}
+function Greet(props: {{ name: string }}): JSX.Element {{
+    return <div>Hello</div>;
+}}
+let x = <Greet name="world" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_about_ia: Vec<_> = diags
+        .iter()
+        .filter(|(c, m)| {
+            *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && m.contains("IntrinsicAttributes")
+        })
+        .collect();
+    assert!(
+        ts2322_about_ia.is_empty(),
+        "Non-generic SFC should not emit IntrinsicAttributes TS2322, got: {ts2322_about_ia:?}"
+    );
+}

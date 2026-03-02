@@ -239,6 +239,17 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
+
+                // For generic SFCs (e.g., `Component<T>(props: T)`), we can't infer
+                // type arguments, but we CAN check that spread attributes satisfy
+                // IntrinsicAttributes. tsc checks spreads against
+                // `IntrinsicAttributes & inferred_props` and emits TS2322 when an
+                // unconstrained type parameter doesn't satisfy IntrinsicAttributes.
+                self.check_generic_sfc_spread_intrinsic_attrs(
+                    evaluated,
+                    jsx_opening.attributes,
+                    jsx_opening.tag_name,
+                );
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -455,18 +466,11 @@ impl<'a> CheckerState<'a> {
 
         // Try SFC first: get call signatures → first parameter is props type
         if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
-            // Don't check if the resolved props type is a type parameter
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
-                return None;
-            }
             return Some((props, raw_has_tp));
         }
 
         // Try class component: get construct signatures → instance type → props
         if let Some(props) = self.get_class_component_props_type(component_type) {
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
-                return None;
-            }
             return Some((props, false));
         }
 
@@ -1708,6 +1712,95 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_missing_required_jsx_props(intrinsic_attrs_type, &provided_attrs, tag_name_idx);
+    }
+
+    // Generic SFC IntrinsicAttributes Spread Check
+
+    /// TS2322: Check spread attributes against `IntrinsicAttributes` for generic SFCs.
+    ///
+    /// For generic SFCs like `Component<T>(props: T)`, we can't infer type arguments
+    /// from JSX attributes. But tsc still checks that spread attributes satisfy
+    /// `IntrinsicAttributes & inferred_props_type`. Since the inferred props type
+    /// equals the spread type (T = U from the spread), the target is
+    /// `IntrinsicAttributes & spread_type`. The check reduces to:
+    /// does `spread_type <: IntrinsicAttributes`?
+    ///
+    /// For unconstrained type parameters (constraint = `unknown`), this fails because
+    /// `unknown` is not assignable to the `IntrinsicAttributes` interface.
+    fn check_generic_sfc_spread_intrinsic_attrs(
+        &mut self,
+        component_type: TypeId,
+        attributes_idx: NodeIndex,
+        tag_name_idx: NodeIndex,
+    ) {
+        // Only applies to generic SFCs (functions with type parameters)
+        let is_generic_sfc =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+                .is_some_and(|shape| !shape.type_params.is_empty() && !shape.is_constructor)
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+                    .is_some_and(|sigs| sigs.iter().any(|s| !s.type_params.is_empty()));
+
+        if !is_generic_sfc {
+            return;
+        }
+
+        let Some(ia_type) = self.get_intrinsic_attributes_type() else {
+            return;
+        };
+
+        // Get spread attributes
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                continue;
+            };
+            let spread_type = self.compute_type_of_node(spread_data.expression);
+
+            if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
+                continue;
+            }
+
+            // Build target: IntrinsicAttributes & spread_type (matching tsc's format).
+            // tsc infers the component's type parameter from the spread, so the
+            // inferred props type = spread_type. The full target is then
+            // IntrinsicAttributes & spread_type.
+            let target = self
+                .ctx
+                .types
+                .factory()
+                .intersection(vec![ia_type, spread_type]);
+
+            // Check: spread_type <: IntrinsicAttributes & spread_type
+            // Since spread_type <: spread_type is always true, this reduces to
+            // spread_type <: IntrinsicAttributes.
+            if !self.is_assignable_to(spread_type, target) {
+                let spread_name = self.format_type(spread_type);
+                // Format target as "IntrinsicAttributes & U" matching tsc's output.
+                // tsc uses the short name "IntrinsicAttributes" (without JSX. namespace)
+                // and puts it before the spread type in the intersection.
+                let target_name = format!("IntrinsicAttributes & {spread_name}");
+                let message =
+                    format!("Type '{spread_name}' is not assignable to type '{target_name}'.");
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    tag_name_idx,
+                    &message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+        }
     }
 
     // JSX Factory Check
