@@ -119,13 +119,36 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     ///
     /// This handles cases like `string & keyof T` indexing into `{ [P in keyof T]: V }`,
     /// where the intersection is a subset of the constraint `keyof T`.
-    fn intersection_contains_mapped_constraint(&self, constraint: TypeId) -> bool {
-        let interner = self.evaluator.interner();
-        let Some(list_id) = intersection_list_id(interner, self.index_type) else {
-            return false;
+    ///
+    /// Also handles the case where `keyof Boxified<T>` appears in the intersection
+    /// and evaluates to `keyof T` (the constraint). This occurs with homomorphic mapped
+    /// types: `keyof { [P in keyof T]: V }` = `keyof T`, but the unevaluated form
+    /// `keyof Application(...)` has a different TypeId than `keyof T`.
+    fn intersection_contains_mapped_constraint(&mut self, constraint: TypeId) -> bool {
+        let (has_direct, members_vec) = {
+            let interner = self.evaluator.interner();
+            let Some(list_id) = intersection_list_id(interner, self.index_type) else {
+                return false;
+            };
+            let members = interner.type_list(list_id);
+            (members.contains(&constraint), members.to_vec())
         };
-        let members = interner.type_list(list_id);
-        members.contains(&constraint)
+
+        if has_direct {
+            return true;
+        }
+
+        // Evaluate each intersection member and check if any evaluates to the constraint.
+        // This handles `keyof Boxified<T>` matching `keyof T` when Boxified<T> is a
+        // homomorphic mapped type `{ [P in keyof T]: ... }`.
+        for &member in &members_vec {
+            let evaluated = self.evaluator.evaluate(member);
+            if evaluated == constraint {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {

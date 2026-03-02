@@ -149,7 +149,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             // keyof B → keyof A breaks subtype comparisons.
                             self.interner().keyof(operand)
                         } else {
-                            self.recurse_keyof(constraint)
+                            // Evaluate keyof of the constraint. If the result is
+                            // non-informative (NEVER — e.g. `object`, `unknown`),
+                            // keep keyof as deferred to preserve the type parameter
+                            // connection. This is critical for for-in loops where
+                            // `keyof T` must remain abstract for mapped type index
+                            // access patterns to work correctly.
+                            let constraint_keyof = self.recurse_keyof(constraint);
+                            if constraint_keyof == TypeId::NEVER {
+                                self.interner().keyof(operand)
+                            } else {
+                                constraint_keyof
+                            }
                         }
                     } else {
                         self.interner().keyof(operand)
