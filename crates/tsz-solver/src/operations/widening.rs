@@ -130,6 +130,63 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     }
 }
 
+/// Widen only object literal property types (not top-level types or union members).
+///
+/// This is used during inference resolution to match TypeScript's behavior:
+/// when an object literal like `{ c: false }` is inferred against a bare type
+/// parameter `T`, the property literal types are widened (`{ c: boolean }`).
+/// However, top-level union types like `"foo" | "bar"` must NOT be widened
+/// (they should stay as literal unions for type parameter inference).
+///
+/// This differs from `widen_type` which recursively widens everything including
+/// union members and direct literals. This function only enters objects/arrays/tuples.
+pub fn widen_object_literal_properties(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        // Objects: recursively widen mutable property types
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let mut new_props = Vec::with_capacity(shape.properties.len());
+            let mut changed = false;
+
+            for prop in &shape.properties {
+                let widened_type = if prop.readonly {
+                    prop.type_id
+                } else {
+                    widen_type(db, prop.type_id)
+                };
+                let widened_write_type = if prop.readonly {
+                    prop.write_type
+                } else {
+                    widen_type(db, prop.write_type)
+                };
+                if widened_type != prop.type_id || widened_write_type != prop.write_type {
+                    changed = true;
+                }
+                let mut new_prop = prop.clone();
+                new_prop.type_id = widened_type;
+                new_prop.write_type = widened_write_type;
+                new_props.push(new_prop);
+            }
+
+            if changed {
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    let mut new_shape = (*shape).clone();
+                    new_shape.properties = new_props;
+                    db.object_with_index(new_shape)
+                } else {
+                    db.object(new_props)
+                }
+            } else {
+                type_id
+            }
+        }
+
+        // All other types pass through unchanged — particularly unions of
+        // string/number literals must NOT be widened here.
+        _ => type_id,
+    }
+}
+
 /// Get the base type of a literal type for comparison operators.
 ///
 /// Matches TypeScript's `getBaseTypeOfLiteralTypeForComparison`:
