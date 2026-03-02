@@ -1175,3 +1175,223 @@ fn test_concrete_check_type_extends_type_param_different_true_branch() {
         "string extends T ? number : never should NOT be assignable to T"
     );
 }
+
+// =============================================================================
+// Nested Conditional Constraint Tests (Extract2 pattern)
+// =============================================================================
+
+#[test]
+fn test_nested_extract_conditional_assignable_to_extends_types() {
+    // type Extract2<T, U, V> = T extends U ? T extends V ? T : never : never;
+    //
+    // Outer: T extends U ? (T extends V ? T : never) : never
+    // Inner constraint: T & V
+    // Outer constraint: (T & V) & U = T & U & V
+    //
+    // T & U & V <: U → true (U is a member of the intersection)
+    // T & U & V <: V → true (V is a member of the intersection)
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let u_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let v_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Inner: T extends V ? T : never
+    let inner = ConditionalType {
+        check_type: t_param,
+        extends_type: v_param,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let inner_type = interner.conditional(inner);
+
+    // Outer: T extends U ? (inner) : never
+    let outer = ConditionalType {
+        check_type: t_param,
+        extends_type: u_param,
+        true_type: inner_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let extract2_type = interner.conditional(outer);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // T & U & V <: U → true
+    assert!(
+        checker.is_subtype_of(extract2_type, u_param),
+        "Extract2<T, U, V> should be assignable to U via constraint T & U & V"
+    );
+
+    // T & U & V <: V → true
+    assert!(
+        checker.is_subtype_of(extract2_type, v_param),
+        "Extract2<T, U, V> should be assignable to V via constraint T & U & V"
+    );
+}
+
+#[test]
+fn test_nested_extract_conditional_not_assignable_to_unrelated() {
+    // Extract2<T, U, V> should NOT be assignable to an unrelated type W.
+    // Constraint = T & U & V, which is not a subtype of W.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let u_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let v_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let w_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("W"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Inner: T extends V ? T : never
+    let inner = ConditionalType {
+        check_type: t_param,
+        extends_type: v_param,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let inner_type = interner.conditional(inner);
+
+    // Outer: T extends U ? (inner) : never
+    let outer = ConditionalType {
+        check_type: t_param,
+        extends_type: u_param,
+        true_type: inner_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let extract2_type = interner.conditional(outer);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // T & U & V <: W → false (no relationship)
+    assert!(
+        !checker.is_subtype_of(extract2_type, w_param),
+        "Extract2<T, U, V> should NOT be assignable to unrelated type W"
+    );
+}
+
+#[test]
+fn test_triple_nested_extract_conditional_constraint() {
+    // Three levels of nesting: T extends A ? (T extends B ? (T extends C ? T : never) : never) : never
+    // Constraint should be T & A & B & C
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let a_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let b_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let c_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("C"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Innermost: T extends C ? T : never
+    let innermost = ConditionalType {
+        check_type: t_param,
+        extends_type: c_param,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let innermost_type = interner.conditional(innermost);
+
+    // Middle: T extends B ? (innermost) : never
+    let middle = ConditionalType {
+        check_type: t_param,
+        extends_type: b_param,
+        true_type: innermost_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let middle_type = interner.conditional(middle);
+
+    // Outer: T extends A ? (middle) : never
+    let outer = ConditionalType {
+        check_type: t_param,
+        extends_type: a_param,
+        true_type: middle_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let triple_extract = interner.conditional(outer);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // T & A & B & C <: A → true
+    assert!(
+        checker.is_subtype_of(triple_extract, a_param),
+        "Triple nested Extract should be assignable to A"
+    );
+
+    // T & A & B & C <: B → true
+    assert!(
+        checker.is_subtype_of(triple_extract, b_param),
+        "Triple nested Extract should be assignable to B"
+    );
+
+    // T & A & B & C <: C → true
+    assert!(
+        checker.is_subtype_of(triple_extract, c_param),
+        "Triple nested Extract should be assignable to C"
+    );
+}
