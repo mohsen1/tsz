@@ -250,13 +250,21 @@ impl<'a> Completions<'a> {
 
         // 5. Filter out positions where completions should not appear
         if self.is_in_no_completion_context(offset) {
+            if self.is_string_property_name_completion_context(node_idx)
+                && self.interner.is_some()
+                && self.file_name.is_some()
+                && let Some(items) =
+                    self.get_object_literal_completions(node_idx, offset, type_cache)
+            {
+                return if items.is_empty() { None } else { Some(items) };
+            }
             return Some(Vec::new());
         }
 
         // 6. Check for object literal property completion (contextual completions)
         if self.interner.is_some()
             && self.file_name.is_some()
-            && let Some(items) = self.get_object_literal_completions(node_idx, type_cache)
+            && let Some(items) = self.get_object_literal_completions(node_idx, offset, type_cache)
         {
             return if items.is_empty() { None } else { Some(items) };
         }

@@ -237,7 +237,7 @@ impl<'a> Completions<'a> {
         &self,
         type_id: TypeId,
         interner: &TypeInterner,
-        _checker: &mut CheckerState,
+        checker: &mut CheckerState,
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
@@ -245,8 +245,15 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(shape_id) = visitor::object_shape_id(interner, type_id)
-            .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        let resolved = checker.resolve_lazy_type(type_id);
+        let evaluated = tsz_solver::evaluate_type(interner, resolved);
+        if evaluated != type_id {
+            self.collect_properties_for_type(evaluated, interner, checker, visited, props);
+            return;
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(interner, evaluated)
+            .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
             let shape = interner.object_shape(shape_id);
             for prop in &shape.properties {
@@ -259,35 +266,35 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(members) = visitor::union_list_id(interner, type_id)
-            .or_else(|| visitor::intersection_list_id(interner, type_id))
+        if let Some(members) = visitor::union_list_id(interner, evaluated)
+            .or_else(|| visitor::intersection_list_id(interner, evaluated))
         {
             let members = interner.type_list(members);
             for &member in members.iter() {
-                self.collect_properties_for_type(member, interner, _checker, visited, props);
+                self.collect_properties_for_type(member, interner, checker, visited, props);
             }
             return;
         }
 
-        if let Some(app) = visitor::application_id(interner, type_id) {
+        if let Some(app) = visitor::application_id(interner, evaluated) {
             let app = interner.type_application(app);
-            self.collect_properties_for_type(app.base, interner, _checker, visited, props);
+            self.collect_properties_for_type(app.base, interner, checker, visited, props);
             return;
         }
 
-        if let Some(literal) = visitor::literal_value(interner, type_id) {
+        if let Some(literal) = visitor::literal_value(interner, evaluated) {
             if let Some(kind) = self.literal_intrinsic_kind(&literal) {
                 self.collect_intrinsic_members(kind, interner, props);
             }
             return;
         }
 
-        if visitor::template_literal_id(interner, type_id).is_some() {
+        if visitor::template_literal_id(interner, evaluated).is_some() {
             self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
             return;
         }
 
-        if let Some(kind) = visitor::intrinsic_kind(interner, type_id) {
+        if let Some(kind) = visitor::intrinsic_kind(interner, evaluated) {
             self.collect_intrinsic_members(kind, interner, props);
         }
     }
@@ -1036,12 +1043,13 @@ impl<'a> Completions<'a> {
     pub(super) fn get_object_literal_completions(
         &self,
         node_idx: NodeIndex,
+        offset: u32,
         type_cache: Option<&mut Option<TypeCache>>,
     ) -> Option<Vec<CompletionItem>> {
         let interner = self.interner?;
 
         // 1. Find the enclosing object literal
-        let object_literal_idx = self.find_enclosing_object_literal(node_idx)?;
+        let object_literal_idx = self.find_enclosing_object_literal(node_idx, offset)?;
 
         // 2. Determine the contextual type (expected type)
         let mut cache_ref = type_cache;
@@ -1064,28 +1072,39 @@ impl<'a> Completions<'a> {
             &mut visited,
             &mut props,
         );
+        let in_string_property_name_context =
+            self.is_string_property_name_completion_context(node_idx);
 
         for (name, info) in props {
-            // Suggest only missing properties
-            if !existing_props.contains(&name) {
-                let kind = if info.is_method {
-                    CompletionItemKind::Method
-                } else {
-                    CompletionItemKind::Property
-                };
-
-                let mut item = CompletionItem::new(name.clone(), kind);
-                item = item.with_detail(checker.format_type(info.type_id));
-                item.sort_text = Some(sort_priority::MEMBER.to_string());
-
-                // Add snippet insert text for method completions in object literals
-                if info.is_method {
-                    item.insert_text = Some(format!("{name}($1)"));
-                    item.is_snippet = true;
-                }
-
-                items.push(item);
+            if !in_string_property_name_context && existing_props.contains(&name) {
+                continue;
             }
+
+            let kind = if info.is_method {
+                CompletionItemKind::Method
+            } else {
+                CompletionItemKind::Property
+            };
+
+            let needs_quoted_label =
+                !in_string_property_name_context && !Self::is_valid_unquoted_property_name(&name);
+            let label = if needs_quoted_label {
+                format!("\"{name}\"")
+            } else {
+                name.clone()
+            };
+
+            let mut item = CompletionItem::new(label, kind);
+            item = item.with_detail(checker.format_type(info.type_id));
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+
+            // Add snippet insert text for method completions in object literals
+            if info.is_method {
+                item.insert_text = Some(format!("{name}($1)"));
+                item.is_snippet = true;
+            }
+
+            items.push(item);
         }
 
         if let Some(cache) = cache_ref {
@@ -1100,8 +1119,54 @@ impl<'a> Completions<'a> {
         }
     }
 
+    pub(super) fn is_string_property_name_completion_context(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        let mut depth = 0usize;
+        while current.is_some() && depth < 8 {
+            let Some(node) = self.arena.get(current) else {
+                break;
+            };
+            if node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            {
+                let Some(ext) = self.arena.get_extended(current) else {
+                    break;
+                };
+                let Some(parent) = self.arena.get(ext.parent) else {
+                    break;
+                };
+                if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(parent)
+                    && prop.name == current
+                {
+                    return true;
+                }
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent == current {
+                break;
+            }
+            current = ext.parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn is_valid_unquoted_property_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return false;
+        }
+        chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
     /// Find the enclosing object literal expression for a given node.
-    fn find_enclosing_object_literal(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+    fn find_enclosing_object_literal(&self, node_idx: NodeIndex, offset: u32) -> Option<NodeIndex> {
         let node = self.arena.get(node_idx)?;
 
         // Cursor is directly on the literal (e.g. empty {})
@@ -1134,6 +1199,45 @@ impl<'a> Completions<'a> {
             if grand_parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 return Some(grand_ext.parent);
             }
+        }
+
+        // General fallback: walk ancestors and pick the nearest object literal.
+        let mut current = node_idx;
+        let mut depth = 0usize;
+        while current.is_some() && depth < 64 {
+            let Some(current_node) = self.arena.get(current) else {
+                break;
+            };
+            if current_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return Some(current);
+            }
+            let Some(current_ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            if current_ext.parent == current {
+                break;
+            }
+            current = current_ext.parent;
+            depth += 1;
+        }
+
+        // Fallback: choose smallest object literal containing the cursor offset.
+        let mut best = None;
+        let mut best_len = u32::MAX;
+        for (i, n) in self.arena.nodes.iter().enumerate() {
+            if n.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            if n.pos <= offset && offset <= n.end {
+                let len = n.end.saturating_sub(n.pos);
+                if len < best_len {
+                    best_len = len;
+                    best = Some(NodeIndex(i as u32));
+                }
+            }
+        }
+        if best.is_some() {
+            return best;
         }
 
         None
@@ -1324,6 +1428,15 @@ impl<'a> Completions<'a> {
                             return Some(param_type);
                         }
                     }
+                }
+            }
+            // assignment expression: target = { ... }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(parent)?;
+                if binary.right == node_idx
+                    && binary.operator_token == SyntaxKind::EqualsToken as u16
+                {
+                    return Some(checker.get_type_of_node(binary.left));
                 }
             }
             _ => {}
