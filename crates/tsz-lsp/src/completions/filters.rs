@@ -204,6 +204,21 @@ impl<'a> Completions<'a> {
         {
             return true;
         }
+        if has_trailing_ws && !trailing_has_line_break && !last_word.is_empty() {
+            let before_word = trimmed[..last_word_start].trim_end();
+            if definition_keywords
+                .iter()
+                .any(|kw| is_whole_word(before_word, kw))
+            {
+                return true;
+            }
+            if before_word.ends_with('*') {
+                let before_star = before_word.trim_end_matches('*').trim_end();
+                if is_whole_word(before_star, "function") {
+                    return true;
+                }
+            }
+        }
 
         // Case 2: "keyword partialId|" - cursor while typing identifier after keyword
         if !has_trailing_ws && !last_word.is_empty() {
