@@ -1533,6 +1533,7 @@ fn test_property_access_tuple_length() {
     let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
+    // Fixed-length tuple [number, string] → .length should be literal 2
     let tuple = interner.tuple(vec![
         TupleElement {
             type_id: TypeId::NUMBER,
@@ -1548,6 +1549,88 @@ fn test_property_access_tuple_length() {
         },
     ]);
 
+    let expected_literal = interner.literal_number(2.0);
+    let result = evaluator.resolve_property_access(tuple, "length");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, expected_literal),
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_property_access_empty_tuple_length() {
+    let interner = TypeInterner::new();
+    let (_env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // Empty tuple [] → .length should be literal 0
+    let tuple = interner.tuple(vec![]);
+    let expected_literal = interner.literal_number(0.0);
+    let result = evaluator.resolve_property_access(tuple, "length");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, expected_literal),
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_property_access_single_element_tuple_length() {
+    let interner = TypeInterner::new();
+    let (_env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // Single element tuple [number] → .length should be literal 1
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let expected_literal = interner.literal_number(1.0);
+    let result = evaluator.resolve_property_access(tuple, "length");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, expected_literal),
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_property_access_array_length_stays_number() {
+    let interner = TypeInterner::new();
+    let (_env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // Array type number[] → .length should remain `number`, not a literal
+    let array = interner.array(TypeId::NUMBER);
+    let result = evaluator.resolve_property_access(array, "length");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_property_access_tuple_with_rest_length_stays_number() {
+    let interner = TypeInterner::new();
+    let (_env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // Tuple with array rest element [number, ...string[]] → variable length → `number`
+    let rest_array = interner.array(TypeId::STRING);
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: rest_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
     let result = evaluator.resolve_property_access(tuple, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
