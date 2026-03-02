@@ -896,10 +896,10 @@ impl<'a> CheckerState<'a> {
                 if (colon_idx.is_none() || paren_idx < colon_idx.unwrap())
                     && let Some(prop) =
                         self.parse_jsdoc_method_signature(prop_str, paren_idx, &properties)
-                    {
-                        properties.push(prop);
-                        continue;
-                    }
+                {
+                    properties.push(prop);
+                    continue;
+                }
             }
 
             // Regular property syntax: `name: Type`
