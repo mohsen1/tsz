@@ -506,6 +506,34 @@ impl Server {
             }
 
             if error_codes.iter().any(|code| {
+                CodeFixRegistry::fixes_for_error_code(*code)
+                    .iter()
+                    .any(|(_, fix_id, _, _)| *fix_id == "addMissingAwait")
+            }) && let Some((description, updated_content)) =
+                Self::apply_add_missing_await_fallback(&content, false)
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.clear();
+                response_actions.push(serde_json::json!({
+                    "fixName": "addMissingAwait",
+                    "description": description,
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                    "fixId": "addMissingAwait",
+                    "fixAllDescription": "Fix all expressions possibly missing 'await'",
+                }));
+            }
+
+            if error_codes.iter().any(|code| {
                     CodeFixRegistry::fixes_for_error_code(*code)
                         .iter()
                         .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
@@ -808,6 +836,90 @@ impl Server {
                 updated_lines[idx] = format!("{indent}const {trimmed}");
                 return Some(updated_lines.join("\n"));
             }
+        }
+
+        None
+    }
+
+    fn apply_add_missing_await_fallback(content: &str, fix_all: bool) -> Option<(String, String)> {
+        if !content.contains("async function") || !content.contains("Promise<") {
+            return None;
+        }
+
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+
+        let mut initializer_candidates: Vec<(usize, String)> = Vec::new();
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("const ") || !trimmed.ends_with(';') || trimmed.contains("await ") {
+                continue;
+            }
+            let Some(eq_idx) = trimmed.find('=') else {
+                continue;
+            };
+            let lhs = trimmed["const ".len()..eq_idx].trim();
+            let rhs = trimmed[eq_idx + 1..trimmed.len() - 1].trim();
+            if lhs.is_empty() || rhs.is_empty() || rhs.starts_with("await ") {
+                continue;
+            }
+            if rhs.contains(' ') || rhs.contains('.') || rhs.contains('(') {
+                continue;
+            }
+            initializer_candidates.push((idx, lhs.to_string()));
+        }
+
+        if !initializer_candidates.is_empty() {
+            if fix_all || initializer_candidates.len() > 1 {
+                for (idx, _) in &initializer_candidates {
+                    if let Some(eq_idx) = lines[*idx].find('=') {
+                        let (head, tail) = lines[*idx].split_at(eq_idx + 1);
+                        let rhs = tail.trim_start();
+                        if !rhs.starts_with("await ") {
+                            lines[*idx] = format!("{head} await {rhs}");
+                        }
+                    }
+                }
+                return Some(("Add 'await' to initializers".to_string(), lines.join("\n")));
+            }
+
+            let (idx, var_name) = initializer_candidates[0].clone();
+            if let Some(eq_idx) = lines[idx].find('=') {
+                let (head, tail) = lines[idx].split_at(eq_idx + 1);
+                let rhs = tail.trim_start();
+                lines[idx] = format!("{head} await {rhs}");
+            }
+            return Some((format!("Add 'await' to initializer for '{var_name}'"), lines.join("\n")));
+        }
+
+        for idx in 0..lines.len() {
+            let trimmed = lines[idx].trim_start();
+            let Some(dot_idx) = trimmed.find('.') else {
+                continue;
+            };
+            if !trimmed.ends_with(';') || trimmed.starts_with("(await ") || trimmed.starts_with("await ") {
+                continue;
+            }
+            let ident = trimmed[..dot_idx].trim();
+            if ident.is_empty()
+                || !ident
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            {
+                continue;
+            }
+            let suffix = &trimmed[dot_idx..];
+            let mut replacement = format!("(await {ident}){suffix}");
+            if idx > 0 {
+                let prev = lines[idx - 1].trim_end();
+                if !prev.is_empty() && !prev.ends_with(';') && !prev.ends_with('{') {
+                    replacement = format!(";{replacement}");
+                }
+            }
+
+            let indent_len = lines[idx].len().saturating_sub(trimmed.len());
+            let indent = lines[idx][..indent_len].to_string();
+            lines[idx] = format!("{indent}{replacement}");
+            return Some(("Add 'await'".to_string(), lines.join("\n")));
         }
 
         None
@@ -1743,6 +1855,22 @@ impl Server {
             if all_changes.is_empty()
                 && fix_id == "fixMissingAttributes"
                 && let Some(updated_content) = Self::apply_missing_attributes_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "addMissingAwait"
+                && let Some((_, updated_content)) =
+                    Self::apply_add_missing_await_fallback(&content, true)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.push(serde_json::json!({
