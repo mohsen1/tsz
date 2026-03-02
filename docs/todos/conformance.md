@@ -1,7 +1,40 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9815/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9820/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02u — Tuple .length literal type for dot-access property resolution
+
+### Fixed: Dot-access `.length` on fixed-length tuples returned `number` instead of literal type
+
+**Area**: types/tuple + cross-cutting (genericCallInferenceConditionalType2, privateNamesConstructorChain)
+
+**Root cause**: Two different code paths resolve tuple properties:
+- **Index access** (`T["length"]`) → `TupleKeyVisitor` in `index_access.rs` → correctly returns literal `2` for `[number, string]`
+- **Dot access** (`.length`) → `resolve_array_property()` in `property_helpers.rs` → creates `Array<ElementUnion>` application → returns `number` from Array interface
+
+**Fix** (1 file, 2 functions):
+1. **property_helpers.rs `resolve_array_property()`**: Early-return for `.length` on fixed-length tuples with literal numeric type.
+2. **property_helpers.rs `compute_tuple_fixed_length()`**: Mirrors `TupleKeyVisitor::fixed_length()` — counts elements, descends single-rest chains.
+
+**Tests**: 5 unit tests (1 updated, 4 new) in `operations_tests.rs`
+
+**Impact**: +3 conformance tests, 0 regressions:
+- `genericCallInferenceConditionalType2.ts` — conditional type using tuple length
+- `privateNamesConstructorChain-1.ts` / `privateNamesConstructorChain-2.ts` — class private names
+
+**Remaining types/tuple gaps (investigated, not fixed)**:
+- **Duplicate var decl type resolution**: `var t1: [number]; var t1 = t2;` uses last declaration type instead of first. Affects `strictTupleLength.ts`.
+- **TS2403 false positives**: 6 tests, each with different root cause (namespace merging, class property init, recursive typeof).
+- **TS2451 missing**: 13 tests need cross-file symbol merging.
+- **Mapped type over tuple**: `partiallyNamedTuples.ts` — mapped types expand instead of preserving tuple structure.
+- **Type alias name in diagnostics**: Many fingerprint-only failures show expanded types instead of alias names.
+
+**Files changed**:
+- `crates/tsz-solver/src/operations/property_helpers.rs`
+- `crates/tsz-solver/tests/operations_tests.rs`
+
+---
 
 ## Session 2026-03-02t — Fix cross-file type-only export detection in value binding check
 
