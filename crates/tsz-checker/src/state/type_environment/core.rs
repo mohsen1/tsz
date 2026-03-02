@@ -238,7 +238,12 @@ impl<'a> CheckerState<'a> {
         }
 
         if !self.ctx.application_eval_set.insert(type_id) {
-            // Recursion guard for self-referential mapped types.
+            // Re-entrancy guard: the same Application is already being evaluated
+            // up the call stack. Return the type_id as-is to break the cycle.
+            // Note: we do NOT flag depth_exceeded here because convergent recursive
+            // types (e.g. GetChars<'AB'>) legitimately hit this guard during
+            // tail-recursive conditional evaluation. The solver's own cycle detection
+            // (seen_tail_call_apps + MAX_TAIL_RECURSION_DEPTH) handles TS2589.
             return type_id;
         }
 
@@ -410,7 +415,6 @@ impl<'a> CheckerState<'a> {
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
-
         // Recursively evaluate in case the result contains more applications
         let result = self.evaluate_application_type(instantiated);
 
