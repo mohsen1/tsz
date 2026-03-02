@@ -630,10 +630,12 @@ impl<'a> CheckerState<'a> {
         //    This is only in resolve_jsdoc_type_str (not jsdoc_type_from_expression)
         //    because @param {{ x: T }} already handles nested braces separately,
         //    and adding this to the general parser would change @param behavior.
-        if type_expr.starts_with('{') && type_expr.ends_with('}')
-            && let Some(ty) = self.parse_jsdoc_object_literal_type(type_expr) {
-                return Some(ty);
-            }
+        if type_expr.starts_with('{')
+            && type_expr.ends_with('}')
+            && let Some(ty) = self.parse_jsdoc_object_literal_type(type_expr)
+        {
+            return Some(ty);
+        }
 
         // 3. Try file-local symbols (type aliases, classes, interfaces — includes merged lib types)
         self.resolve_jsdoc_type_name(type_expr)
@@ -644,18 +646,18 @@ impl<'a> CheckerState<'a> {
         // Check file_locals for type aliases, classes, interfaces, enums
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags
-                    & (symbol_flags::TYPE_ALIAS
-                        | symbol_flags::CLASS
-                        | symbol_flags::INTERFACE
-                        | symbol_flags::ENUM))
-                    != 0
-                {
-                    let resolved = self.type_reference_symbol_type(sym_id);
-                    if resolved != TypeId::ERROR {
-                        return Some(resolved);
-                    }
-                }
+            && (symbol.flags
+                & (symbol_flags::TYPE_ALIAS
+                    | symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::ENUM))
+                != 0
+        {
+            let resolved = self.type_reference_symbol_type(sym_id);
+            if resolved != TypeId::ERROR {
+                return Some(resolved);
+            }
+        }
 
         // Try @typedef resolution from JSDoc comments
         if let Some(sf) = self.ctx.arena.source_files.first() {
