@@ -260,6 +260,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(cond.clone());
             }
 
+            // Step 2a: Non-naked compound type parameter deferral.
+            // When the check_type is a compound type containing type parameters
+            // (e.g., `T & U`, `keyof T`, `T[K]`), the conditional must be deferred.
+            // Unlike a naked TypeParameter (handled in Step 2), compound types like
+            // intersections won't be caught by the TypeParameter check above.
+            //
+            // We check the RAW (pre-evaluation) check_type because evaluation may
+            // collapse the structure (e.g., `Intersection(Lazy, Lazy)` → `Lazy`).
+            // We exclude naked Lazy (single type params) since those should have been
+            // caught by Step 2, or will be handled by the subtype check deferral.
+            //
+            // Only defer when extends_type has no infer patterns (those need pattern
+            // matching first — Step 3 handles them with its own deferral logic).
+            if !self.type_contains_infer(extends_type)
+                && self.type_is_compound_generic(cond.check_type)
+            {
+                return self.interner().conditional(cond.clone());
+            }
+
             // Step 2b: Identity simplification for any type (not just type params).
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
@@ -1151,5 +1170,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         None
+    }
+
+    /// Check whether a type is an **intersection** of type parameters/Lazy refs.
+    ///
+    /// TSC defers conditional types when the check type is a naked type parameter.
+    /// An intersection like `T & U` is NOT a naked type parameter (so Step 2 misses it),
+    /// but the subtype relationship `T & U extends X` IS genuinely indeterminate until
+    /// T and U are instantiated. This helper detects that case.
+    ///
+    /// We intentionally limit this to Intersection types. Other compound types like
+    /// `keyof T`, `T[K]`, or `Lowercase<T>` are evaluated eagerly by TSC through
+    /// constraint resolution and should NOT be deferred at this stage.
+    ///
+    /// Type parameters inside generic function bodies are represented as `Lazy(DefId)`
+    /// references. The standard `contains_type_parameters` visitor doesn't walk through
+    /// `Lazy` refs, so this helper checks for Lazy members directly.
+    fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
+        // Only check for Intersection types with type-parameter-like members.
+        // We intentionally skip the `contains_type_parameters` visitor here because
+        // it catches KeyOf(TypeParam), StringIntrinsic(_, TypeParam), etc., which
+        // TSC evaluates eagerly via constraint resolution (not deferral).
+        // Only intersections like `T & U` need compound deferral.
+        if let Some(TypeData::Intersection(list_id)) = self.interner().lookup(type_id) {
+            let members = self.interner().type_list(list_id);
+            return members.iter().any(|&m| {
+                matches!(
+                    self.interner().lookup(m),
+                    Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::TypeParameter(_))
+                )
+            });
+        }
+        false
     }
 }
