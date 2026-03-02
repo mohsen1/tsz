@@ -659,11 +659,20 @@ impl Server {
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|d| d.starts_with("Add missing enum member '"))
             }) {
+                let mut seen_enum_fix = false;
                 response_actions.retain(|action| {
-                    action
+                    let is_enum_fix = action
                         .get("description")
                         .and_then(serde_json::Value::as_str)
-                        .is_some_and(|d| d.starts_with("Add missing enum member '"))
+                        .is_some_and(|d| d.starts_with("Add missing enum member '"));
+                    if !is_enum_fix {
+                        return false;
+                    }
+                    if seen_enum_fix {
+                        return false;
+                    }
+                    seen_enum_fix = true;
+                    true
                 });
             }
 
