@@ -388,6 +388,27 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // TSC emits TS2322 when the target's declared type annotation is an
+                // intersection type. Our normalizer eagerly merges `{a:string} & {b:string}`
+                // into `{a:string, b:string}`, losing the intersection identity. Check the
+                // AST to detect whether the assignment target was declared with an
+                // intersection type annotation.
+                if self.anchor_target_has_intersection_annotation(idx) {
+                    let src_str = self.format_type(source);
+                    let tgt_str_full = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str_full],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 let src_str = self.format_type(*source_type);
                 let message = format_message(
@@ -1132,5 +1153,61 @@ impl<'a> CheckerState<'a> {
         )
         .with_related(self.ctx.file_name.clone(), loc.start, loc.length(), detail);
         self.ctx.diagnostics.push(diag);
+    }
+
+    /// Check if the diagnostic anchor node traces back to an assignment target
+    /// whose variable declaration has an intersection type annotation.
+    ///
+    /// For `y = a;` where `y: { a: string } & { b: string }`:
+    ///   anchor (`ExpressionStatement`) → expression (`BinaryExpression`) → left (Identifier)
+    ///   → symbol → `value_declaration` (`VariableDeclaration`) → `type_annotation` (`IntersectionType`)
+    fn anchor_target_has_intersection_annotation(&self, anchor_idx: NodeIndex) -> bool {
+        self.anchor_target_intersection_check_inner(anchor_idx)
+            .unwrap_or(false)
+    }
+
+    /// Inner helper returning `Option` so we can use `?` for early returns.
+    fn anchor_target_intersection_check_inner(&self, anchor_idx: NodeIndex) -> Option<bool> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let anchor_node = self.ctx.arena.get(anchor_idx)?;
+
+        // Walk from anchor to the assignment target identifier
+        let target_ident_idx = if anchor_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            let expr_stmt = self.ctx.arena.get_expression_statement(anchor_node)?;
+            let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+                binary.left
+            } else {
+                return Some(false);
+            }
+        } else {
+            return Some(false);
+        };
+
+        // Check if the target is an identifier
+        let ident_node = self.ctx.arena.get(target_ident_idx)?;
+        if ident_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return Some(false);
+        }
+
+        // Resolve identifier to symbol
+        let sym_id = self.resolve_identifier_symbol(target_ident_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        // Get value declaration
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+
+        // Check if it's a variable declaration with an intersection type annotation
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            if var_decl.type_annotation.is_some() {
+                let type_node = self.ctx.arena.get(var_decl.type_annotation)?;
+                return Some(type_node.kind == syntax_kind_ext::INTERSECTION_TYPE);
+            }
+        }
+
+        Some(false)
     }
 }

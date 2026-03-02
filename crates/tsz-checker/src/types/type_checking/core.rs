@@ -1623,6 +1623,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut object_type_for_check = self.evaluate_type_with_env(object_type);
+        // Indexing `never` is always valid (produces `never`), so suppress TS2536.
+        // This handles cases like `(A & B)['kind']` where `A & B` reduces to `never`
+        // due to conflicting discriminant properties.
+        if object_type_for_check == TypeId::NEVER {
+            return;
+        }
         object_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
             self.ctx.types,
             object_type_for_check,
