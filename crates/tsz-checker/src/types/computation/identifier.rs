@@ -205,6 +205,15 @@ impl<'a> CheckerState<'a> {
                     // Fall through to binder resolution — the outer value takes
                     // precedence over the type parameter in expression context.
                 } else {
+                    // In heritage expression positions (`class C<T> extends T {}`),
+                    // tsc reports TS2304 instead of TS2693 for type parameters.
+                    if self.is_direct_heritage_type_reference(idx) {
+                        if self.is_heritage_type_only_context(idx) {
+                            return TypeId::ERROR;
+                        }
+                        self.error_cannot_find_name_at(name, idx);
+                        return TypeId::ERROR;
+                    }
                     // TS2693: Type parameters cannot be used as values
                     // Example: function f<T>() { return T; }  // Error: T is a type, not a value
                     self.error_type_parameter_used_as_value(name, idx);
