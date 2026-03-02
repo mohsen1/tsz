@@ -375,8 +375,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(import_sym_id) = import_sym_id
                 && let Some(import_sym) = self.ctx.binder.symbols.get(import_sym_id)
             {
-                let has_merged_local_non_import_decl =
-                    import_sym.declarations.iter().any(|&decl_idx| {
+                let has_merged_local_value_decl = import_sym.declarations.iter().any(|&decl_idx| {
                         if decl_idx == stmt_idx {
                             return false;
                         }
@@ -415,12 +414,21 @@ impl<'a> CheckerState<'a> {
                         if !in_same_scope {
                             return false;
                         }
-                        self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
-                            decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                        })
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            return false;
+                        };
+                        if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                            return false;
+                        }
+                        if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                            && self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx)
+                        {
+                            return false;
+                        }
+                        self.declaration_introduces_runtime_value(decl_idx)
                     });
 
-                if has_merged_local_non_import_decl {
+                if has_merged_local_value_decl {
                     let message = format_message(
                         diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         &[name],
@@ -471,6 +479,14 @@ impl<'a> CheckerState<'a> {
                     // Special case: If this is a namespace module, check if it's the enclosing scope
                     // itself. In TypeScript, `namespace A.M { import M = Z.M; }` is allowed - the
                     // import alias `M` shadows the namespace container name `M`.
+                    if is_namespace
+                        && sym
+                            .declarations
+                            .iter()
+                            .any(|&decl_idx| self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx))
+                    {
+                        continue;
+                    }
                     if is_namespace && let Some(import_scope_id) = import_scope {
                         // Get the scope that contains the import
                         if let Some(scope) = self.ctx.binder.scopes.get(import_scope_id.0 as usize)
@@ -1232,5 +1248,58 @@ impl<'a> CheckerState<'a> {
             walk_id = scope.parent;
         }
         false
+    }
+
+    /// Whether a declaration introduces a runtime value binding in the current file.
+    ///
+    /// Used by TS2440 conflict checks to avoid reporting conflicts against purely
+    /// type-space declarations (e.g. interfaces/type aliases).
+    fn declaration_introduces_runtime_value(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::ENUM_DECLARATION
+            | syntax_kind_ext::VARIABLE_DECLARATION
+            | syntax_kind_ext::VARIABLE_STATEMENT => true,
+            syntax_kind_ext::MODULE_DECLARATION => self.is_namespace_declaration_instantiated(decl_idx),
+            _ => false,
+        }
+    }
+
+    fn declaration_is_enclosing_namespace_of_node(
+        &self,
+        decl_idx: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            return false;
+        }
+        self.node_has_ancestor(node_idx, decl_idx)
+    }
+
+    fn node_has_ancestor(&self, mut node_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
+        let mut guard = 0u32;
+        loop {
+            if node_idx == ancestor_idx {
+                return true;
+            }
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            node_idx = ext.parent;
+        }
     }
 }
