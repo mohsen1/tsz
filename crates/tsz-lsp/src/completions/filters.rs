@@ -40,12 +40,16 @@ impl<'a> Completions<'a> {
             if line_prefix.contains("//") {
                 // Check that the // is not inside a string
                 let comment_pos = line_prefix.find("//").unwrap();
-                let before_comment = &line_prefix[..comment_pos];
-                let single_quotes = before_comment.chars().filter(|&c| c == '\'').count();
-                let double_quotes = before_comment.chars().filter(|&c| c == '"').count();
-                let backticks = before_comment.chars().filter(|&c| c == '`').count();
-                if single_quotes % 2 == 0 && double_quotes % 2 == 0 && backticks % 2 == 0 {
-                    return true;
+                if comment_pos == 0 && line_prefix.starts_with("////") {
+                    // Ignore fourslash test line prefixes.
+                } else {
+                    let before_comment = &line_prefix[..comment_pos];
+                    let single_quotes = before_comment.chars().filter(|&c| c == '\'').count();
+                    let double_quotes = before_comment.chars().filter(|&c| c == '"').count();
+                    let backticks = before_comment.chars().filter(|&c| c == '`').count();
+                    if single_quotes % 2 == 0 && double_quotes % 2 == 0 && backticks % 2 == 0 {
+                        return true;
+                    }
                 }
             }
 
@@ -906,7 +910,14 @@ impl<'a> Completions<'a> {
         }
         let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
         let line = Self::strip_trailing_fourslash_marker(&prefix[line_start..]).trim_end();
-        line.ends_with("/.")
+        let Some(before_dot) = line.strip_suffix('.') else {
+            return false;
+        };
+        let Some(before_slash) = before_dot.strip_suffix('/') else {
+            return false;
+        };
+        let expr = before_slash.trim_end();
+        !expr.contains('/')
     }
 
     fn is_ambiguous_numeric_dot_context(&self, offset: u32) -> bool {

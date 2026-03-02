@@ -394,6 +394,38 @@ impl<'a> Completions<'a> {
             return;
         };
 
+        if expr_node.kind == SyntaxKind::RegularExpressionLiteral as u16 {
+            for (name, kind, deprecated) in [
+                ("exec", CompletionItemKind::Method, false),
+                ("test", CompletionItemKind::Method, false),
+                ("source", CompletionItemKind::Property, false),
+                ("global", CompletionItemKind::Property, false),
+                ("ignoreCase", CompletionItemKind::Property, false),
+                ("multiline", CompletionItemKind::Property, false),
+                ("lastIndex", CompletionItemKind::Property, false),
+                ("compile", CompletionItemKind::Method, true),
+            ] {
+                if !seen_names.insert(name.to_string()) {
+                    continue;
+                }
+                let mut item = CompletionItem::new(name.to_string(), kind);
+                item.sort_text = Some(if deprecated {
+                    sort_priority::deprecated(sort_priority::LOCATION_PRIORITY)
+                } else {
+                    sort_priority::MEMBER.to_string()
+                });
+                if deprecated {
+                    item.kind_modifiers = Some("deprecated".to_string());
+                }
+                if kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+                items.push(item);
+            }
+            return;
+        }
+
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(expr_node)
         {
