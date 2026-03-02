@@ -970,10 +970,27 @@ impl<'a> CheckerState<'a> {
                     }
                     if var_decl.initializer.is_some()
                         && self.is_const_variable_declaration(resolved_value_decl)
-                        && let Some(literal_type) =
-                            self.literal_type_from_initializer(var_decl.initializer)
                     {
-                        return (literal_type, Vec::new());
+                        // In JS files, parenthesized expressions may carry JSDoc
+                        // type casts (e.g., `/** @type {*} */(null)` → any).
+                        // The cast type overrides the inner literal, so compute
+                        // the full initializer type first and use it when it's
+                        // `any` or `unknown` (assertion results).
+                        if self.ctx.is_js_file()
+                            && self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                            })
+                        {
+                            let init_type = self.get_type_of_node(var_decl.initializer);
+                            if init_type == TypeId::ANY || init_type == TypeId::UNKNOWN {
+                                return (init_type, Vec::new());
+                            }
+                        }
+                        if let Some(literal_type) =
+                            self.literal_type_from_initializer(var_decl.initializer)
+                        {
+                            return (literal_type, Vec::new());
+                        }
                     }
                     // `const k = Symbol()` — infer unique symbol type.
                     // In TypeScript, const declarations initialized with Symbol() get
