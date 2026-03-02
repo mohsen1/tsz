@@ -1390,7 +1390,7 @@ mod tests {
 
     fn helper_names_at(source: &str, target: tsz_common::ScriptTarget) -> Vec<&'static str> {
         let file = bound_file(source);
-        required_helpers(&file, target)
+        required_helpers(&file, target, false)
             .into_iter()
             .map(|(name, _, _)| name)
             .collect()

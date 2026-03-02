@@ -644,8 +644,7 @@ impl<'a> CheckerState<'a> {
             // `{ a, ...rest } = obj` where `obj: T extends { a, b }` produces
             // rest without the excluded properties.  Without this, `rest` would
             // keep all of T's constraint properties and trigger false TS2783.
-            let constraint =
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)?;
+            let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
             query::object_shape(self.ctx.types, constraint)
         });
         let Some(shape) = shape else {

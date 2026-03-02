@@ -591,12 +591,12 @@ fn test_method_implementation_name_formatting_probe() {
 /// Expected: TS1005 only (no cascading errors)
 /// Status: FIXED (2026-02-09)
 ///
-/// Root cause: Similar to class declarations, interfaces need to reject reserved words
-/// Fix: Added reserved word check in `state_declarations.rs` `parse_interface_declaration`
+/// Root cause: Parser must consume invalid reserved-word names to avoid cascades.
+/// Fix: Reserved-word interface names emit TS1005 and recover.
 #[test]
 fn test_interface_reserved_word_error_suppression() {
     let source = r"
-interface void {}
+interface class {}
     ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

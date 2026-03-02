@@ -436,18 +436,15 @@ pub fn resolve_compiler_options(
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Match tsc 6.0: when --module is omitted, default depends on target.
-        // tsc 6.0 changed the defaults from tsc 5.x (verified via getEmitModuleKind):
-        //   target=undefined  → ES2022  (tsc 5.x: CommonJS)
-        //   target=ES3        → ES2022  (tsc 5.x: CommonJS)
-        //   target=ES5        → CommonJS (unchanged)
-        //   target=ES2015..ES2019 → ES2015 (unchanged)
-        //   target=ES2020..ES2021 → ES2020 (unchanged)
-        //   target=ES2022..ES2025 → ES2022 (unchanged)
-        //   target=ESNext     → ESNext (unchanged)
-        let default_module = if let Some(_target_str) = options.target.as_deref() {
+        // Match our tsc parity defaults when --module is omitted:
+        // target omitted / ES3 / ES5 -> CommonJS
+        // ES2015..ES2019 -> ES2015
+        // ES2020..ES2021 -> ES2020
+        // ES2022..ES2025 -> ES2022
+        // ESNext -> ESNext
+        let default_module = if options.target.is_some() {
             match resolved.printer.target {
-                ScriptTarget::ES5 => ModuleKind::CommonJS,
+                ScriptTarget::ES3 | ScriptTarget::ES5 => ModuleKind::CommonJS,
                 ScriptTarget::ES2015
                 | ScriptTarget::ES2016
                 | ScriptTarget::ES2017
@@ -457,14 +454,11 @@ pub fn resolve_compiler_options(
                 ScriptTarget::ES2022
                 | ScriptTarget::ES2023
                 | ScriptTarget::ES2024
-                | ScriptTarget::ES2025
-                // ES3: tsc 6.0 changed this from CommonJS to ES2022
-                | ScriptTarget::ES3 => ModuleKind::ES2022,
+                | ScriptTarget::ES2025 => ModuleKind::ES2022,
                 ScriptTarget::ESNext => ModuleKind::ESNext,
             }
         } else {
-            // No target specified: tsc 6.0 defaults to ES2022
-            ModuleKind::ES2022
+            ModuleKind::CommonJS
         };
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;

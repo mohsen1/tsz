@@ -14,7 +14,7 @@ fn profile_subtype_check_limits() {
 #[test]
 fn profile_type_evaluation_limits() {
     let p = RecursionProfile::TypeEvaluation;
-    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_depth(), 100);
     assert_eq!(p.max_iterations(), 100_000);
 }
 
