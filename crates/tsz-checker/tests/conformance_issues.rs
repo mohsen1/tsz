@@ -4177,3 +4177,81 @@ function h3() {
         "Loop fixed-point with call assignment at end should not widen via ERROR type. Got: {diagnostics:?}"
     );
 }
+
+/// Boolean literal discriminant narrowing: `x.kind === false` should narrow via
+/// discriminant comparison (checking `false <: prop_type`), not truthiness narrowing.
+///
+/// Previously, `narrow_by_boolean_comparison` intercepted `x.kind === false` and
+/// treated it as a truthiness check on `x.kind`, which kept `{ kind: string }` in
+/// the narrowed type (since strings can be falsy). The fix ensures property access
+/// comparisons with boolean literals fall through to discriminant narrowing.
+///
+/// Reproduces discriminatedUnionTypes2.ts function f10.
+#[test]
+fn test_boolean_discriminant_narrowing_false() {
+    let source = r#"
+function f10(x: { kind: false, a: string } | { kind: true, b: string } | { kind: string, c: string }) {
+    if (x.kind === false) {
+        x.a;
+    }
+    else if (x.kind === true) {
+        x.b;
+    }
+    else {
+        x.c;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Boolean literal discriminant narrowing should filter union members by discriminant subtyping, not truthiness. Got: {diagnostics:?}"
+    );
+}
+
+/// Boolean literal discriminant narrowing with switch statement.
+/// `switch (x.kind) { case false: ... }` should also narrow via discriminant.
+///
+/// Reproduces discriminatedUnionTypes2.ts function f11.
+#[test]
+fn test_boolean_discriminant_narrowing_switch() {
+    let source = r#"
+function f11(x: { kind: false, a: string } | { kind: true, b: string } | { kind: string, c: string }) {
+    switch (x.kind) {
+        case false:
+            x.a;
+            break;
+        case true:
+            x.b;
+            break;
+        default:
+            x.c;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Boolean discriminant narrowing via switch should work like if/else. Got: {diagnostics:?}"
+    );
+}
+
+/// Ensure `instanceof === false` still works via boolean comparison handler.
+/// This pattern should NOT be intercepted by the discriminant path guard,
+/// because the `guard_expr` (`x instanceof Error`) is a binary expression, not
+/// a property access.
+#[test]
+fn test_instanceof_false_still_narrows() {
+    let source = r#"
+function test(x: string | Error) {
+    if (x instanceof Error === false) {
+        const s: string = x;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "instanceof === false should still narrow via boolean comparison. Got: {diagnostics:?}"
+    );
+}
