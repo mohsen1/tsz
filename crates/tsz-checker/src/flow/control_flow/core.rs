@@ -1247,16 +1247,17 @@ impl<'a> FlowAnalyzer<'a> {
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
             // Also skip caching UNREACHABLE_NEVER as it's an internal sentinel.
             if final_type != Self::UNREACHABLE_NEVER
-                && let Some(cache) = self.flow_cache {
-                    let final_has_type_params =
-                        query::contains_type_parameters(self.interner, final_type);
+                && let Some(cache) = self.flow_cache
+            {
+                let final_has_type_params =
+                    query::contains_type_parameters(self.interner, final_type);
 
-                    // Only cache if neither initial nor final types contain type parameters
-                    if !initial_has_type_params && !final_has_type_params {
-                        let key = (current_flow, cache_symbol, initial_type);
-                        cache.borrow_mut().insert(key, final_type);
-                    }
+                // Only cache if neither initial nor final types contain type parameters
+                if !initial_has_type_params && !final_has_type_params {
+                    let key = (current_flow, cache_symbol, initial_type);
+                    cache.borrow_mut().insert(key, final_type);
                 }
+            }
         }
 
         // Return the result for the initial flow_id.
@@ -1427,9 +1428,10 @@ impl<'a> FlowAnalyzer<'a> {
         // This matches tsc's getTypeAtFlowCall which returns unreachableNeverType
         // when getReturnTypeOfSignature(signature).flags & TypeFlags.Never.
         if let Some(&call_return_type) = node_types.get(&flow.node.0)
-            && call_return_type == TypeId::NEVER {
-                return Self::UNREACHABLE_NEVER;
-            }
+            && call_return_type == TypeId::NEVER
+        {
+            return Self::UNREACHABLE_NEVER;
+        }
 
         let Some(&callee_type) = node_types.get(&call.expression.0) else {
             return pre_type;
