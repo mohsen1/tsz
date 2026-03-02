@@ -1048,18 +1048,67 @@ impl<'a> DefaultJudge<'a> {
             // Check if it's a function
             if let Some(TypeData::Function(fn_id)) = self.db.lookup(type_id) {
                 let shape = self.db.function_shape(fn_id);
-                // Look for value property in return type
-                let value_name = self.db.intern_string("value");
-                if let PropertyResult::Found {
-                    type_id: value_type,
-                    ..
-                } = self.get_property(shape.return_type, value_name)
+                if let Some(yield_type) =
+                    self.extract_yield_type_from_iterator_result(shape.return_type)
                 {
-                    return value_type;
+                    return yield_type;
                 }
             }
         }
         TypeId::UNKNOWN
+    }
+
+    /// Extract the yielded element type from `IteratorResult<T, TReturn>`.
+    ///
+    /// For unions like `{ done: false, value: T } | { done: true, value: TReturn }`,
+    /// this returns `T` and excludes the completed branch.
+    fn extract_yield_type_from_iterator_result(&self, result_type: TypeId) -> Option<TypeId> {
+        let done_name = self.db.intern_string("done");
+        let value_name = self.db.intern_string("value");
+
+        let mut collected = Vec::new();
+        match self.db.lookup(result_type)? {
+            TypeData::Union(members_id) => {
+                for &member in self.db.type_list(members_id).iter() {
+                    // Skip the completed iterator branch (`done: true`)
+                    if let PropertyResult::Found {
+                        type_id: done_type, ..
+                    } = self.get_property(member, done_name)
+                        && matches!(
+                            self.db.lookup(done_type),
+                            Some(TypeData::Literal(LiteralValue::Boolean(true)))
+                        )
+                    {
+                        continue;
+                    }
+
+                    if let PropertyResult::Found {
+                        type_id: value_type,
+                        ..
+                    } = self.get_property(member, value_name)
+                    {
+                        collected.push(value_type);
+                    }
+                }
+            }
+            _ => {
+                if let PropertyResult::Found {
+                    type_id: value_type,
+                    ..
+                } = self.get_property(result_type, value_name)
+                {
+                    collected.push(value_type);
+                }
+            }
+        }
+
+        if collected.is_empty() {
+            None
+        } else if collected.len() == 1 {
+            Some(collected[0])
+        } else {
+            Some(self.db.union(collected))
+        }
     }
 }
 

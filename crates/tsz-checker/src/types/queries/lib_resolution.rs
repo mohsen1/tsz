@@ -79,6 +79,18 @@ impl<'a> CheckerState<'a> {
             return derived_type;
         };
 
+        // Seed type-parameter scope with the derived interface's generic params so
+        // heritage args like `extends IteratorObject<T, ...>` resolve `T` correctly.
+        // Without this, lib heritage substitution falls back to `unknown` and loses
+        // member types (e.g. `ArrayIterator<T>.next().value` becomes `unknown`).
+        let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
+        for param in self.get_type_params_for_symbol(sym_id) {
+            let name = self.ctx.types.resolve_atom(param.name).to_string();
+            let param_ty = self.ctx.types.type_param(param.clone());
+            let prev = self.ctx.type_parameter_scope.insert(name.clone(), param_ty);
+            scope_restore.push((name, prev));
+        }
+
         let fallback_arena: &NodeArena = self
             .ctx
             .binder
@@ -213,6 +225,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        for (name, prev) in scope_restore {
+            if let Some(prev_ty) = prev {
+                self.ctx.type_parameter_scope.insert(name, prev_ty);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+
         self.ctx.leave_recursion();
         derived_type
     }
@@ -271,6 +291,16 @@ impl<'a> CheckerState<'a> {
             if let Some(ty) = self.resolve_lib_type_by_name(name) {
                 return ty;
             }
+            // Preserve unresolved lib heritage args as symbolic type params
+            // (e.g. `T` in `extends IteratorObject<T, ...>`) instead of
+            // collapsing to unknown.
+            let atom = self.ctx.types.intern_string(name);
+            return self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
         }
 
         // For identifiers, try resolving the name
@@ -281,6 +311,13 @@ impl<'a> CheckerState<'a> {
             if let Some(ty) = self.resolve_lib_type_by_name(name) {
                 return ty;
             }
+            let atom = self.ctx.types.intern_string(name);
+            return self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
         }
 
         TypeId::UNKNOWN
@@ -288,6 +325,13 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use tsz_lowering::TypeLowering;
+
+        // TS 6.0 lib intrinsic: defaults to `undefined` unless
+        // `strictBuiltinIteratorReturn` is disabled.
+        // We currently model default strict behavior.
+        if name == "BuiltinIteratorReturn" {
+            return Some(TypeId::UNDEFINED);
+        }
 
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;

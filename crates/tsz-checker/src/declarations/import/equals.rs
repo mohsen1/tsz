@@ -2,10 +2,10 @@
 //! `import X = Namespace.Member` forms, plus import alias duplicate checking.
 
 use crate::state::CheckerState;
+use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_common::ModuleKind;
 
 /// Whether a type-only reference came from `import type` or `export type`.
 #[derive(Debug)]
