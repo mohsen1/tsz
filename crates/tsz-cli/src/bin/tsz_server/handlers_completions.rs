@@ -1213,6 +1213,76 @@ impl Server {
         out
     }
 
+    fn trailing_function_parameter_names_at_declaration_end(
+        source_text: &str,
+        offset: u32,
+    ) -> FxHashSet<String> {
+        let mut out = FxHashSet::default();
+        let end = (offset as usize).min(source_text.len());
+        let trimmed = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        if !trimmed.ends_with('}') {
+            return out;
+        }
+
+        let bytes = trimmed.as_bytes();
+        let close = bytes.len() - 1;
+        let mut depth = 0i32;
+        let mut open = None;
+        let mut i = close + 1;
+        while i > 0 {
+            i -= 1;
+            match bytes[i] {
+                b'}' => depth += 1,
+                b'{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            return out;
+        };
+        let before_body = &trimmed[..open];
+        let Some(function_kw) = before_body.rfind("function") else {
+            return out;
+        };
+        let after_kw = &before_body[function_kw + "function".len()..];
+        let Some(paren_rel) = after_kw.find('(') else {
+            return out;
+        };
+        let open_paren = function_kw + "function".len() + paren_rel;
+        let Some(close_rel) = before_body[open_paren + 1..].find(')') else {
+            return out;
+        };
+        let close_paren = open_paren + 1 + close_rel;
+        let params = &before_body[open_paren + 1..close_paren];
+        for segment in params.split(',') {
+            let mut part = segment.trim();
+            if part.starts_with("...") {
+                part = part[3..].trim_start();
+            }
+            let ident_end = part
+                .find(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+                .unwrap_or(part.len());
+            if ident_end == 0 {
+                continue;
+            }
+            let ident = &part[..ident_end];
+            if ident
+                .chars()
+                .next()
+                .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+            {
+                out.insert(ident.to_string());
+            }
+        }
+        out
+    }
+
     pub(crate) fn handle_completions(
         &mut self,
         seq: u64,
@@ -1312,6 +1382,18 @@ impl Server {
                     {
                         item.replacement_span = Some((replacement_start, completion_offset));
                     }
+                }
+            }
+            if !is_member_completion
+                && let Some(completion_offset) =
+                    line_map.position_to_offset(completion_position, &source_text)
+            {
+                let blocked = Self::trailing_function_parameter_names_at_declaration_end(
+                    &source_text,
+                    completion_offset,
+                );
+                if !blocked.is_empty() {
+                    items.retain(|item| !blocked.contains(&item.label));
                 }
             }
             if is_member_completion
