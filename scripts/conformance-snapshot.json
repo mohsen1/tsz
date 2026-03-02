@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-02T13:02:03Z",
-  "git_sha": "c202e794cddc2e33cdf3eeb8b4204ce89bbad70d",
+  "timestamp": "2026-03-02T13:33:26Z",
+  "git_sha": "5e0687379552a0dcc8546b0edb5e044cadb4a328",
   "summary": {
     "total_tests": 12570,
-    "passed": 9791,
-    "failed": 2779,
+    "passed": 9797,
+    "failed": 2773,
     "pass_rate": 77.9
   },
   "areas_by_pass_rate": [
@@ -28,20 +28,6 @@
       "passed": 6,
       "failed": 4,
       "pass_rate": 60.0
-    },
-    {
-      "area": "es6/for-ofStatements",
-      "total": 59,
-      "passed": 36,
-      "failed": 23,
-      "pass_rate": 61.02
-    },
-    {
-      "area": "controlFlow",
-      "total": 57,
-      "passed": 35,
-      "failed": 22,
-      "pass_rate": 61.4
     },
     {
       "area": "jsdoc",
@@ -86,6 +72,13 @@
       "pass_rate": 63.08
     },
     {
+      "area": "controlFlow",
+      "total": 57,
+      "passed": 36,
+      "failed": 21,
+      "pass_rate": 63.16
+    },
+    {
       "area": "types/thisType",
       "total": 30,
       "passed": 19,
@@ -112,6 +105,13 @@
       "passed": 43,
       "failed": 24,
       "pass_rate": 64.18
+    },
+    {
+      "area": "es6/for-ofStatements",
+      "total": 59,
+      "passed": 38,
+      "failed": 21,
+      "pass_rate": 64.41
     },
     {
       "area": "expressions/contextualTyping",
@@ -170,13 +170,6 @@
       "pass_rate": 66.67
     },
     {
-      "area": "classes/members",
-      "total": 197,
-      "passed": 132,
-      "failed": 65,
-      "pass_rate": 67.01
-    },
-    {
       "area": "node",
       "total": 73,
       "passed": 49,
@@ -196,6 +189,13 @@
       "passed": 17,
       "failed": 8,
       "pass_rate": 68.0
+    },
+    {
+      "area": "classes/members",
+      "total": 197,
+      "passed": 134,
+      "failed": 63,
+      "pass_rate": 68.02
     },
     {
       "area": "internalModules/exportDeclarations",
@@ -375,9 +375,9 @@
     {
       "area": "compiler",
       "total": 6512,
-      "passed": 5088,
-      "failed": 1424,
-      "pass_rate": 78.13
+      "passed": 5090,
+      "failed": 1422,
+      "pass_rate": 78.16
     },
     {
       "area": "enums",
@@ -935,7 +935,7 @@
     },
     {
       "code": "TS2345",
-      "count": 60
+      "count": 59
     },
     {
       "code": "TS1128",
@@ -1247,7 +1247,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 70
+      "count": 69
     },
     {
       "code": "TS2339",
@@ -1298,10 +1298,6 @@
       "count": 5
     },
     {
-      "code": "TS2536",
-      "count": 4
-    },
-    {
       "code": "TS2344",
       "count": 4
     },
@@ -1347,6 +1343,10 @@
     },
     {
       "code": "TS2365",
+      "count": 2
+    },
+    {
+      "code": "TS2536",
       "count": 2
     },
     {
@@ -1449,7 +1449,7 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 79
+      "count": 78
     },
     {
       "code": "TS2345",
@@ -1516,10 +1516,6 @@
       "count": 4
     },
     {
-      "code": "TS2536",
-      "count": 4
-    },
-    {
       "code": "TS2403",
       "count": 4
     },
@@ -1566,6 +1562,10 @@
     {
       "code": "TS7026",
       "count": 3
+    },
+    {
+      "code": "TS2874",
+      "count": 3
     }
   ],
   "top_missing_codes": [
@@ -1583,7 +1583,7 @@
     },
     {
       "code": "TS2345",
-      "count": 60
+      "count": 59
     },
     {
       "code": "TS1128",
@@ -1733,7 +1733,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 161
+      "count": 160
     },
     {
       "code": "TS2339",
@@ -1776,12 +1776,12 @@
       "count": 20
     },
     {
-      "code": "TS2769",
+      "code": "TS1003",
       "count": 19
     },
     {
-      "code": "TS1003",
-      "count": 19
+      "code": "TS2769",
+      "count": 18
     },
     {
       "code": "TS2741",
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 325,
+    "false_positive": 322,
     "all_missing": 496,
-    "wrong_code": 1954,
-    "close_to_passing": 1646
+    "wrong_code": 1951,
+    "close_to_passing": 1643
   }
 }
