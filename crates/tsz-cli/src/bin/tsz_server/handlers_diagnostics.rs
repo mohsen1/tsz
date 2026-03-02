@@ -111,10 +111,13 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files.get(file_path).cloned().or_else(|| {
-                Self::read_virtual_harness_path(file_path)
-                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-            })
+            open_files
+                .get(file_path)
+                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
+                .or_else(|| {
+                    Self::read_virtual_harness_path(file_path)
+                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+                })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -186,10 +189,13 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files.get(file_path).cloned().or_else(|| {
-                Self::read_virtual_harness_path(file_path)
-                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-            })
+            open_files
+                .get(file_path)
+                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
+                .or_else(|| {
+                    Self::read_virtual_harness_path(file_path)
+                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+                })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -336,10 +342,13 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files.get(file_path).cloned().or_else(|| {
-                Self::read_virtual_harness_path(file_path)
-                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-            })
+            open_files
+                .get(file_path)
+                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
+                .or_else(|| {
+                    Self::read_virtual_harness_path(file_path)
+                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+                })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
