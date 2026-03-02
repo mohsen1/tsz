@@ -172,6 +172,24 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     self.collect(constraint);
                 }
             }
+            // Conditional type: collect properties from its default constraint.
+            // For Extract-like patterns (T extends U ? T : never), the constraint
+            // is T & U, so we get U's properties. For general patterns, the
+            // constraint is true_type | false_type (union of both branches).
+            // This matches tsc's getApparentType → getBaseConstraintOfType →
+            // getConstraintOfConditionalType for conditional types.
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner.conditional_type(cond_id);
+                let constraint = if cond.true_type == cond.check_type {
+                    // Extract-like: T extends U ? T : never → T & U
+                    self.interner
+                        .intersection2(cond.check_type, cond.extends_type)
+                } else {
+                    // General: union of both branches
+                    self.interner.union2(cond.true_type, cond.false_type)
+                };
+                self.collect(constraint);
+            }
             // Union: collect common properties (present in ALL members)
             Some(TypeData::Union(members_id)) => {
                 self.collect_union_common(members_id);

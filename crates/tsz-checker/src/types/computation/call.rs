@@ -353,15 +353,26 @@ impl<'a> CheckerState<'a> {
             classification = ?classification,
             "Call signatures classified"
         );
-        let overload_signatures = match classification {
-            query::CallSignaturesKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                (shape.call_signatures.len() > 1).then(|| shape.call_signatures.clone())
+        // When the callee is a Union type, do NOT treat the collected member
+        // signatures as overloads. Union call semantics require the call to be
+        // valid for ALL members (handled by solver's resolve_union_call), while
+        // overload resolution accepts the call if ANY single signature matches.
+        // Without this guard, `(F1 | F2)("a")` would succeed if F1 alone accepts
+        // 1 arg, silently ignoring F2 which requires 2 args — missing TS2554.
+        let callee_is_union = tsz_solver::is_union_type(self.ctx.types, callee_type_for_resolution);
+        let overload_signatures = if callee_is_union {
+            None
+        } else {
+            match classification {
+                query::CallSignaturesKind::Callable(shape_id) => {
+                    let shape = self.ctx.types.callable_shape(shape_id);
+                    (shape.call_signatures.len() > 1).then(|| shape.call_signatures.clone())
+                }
+                query::CallSignaturesKind::MultipleSignatures(signatures) => {
+                    (signatures.len() > 1).then_some(signatures)
+                }
+                query::CallSignaturesKind::NoSignatures => None,
             }
-            query::CallSignaturesKind::MultipleSignatures(signatures) => {
-                (signatures.len() > 1).then_some(signatures)
-            }
-            query::CallSignaturesKind::NoSignatures => None,
         };
 
         // Overload candidates need signature-specific contextual typing.

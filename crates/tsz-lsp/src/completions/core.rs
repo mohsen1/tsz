@@ -126,7 +126,7 @@ impl<'a> Completions<'a> {
             !is_dotted_namespace && (member_target.is_some() || self.is_member_context(offset));
         let is_new_id = if is_member {
             false
-        } else if is_dotted_namespace {
+        } else if is_dotted_namespace || self.should_offer_constructor_keyword(offset) {
             true
         } else {
             self.compute_is_new_identifier_location(root, offset)
@@ -426,6 +426,17 @@ impl<'a> Completions<'a> {
             completions.push(item);
         }
 
+        if !member_request
+            && !seen_names.contains("constructor")
+            && self.should_offer_constructor_keyword(offset)
+        {
+            seen_names.insert("constructor".to_string());
+            let mut ctor =
+                CompletionItem::new("constructor".to_string(), CompletionItemKind::Keyword);
+            ctor.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(ctor);
+        }
+
         // 11. Add keywords for non-member completions
         if !member_request {
             let keywords = if inside_func {
@@ -711,6 +722,14 @@ impl<'a> Completions<'a> {
             }
 
             break;
+        }
+
+        let line_start = self.source_text[..cursor as usize]
+            .rfind('\n')
+            .map_or(0, |idx| idx + 1);
+        let line_prefix = &self.source_text[line_start..cursor as usize];
+        if line_prefix.contains("//") {
+            return None;
         }
 
         if cursor == 0 {

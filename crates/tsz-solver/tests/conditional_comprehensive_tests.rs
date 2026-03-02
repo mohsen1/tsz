@@ -1534,6 +1534,283 @@ fn test_distributive_conditional_constraint_simple() {
     );
 }
 
+// =============================================================================
+// Composed Extract deferral and property collection from conditional types
+// =============================================================================
+
+#[test]
+fn test_composed_extract_deferred_when_check_is_conditional() {
+    // Extract<Extract<T, Foo>, Bar> should be deferred (not eagerly resolved to never).
+    //
+    // Inner: T extends Foo ? T : never → deferred (T is type param)
+    // Outer: Inner extends Bar ? Inner : never → should also defer
+    //
+    // Previously, the outer was eagerly resolved to the false branch (never) because
+    // the evaluator didn't recognize that a Conditional check_type containing type
+    // params should be deferred.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let foo = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
+
+    let bar = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("bar"),
+        TypeId::STRING,
+    )]);
+
+    // Inner conditional: T extends Foo ? T : never (Extract<T, Foo>)
+    let inner_cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: foo,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Outer conditional: Inner extends Bar ? Inner : never (Extract<Inner, Bar>)
+    let outer_cond = interner.conditional(ConditionalType {
+        check_type: inner_cond,
+        extends_type: bar,
+        true_type: inner_cond,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let result = evaluate_type(&interner, outer_cond);
+
+    // The result should NOT be NEVER — it should be a deferred conditional
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "Extract<Extract<T, Foo>, Bar> should be deferred, not resolved to never"
+    );
+    // It should be a Conditional type
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Conditional(_))),
+        "Result should be a deferred conditional type"
+    );
+}
+
+#[test]
+fn test_composed_extract_not_assignable_to_missing_property() {
+    // Extract<Extract<T, Foo>, Bar> should NOT be assignable to { foo: string; bat: string }
+    // because the constraint T & Foo & Bar doesn't have 'bat'.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let foo = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
+
+    let bar = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("bar"),
+        TypeId::STRING,
+    )]);
+
+    let foo_bat = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("bat"), TypeId::STRING),
+    ]);
+
+    // Build Extract<Extract<T, Foo>, Bar>
+    let inner_cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: foo,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let outer_cond = interner.conditional(ConditionalType {
+        check_type: inner_cond,
+        extends_type: bar,
+        true_type: inner_cond,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let evaluated = evaluate_type(&interner, outer_cond);
+    let mut checker = SubtypeChecker::new(&interner);
+    let result = checker.is_subtype_of(evaluated, foo_bat);
+
+    assert!(
+        !result,
+        "Extract<Extract<T, Foo>, Bar> should NOT be assignable to {{ foo, bat }}"
+    );
+}
+
+#[test]
+fn test_composed_extract_assignable_to_matching_properties() {
+    // Extract<Extract<T, Foo>, Bar> SHOULD be assignable to { foo: string; bar: string }
+    // because the constraint T & Foo & Bar has both 'foo' and 'bar'.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let foo = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
+
+    let bar = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("bar"),
+        TypeId::STRING,
+    )]);
+
+    let foo_bar = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("bar"), TypeId::STRING),
+    ]);
+
+    // Build Extract<Extract<T, Foo>, Bar>
+    let inner_cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: foo,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let outer_cond = interner.conditional(ConditionalType {
+        check_type: inner_cond,
+        extends_type: bar,
+        true_type: inner_cond,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let evaluated = evaluate_type(&interner, outer_cond);
+    let mut checker = SubtypeChecker::new(&interner);
+    let result = checker.is_subtype_of(evaluated, foo_bar);
+
+    assert!(
+        result,
+        "Extract<Extract<T, Foo>, Bar> SHOULD be assignable to {{ foo, bar }}"
+    );
+}
+
+#[test]
+fn test_property_collection_from_conditional_in_intersection() {
+    // When a conditional type is part of an intersection, its properties
+    // should be collected from its default constraint.
+    //
+    // For Extract<T, Foo> & Bar:
+    //   Extract<T, Foo> contributes foo (from T & Foo constraint)
+    //   Bar contributes bar
+    //   Merged: { foo: string, bar: string }
+    use crate::objects::collect_properties;
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let foo = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
+
+    let bar = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("bar"),
+        TypeId::STRING,
+    )]);
+
+    // Extract<T, Foo> = T extends Foo ? T : never
+    let extract = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: foo,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Intersection: Extract<T, Foo> & Bar
+    let intersection = interner.intersection2(extract, bar);
+
+    use crate::objects::PropertyCollectionResult;
+    struct MockResolver;
+    impl crate::TypeResolver for MockResolver {
+        fn resolve_lazy(
+            &self,
+            _def_id: crate::DefId,
+            _interner: &dyn crate::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+        fn symbol_to_def_id(&self, _symbol: crate::types::SymbolRef) -> Option<crate::DefId> {
+            None
+        }
+        fn resolve_ref(
+            &self,
+            _symbol: crate::types::SymbolRef,
+            _interner: &dyn crate::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+        fn get_type_params(
+            &self,
+            _symbol: crate::types::SymbolRef,
+        ) -> Option<Vec<crate::types::TypeParamInfo>> {
+            None
+        }
+        fn get_lazy_type_params(
+            &self,
+            _def_id: crate::DefId,
+        ) -> Option<Vec<crate::types::TypeParamInfo>> {
+            None
+        }
+        fn def_to_symbol_id(&self, _def_id: crate::DefId) -> Option<tsz_binder::SymbolId> {
+            None
+        }
+    }
+    let resolver = MockResolver;
+    let result = collect_properties(intersection, &interner, &resolver);
+
+    match result {
+        PropertyCollectionResult::Properties { properties, .. } => {
+            let names: Vec<_> = properties.iter().map(|p| p.name).collect();
+            let foo_atom = interner.intern_string("foo");
+            let bar_atom = interner.intern_string("bar");
+            assert!(
+                names.contains(&foo_atom),
+                "Should have 'foo' from conditional constraint"
+            );
+            assert!(
+                names.contains(&bar_atom),
+                "Should have 'bar' from intersection member"
+            );
+        }
+        other => panic!(
+            "Expected Properties result, got {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
 #[test]
 fn test_non_distributive_conditional_no_constraint_eval() {
     // Non-distributive conditional should NOT use the distributive constraint strategy.

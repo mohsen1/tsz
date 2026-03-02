@@ -1600,11 +1600,10 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(shape) =
                 crate::query_boundaries::property_access::callable_shape(self.ctx.types, candidate)
+                && let Some(sig) = shape.call_signatures.first()
             {
-                if let Some(sig) = shape.call_signatures.first() {
-                    resolved_shape = Some((sig.params.clone(), sig.return_type));
-                    break;
-                }
+                resolved_shape = Some((sig.params.clone(), sig.return_type));
+                break;
             }
         }
 

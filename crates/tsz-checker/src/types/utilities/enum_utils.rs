@@ -893,7 +893,8 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node) {
                 let member_name = self.get_identifier_text_from_idx(prop_decl.name);
                 if member_name.as_deref() == Some(prop_name) {
-                    return self.has_readonly_modifier(&prop_decl.modifiers);
+                    return self.has_readonly_modifier(&prop_decl.modifiers)
+                        || self.jsdoc_has_readonly_tag(member_idx);
                 }
             }
         }
