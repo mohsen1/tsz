@@ -9,6 +9,12 @@ impl<'a> Completions<'a> {
     /// Check if the cursor is inside a context where completions should not be offered,
     /// such as inside string literals (non-module-specifier), comments, or regex literals.
     pub(super) fn is_in_no_completion_context(&self, offset: u32) -> bool {
+        if self.should_offer_constructor_keyword(offset) {
+            return false;
+        }
+        if self.is_class_member_continuation_without_separator(offset) {
+            return true;
+        }
         // Check if we're at an identifier definition location first - this works
         // even when offset == source_text.len() (cursor at end of file).
         if self.is_at_definition_location(offset) {
@@ -132,6 +138,43 @@ impl<'a> Completions<'a> {
         }
 
         false
+    }
+
+    fn is_class_member_continuation_without_separator(&self, offset: u32) -> bool {
+        if !self.text_likely_in_class_body(offset) {
+            return false;
+        }
+        let end = (offset as usize).min(self.source_text.len());
+        let text = &self.source_text[..end];
+        let line_start = text.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = &text[line_start..];
+        let prefix = Self::strip_trailing_fourslash_marker(line).trim_end();
+        if prefix.is_empty() {
+            return false;
+        }
+
+        let bytes = prefix.as_bytes();
+        let mut idx = bytes.len();
+        while idx > 0 {
+            let ch = bytes[idx - 1] as char;
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        let word = &prefix[idx..];
+        if idx == 0 {
+            return !word.starts_with("con");
+        }
+        let before = prefix[..idx].trim_end();
+        if before.is_empty() {
+            return !word.starts_with("con");
+        }
+        if before.contains('=') || before.contains(':') {
+            return true;
+        }
+        !matches!(before.as_bytes().last().copied(), Some(b';') | Some(b'{'))
     }
 
     /// Check if the cursor is at a position where a new identifier is being defined.

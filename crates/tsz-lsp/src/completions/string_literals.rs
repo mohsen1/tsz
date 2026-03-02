@@ -168,6 +168,7 @@ impl<'a> Completions<'a> {
         }
 
         let mut seen_non_omitted = 0usize;
+        let mut last_non_omitted_end = None;
         for (i, &arg_idx) in args.nodes.iter().enumerate() {
             let Some(arg_node) = self.arena.get(arg_idx) else {
                 continue;
@@ -195,7 +196,17 @@ impl<'a> Completions<'a> {
             {
                 return seen_non_omitted + 1;
             }
+            last_non_omitted_end = Some(arg_end as usize);
             seen_non_omitted += 1;
+        }
+        if let Some(last_end) = last_non_omitted_end {
+            let end = (offset as usize).min(self.source_text.len());
+            if last_end < end && seen_non_omitted > 0 {
+                let gap = &self.source_text[last_end..end];
+                if !gap.contains(',') {
+                    return seen_non_omitted - 1;
+                }
+            }
         }
         seen_non_omitted
     }
@@ -313,6 +324,7 @@ impl<'a> Completions<'a> {
             let Some(param_type_node) = self.arena.get(param.type_annotation) else {
                 continue;
             };
+            let before_len = labels.len();
             if param_type_node.kind == syntax_kind_ext::TYPE_REFERENCE
                 && let Some(type_ref) = self.arena.get_type_ref(param_type_node)
                 && let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name)
@@ -337,7 +349,94 @@ impl<'a> Completions<'a> {
             } else {
                 self.collect_string_literals_from_type_node(param.type_annotation, labels);
             }
+            if labels.len() == before_len {
+                self.collect_type_parameter_constraint_labels_from_type_node(
+                    func.type_parameters.as_ref(),
+                    param.type_annotation,
+                    labels,
+                );
+            }
+            if labels.len() == before_len
+                && let Some(type_parameters) = func.type_parameters.as_ref()
+            {
+                for &type_param_idx in &type_parameters.nodes {
+                    let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                        continue;
+                    };
+                    let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                        continue;
+                    };
+                    if type_param.constraint.is_some() {
+                        self.collect_string_literals_from_type_node(type_param.constraint, labels);
+                    }
+                }
+            }
+            if labels.len() == before_len {
+                self.collect_string_literals_from_type_node(decl_idx, labels);
+            }
         }
+    }
+
+    fn collect_type_parameter_constraint_labels_from_type_node(
+        &self,
+        type_parameters: Option<&tsz_parser::parser::base::NodeList>,
+        type_node_idx: NodeIndex,
+        labels: &mut FxHashSet<String>,
+    ) {
+        let Some(type_parameters) = type_parameters else {
+            return;
+        };
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        let start = type_node.pos as usize;
+        let end = (type_node.end as usize).min(self.source_text.len());
+        if start >= end {
+            return;
+        }
+        let type_text = &self.source_text[start..end];
+        for &type_param_idx in &type_parameters.nodes {
+            let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                continue;
+            };
+            let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                continue;
+            };
+            if !type_param.constraint.is_some() {
+                continue;
+            }
+            let Some(type_param_name) = self.arena.get_identifier_text(type_param.name) else {
+                continue;
+            };
+            if !Self::contains_identifier(type_text, type_param_name) {
+                continue;
+            }
+            self.collect_string_literals_from_type_node(type_param.constraint, labels);
+        }
+    }
+
+    fn contains_identifier(text: &str, ident: &str) -> bool {
+        if ident.is_empty() || text.len() < ident.len() {
+            return false;
+        }
+        let mut search_start = 0usize;
+        while let Some(rel_idx) = text[search_start..].find(ident) {
+            let idx = search_start + rel_idx;
+            let end = idx + ident.len();
+            let before = (idx > 0).then(|| text.as_bytes()[idx - 1] as char);
+            let after = (end < text.len()).then(|| text.as_bytes()[end] as char);
+            let before_ok = before.is_none_or(|ch| !Self::is_identifier_char(ch));
+            let after_ok = after.is_none_or(|ch| !Self::is_identifier_char(ch));
+            if before_ok && after_ok {
+                return true;
+            }
+            search_start = idx + ident.len();
+        }
+        false
+    }
+
+    const fn is_identifier_char(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     fn collect_string_literals_from_type_node(

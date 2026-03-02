@@ -126,7 +126,7 @@ impl<'a> Completions<'a> {
             !is_dotted_namespace && (member_target.is_some() || self.is_member_context(offset));
         let is_new_id = if is_member {
             false
-        } else if is_dotted_namespace {
+        } else if is_dotted_namespace || self.should_offer_constructor_keyword(offset) {
             true
         } else {
             self.compute_is_new_identifier_location(root, offset)
@@ -424,6 +424,17 @@ impl<'a> Completions<'a> {
                 CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
             item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
             completions.push(item);
+        }
+
+        if !member_request
+            && !seen_names.contains("constructor")
+            && self.should_offer_constructor_keyword(offset)
+        {
+            seen_names.insert("constructor".to_string());
+            let mut ctor =
+                CompletionItem::new("constructor".to_string(), CompletionItemKind::Keyword);
+            ctor.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(ctor);
         }
 
         // 11. Add keywords for non-member completions

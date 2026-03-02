@@ -40,7 +40,13 @@ impl<'a> Completions<'a> {
         // for specific token/parent-kind combinations. Our heuristic approximates this
         // by checking AST context and text patterns.
 
-        let node_idx = self.find_completions_node(root, offset);
+        let node_idx = if let Some(marker_start) =
+            Self::fourslash_marker_comment_start(self.source_text, offset)
+        {
+            self.find_completions_node(root, marker_start.saturating_sub(1))
+        } else {
+            self.find_completions_node(root, offset)
+        };
 
         // Check if we're inside a JSX context - most JSX positions return false
         if self.is_in_jsx_context(node_idx) {
@@ -114,7 +120,7 @@ impl<'a> Completions<'a> {
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
         let trimmed_without_marker = Self::strip_trailing_fourslash_marker(trimmed);
-        if trimmed.is_empty() {
+        if trimmed_without_marker.is_empty() {
             return false;
         }
         if trimmed_without_marker.ends_with('.')
@@ -124,10 +130,10 @@ impl<'a> Completions<'a> {
         }
 
         // Find the last word before cursor
-        let last_word_start = trimmed
+        let last_word_start = trimmed_without_marker
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map_or(0, |p| p + 1);
-        let last_word = &trimmed[last_word_start..];
+        let last_word = &trimmed_without_marker[last_word_start..];
 
         // Keywords after which we are creating a new identifier (name declaration position).
         if matches!(
@@ -161,12 +167,12 @@ impl<'a> Completions<'a> {
         }
 
         // Check the last non-whitespace character for common expression-start operators.
-        let last_char = trimmed.as_bytes().last().copied();
+        let last_char = trimmed_without_marker.as_bytes().last().copied();
         match last_char {
             // After `=` in variable declarations and property assignments,
             // but NOT after `==`, `===`, `!=`, `>=`, `<=`
             Some(b'=') => {
-                let before = &trimmed[..trimmed.len() - 1];
+                let before = &trimmed_without_marker[..trimmed_without_marker.len() - 1];
                 let prev = before.as_bytes().last().copied();
                 if prev != Some(b'=')
                     && prev != Some(b'!')
@@ -186,7 +192,7 @@ impl<'a> Completions<'a> {
             Some(b'[') => {
                 // Check if this is a computed property access (obj[|]) - should be false
                 // vs array literal [|] or binding pattern - should be true
-                if !self.is_element_access_context(trimmed) {
+                if !self.is_element_access_context(trimmed_without_marker) {
                     return true;
                 }
             }
@@ -194,7 +200,7 @@ impl<'a> Completions<'a> {
             // Type parameter: `<T, |` or `func<|`
             Some(b'<') => {
                 // Check if this looks like a type parameter list
-                if self.is_type_parameter_context(trimmed) {
+                if self.is_type_parameter_context(trimmed_without_marker) {
                     return true;
                 }
             }
@@ -202,7 +208,7 @@ impl<'a> Completions<'a> {
         }
 
         // After `${` in template literal expressions
-        if trimmed.ends_with("${") {
+        if trimmed_without_marker.ends_with("${") {
             return true;
         }
         // Dotted namespace/module declaration names are identifier-definition
@@ -213,10 +219,10 @@ impl<'a> Completions<'a> {
 
         // If the user is typing an identifier prefix in expression/member-declaration
         // context, treat this as a new identifier location.
-        if let Some(prev) = trimmed.chars().last()
+        if let Some(prev) = trimmed_without_marker.chars().last()
             && (prev == '_' || prev == '$' || prev.is_ascii_alphanumeric())
         {
-            let bytes = trimmed.as_bytes();
+            let bytes = trimmed_without_marker.as_bytes();
             let mut idx = bytes.len();
             while idx > 0 {
                 let ch = bytes[idx - 1] as char;
@@ -226,13 +232,26 @@ impl<'a> Completions<'a> {
                     break;
                 }
             }
-            let current_word = &trimmed[idx..];
+            let current_word = &trimmed_without_marker[idx..];
             if current_word
                 .chars()
                 .next()
                 .is_some_and(|ch| ch.is_ascii_digit())
             {
                 return false;
+            }
+            if self.is_in_class_body_context(node_idx) {
+                let mut j = idx;
+                while j > 0 && bytes[j - 1].is_ascii_whitespace() {
+                    j -= 1;
+                }
+                if j == 0 {
+                    return true;
+                }
+                let prev = bytes[j - 1];
+                if prev == b'{' || prev == b';' || prev == b'}' {
+                    return true;
+                }
             }
 
             if matches!(
@@ -281,13 +300,59 @@ impl<'a> Completions<'a> {
             if self.is_in_class_or_interface_member_position(node_idx, offset) {
                 return true;
             }
+            if self.text_likely_in_class_body(offset)
+                && matches!(prev_sig, '\n' | '\r' | ';' | '{' | '}')
+            {
+                return true;
+            }
             return matches!(
                 prev_sig,
                 '=' | '(' | ',' | '?' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
             );
         }
 
+        if self.is_in_class_body_context(node_idx) {
+            return true;
+        }
+
+        if self.text_likely_in_class_body(offset) {
+            return true;
+        }
+
         false
+    }
+
+    fn fourslash_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len < 4 {
+            return None;
+        }
+        let offset = base_offset.min(len.saturating_sub(1));
+        let search_start = offset.saturating_sub(8);
+        let search_end = (offset + 1).min(len.saturating_sub(2));
+        for start in search_start..=search_end {
+            if bytes[start as usize] != b'/' || bytes[(start + 1) as usize] != b'*' {
+                continue;
+            }
+            let mut end = start + 2;
+            while end + 1 < len && end - start <= 8 {
+                if bytes[end as usize] == b'*' && bytes[(end + 1) as usize] == b'/' {
+                    let digits = &bytes[(start + 2) as usize..end as usize];
+                    let is_fourslash_marker =
+                        digits.is_empty() || digits.iter().all(u8::is_ascii_digit);
+                    if is_fourslash_marker {
+                        let comment_end = end + 1;
+                        if offset >= start && offset <= comment_end {
+                            return Some(start);
+                        }
+                    }
+                    break;
+                }
+                end += 1;
+            }
+        }
+        None
     }
 
     pub(super) fn is_dotted_namespace_completion_context(&self, offset: u32) -> bool {
@@ -316,7 +381,7 @@ impl<'a> Completions<'a> {
         false
     }
 
-    fn strip_trailing_fourslash_marker(text: &str) -> &str {
+    pub(super) fn strip_trailing_fourslash_marker(text: &str) -> &str {
         let trimmed = text.trim_end();
         if let Some(start) = trimmed.rfind("/*") {
             let after = &trimmed[start + 2..];
@@ -472,6 +537,82 @@ impl<'a> Completions<'a> {
         // for `<` in TypeScript than less-than comparison in completion context.
         // JSX is handled separately by the JSX context check.
         true
+    }
+
+    pub(super) fn should_offer_constructor_keyword(&self, offset: u32) -> bool {
+        let node_idx = if let Some(marker_start) =
+            Self::fourslash_marker_comment_start(self.source_text, offset)
+        {
+            crate::utils::find_node_at_offset(self.arena, marker_start.saturating_sub(1))
+        } else {
+            crate::utils::find_node_at_offset(self.arena, offset)
+        };
+        let in_class_body = node_idx.is_some() && self.is_in_class_body_context(node_idx);
+        if !in_class_body && !self.text_likely_in_class_body(offset) {
+            return false;
+        }
+
+        let end = (offset as usize).min(self.source_text.len());
+        let text = &self.source_text[..end];
+        let line_start = text.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = &text[line_start..];
+        let prefix = Self::strip_trailing_fourslash_marker(line).trim_end();
+        if prefix.is_empty() {
+            return true;
+        }
+
+        let bytes = prefix.as_bytes();
+        let mut idx = bytes.len();
+        while idx > 0 {
+            let ch = bytes[idx - 1] as char;
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        let word = &prefix[idx..];
+        if !word.is_empty() && !word.starts_with("con") {
+            return false;
+        }
+        let before = prefix[..idx].trim_end();
+        if before.is_empty() {
+            return !word.is_empty();
+        }
+        if before.contains('=') || before.contains(':') {
+            return false;
+        }
+        matches!(
+            before.as_bytes().last().copied(),
+            Some(b';') | Some(b'{') | Some(b'}')
+        )
+    }
+
+    pub(super) fn text_likely_in_class_body(&self, offset: u32) -> bool {
+        let end = (offset as usize).min(self.source_text.len());
+        let text = &self.source_text[..end];
+        let Some(class_pos) = text.rfind("class ") else {
+            return false;
+        };
+        let Some(rel_open) = text[class_pos..].find('{') else {
+            return false;
+        };
+        let open = class_pos + rel_open;
+        if open + 1 >= end {
+            return true;
+        }
+        let mut depth = 1i32;
+        for &b in &text.as_bytes()[open + 1..] {
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth <= 0 {
+                return false;
+            }
+        }
+        depth == 1
     }
 
     pub(super) fn get_symbol_detail(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
