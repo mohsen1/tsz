@@ -552,12 +552,7 @@ impl Server {
                 };
             }
 
-            if (error_codes.iter().any(|code| {
-                CodeFixRegistry::fixes_for_error_code(*code)
-                    .iter()
-                    .any(|(_, fix_id, _, _)| *fix_id == "addMissingAwait")
-            }) || (error_codes.is_empty() && add_missing_await_preview.is_some()))
-                && let Some((description, updated_content)) = add_missing_await_preview.as_ref()
+            if let Some((description, updated_content)) = add_missing_await_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
             {
@@ -593,8 +588,7 @@ impl Server {
                     CodeFixRegistry::fixes_for_error_code(*code)
                         .iter()
                         .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
-                } || (error_codes.is_empty() && has_cannot_find_name_diag)
-                    || (error_codes.is_empty() && response_actions.is_empty()))
+                } || (error_codes.is_empty() && has_cannot_find_name_diag))
                 && add_missing_await_preview.is_none()
                 && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
                 && let Some((start_off, end_off, replacement)) =
@@ -650,6 +644,19 @@ impl Server {
             Self::rewrite_jsdoc_import_fixes(&content, &mut response_actions);
             self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
+            if response_actions.iter().any(|action| {
+                action
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|d| d.starts_with("Add missing enum member '"))
+            }) {
+                response_actions.retain(|action| {
+                    action
+                        .get("description")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|d| d.starts_with("Add missing enum member '"))
+                });
+            }
 
             if !response_actions.is_empty() {
                 return TsServerResponse {
@@ -688,6 +695,7 @@ impl Server {
                 if error_codes.contains(
                     &tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                 ) && !has_add_missing_await
+                    && add_missing_await_preview.is_none()
                 {
                     let prop_name = request
                         .arguments
@@ -1185,7 +1193,11 @@ impl Server {
                     continue;
                 }
 
-                let mut left_start = idx;
+                let mut left_end = idx;
+                while left_end > 0 && (bytes[left_end - 1] as char).is_ascii_whitespace() {
+                    left_end -= 1;
+                }
+                let mut left_start = left_end;
                 while left_start > 0 {
                     let c = bytes[left_start - 1] as char;
                     if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
@@ -1194,9 +1206,15 @@ impl Server {
                         break;
                     }
                 }
-                let left = trimmed[left_start..idx].trim();
+                let left = trimmed[left_start..left_end].trim();
 
-                let mut right_end = idx + 1;
+                let mut right_start = idx + 1;
+                while right_start < trimmed.len()
+                    && (bytes[right_start] as char).is_ascii_whitespace()
+                {
+                    right_start += 1;
+                }
+                let mut right_end = right_start;
                 while right_end < trimmed.len() {
                     let c = bytes[right_end] as char;
                     if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
@@ -1205,7 +1223,7 @@ impl Server {
                         break;
                     }
                 }
-                let right = trimmed[idx + 1..right_end].trim();
+                let right = trimmed[right_start..right_end].trim();
                 if is_ident(left) && is_ident(right) {
                     enum_name = left.to_string();
                     member_name = right.to_string();
