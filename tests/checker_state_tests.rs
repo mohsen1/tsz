@@ -12631,7 +12631,6 @@ var x: Alias;
 }
 
 #[test]
-#[ignore] // TS1361 not yet emitted for type-only imports used as values
 fn test_import_type_value_usage_errors() {
     use crate::parser::ParserState;
 
@@ -12662,9 +12661,11 @@ Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // TS1361: cannot be used as a value because it was imported using 'import type'
-    // TODO: TS1361 is not yet implemented — update this assertion when it is.
-    // For now, verify we don't emit a false positive (like TS1148 from module=None).
+    // TS1361: 'Foo' cannot be used as a value because it was imported using 'import type'.
+    assert!(
+        codes.contains(&1361),
+        "Expected TS1361 for type-only import used as value, got: {codes:?}"
+    );
     assert!(
         !codes.contains(&1148),
         "Should not emit TS1148 (module=none error) for import type test, got: {codes:?}"
