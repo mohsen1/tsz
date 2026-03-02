@@ -300,9 +300,7 @@ impl<'a> ContextualTypeContext<'a> {
             if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
                 let cond = self.interner.conditional_type(cond_id);
                 let mut branch_param_types = Vec::new();
-                for (is_true_branch, branch) in
-                    [(true, cond.true_type), (false, cond.false_type)]
-                {
+                for (is_true_branch, branch) in [(true, cond.true_type), (false, cond.false_type)] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
                         continue;
