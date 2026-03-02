@@ -636,7 +636,8 @@ impl Server {
             .open_files
             .get(file_path)
             .cloned()
-            .or_else(|| std::fs::read_to_string(file_path).ok())?;
+            .or_else(|| std::fs::read_to_string(file_path).ok())
+            .or_else(|| Self::read_virtual_harness_path(file_path))?;
         let content = Self::normalize_fourslash_virtual_content(file_path, &raw_content);
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
@@ -644,6 +645,24 @@ impl Server {
         let mut binder = BinderState::new();
         binder.bind_source_file(&arena, root);
         Some((arena, binder, root, content))
+    }
+
+    fn read_virtual_harness_path(file_path: &str) -> Option<String> {
+        let rel = file_path.strip_prefix('/').unwrap_or(file_path);
+        let cwd = std::env::current_dir().ok()?;
+        let mut candidates = Vec::new();
+        candidates.push(cwd.join(rel));
+        candidates.push(cwd.join("TypeScript").join(rel));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("TypeScript").join(rel));
+        }
+
+        for path in candidates {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return Some(content);
+            }
+        }
+        None
     }
 
     fn normalize_fourslash_virtual_content(file_path: &str, content: &str) -> String {

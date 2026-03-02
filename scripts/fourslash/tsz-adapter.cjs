@@ -432,6 +432,37 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
+            for (const prop of ["getCombinedCodeFix", "applyCodeActionCommand", "mapCode"]) {
+                if (Object.prototype.hasOwnProperty.call(this._client, prop)) {
+                    delete this._client[prop];
+                }
+            }
+            if (typeof this._client.getCombinedCodeFix !== "function") {
+                this._client.getCombinedCodeFix = (scope, fixId) => {
+                    const args = {
+                        scope: { type: "file", args: { file: scope.fileName } },
+                        fixId,
+                    };
+                    const request = this._client.processRequest("getCombinedCodeFix", args);
+                    const response = this._client.processResponse(request);
+                    const { changes, commands } = response.body || {};
+                    return {
+                        changes: this._client.convertChanges(changes || [], scope.fileName),
+                        commands,
+                    };
+                };
+            }
+            if (typeof this._client.applyCodeActionCommand !== "function") {
+                this._client.applyCodeActionCommand = (action) => {
+                    const args = { command: action };
+                    const request = this._client.processRequest("applyCodeActionCommand", args);
+                    const response = this._client.processResponse(request);
+                    if (Array.isArray(action)) {
+                        return Promise.resolve(Array.isArray(response.body) ? response.body : []);
+                    }
+                    return Promise.resolve(response.body || { successMessage: "" });
+                };
+            }
             const originalGetCodeFixesAtPosition = this._client.getCodeFixesAtPosition?.bind(this._client);
             if (originalGetCodeFixesAtPosition) {
                 this._client.getCodeFixesAtPosition = (file, start, end, errorCodes, _formatOptions, preferences) => {

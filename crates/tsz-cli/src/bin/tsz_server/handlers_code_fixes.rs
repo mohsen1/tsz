@@ -1302,6 +1302,29 @@ impl Server {
     }
 
     fn apply_add_missing_enum_member_fallback(content: &str) -> Option<(String, String)> {
+        if content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
+            let normalized = content
+                .lines()
+                .map(|line| {
+                    let ws_len = line.len().saturating_sub(line.trim_start().len());
+                    let ws = &line[..ws_len];
+                    let trimmed = &line[ws_len..];
+                    if let Some(rest) = trimmed.strip_prefix("////") {
+                        format!("{ws}{rest}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if normalized != content {
+                return Self::apply_add_missing_enum_member_fallback(&normalized);
+            }
+        }
+
         let lines: Vec<String> = content.lines().map(str::to_string).collect();
 
         fn is_ident(s: &str) -> bool {
@@ -1510,6 +1533,29 @@ impl Server {
     }
 
     fn apply_add_missing_enum_member_simple_fallback(content: &str) -> Option<(String, String)> {
+        if content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
+            let normalized = content
+                .lines()
+                .map(|line| {
+                    let ws_len = line.len().saturating_sub(line.trim_start().len());
+                    let ws = &line[..ws_len];
+                    let trimmed = &line[ws_len..];
+                    if let Some(rest) = trimmed.strip_prefix("////") {
+                        format!("{ws}{rest}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if normalized != content {
+                return Self::apply_add_missing_enum_member_simple_fallback(&normalized);
+            }
+        }
+
         let mut enum_name = None::<String>;
         let mut member_name = None::<String>;
         for line in content.lines() {
