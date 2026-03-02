@@ -9,6 +9,7 @@
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
+use tsz::parser::node::NodeAccess;
 use tsz_solver::TypeInterner;
 
 impl Server {
@@ -68,6 +69,14 @@ impl Server {
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                 parts.push(serde_json::json!({"text": name, "kind": "typeParameterName"}));
+                if let Some(suffix) =
+                    Self::type_parameter_context_suffix(name, binder, arena, source_text)
+                {
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": "in", "kind": "keyword"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": suffix, "kind": "text"}));
+                }
             }
             CompletionItemKind::Function => {
                 parts.push(serde_json::json!({"text": "function", "kind": "keyword"}));
@@ -225,6 +234,123 @@ impl Server {
         }
 
         serde_json::json!(parts)
+    }
+
+    fn node_text_slice<'a>(
+        node: tsz::parser::NodeIndex,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &'a str,
+    ) -> Option<&'a str> {
+        let n = arena.get(node)?;
+        let start = n.pos as usize;
+        let end = n.end.min(source_text.len() as u32) as usize;
+        (start < end).then(|| source_text[start..end].trim())
+    }
+
+    fn type_parameter_context_suffix(
+        name: &str,
+        binder: &tsz::binder::BinderState,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+    ) -> Option<String> {
+        use tsz::parser::syntax_kind_ext;
+
+        let mut type_param_decl = None;
+        for symbol in binder.symbols.iter() {
+            if symbol.escaped_name != name {
+                continue;
+            }
+            for &decl in &symbol.declarations {
+                if arena
+                    .get(decl)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PARAMETER)
+                {
+                    type_param_decl = Some(decl);
+                    break;
+                }
+            }
+            if type_param_decl.is_some() {
+                break;
+            }
+        }
+        let mut current = type_param_decl?;
+        for _ in 0..24 {
+            let ext = arena.get_extended(current)?;
+            if ext.parent == current {
+                break;
+            }
+            current = ext.parent;
+            let node = arena.get(current)?;
+            if node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                let function = arena.get_function(node)?;
+                let type_params = function
+                    .type_parameters
+                    .as_ref()
+                    .map(|list| {
+                        list.nodes
+                            .iter()
+                            .filter_map(|&idx| {
+                                Self::node_text_slice(idx, arena, source_text).map(|text| {
+                                    text.trim()
+                                        .trim_start_matches('<')
+                                        .trim_end_matches('>')
+                                        .trim()
+                                        .to_string()
+                                })
+                            })
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                let params = function
+                    .parameters
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        let param_node = arena.get(param_idx)?;
+                        let param = arena.get_parameter(param_node)?;
+                        let pname = arena.get_identifier_text(param.name)?;
+                        let ptype = if param.type_annotation.is_some() {
+                            let raw =
+                                Self::node_text_slice(param.type_annotation, arena, source_text)?;
+                            raw.trim()
+                                .trim_end_matches(',')
+                                .trim_end_matches(';')
+                                .trim_end_matches(')')
+                                .trim()
+                        } else {
+                            "any"
+                        };
+                        Some(format!("{pname}: {ptype}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let return_type = if function.type_annotation.is_some() {
+                    Self::node_text_slice(function.type_annotation, arena, source_text)
+                        .unwrap_or("any")
+                } else if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                    let body_node = arena.get(function.body)?;
+                    if body_node.kind == syntax_kind_ext::BLOCK {
+                        "void"
+                    } else {
+                        "any"
+                    }
+                } else {
+                    "any"
+                };
+                let signature = if type_params.is_empty() {
+                    format!("({params}): {return_type}")
+                } else {
+                    format!("<{type_params}>({params}): {return_type}")
+                };
+                return Some(signature);
+            }
+        }
+        None
     }
 
     fn is_merged_namespace_symbol(name: &str, binder: &tsz::binder::BinderState) -> bool {
