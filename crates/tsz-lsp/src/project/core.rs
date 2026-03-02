@@ -1221,6 +1221,14 @@ impl Project {
         self.files.len()
     }
 
+    /// Get the set of files that directly import the given file.
+    pub fn get_file_dependents(&self, file: &str) -> Vec<String> {
+        self.dependency_graph
+            .get_dependents(file)
+            .map(|deps| deps.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Snapshot of per-request timing data.
     pub const fn performance(&self) -> &ProjectPerformance {
         &self.performance
