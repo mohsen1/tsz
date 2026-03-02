@@ -309,6 +309,10 @@ impl Server {
                     json_obj
                 })
                 .collect();
+            response_actions.retain(|action| {
+                action.get("fixId").and_then(serde_json::Value::as_str) != Some("addMissingConst")
+                    || add_missing_const_preview.is_some()
+            });
             if add_missing_await_preview.is_some() {
                 response_actions.retain(|action| {
                     action.get("fixId").and_then(serde_json::Value::as_str)
