@@ -1470,10 +1470,54 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 // TODO: implement check_type_element for type literal members
             }
-            // Note: CONDITIONAL_TYPE is intentionally NOT handled here.
-            // Conditional types introduce scoping complexities (infer variables,
-            // type narrowing in branches) that make safe recursion difficult.
-            // Mapped type constraint checks within conditionals are deferred.
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                // Recurse into conditional type branches to validate nested
+                // mapped type constraints (e.g., `string extends T ? { [P in T]: V } : T`).
+                //
+                // Scoping subtlety: in `CheckType extends ExtendsType ? TrueType : FalseType`,
+                // the true branch narrows CheckType to `CheckType & ExtendsType` when
+                // CheckType is a type parameter. This means mapped types in the true branch
+                // may be valid even if the unconstrained type parameter isn't a valid key.
+                // (e.g., `T extends string ? { [P in T]: void } : T` — T is narrowed to string)
+                //
+                // Only visit a branch when:
+                // 1. It IS a mapped type (direct child), AND
+                // 2. For the true branch: the check type is NOT a type parameter reference
+                //    (no narrowing applies, so the mapped type key isn't silently valid).
+                //
+                // This minimizes side effects from type resolution while still catching
+                // invalid mapped type keys inside conditional types.
+                if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+                    let true_is_mapped = self
+                        .ctx
+                        .arena
+                        .get(cond.true_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::MAPPED_TYPE);
+                    if true_is_mapped {
+                        // Check if the check type resolves to a type parameter.
+                        // If so, the true branch benefits from narrowing and we
+                        // skip it. Use get_type_from_type_node which is safe here
+                        // because we only call it on the check type (not the
+                        // branches), and only when a mapped type is present.
+                        let check_type = self.get_type_from_type_node(cond.check_type);
+                        let check_is_type_param = tsz_solver::type_queries::is_type_parameter_like(
+                            self.ctx.types,
+                            check_type,
+                        );
+                        if !check_is_type_param {
+                            self.check_type_node(cond.true_type);
+                        }
+                    }
+                    let false_is_mapped = self
+                        .ctx
+                        .arena
+                        .get(cond.false_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::MAPPED_TYPE);
+                    if false_is_mapped {
+                        self.check_type_node(cond.false_type);
+                    }
+                }
+            }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 self.check_mapped_type_constraint(node_idx);
             }

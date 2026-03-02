@@ -299,6 +299,25 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // If the spread type is a generic type parameter constrained to an
+                    // array type (e.g., A extends any[]), treat it like a rest parameter
+                    // spread. TypeScript does NOT emit TS2556 for such spreads because
+                    // the runtime value is guaranteed to be array-like.
+                    if is_type_parameter_type(self.ctx.types, spread_type)
+                        && let Some(constraint) =
+                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                self.ctx.types,
+                                spread_type,
+                            )
+                            && (array_element_type_for_type(self.ctx.types, constraint).is_some()
+                                || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+                            {
+                                // Push the spread type as-is (the solver will handle it)
+                                arg_types.push(spread_type);
+                                effective_index += 1;
+                                continue;
+                            }
+
                     // If it's an array type, check if it's an array literal spread
                     // For array literals, we want to check each element individually
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
