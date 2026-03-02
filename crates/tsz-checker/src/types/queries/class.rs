@@ -64,6 +64,7 @@ impl<'a> CheckerState<'a> {
         type_parameters: &Option<tsz_parser::parser::NodeList>,
         body_root: NodeIndex,
     ) {
+        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
         // Type parameters are checked under noUnusedParameters, not noUnusedLocals.
@@ -107,19 +108,61 @@ impl<'a> CheckerState<'a> {
         let mut pos_start = root_node.pos;
         let mut pos_end = root_node.end;
 
-        // For merged declarations (e.g., class + interface with same name),
-        // check type parameter usage across ALL declarations, not just the current one.
-        // This prevents false positives like "class C<T> {} interface C<T> { a: T }".
+        // Determine if this declaration is part of a cross-file merge.
+        // For merged declarations (e.g., class C<T> in a.ts + interface C<T> in b.ts),
+        // TSC checks type parameter usage across ALL merged declarations. If T is used
+        // in ANY merged declaration, no TS6133 is emitted for any of them. If T is
+        // unused in ALL merged declarations, TS6133 is emitted only for non-class
+        // declarations (interfaces get flagged, classes do not).
+        let mut is_cross_file_merge = false;
+        let mut is_class_in_merge = false;
+        let mut remote_decl_indices: Vec<(
+            std::sync::Arc<tsz_parser::parser::NodeArena>,
+            NodeIndex,
+        )> = Vec::new();
+
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(body_root)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            // If there are multiple declarations, expand the range to include all
-            if symbol.declarations.len() > 1 {
-                for &decl_idx in &symbol.declarations {
+            // Check each declaration for local vs remote and expand local range.
+            // Note: symbol.declarations may have fewer entries than actual merged
+            // declarations when cross-file NodeIndex collision caused dedup in
+            // parallel.rs. A single NodeIndex can map to multiple arenas in
+            // declaration_arenas, so we must check arenas regardless of
+            // symbol.declarations.len().
+            for &decl_idx in &symbol.declarations {
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    let mut has_local = false;
+                    for arena_arc in arenas {
+                        if std::ptr::eq(&**arena_arc, self.ctx.arena) {
+                            has_local = true;
+                        } else {
+                            is_cross_file_merge = true;
+                            remote_decl_indices.push((std::sync::Arc::clone(arena_arc), decl_idx));
+                        }
+                    }
+                    if has_local
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                            pos_start = pos_start.min(decl_node.pos);
+                            pos_end = pos_end.max(decl_node.end);
+                        }
+                } else {
+                    // No declaration_arenas entry: assume local
                     if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                         pos_start = pos_start.min(decl_node.pos);
                         pos_end = pos_end.max(decl_node.end);
                     }
+                }
+            }
+
+            // If this is a class declaration in a cross-file merge, TSC does not
+            // emit TS6133 for the class's type parameters (only for interfaces).
+            if is_cross_file_merge {
+                let body_kind = root_node.kind;
+                if body_kind == syntax_kind_ext::CLASS_DECLARATION
+                    || body_kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    is_class_in_merge = true;
                 }
             }
         }
@@ -127,7 +170,7 @@ impl<'a> CheckerState<'a> {
         let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx, _)| *idx).collect();
         let mut used = vec![false; params.len()];
 
-        // Scan all nodes in the arena for identifiers within the declaration range
+        // Scan all nodes in the LOCAL arena for identifiers within the declaration range
         let arena_len = self.ctx.arena.len();
         for i in 0..arena_len {
             let idx = NodeIndex(i as u32);
@@ -153,7 +196,67 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Emit TS6133 for unused type parameters
+        // For cross-file merges, also scan REMOTE arenas for type parameter usage.
+        // This matches TSC behavior where T is considered "used" if it appears in
+        // ANY merged declaration across files.
+        if is_cross_file_merge && used.iter().any(|u| !u) {
+            for (remote_arena, remote_decl_idx) in &remote_decl_indices {
+                if let Some(remote_decl_node) = remote_arena.get(*remote_decl_idx) {
+                    let remote_start = remote_decl_node.pos;
+                    let remote_end = remote_decl_node.end;
+
+                    // Collect type parameter declaration name identifiers in the
+                    // remote arena so we can skip them (they are declarations, not
+                    // usages of the type parameter).
+                    let mut remote_tp_name_indices: Vec<NodeIndex> = Vec::new();
+                    let remote_len = remote_arena.len();
+                    for i in 0..remote_len {
+                        let idx = NodeIndex(i as u32);
+                        let Some(node) = remote_arena.get(idx) else {
+                            continue;
+                        };
+                        if node.pos < remote_start || node.end > remote_end {
+                            continue;
+                        }
+                        if let Some(tp_data) = remote_arena.get_type_parameter(node) {
+                            remote_tp_name_indices.push(tp_data.name);
+                        }
+                    }
+
+                    for i in 0..remote_len {
+                        let idx = NodeIndex(i as u32);
+                        // Skip type parameter declaration identifiers
+                        if remote_tp_name_indices.contains(&idx) {
+                            continue;
+                        }
+                        let Some(node) = remote_arena.get(idx) else {
+                            continue;
+                        };
+                        if node.pos < remote_start || node.end > remote_end {
+                            continue;
+                        }
+                        if node.kind == SyntaxKind::Identifier as u16
+                            && let Some(ident) = remote_arena.get_identifier(node)
+                        {
+                            let name_str = ident.escaped_text.as_str();
+                            for (j, (param_name, _, _)) in params.iter().enumerate() {
+                                if !used[j] && param_name == name_str {
+                                    used[j] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Emit TS6133 for unused type parameters.
+        // For class declarations in a cross-file merge, TSC does not emit TS6133
+        // (only interfaces in the merge get flagged).
+        if is_class_in_merge {
+            return;
+        }
+
         let file_name = self.ctx.file_name.clone();
         for (j, (name, decl_idx, use_list_anchor)) in params.iter().enumerate() {
             if used[j] {

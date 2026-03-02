@@ -1511,8 +1511,37 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 if is_cross_file_merge {
                     // Cross-file merge: append declarations and merge flags
                     new_sym.flags |= old_sym.flags;
-                    // Append new declarations from this file
-                    append_unique_declarations(&mut new_sym.declarations, &old_sym.declarations);
+                    // Append new declarations from this file, but skip NodeIndex values
+                    // that already exist from a DIFFERENT arena (cross-file NodeIndex
+                    // collision). When two files produce the same NodeIndex for different
+                    // declarations, adding duplicates causes the checker to look up the
+                    // wrong arena and misidentify declaration kinds (e.g., treating a
+                    // remote interface as a local class, triggering false TS2300).
+                    // The declaration_arenas entry already contains both arenas for the
+                    // colliding NodeIndex, so the checker can iterate all arenas there.
+                    {
+                        let mut filtered_decls: Vec<NodeIndex> = Vec::new();
+                        for &decl_idx in &old_sym.declarations {
+                            if new_sym.declarations.contains(&decl_idx) {
+                                // NodeIndex collision: this index already exists in the
+                                // merged symbol from a previous file. Check if the
+                                // declaration_arenas entry has a different arena (meaning
+                                // it's from a different file, not a true duplicate).
+                                if let Some(arenas) = declaration_arenas.get(&(new_id, decl_idx)) {
+                                    let has_different_arena = arenas.iter().any(|a| {
+                                        !std::ptr::eq(Arc::as_ptr(a), Arc::as_ptr(&result.arena))
+                                    });
+                                    if has_different_arena {
+                                        // Skip: this is a cross-file collision, not a
+                                        // true duplicate declaration within the same file.
+                                        continue;
+                                    }
+                                }
+                            }
+                            filtered_decls.push(decl_idx);
+                        }
+                        append_unique_declarations(&mut new_sym.declarations, &filtered_decls);
+                    }
                     // Update value_declaration if the old one was NONE
                     if new_sym.value_declaration.is_none() && !old_sym.value_declaration.is_none() {
                         new_sym.value_declaration = old_sym.value_declaration;
