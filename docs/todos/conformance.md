@@ -1,7 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9754/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9756/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02f — Fix type-only import detection for TS1361/TS1362
+
+### Fixed: source_file_has_value_import_binding_named checked wrong is_type_only level — Checker (identifier.rs)
+
+**Area**: externalModules/typeOnly (computedPropertyName.ts, filterNamespace_import.ts, and 8+ other tests)
+
+**Root cause**: `source_file_has_value_import_binding_named()` checked `ImportDeclData::is_type_only` to determine if an import should be skipped when looking for value import bindings. But for regular import declarations (`import type { X } from ...`), `ImportDeclData::is_type_only` is **always false** — the type-only flag lives on `ImportClauseData::is_type_only` instead. Only import-equals declarations (`import type X = require(...)`) use `ImportDeclData::is_type_only`.
+
+This caused the function to treat ALL type-only imports as value imports, incorrectly suppressing TS1361/TS1362 diagnostics. Every call site that checked `alias_resolves_to_type_only()` → `source_file_has_value_import_binding_named()` was affected.
+
+**Fix**: Three-level is_type_only check:
+1. `ImportDeclData::is_type_only` — only for import-equals (`import type X = require(...)`)
+2. `ImportClauseData::is_type_only` — for clause-level type-only (`import type { X }`, `import type X`)
+3. `SpecifierData::is_type_only` — for per-specifier type-only (`import { type X, Y }`)
+
+**Tests**: 3 unit tests in `identifier.rs`:
+- `ts1361_type_only_import_in_value_computed_property` — `import type { onInit }` → `[onInit]: 0` in object literal → TS1361
+- `no_ts1361_for_regular_import_with_same_name` — `import { onInit }` → no TS1361
+- `ts1361_respects_per_specifier_type_only` — `import { type Foo }` → `let x = Foo` → TS1361
+
+**Impact**: +7-11 conformance tests (varies due to suite non-determinism):
+- `computedPropertyName.ts` — 4 TS1361 now emitted for value computed property names
+- `filterNamespace_import.ts` — 2 TS1361 for `ns.Class` and `ns.Value` after `import type ns`
+- `importClause_default.ts` — TS1361 now correct (was passing but with wrong suppression path)
+- `importClause_namedImports.ts` — same as above
+- `commonJSImportNotAsPrimaryExpression.ts` — cross-cutting improvement
+- Several others via indirect improvements (resolutionModeCache, for-of37, etc.)
+
+**Files changed**:
+- `crates/tsz-checker/src/types/computation/identifier.rs` — `source_file_has_value_import_binding_named()` fix + 3 tests
+
+**Remaining TS1361/TS1362 gaps** (separate root causes):
+- `exportNamespace2.ts` — cross-file chain: `import type { a } → export { a } → import { a }`. The intermediate re-export doesn't propagate type-only through `is_export_type_only_across_binders`.
+- `exportNamespace4.ts` — `export type * from './a'` wildcard type-only re-export not detected by cross-binder resolution.
+- `exportNamespace10/12.ts`, `exportSpecifiers.ts`, `typeOnlyMerge2/3.ts` — all need TS1362 via `export type` chain. Root cause is `is_export_type_only_in_file()` not handling all wildcard/chain patterns.
+- `enums.ts` — TS1361 now emitted but also has false TS2322 (enum cross-file resolution issue).
+
+---
 
 ## Session 2026-03-02e — Fix nested conditional type constraint computation
 
