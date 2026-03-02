@@ -334,3 +334,18 @@ function* g204() {
         "yield in generic call argument should trigger TS7057"
     );
 }
+
+#[test]
+fn no_ts7057_for_yield_in_nested_dynamic_import_argument() {
+    // Mirrors asyncImportNestedYield.ts: yield is contextually typed by import().
+    let source = r#"
+async function* g() {
+    import((await import(yield "foo")).default);
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield inside nested dynamic import argument should not trigger TS7057"
+    );
+}
