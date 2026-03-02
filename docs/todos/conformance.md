@@ -1,7 +1,52 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9772/12570 (77.7%) — full suite, error-code level
+**Current score**: **9774/12569 (77.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Direction (2026-03-02)
+
+### Where we are
+- Progress is steady but still in “high-volume mismatch” mode:
+  - False positives: **327 tests**
+  - All-missing (emit 0 when tsc emits errors): **497 tests**
+  - Wrong-code mismatches: **1971 tests**
+  - Near-pass opportunities (`diff <= 2`): **1596 tests**
+- The top 3 codes dominate both missing and extra buckets:
+  - **TS2322, TS2339, TS2345**
+  - These are also top false-positive codes, so they should be addressed via shared gates, not piecemeal heuristics.
+
+### Priority order (highest ROI first)
+1. **False-positive burn-down on TS2322/TS2339/TS2345/TS7006**
+   - Why first: removing extras is the fastest path to flips and reduces noise that hides true misses.
+   - Evidence: one-extra-only pass potential is highest for TS2322 (68), TS2339 (60), TS2345 (53), TS7006 (14).
+2. **One-missing quick-win campaign on the same code family**
+   - Why second: same subsystems, high pass conversion with minimal surface area.
+   - Evidence: one-missing-only pass potential TS2322 (65), TS2339 (47), TS2345 (40), then TS2307/TS2304/TS2769.
+3. **Parser/config tail cleanup (TS1005/TS1109/TS1128 + TS2307/TS5107)**
+   - Why third: these are broad multipliers that unblock many “all-missing” and wrong-code cases.
+
+### Execution plan (next 3 sessions)
+1. **Session A — TS2322/TS2345 centralization hardening**
+   - Enforce single assignability gateway usage on all checker paths that still bypass it.
+   - Eliminate ad-hoc suppression behavior that masks structural mismatches.
+   - Target outcome: reduce TS2322+TS2345 false positives by 20-30 tests.
+2. **Session B — Property/callability narrowing for TS2339/TS2349/TS2769**
+   - Focus on union/intersection/indexed-access property lookup consistency and callability resolution.
+   - Target outcome: reduce TS2339 false positives by 15-20 tests and improve TS2769/TS2349 spillover.
+3. **Session C — TS7006 contextual typing sweep**
+   - Focus on contextual typing propagation through callbacks/IIFEs/generics/JSX attributes.
+   - Target outcome: reduce TS7006 false positives by 8-12 tests.
+
+### What to avoid
+- Do **not** optimize for message/fingerprint diffs before error-code flips on the top codes.
+- Do **not** add checker-local special cases for TS2322-family behavior; push logic into solver + boundary helpers.
+- Do **not** run full conformance for exploration. Use snapshot queries first; run filtered tests, then full run only for verification.
+
+### Tracking gates
+- Per session, require:
+  - `+N` net pass tests (target N >= 10)
+  - no increase in total false positives
+  - no architecture guardrail regressions on checker/solver boundaries
 
 ---
 
