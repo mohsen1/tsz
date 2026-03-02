@@ -117,6 +117,7 @@ impl Server {
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
+            let add_missing_const_preview = Self::apply_add_missing_const_fallback(&content);
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -584,9 +585,9 @@ impl Server {
                         .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
                 } || (error_codes.is_empty() && has_cannot_find_name_diag))
                 && add_missing_await_preview.is_none()
-                && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
+                && let Some(updated_content) = add_missing_const_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
-                    Self::compute_minimal_edit(&content, &updated_content)
+                    Self::compute_minimal_edit(&content, updated_content)
             {
                 let start_pos = line_map.offset_to_position(start_off, &content);
                 let end_pos = line_map.offset_to_position(end_off, &content);
@@ -774,10 +775,16 @@ impl Server {
                                     == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
                                     && import_candidates_is_empty
                                 {
-                                    return *fix_id == "addMissingConst";
+                                    if *fix_id == "addMissingConst" {
+                                        return add_missing_const_preview.is_some();
+                                    }
+                                    return false;
                                 }
                                 if *fix_id == "addMissingAwait" {
                                     return add_missing_await_preview.is_some();
+                                }
+                                if *fix_id == "addMissingConst" {
+                                    return add_missing_const_preview.is_some();
                                 }
                                 true
                             })
