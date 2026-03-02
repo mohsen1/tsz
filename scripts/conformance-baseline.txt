@@ -1731,7 +1731,6 @@ FAIL TypeScript/tests/cases/conformance/es6/memberFunctionDeclarations/MemberFun
 FAIL TypeScript/tests/cases/conformance/es6/modules/defaultExportInAwaitExpression02.ts
 FAIL TypeScript/tests/cases/conformance/es6/modules/exportsAndImportsWithUnderscores1.ts
 FAIL TypeScript/tests/cases/conformance/es6/modules/exportSpellingSuggestion.ts
-FAIL TypeScript/tests/cases/conformance/es6/restParameters/readonlyRestParameters.ts
 FAIL TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesAssignmentError.ts
 FAIL TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesAssignmentErrorFromMissingIdentifier.ts
 FAIL TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesErrorFromNotUsingIdentifier.ts
@@ -1849,9 +1848,7 @@ FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesiz
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/taggedTemplateContextualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithMissingVoid.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread2.ts
-FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread4.ts
-FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread5.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/forgottenNew.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/functionCalls.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInference.ts
@@ -9117,6 +9114,7 @@ PASS TypeScript/tests/cases/conformance/es6/restParameters/emitRestParametersFun
 PASS TypeScript/tests/cases/conformance/es6/restParameters/emitRestParametersFunctionPropertyES6.ts
 PASS TypeScript/tests/cases/conformance/es6/restParameters/emitRestParametersMethod.ts
 PASS TypeScript/tests/cases/conformance/es6/restParameters/emitRestParametersMethodES6.ts
+PASS TypeScript/tests/cases/conformance/es6/restParameters/readonlyRestParameters.ts
 PASS TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandProperties.ts
 PASS TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesAssignment.ts
 PASS TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesAssignmentES6.ts
@@ -9776,6 +9774,8 @@ PASS TypeScript/tests/cases/conformance/expressions/elementAccess/stringEnumInEl
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callOverload.ts
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callWithMissingVoidUndefinedUnknownAnyInJs.ts
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread.ts
+PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread3.ts
+PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread5.ts
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpreadES6.ts
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/grammarAmbiguities.ts
 PASS TypeScript/tests/cases/conformance/expressions/functionCalls/newWithSpread.ts
