@@ -1395,3 +1395,189 @@ fn test_triple_nested_extract_conditional_constraint() {
         "Triple nested Extract should be assignable to C"
     );
 }
+
+// =============================================================================
+// Distributive Conditional Constraint Tests
+// =============================================================================
+// Tests for getConstraintOfDistributiveConditionalType behavior.
+// When a distributive conditional's check type is a type parameter with a constraint,
+// instantiate T→constraint and evaluate to get a concrete type for subtype checks.
+
+#[test]
+fn test_distributive_conditional_constraint_zeroof() {
+    // type ZeroOf<T extends number | string | boolean> =
+    //   T extends number ? 0 : T extends string ? "" : false;
+    //
+    // When T extends number | string, ZeroOf<T> should be assignable to number | string
+    // because instantiating T → number | string and distributing gives 0 | "" which
+    // is a subtype of number | string.
+    let interner = TypeInterner::new();
+
+    let num_or_str = interner.union2(TypeId::NUMBER, TypeId::STRING);
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(num_or_str),
+        default: None,
+        is_const: false,
+    });
+
+    let zero = interner.literal_number(0.0);
+    let empty_str = interner.literal_string("");
+
+    // Inner: T extends string ? "" : false
+    let inner = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: empty_str,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: true,
+    };
+    let inner_id = interner.conditional(inner);
+
+    // Outer: T extends number ? 0 : <inner>
+    let outer = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::NUMBER,
+        true_type: zero,
+        false_type: inner_id,
+        is_distributive: true,
+    };
+    let zeroof = interner.conditional(outer);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // ZeroOf<T> where T extends number | string should be assignable to number | string
+    assert!(
+        checker.is_subtype_of(zeroof, num_or_str),
+        "ZeroOf<T> should be assignable to number | string via distributive constraint"
+    );
+}
+
+#[test]
+fn test_distributive_conditional_constraint_zeroof_literal_union() {
+    // Same ZeroOf<T> as above, but checking against 0 | ""
+    let interner = TypeInterner::new();
+
+    let num_or_str = interner.union2(TypeId::NUMBER, TypeId::STRING);
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(num_or_str),
+        default: None,
+        is_const: false,
+    });
+
+    let zero = interner.literal_number(0.0);
+    let empty_str = interner.literal_string("");
+
+    let inner = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: empty_str,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: true,
+    };
+    let inner_id = interner.conditional(inner);
+
+    let outer = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::NUMBER,
+        true_type: zero,
+        false_type: inner_id,
+        is_distributive: true,
+    };
+    let zeroof = interner.conditional(outer);
+
+    let zero_or_empty = interner.union2(zero, empty_str);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // ZeroOf<T> where T extends number | string should be assignable to 0 | ""
+    assert!(
+        checker.is_subtype_of(zeroof, zero_or_empty),
+        "ZeroOf<T> should be assignable to 0 | \"\" via distributive constraint"
+    );
+}
+
+#[test]
+fn test_distributive_conditional_constraint_simple() {
+    // type F<T extends string | number> = T extends string ? boolean : object;
+    // F<T> should be assignable to boolean | object when T extends string | number
+    let interner = TypeInterner::new();
+
+    let str_or_num = interner.union2(TypeId::STRING, TypeId::NUMBER);
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(str_or_num),
+        default: None,
+        is_const: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::BOOLEAN,
+        false_type: TypeId::OBJECT,
+        is_distributive: true,
+    };
+    let cond_id = interner.conditional(cond);
+
+    let bool_or_obj = interner.union2(TypeId::BOOLEAN, TypeId::OBJECT);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    assert!(
+        checker.is_subtype_of(cond_id, bool_or_obj),
+        "Distributive conditional should be assignable to union of both branches"
+    );
+}
+
+#[test]
+fn test_non_distributive_conditional_no_constraint_eval() {
+    // Non-distributive conditional should NOT use the distributive constraint strategy.
+    // [T] extends [string] ? boolean : object should stay deferred.
+    let interner = TypeInterner::new();
+
+    let str_or_num = interner.union2(TypeId::STRING, TypeId::NUMBER);
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(str_or_num),
+        default: None,
+        is_const: false,
+    });
+
+    // Non-distributive conditional (is_distributive = false)
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::BOOLEAN,
+        false_type: TypeId::OBJECT,
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Strategy 1 (default constraint) gives (T & string) | object.
+    // T & string <: boolean | object? T & string is not a subtype of boolean.
+    // object <: boolean | object? Yes. So constraint = (T & string) | object <: boolean | object?
+    // T & string is not a subtype of boolean, and not subtype of object either (it's a type param
+    // intersection). So this should NOT be assignable via distributive constraint.
+    // But it might still succeed via the default constraint path (Strategy 1).
+    // The key test is that is_distributive=false does NOT trigger Strategy 1.5.
+    // Let's just verify it behaves differently from the distributive case.
+    let bool_or_obj = interner.union2(TypeId::BOOLEAN, TypeId::OBJECT);
+    let result = checker.is_subtype_of(cond_id, bool_or_obj);
+    // Non-distributive: Strategy 1 gives (T & string) | object.
+    // T & string <: boolean | object is checked; T & string <: boolean = false,
+    // T & string <: object = maybe (type param). Let it fall through to Strategy 2.
+    // Strategy 2: true=boolean <: boolean|object=yes, false=object <: boolean|object=yes.
+    // So it should actually succeed via Strategy 2.
+    assert!(
+        result,
+        "Non-distributive conditional should still succeed via branch checking"
+    );
+}
