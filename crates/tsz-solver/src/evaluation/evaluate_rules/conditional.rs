@@ -447,11 +447,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
-            } else if crate::visitor::contains_type_parameters(self.interner(), extends_type) {
-                // Subtype check failed, but extends_type contains unresolved type
-                // parameters. The result is indeterminate: once the type parameter
-                // is instantiated, `check_type` might become a subtype.
-                // For example: `number extends T ? fn : never` — T could be `number`.
+            } else if crate::visitor::contains_type_parameters(self.interner(), extends_type)
+                // Also check if the evaluated check_type is a direct Lazy reference
+                // (or a union/intersection of Lazy refs). Type parameters in generic
+                // function bodies are Lazy(DefId) and contains_type_parameters doesn't
+                // see through them. A direct Lazy check_type means the whole type is
+                // unresolved (e.g., `T & U` becomes Lazy(DefId)), so the conditional
+                // result is indeterminate. Don't defer for wrapped Lazy (like KeyOf(Lazy))
+                // where the wrapper type provides enough info for a determinate result.
+                || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
+                || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
+            {
+                // Subtype check failed, but either side contains unresolved type
+                // parameters or lazy references. The result is indeterminate: once
+                // the type parameters are instantiated, the relationship might change.
+                // Examples:
+                //   `number extends T ? X : Y` — T could be `number`
+                //   `T & U extends string ? X : Y` — T & U could be `string`
                 // Defer the conditional instead of eagerly taking the false branch.
                 return self.interner().conditional(ConditionalType {
                     check_type,
