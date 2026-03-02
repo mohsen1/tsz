@@ -591,8 +591,7 @@ impl Server {
             {
                 let start_pos = line_map.offset_to_position(start_off, &content);
                 let end_pos = line_map.offset_to_position(end_off, &content);
-                response_actions.clear();
-                response_actions.push(serde_json::json!({
+                let const_action = serde_json::json!({
                     "fixName": "addMissingConst",
                     "description": "Add 'const' to unresolved variable",
                     "changes": [{
@@ -605,7 +604,18 @@ impl Server {
                     }],
                     "fixId": "addMissingConst",
                     "fixAllDescription": "Add 'const' to all unresolved variables",
-                }));
+                });
+                response_actions.retain(|existing| {
+                    existing
+                        .get("fixId")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("addMissingConst")
+                });
+                if response_actions.is_empty() {
+                    response_actions.push(const_action);
+                } else {
+                    response_actions.push(const_action);
+                }
             }
 
             if let Some(action) = self.synthetic_implement_interface_codefix(
