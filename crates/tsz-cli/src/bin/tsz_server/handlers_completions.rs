@@ -1002,14 +1002,11 @@ impl Server {
             entry["hasAction"] = serde_json::json!(true);
             let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
             if include_insert_text
-                && let Some(insert_text) = item
-                    .insert_text
-                    .clone()
-                    .or_else(|| {
-                        is_class_member_snippet
-                            .then(|| Self::class_member_snippet_insert_text(item))
-                            .flatten()
-                    })
+                && let Some(insert_text) = item.insert_text.clone().or_else(|| {
+                    is_class_member_snippet
+                        .then(|| Self::class_member_snippet_insert_text(item))
+                        .flatten()
+                })
             {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
@@ -1305,12 +1302,8 @@ impl Server {
                     // When source metadata is missing for duplicate labels, prefer
                     // ClassMemberSnippet entries to keep tsserver details/code-action
                     // pairing stable for snippet-backed completions.
-                    let normalize_source = |s: &str| {
-                        s.trim()
-                            .trim_matches('\"')
-                            .trim_matches('\'')
-                            .to_string()
-                    };
+                    let normalize_source =
+                        |s: &str| s.trim().trim_matches('\"').trim_matches('\'').to_string();
                     let source_matches = |item_source: Option<&str>, requested_source: &str| {
                         let Some(item_source) = item_source else {
                             return false;
