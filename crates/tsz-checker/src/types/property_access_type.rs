@@ -554,8 +554,11 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.ctx.strict_bind_call_apply()
-                && let Some(strict_method_type) =
-                    self.strict_bind_call_apply_method_type(object_type_for_access, property_name)
+                && let Some(strict_method_type) = self.strict_bind_call_apply_method_type(
+                    object_type_for_access,
+                    access.expression,
+                    property_name,
+                )
             {
                 return self.apply_flow_narrowing(idx, strict_method_type);
             }
@@ -1569,8 +1572,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn strict_bind_call_apply_method_type(
-        &self,
+        &mut self,
         object_type: TypeId,
+        object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> Option<TypeId> {
         if property_name != "apply" {
@@ -1578,30 +1582,46 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        let (params, return_type) = if let Some(shape) =
-            crate::query_boundaries::property_access::function_shape(self.ctx.types, object_type)
-        {
-            (shape.params.clone(), shape.return_type)
-        } else if let Some(shape) =
-            crate::query_boundaries::property_access::callable_shape(self.ctx.types, object_type)
-        {
-            let sig = shape.call_signatures.first()?;
-            (sig.params.clone(), sig.return_type)
-        } else {
-            return None;
-        };
+        let mut candidates = vec![object_type];
+        if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
+            let sym_type = self.get_type_of_symbol(sym_id);
+            if sym_type != TypeId::ERROR
+                && !candidates.contains(&sym_type)
+            {
+                candidates.push(sym_type);
+            }
+        }
+
+        let mut resolved_shape = None;
+        for candidate in candidates {
+            if let Some(shape) =
+                crate::query_boundaries::property_access::function_shape(self.ctx.types, candidate)
+            {
+                resolved_shape = Some((shape.params.clone(), shape.return_type));
+                break;
+            }
+            if let Some(shape) =
+                crate::query_boundaries::property_access::callable_shape(self.ctx.types, candidate)
+            {
+                if let Some(sig) = shape.call_signatures.first() {
+                    resolved_shape = Some((sig.params.clone(), sig.return_type));
+                    break;
+                }
+            }
+        }
+
+        let (params, return_type) = resolved_shape?;
 
         let tuple_elements: Vec<tsz_solver::TupleElement> = params
             .iter()
             .map(|param| tsz_solver::TupleElement {
                 type_id: param.type_id,
                 name: param.name,
-                optional: param.optional,
+                optional: param.optional && !param.rest,
                 rest: param.rest,
             })
             .collect();
         let args_tuple = factory.tuple(tuple_elements);
-
         let method_shape = tsz_solver::FunctionShape {
             params: vec![
                 tsz_solver::ParamInfo {

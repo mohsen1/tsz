@@ -317,6 +317,18 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
 
     match key {
         TypeData::Callable(shape_id) => CallSignaturesKind::Callable(shape_id),
+        TypeData::Function(func_id) => {
+            let function = db.function_shape(func_id);
+            let signature = crate::CallSignature {
+                params: function.params.clone(),
+                this_type: function.this_type,
+                return_type: function.return_type,
+                type_params: function.type_params.clone(),
+                type_predicate: function.type_predicate.clone(),
+                is_method: function.is_method,
+            };
+            CallSignaturesKind::MultipleSignatures(vec![signature])
+        }
         TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
             // For unions/intersections, collect call signatures from all callable members.
             // Intersections arise from merged declarations (e.g., function + namespace).
@@ -328,6 +340,17 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                     Some(TypeData::Callable(shape_id)) => {
                         let shape = db.callable_shape(shape_id);
                         call_signatures.extend(shape.call_signatures.iter().cloned());
+                    }
+                    Some(TypeData::Function(func_id)) => {
+                        let function = db.function_shape(func_id);
+                        call_signatures.push(crate::CallSignature {
+                            params: function.params.clone(),
+                            this_type: function.this_type,
+                            return_type: function.return_type,
+                            type_params: function.type_params.clone(),
+                            type_predicate: function.type_predicate.clone(),
+                            is_method: function.is_method,
+                        });
                     }
                     _ => continue,
                 }
