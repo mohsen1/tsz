@@ -3,6 +3,32 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9762/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02i — Defer premature TS2339 in contextual destructuring callbacks
+
+### Fixed: Destructuring callback parameters emitted TS2339 before generic contextual typing stabilized
+
+**Area**: checker/destructuring + high-impact TS2339 false positives
+
+**Root cause**: `get_binding_element_type()` emitted TS2339 immediately when a binding-property lookup failed, even for unannotated callback parameters contextually typed through unresolved type parameters. In those call sites, TypeScript typically reports the top-level assignability error (TS2322/TS2345), not a premature property error from transient `T`.
+
+**Fix**:
+1. Added `should_defer_property_not_found_for_contextual_destructuring()` guard in `destructuring.rs`.
+2. Suppress TS2339 for property-not-found only when all are true:
+   - parent type is type-parameter-like,
+   - binding pattern belongs to a parameter,
+   - parameter has no explicit annotation,
+   - enclosing function is an arrow/function expression (contextual callback scenario).
+
+**Targeted verification**:
+- `arrayFrom.ts` now passes in targeted conformance run.
+- `destructuringWithGenericParameter.ts` now passes in targeted conformance run.
+- Added checker regression test:
+  - `test_array_from_contextual_destructuring_does_not_emit_ts2339`
+
+**Files changed**:
+- `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+- `crates/tsz-checker/tests/conformance_issues.rs`
+
 ## Session 2026-03-02h — Fix union type call resolution bypassing solver via overload path
 
 ### Fixed: Union callee types incorrectly routed through overload resolution — Checker (call.rs)
