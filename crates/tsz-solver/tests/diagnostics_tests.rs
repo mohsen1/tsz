@@ -52,7 +52,8 @@ fn test_format_object_type() {
 
     let formatted = formatter.format(obj);
     assert!(formatted.contains("x: number"));
-    assert!(formatted.contains("y?: string"));
+    // Optional properties display with `| undefined` to match tsc output
+    assert!(formatted.contains("y?: string | undefined"));
 }
 
 #[test]
@@ -457,5 +458,132 @@ fn test_too_many_parameters_reason_produces_ts2322_not_ts2554() {
         pending.code,
         codes::TYPE_NOT_ASSIGNABLE,
         "TooManyParameters diagnostic should use TS2322 code"
+    );
+}
+
+// =============================================================================
+// Optional property/parameter `| undefined` display tests
+// =============================================================================
+
+#[test]
+fn test_optional_property_shows_undefined() {
+    // tsc displays optional properties as `name?: T | undefined` when
+    // exactOptionalPropertyTypes is not enabled (the default).
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+        PropertyInfo::opt(interner.intern_string("y"), TypeId::STRING),
+    ]);
+
+    let formatted = formatter.format(obj);
+    assert_eq!(
+        formatted, "{ x: number; y?: string | undefined; }",
+        "Optional properties should include '| undefined' in display"
+    );
+}
+
+#[test]
+fn test_optional_property_already_has_undefined_no_duplicate() {
+    // If the property type already includes undefined (e.g., `string | undefined`),
+    // the formatter should not add a duplicate `| undefined`.
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let str_or_undef = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+    let obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("val"),
+        str_or_undef,
+    )]);
+
+    let formatted = formatter.format(obj);
+    assert_eq!(
+        formatted, "{ val?: string | undefined; }",
+        "Should not add duplicate '| undefined' when type already includes it"
+    );
+}
+
+#[test]
+fn test_optional_function_param_shows_undefined() {
+    // tsc displays optional function params with `| undefined` when the stored
+    // type doesn't already include undefined (e.g., interface member function types).
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let formatted = formatter.format(func);
+    assert_eq!(
+        formatted, "(x: number, y?: number | undefined) => number",
+        "Optional params should include '| undefined' in display"
+    );
+}
+
+#[test]
+fn test_optional_param_already_has_undefined_no_duplicate() {
+    // If the param type already includes undefined, don't double-add it.
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let func = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: num_or_undef,
+            optional: true,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let formatted = formatter.format(func);
+    assert_eq!(
+        formatted, "(x?: number | undefined) => void",
+        "Should not add duplicate '| undefined' when param type already includes it"
+    );
+}
+
+#[test]
+fn test_required_property_no_undefined() {
+    // Required properties should NOT get `| undefined` appended.
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+
+    let formatted = formatter.format(obj);
+    assert_eq!(
+        formatted, "{ name: string; }",
+        "Required properties should not include '| undefined'"
     );
 }
