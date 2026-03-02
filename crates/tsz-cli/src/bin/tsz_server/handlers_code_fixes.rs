@@ -89,7 +89,6 @@ impl Server {
             const ADD_PARAMETER_NAMES_FIX_ID: &str = "addNameToNamelessParameter";
             const IMPLICIT_ANY_PARAMETER_ERROR_CODE: u32 = 7006;
             const FIX_MISSING_ATTRIBUTES_FIX_ID: &str = "fixMissingAttributes";
-            const MISSING_ATTRIBUTES_ERROR_CODE: u32 = 2739;
             let organize_imports_ignore_case = request
                 .arguments
                 .get("preferences")
@@ -481,7 +480,9 @@ impl Server {
 
             if response_actions.is_empty()
                 && error_codes.len() == 1
-                && error_codes[0] == MISSING_ATTRIBUTES_ERROR_CODE
+                && CodeFixRegistry::fixes_for_error_code(error_codes[0])
+                    .iter()
+                    .any(|(fix_name, _, _, _)| *fix_name == "addMissingProperties")
                 && let Some(updated_content) = missing_attributes_content.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
@@ -564,9 +565,16 @@ impl Server {
                     };
                 }
 
+                let has_add_missing_await = error_codes.iter().any(|code| {
+                    CodeFixRegistry::fixes_for_error_code(*code)
+                        .iter()
+                        .any(|(fix_name, _, _, _)| *fix_name == "addMissingAwait")
+                });
+
                 if error_codes.contains(
                     &tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                ) {
+                ) && !has_add_missing_await
+                {
                     let prop_name = request
                         .arguments
                         .get("startLine")
@@ -659,6 +667,18 @@ impl Server {
                         if !seen_fixes.insert((fix_name, fix_id)) {
                             continue;
                         }
+                        let (description, fix_id, fix_all_description) = if fix_name
+                            == "addMissingProperties"
+                            && missing_attributes_content.is_some()
+                        {
+                            (
+                                "Add missing attributes",
+                                "fixMissingAttributes",
+                                "Add all missing attributes",
+                            )
+                        } else {
+                            (description, fix_id, fix_all_description)
+                        };
                         response_actions.push(serde_json::json!({
                             "fixName": fix_name,
                             "description": description,

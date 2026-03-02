@@ -129,9 +129,9 @@ impl CodeFixRegistry {
             // Property '{0}' does not exist on type '{1}'.
             2339 => {
                 vec![
+                    ("addMissingAwait", "addMissingAwait", "Add 'await'", "Fix all expressions possibly missing 'await'"),
                     ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
                     ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
-                    ("addMissingAwait", "addMissingAwait", "Add missing 'await'", "Add all missing 'await'"),
                 ]
             }
             // Property '{0}' is missing in type '{1}' but required in type '{2}'.
@@ -151,8 +151,8 @@ impl CodeFixRegistry {
             // Argument of type '{0}' is not assignable to parameter of type '{1}'.
             2345 => {
                 vec![
+                    ("addMissingAwait", "addMissingAwait", "Add 'await'", "Fix all expressions possibly missing 'await'"),
                     ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
-                    ("addMissingAwait", "addMissingAwait", "Add missing 'await'", "Add all missing 'await'"),
                     ("returnValueCorrect", "fixReturnValueCorrect", "Fix return value", "Fix all return values"),
                 ]
             }
@@ -417,7 +417,7 @@ impl CodeFixRegistry {
             2349 |
             // This expression is not constructable.
             2351 => {
-                vec![("addMissingAwait", "addMissingAwait", "Add missing 'await'", "Add all missing 'await'")]
+                vec![("addMissingAwait", "addMissingAwait", "Add 'await'", "Fix all expressions possibly missing 'await'")]
             }
 
             // === fixExtendsInterfaceBecomesImplements ===
