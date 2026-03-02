@@ -25,15 +25,36 @@ pub(crate) fn get_contextual_signature(
 pub(crate) fn get_construct_signature(
     db: &dyn TypeDatabase,
     type_id: TypeId,
+    arg_count: usize,
 ) -> Option<FunctionShape> {
     let sigs = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
-    // Prefer a generic signature (one with type parameters) over a non-generic one.
-    // This ensures that overloaded constructors like Map's `new<K,V>(entries?)` trigger
-    // proper contextual typing for array/object literal arguments.
-    let sig = sigs
+    let signature_accepts_arg_count = |params: &[tsz_solver::ParamInfo], count: usize| {
+        let required_count = params.iter().filter(|p| !p.optional).count();
+        let has_rest = params.iter().any(|p| p.rest);
+        if has_rest {
+            count >= required_count
+        } else {
+            count >= required_count && count <= params.len()
+        }
+    };
+    let applicable: Vec<_> = sigs
         .iter()
-        .find(|s| !s.type_params.is_empty())
-        .or_else(|| sigs.first())?;
+        .filter(|s| signature_accepts_arg_count(&s.params, arg_count))
+        .collect();
+
+    // Prefer generic signatures among arity-compatible candidates.
+    let sig = if !applicable.is_empty() {
+        applicable
+            .iter()
+            .find(|s| !s.type_params.is_empty())
+            .copied()
+            .or_else(|| applicable.first().copied())?
+    } else {
+        // Fallback to previous behavior when no signature matches arity.
+        sigs.iter()
+            .find(|s| !s.type_params.is_empty())
+            .or_else(|| sigs.first())?
+    };
     Some(FunctionShape {
         type_params: sig.type_params.clone(),
         params: sig.params.clone(),

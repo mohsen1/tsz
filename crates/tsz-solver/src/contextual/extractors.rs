@@ -1039,6 +1039,17 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
             }
         }
 
+        // Avoid contextual-type poisoning from catch-all `any` signatures
+        // (e.g. implementation signatures like `(...args: any[])` on overloaded
+        // constructors). If at least one non-`any` contextual type exists, prefer
+        // those and drop `any` contributors.
+        if param_types.len() > 1 {
+            let has_non_any = param_types.iter().any(|&ty| ty != TypeId::ANY);
+            if has_non_any {
+                param_types.retain(|&ty| ty != TypeId::ANY);
+            }
+        }
+
         collect_single_or_union(self.db, param_types)
     }
 

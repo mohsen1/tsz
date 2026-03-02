@@ -163,6 +163,9 @@ impl<'a> CheckerState<'a> {
                     // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
                         let ctx_type_evaluated = self.evaluate_contextual_type(ctx_type);
+                        let ctx_type_evaluated = self.evaluate_type_with_env(ctx_type_evaluated);
+                        let ctx_type_evaluated = self.resolve_lazy_type(ctx_type_evaluated);
+                        let ctx_type_evaluated = self.evaluate_application_type(ctx_type_evaluated);
                         self.ctx
                             .types
                             .contextual_property_type(ctx_type_evaluated, &name)
@@ -332,6 +335,9 @@ impl<'a> CheckerState<'a> {
                     }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
                         let ctx_type = self.evaluate_contextual_type(ctx_type);
+                        let ctx_type = self.evaluate_type_with_env(ctx_type);
+                        let ctx_type = self.resolve_lazy_type(ctx_type);
+                        let ctx_type = self.evaluate_application_type(ctx_type);
                         // Use a synthetic name that won't match any named property,
                         // causing contextual_property_type to fall back to the index signature.
                         self.ctx
@@ -366,6 +372,9 @@ impl<'a> CheckerState<'a> {
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
                         let ctx_type = self.evaluate_contextual_type(ctx_type);
+                        let ctx_type = self.evaluate_type_with_env(ctx_type);
+                        let ctx_type = self.resolve_lazy_type(ctx_type);
+                        let ctx_type = self.evaluate_application_type(ctx_type);
                         self.ctx.types.contextual_property_type(ctx_type, &name)
                     } else {
                         None
