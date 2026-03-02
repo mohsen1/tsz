@@ -517,6 +517,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             if yield_type != Some(TypeId::ANY)
                 && !contextual_is_concrete
                 && !self.yield_is_in_binding_pattern_initializer(idx)
+                && !self.yield_is_direct_dynamic_import_argument(idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.checker.error_at_node(
@@ -650,6 +651,61 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 return args.nodes.contains(&idx);
             }
+        }
+        false
+    }
+
+    /// Check if a yield expression appears inside an argument of a dynamic import call.
+    /// TypeScript contextually types `import(yield "x")` as string and does not emit TS7057.
+    fn yield_is_direct_dynamic_import_argument(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut guard = 0u32;
+        while current.is_some() {
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            let Some(node) = self.checker.ctx.arena.get(current) else {
+                return false;
+            };
+            if let Some(call) = self.checker.ctx.arena.get_call_expr(node)
+                && self.checker.is_dynamic_import(call)
+                && let Some(args) = call.arguments.as_ref()
+                && args
+                    .nodes
+                    .iter()
+                    .any(|&arg_idx| self.node_contains_descendant(arg_idx, idx))
+            {
+                return true;
+            }
+            let Some(ext) = self.checker.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
+        let mut guard = 0u32;
+        while descendant.is_some() {
+            if descendant == ancestor {
+                return true;
+            }
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            let Some(ext) = self.checker.ctx.arena.get_extended(descendant) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            descendant = ext.parent;
         }
         false
     }
