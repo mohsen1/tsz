@@ -291,6 +291,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
+                // Duplicate import-equals aliases may merge type-only and value targets
+                // under one symbol. If a value import binding with the same local name
+                // exists in the current source/module block, don't treat this as type-only.
+                if self.source_file_has_value_import_binding_named(idx, name) {
+                    return TypeId::ANY;
+                }
                 // Suppress TS1361/TS1362 only in type-only heritage contexts
                 // (interface extends, class implements, declare class extends).
                 // For regular class extends, TS1361 must fire because the extends
