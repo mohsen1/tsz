@@ -1035,6 +1035,126 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Scan given statements for `@extends`/`@augments` JSDoc tags
+    /// that are not on class declarations (TS8022).
+    ///
+    /// Returns `(tag_name, error_pos, error_len)` for each non-class statement
+    /// whose leading JSDoc contains `@extends`/`@augments`.
+    /// For function declarations, the error is anchored at the function name.
+    /// Also checks for dangling JSDoc comments not attached to any statement.
+    pub(crate) fn find_orphaned_extends_tags_for_statements(
+        &self,
+        statements: &[NodeIndex],
+    ) -> Vec<(&'static str, u32, u32)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let mut results = Vec::new();
+        let mut handled_comment_positions = Vec::new();
+
+        // Phase 1: Check each top-level statement's leading JSDoc
+        for &stmt_idx in statements {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Skip class declarations — @extends is valid on classes
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                // Still record the comment position so phase 2 doesn't duplicate
+                if let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text)
+                    && (Self::jsdoc_contains_tag(&jsdoc, "augments")
+                        || Self::jsdoc_contains_tag(&jsdoc, "extends"))
+                    {
+                        handled_comment_positions.push(node.pos);
+                    }
+                continue;
+            }
+
+            let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
+                continue;
+            };
+            let tag = if Self::jsdoc_contains_tag(&jsdoc, "augments") {
+                "augments"
+            } else if Self::jsdoc_contains_tag(&jsdoc, "extends") {
+                "extends"
+            } else {
+                continue;
+            };
+            handled_comment_positions.push(node.pos);
+
+            // Determine error position: function name if available, else node start
+            let (pos, len) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                if let Some(func) = self.ctx.arena.get_function(node)
+                    && let Some(name_node) = self.ctx.arena.get(func.name)
+                {
+                    (name_node.pos, name_node.end - name_node.pos)
+                } else {
+                    (node.pos, node.end - node.pos)
+                }
+            } else {
+                (node.pos, node.end - node.pos)
+            };
+
+            results.push((tag, pos, len));
+        }
+
+        // Phase 2: Check for dangling JSDoc comments not attached to any statement
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+        for comment in comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            // Skip comments we already handled in phase 1
+            if handled_comment_positions
+                .iter()
+                .any(|&stmt_pos| comment.end <= stmt_pos)
+            {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, source_text);
+            let tag = if Self::jsdoc_contains_tag(&content, "augments") {
+                "augments"
+            } else if Self::jsdoc_contains_tag(&content, "extends") {
+                "extends"
+            } else {
+                continue;
+            };
+
+            // Check if any statement contains this comment
+            let is_attached = statements.iter().any(|&stmt_idx| {
+                self.ctx
+                    .arena
+                    .get(stmt_idx)
+                    .is_some_and(|n| n.pos <= comment.pos && n.end >= comment.end)
+            });
+            if is_attached {
+                continue;
+            }
+
+            // Dangling comment — report at the @tag position
+            let needle = format!("@{tag}");
+            let (pos, len) = if let Some(offset) = source_text
+                .get(comment.pos as usize..comment.end as usize)
+                .and_then(|s| s.find(&needle))
+            {
+                let tag_pos = comment.pos + offset as u32;
+                (tag_pos, needle.len() as u32)
+            } else {
+                (comment.pos, comment.end - comment.pos)
+            };
+
+            results.push((tag, pos, len));
+        }
+
+        results
+    }
+
     // JSDoc param tag validation, comment finding, and text parsing utilities
     // have been moved to jsdoc_params.rs
 }
