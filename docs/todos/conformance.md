@@ -1,7 +1,41 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9764/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9799/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02l — Fix boolean discriminant narrowing intercepted by boolean comparison handler
+
+### Fixed: `narrow_by_boolean_comparison()` intercepted discriminant property comparisons with boolean literals
+
+**Area**: types/union (discriminatedUnionTypes2.ts) + cross-cutting (controlFlow, for-of, intersection, classes)
+
+**Root cause**: `narrow_by_boolean_comparison()` in `condition_narrowing.rs` ran BEFORE the discriminant narrowing handler in `narrow_by_binary_expr()`. When encountering `x.kind === false`, it recognized `false` as a boolean literal and treated the comparison as "narrow based on truthiness of `x.kind`". This kept union members like `{ kind: string }` in the narrowed type because strings CAN be falsy (empty string `""`), when discriminant narrowing should exclude them because `false` is NOT a subtype of `string`.
+
+**Fix**: Added a guard in `narrow_by_boolean_comparison()` that checks if the guard expression (the non-boolean side) forms a discriminant property path on the target reference via `relative_discriminant_path()`. If it does, the function returns `None` to let the downstream discriminant narrowing handle it correctly. Also promoted `relative_discriminant_path()` to `pub(super)` visibility for cross-module access.
+
+**Tests**: 3 unit tests in `conformance_issues.rs`:
+- `test_boolean_discriminant_narrowing_false` — `x.kind === false` with 3-member boolean union
+- `test_boolean_discriminant_narrowing_switch` — same pattern via switch statement
+- `test_instanceof_false_still_narrows` — regression guard: `instanceof === false` still uses boolean comparison
+
+**Impact**: +6 conformance tests (9791 → 9797 pre-rebase), 0 regressions:
+- `privateNamesConstructorChain-1.ts` / `privateNamesConstructorChain-2.ts` — class constructor narrowing
+- `controlFlowOptionalChain3.tsx` — optional chain with boolean comparison
+- `for-of40.ts` / `for-of50.ts` — for-of loop with discriminated unions
+- `intersectionTypeInference3.ts` — intersection narrowing
+
+**Remaining types/union gaps**:
+- discriminatedUnionTypes2.ts: still fails at fingerprint level (TS2339 at line 135 in foo1 — intersection narrowing issue, and missing TS2339 at line 35 — generic discriminant narrowing `x.a === 0` with type parameter T)
+- discriminatedUnionTypes1.ts: fingerprint-only (union member display order in message)
+- unionTypeParameterInference.ts: false TS2322 — generic inference with union parameter
+- unionTypeWithIndexSignature.ts: missing TS2322 and TS7053 for union index signature resolution
+
+**Files changed**:
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs` — guard for discriminant property paths
+- `crates/tsz-checker/src/flow/control_flow/narrowing.rs` — `pub(super)` visibility for `relative_discriminant_path`
+- `crates/tsz-checker/tests/conformance_issues.rs` — 3 new unit tests
+
+---
 
 ## Session 2026-03-02k — Expando chain support for namespace member functions
 
