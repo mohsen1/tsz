@@ -8317,7 +8317,8 @@ fn test_type_guard_custom_predicate() {
 
 #[test]
 fn test_discriminated_union_basic() {
-    // Test: { kind: "a" } | { kind: "b" } narrowed by kind
+    // Test: T extends { kind: "a" } | { kind: "b" } with candidate { kind: "a" }
+    // The constraint's literal types prevent widening of discriminant properties.
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -8327,10 +8328,16 @@ fn test_discriminated_union_basic() {
     // Create discriminated union members
     let kind_prop = interner.intern_string("kind");
     let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
 
     let type_a = interner.object(vec![PropertyInfo::new(kind_prop, lit_a)]);
+    let type_b = interner.object(vec![PropertyInfo::new(kind_prop, lit_b)]);
 
-    // After checking kind === "a", narrow to type_a
+    // Add upper bound: T extends { kind: "a" } | { kind: "b" }
+    let constraint = interner.union(vec![type_a, type_b]);
+    ctx.add_upper_bound(var_t, constraint);
+
+    // Add candidate: { kind: "a" }
     ctx.add_lower_bound(var_t, type_a);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -8339,22 +8346,31 @@ fn test_discriminated_union_basic() {
 
 #[test]
 fn test_discriminated_union_switch() {
-    // Test: switch(x.kind) narrowing
+    // Test: T extends Shape (discriminated union) with candidate { kind: "circle", radius: number }
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    // After switch case "circle"
     let kind_prop = interner.intern_string("kind");
     let radius_prop = interner.intern_string("radius");
+    let side_prop = interner.intern_string("side");
     let lit_circle = interner.literal_string("circle");
+    let lit_square = interner.literal_string("square");
 
     let circle_type = interner.object(vec![
         PropertyInfo::new(kind_prop, lit_circle),
         PropertyInfo::new(radius_prop, TypeId::NUMBER),
     ]);
+    let square_type = interner.object(vec![
+        PropertyInfo::new(kind_prop, lit_square),
+        PropertyInfo::new(side_prop, TypeId::NUMBER),
+    ]);
+
+    // Add upper bound: T extends Circle | Square
+    let constraint = interner.union(vec![circle_type, square_type]);
+    ctx.add_upper_bound(var_t, constraint);
 
     ctx.add_lower_bound(var_t, circle_type);
 
@@ -8364,7 +8380,7 @@ fn test_discriminated_union_switch() {
 
 #[test]
 fn test_discriminated_union_type_property() {
-    // Test: { type: "request" } | { type: "response" } narrowing
+    // Test: T extends { type: "request" } | { type: "response" } with constraint
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -8373,12 +8389,21 @@ fn test_discriminated_union_type_property() {
 
     let type_prop = interner.intern_string("type");
     let lit_request = interner.literal_string("request");
+    let lit_response = interner.literal_string("response");
     let body_prop = interner.intern_string("body");
 
     let request_type = interner.object(vec![
         PropertyInfo::new(type_prop, lit_request),
         PropertyInfo::new(body_prop, TypeId::STRING),
     ]);
+    let response_type = interner.object(vec![
+        PropertyInfo::new(type_prop, lit_response),
+        PropertyInfo::new(body_prop, TypeId::STRING),
+    ]);
+
+    // Add upper bound: T extends Request | Response
+    let constraint = interner.union(vec![request_type, response_type]);
+    ctx.add_upper_bound(var_t, constraint);
 
     ctx.add_lower_bound(var_t, request_type);
 
@@ -8412,7 +8437,7 @@ fn test_discriminated_union_boolean_discriminant() {
 
 #[test]
 fn test_discriminated_union_numeric_discriminant() {
-    // Test: { code: 200, body: string } | { code: 404, message: string }
+    // Test: T extends { code: 200 } | { code: 404 } with numeric literal constraint
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -8421,12 +8446,22 @@ fn test_discriminated_union_numeric_discriminant() {
 
     let code_prop = interner.intern_string("code");
     let body_prop = interner.intern_string("body");
+    let message_prop = interner.intern_string("message");
     let lit_200 = interner.literal_number(200.0);
+    let lit_404 = interner.literal_number(404.0);
 
     let ok_response = interner.object(vec![
         PropertyInfo::new(code_prop, lit_200),
         PropertyInfo::new(body_prop, TypeId::STRING),
     ]);
+    let err_response = interner.object(vec![
+        PropertyInfo::new(code_prop, lit_404),
+        PropertyInfo::new(message_prop, TypeId::STRING),
+    ]);
+
+    // Add upper bound: T extends OkResponse | ErrResponse
+    let constraint = interner.union(vec![ok_response, err_response]);
+    ctx.add_upper_bound(var_t, constraint);
 
     ctx.add_lower_bound(var_t, ok_response);
 

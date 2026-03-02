@@ -8,6 +8,7 @@
 
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
     FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
@@ -127,6 +128,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
         }
+
+        // 1.5. Pre-compute which placeholders should have their argument's object
+        // properties widened. In tsc, object literal property widening happens at the
+        // expression level (checkObjectLiteral) based on contextual type. When the
+        // contextual type is a bare type parameter whose constraint doesn't contain
+        // literal types, properties like `false` are widened to `boolean`.
+        //
+        // We suppress widening in two cases:
+        // (a) The constraint contains literal types (discriminated union protection)
+        // (b) The type parameter is referenced in another type param's constraint,
+        //     because widening would cause a mismatch between the widened candidate
+        //     and the un-widened contextual type used for callback parameters.
+        let widenable_placeholders: FxHashSet<TypeId> = var_map
+            .keys()
+            .filter(|&&placeholder_id| {
+                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) {
+                    // (a) Skip if constraint implies literal types
+                    if let Some(constraint) = tp.constraint {
+                        let inst = instantiate_type(self.interner, constraint, &substitution);
+                        if type_implies_literals_deep(self.interner, inst) {
+                            return false;
+                        }
+                    }
+                    // (b) Skip if this placeholder is referenced in another type param's
+                    // constraint (e.g., TContext in TMethods extends Record<..., (ctx: TContext) => ...>)
+                    let is_referenced_in_other_constraints =
+                        func.type_params.iter().any(|other_tp| {
+                            if other_tp.name == tp.name {
+                                return false; // Skip self
+                            }
+                            if let Some(constraint) = other_tp.constraint {
+                                let inst =
+                                    instantiate_type(self.interner, constraint, &substitution);
+                                type_references_placeholder(self.interner, inst, placeholder_id)
+                            } else {
+                                false
+                            }
+                        });
+                    !is_referenced_in_other_constraints
+                } else {
+                    false
+                }
+            })
+            .copied()
+            .collect();
 
         // 2. Instantiate parameters with placeholders
         let instantiated_params: Vec<ParamInfo> = func
@@ -311,11 +357,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ));
             }
 
+            // When the target is a bare type parameter placeholder whose constraint
+            // doesn't imply literal types, widen the argument's object literal properties.
+            // This matches tsc's behavior: `{ c: false }` passed to parameter `T` becomes
+            // `{ c: boolean }` for inference, preventing false TS2322/TS2345 errors.
+            let source_for_inference = if widenable_placeholders.contains(&contextual_target_type) {
+                widening::widen_object_literal_properties(self.interner, contextual_arg_type)
+            } else {
+                contextual_arg_type
+            };
+
             // arg_type <: target_type
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
-                contextual_arg_type,
+                source_for_inference,
                 contextual_target_type,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
@@ -1328,5 +1384,102 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result_subst
+    }
+}
+
+/// Check if a type contains literal types — recursing into unions, intersections,
+/// and object properties. Used to detect discriminated union constraints like
+/// `{ kind: "a" } | { kind: "b" }` where the literal property types should
+/// prevent widening of the corresponding argument properties.
+fn type_implies_literals_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_)) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| type_implies_literals_deep(db, m))
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| type_implies_literals_deep(db, m))
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .any(|prop| type_implies_literals_deep(db, prop.type_id))
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type structurally contains a reference to a specific placeholder TypeId.
+/// Used to detect when a type parameter (e.g., `TContext`) is referenced inside another
+/// type parameter's constraint (e.g., `TMethods` extends Record<string, (ctx: `TContext`) => unknown>).
+fn type_references_placeholder(
+    db: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+    placeholder: TypeId,
+) -> bool {
+    if type_id == placeholder {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| type_references_placeholder(db, m, placeholder))
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape.properties.iter().any(|prop| {
+                type_references_placeholder(db, prop.type_id, placeholder)
+                    || type_references_placeholder(db, prop.write_type, placeholder)
+            })
+        }
+        Some(TypeData::Array(elem)) => type_references_placeholder(db, elem, placeholder),
+        Some(TypeData::Tuple(list_id)) => {
+            let elems = db.tuple_list(list_id);
+            elems
+                .iter()
+                .any(|e| type_references_placeholder(db, e.type_id, placeholder))
+        }
+        Some(TypeData::Function(fn_id)) => {
+            let func = db.function_shape(fn_id);
+            func.params
+                .iter()
+                .any(|p| type_references_placeholder(db, p.type_id, placeholder))
+                || type_references_placeholder(db, func.return_type, placeholder)
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            type_references_placeholder(db, app.base, placeholder)
+                || app
+                    .args
+                    .iter()
+                    .any(|&a| type_references_placeholder(db, a, placeholder))
+        }
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.conditional_type(cond_id);
+            type_references_placeholder(db, cond.check_type, placeholder)
+                || type_references_placeholder(db, cond.extends_type, placeholder)
+                || type_references_placeholder(db, cond.true_type, placeholder)
+                || type_references_placeholder(db, cond.false_type, placeholder)
+        }
+        Some(TypeData::IndexAccess(obj, idx)) => {
+            type_references_placeholder(db, obj, placeholder)
+                || type_references_placeholder(db, idx, placeholder)
+        }
+        Some(TypeData::KeyOf(inner)) => type_references_placeholder(db, inner, placeholder),
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            type_references_placeholder(db, mapped.template, placeholder)
+                || type_references_placeholder(db, mapped.constraint, placeholder)
+                || mapped
+                    .name_type
+                    .is_some_and(|n| type_references_placeholder(db, n, placeholder))
+        }
+        _ => false,
     }
 }

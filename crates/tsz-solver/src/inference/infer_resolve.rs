@@ -384,7 +384,10 @@ impl<'a> InferenceContext<'a> {
             .any(|&bound| self.type_implies_literals(bound))
     }
 
-    /// Check if a type contains literal types (directly or in unions/intersections).
+    /// Check if a type contains literal types (directly, in unions/intersections,
+    /// or in object properties). This is critical for discriminated union constraints
+    /// like `{ kind: "a" } | { kind: "b" }` — the literal "a"/"b" in object
+    /// properties must be detected so `preserve_literals` prevents widening.
     fn type_implies_literals(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
@@ -395,6 +398,13 @@ impl<'a> InferenceContext<'a> {
             Some(TypeData::Intersection(list_id)) => {
                 let members = self.interner.type_list(list_id);
                 members.iter().any(|&m| self.type_implies_literals(m))
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .any(|prop| self.type_implies_literals(prop.type_id))
             }
             _ => false,
         }
@@ -425,12 +435,10 @@ impl<'a> InferenceContext<'a> {
         candidates
             .iter()
             .map(|candidate| {
-                // Widen fresh literal candidates to their base type.
-                // TypeScript widens fresh literals (0 → number, false → boolean)
-                // during inference resolution. Const type parameters are protected
-                // by the is_const check in resolve_from_candidates which uses
-                // apply_const_assertion instead of this method.
                 if candidate.is_fresh_literal {
+                    // Widen direct literal candidates (0 → number, false → boolean).
+                    // Const type parameters are protected by the is_const check in
+                    // resolve_from_candidates which uses apply_const_assertion instead.
                     self.get_base_type(candidate.type_id)
                         .unwrap_or(candidate.type_id)
                 } else {
