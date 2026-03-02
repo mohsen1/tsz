@@ -333,11 +333,12 @@ impl<'a> CheckerState<'a> {
         // Handle string literal types: "foo" or 'bar'
         if ((type_expr.starts_with('"') && type_expr.ends_with('"'))
             || (type_expr.starts_with('\'') && type_expr.ends_with('\'')))
-            && type_expr.len() >= 2 {
-                let inner = &type_expr[1..type_expr.len() - 1];
-                let factory = self.ctx.types.factory();
-                return Some(factory.literal_string(inner));
-            }
+            && type_expr.len() >= 2
+        {
+            let inner = &type_expr[1..type_expr.len() - 1];
+            let factory = self.ctx.types.factory();
+            return Some(factory.literal_string(inner));
+        }
 
         // Handle boolean literal types: true, false
         if type_expr == "true" {
@@ -354,10 +355,10 @@ impl<'a> CheckerState<'a> {
             && type_expr
                 .chars()
                 .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
-            {
-                let factory = self.ctx.types.factory();
-                return Some(factory.literal_number(n));
-            }
+        {
+            let factory = self.ctx.types.factory();
+            return Some(factory.literal_number(n));
+        }
 
         let factory = self.ctx.types.factory();
 
