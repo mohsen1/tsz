@@ -101,6 +101,7 @@ export function parseBaseline(content: string): BaselineContent {
 
   const sourceLikeFiles: Array<{ name: string; content: string }> = [];
   const outputSegments: typeof segments = [];
+  const outputFileNames: Set<string> = new Set();
   const sourceFileNames: Set<string> = new Set();
   const dtsOutputCandidates: Set<string> = new Set();
   const dtsSourceFiles: Array<{ name: string; content: string }> = [];
@@ -176,6 +177,7 @@ export function parseBaseline(content: string): BaselineContent {
       sourceFileNames.add(name);
     } else if (segIndex >= outputStart) {
       outputSegments.push(seg);
+      outputFileNames.add(name);
     }
   }
 
@@ -243,7 +245,7 @@ export function parseBaseline(content: string): BaselineContent {
     result.js = result.files.get('out.js') ?? result.js;
     result.jsFileName = 'out.js';
   }
-  if (result.files.has('out.d.ts')) {
+  if (outputFileNames.has('out.d.ts') && result.files.has('out.d.ts')) {
     result.dts = result.files.get('out.d.ts') ?? result.dts;
     result.dtsFileName = 'out.d.ts';
   }
@@ -259,12 +261,12 @@ export function parseBaseline(content: string): BaselineContent {
     const preferredJsName = `${sourceBase}.${preferredJsExt}`;
     const preferredDtsName = `${sourceBase}.d.ts`;
 
-    if (!result.js && result.files.has(preferredJsName)) {
+    if (!result.js && outputFileNames.has(preferredJsName) && result.files.has(preferredJsName)) {
       result.js = result.files.get(preferredJsName) ?? result.js;
       result.jsFileName = preferredJsName;
     } else if (!result.js) {
       for (const [name, fileContent] of result.files) {
-        if (isJsLikeOutput(name)) {
+        if (outputFileNames.has(name) && isJsLikeOutput(name)) {
           result.js = fileContent;
           result.jsFileName = name;
           break;
@@ -272,12 +274,12 @@ export function parseBaseline(content: string): BaselineContent {
       }
     }
 
-    if (!result.dts && result.files.has(preferredDtsName)) {
+    if (!result.dts && outputFileNames.has(preferredDtsName) && result.files.has(preferredDtsName)) {
       result.dts = result.files.get(preferredDtsName) ?? result.dts;
       result.dtsFileName = preferredDtsName;
     } else if (!result.dts) {
       for (const [name, fileContent] of result.files) {
-        if (name.endsWith('.d.ts')) {
+        if (outputFileNames.has(name) && name.endsWith('.d.ts')) {
           result.dts = fileContent;
           result.dtsFileName = name;
           break;

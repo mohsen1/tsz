@@ -461,9 +461,7 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
-        if !self.inside_declare_namespace {
-            self.write("export declare ");
-        } else if self.ambient_module_has_scope_marker {
+        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
         if is_abstract {
@@ -480,6 +478,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(ref heritage) = class.heritage_clauses {
             self.emit_heritage_clauses(heritage);
+        }
+
+        if class.members.nodes.is_empty() {
+            self.write(" {}");
+            self.write_line();
+            return;
         }
 
         self.write(" {");
@@ -538,9 +542,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        if !self.inside_declare_namespace {
-            self.write("export declare ");
-        } else if self.ambient_module_has_scope_marker {
+        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
         self.write("function ");
@@ -640,9 +642,7 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
-        if !self.inside_declare_namespace {
-            self.write("export declare ");
-        } else if self.ambient_module_has_scope_marker {
+        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
         if is_const {
@@ -782,9 +782,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
                     self.write_indent();
-                    if !self.inside_declare_namespace {
-                        self.write("export declare ");
-                    } else if self.ambient_module_has_scope_marker {
+                    if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
                         self.write("export ");
                     }
                     self.write(keyword);
