@@ -210,6 +210,10 @@ impl<'a> Completions<'a> {
             );
         }
 
+        if items.is_empty() {
+            self.append_syntactic_member_fallback(expr_idx, &mut seen_names, &mut items);
+        }
+
         items.sort_by(|a, b| a.label.cmp(&b.label));
         if let Some(cache) = cache_ref {
             *cache = Some(checker.extract_cache());
@@ -298,6 +302,13 @@ impl<'a> Completions<'a> {
                 .is_some()
                 .then_some(param.type_annotation);
         }
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let property = self.arena.get_property_decl(node)?;
+            return property
+                .type_annotation
+                .is_some()
+                .then_some(property.type_annotation);
+        }
         None
     }
 
@@ -362,6 +373,206 @@ impl<'a> Completions<'a> {
             return Some(member);
         }
         None
+    }
+
+    fn append_syntactic_member_fallback(
+        &self,
+        expr_idx: NodeIndex,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+            && let Some(sym_id) = self.resolve_member_target_symbol(access.name_or_argument)
+        {
+            self.append_type_literal_annotation_members(sym_id, seen_names, items);
+            return;
+        }
+
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16
+            || (expr_node.kind == SyntaxKind::Identifier as u16
+                && self.arena.get_identifier_text(expr_idx) == Some("this"))
+        {
+            let Some(class_idx) = self.find_enclosing_class_declaration(expr_idx) else {
+                return;
+            };
+            let Some(class_node) = self.arena.get(class_idx) else {
+                return;
+            };
+            let Some(class_data) = self.arena.get_class(class_node) else {
+                return;
+            };
+
+            for &member_idx in &class_data.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                    continue;
+                };
+                if name.starts_with('#') {
+                    continue;
+                }
+                if !seen_names.insert(name.to_string()) {
+                    continue;
+                }
+                let mut item = CompletionItem::new(name.to_string(), CompletionItemKind::Property);
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                items.push(item);
+            }
+        }
+    }
+
+    fn append_type_literal_annotation_members(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(type_node_idx) = self.symbol_type_annotation_node(sym_id) else {
+            return;
+        };
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = self.arena.get_type_ref(type_node) else {
+                return;
+            };
+            let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name) else {
+                return;
+            };
+            let sym_id = self
+                .binder
+                .file_locals
+                .get(type_name)
+                .or_else(|| self.resolve_member_target_symbol(type_ref.type_name));
+            let Some(sym_id) = sym_id else {
+                return;
+            };
+            let Some(symbol) = self.binder.symbols.get(sym_id) else {
+                return;
+            };
+            for &decl_idx in &symbol.declarations {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    continue;
+                }
+                let Some(class_data) = self.arena.get_class(decl_node) else {
+                    continue;
+                };
+                for &member_idx in &class_data.members.nodes {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                        continue;
+                    }
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                        continue;
+                    };
+                    if name.starts_with('#') || !seen_names.insert(name.to_string()) {
+                        continue;
+                    }
+                    let mut item =
+                        CompletionItem::new(name.to_string(), CompletionItemKind::Property);
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                    items.push(item);
+                }
+            }
+            return;
+        }
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return;
+        }
+        let Some(type_literal) = self.arena.get_type_literal(type_node) else {
+            return;
+        };
+
+        for &member_idx in &type_literal.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
+            let is_property = member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE;
+            if !(is_method || is_property) {
+                continue;
+            }
+            let Some(signature) = self.arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(signature.name) else {
+                continue;
+            };
+            let start = name_node.pos as usize;
+            let end = (name_node.end as usize).min(self.source_text.len());
+            if start >= end {
+                continue;
+            }
+            let raw_name = self.source_text[start..end]
+                .trim()
+                .trim_end_matches(':')
+                .trim_end()
+                .trim_end_matches('?')
+                .trim_end();
+            let (label, needs_quoted_insert) = if (raw_name.starts_with('"')
+                && raw_name.ends_with('"'))
+                || (raw_name.starts_with('\'') && raw_name.ends_with('\''))
+            {
+                (raw_name[1..raw_name.len() - 1].to_string(), true)
+            } else {
+                (raw_name.to_string(), false)
+            };
+            if label.is_empty() || !seen_names.insert(label.clone()) {
+                continue;
+            }
+            let kind = if is_method {
+                CompletionItemKind::Method
+            } else {
+                CompletionItemKind::Property
+            };
+            let mut item = CompletionItem::new(label.clone(), kind);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            if signature.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(signature.type_annotation)
+            {
+                let type_start = type_node.pos as usize;
+                let type_end = (type_node.end as usize).min(self.source_text.len());
+                if type_start < type_end {
+                    let type_text = self.source_text[type_start..type_end]
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim_end();
+                    if !type_text.is_empty() {
+                        item = item.with_detail(type_text.to_string());
+                    }
+                }
+            }
+            if needs_quoted_insert {
+                item.insert_text = Some(format!("?.[\"{label}\"]"));
+            } else if is_method {
+                item.insert_text = Some(format!("{label}($1)"));
+                item.is_snippet = true;
+            }
+            items.push(item);
+        }
     }
 
     fn append_namespace_export_member_completions(
@@ -516,6 +727,9 @@ impl<'a> Completions<'a> {
             normalized = stripped.trim();
         }
         if normalized.is_empty() {
+            return None;
+        }
+        if normalized == "any" {
             return None;
         }
         let mut chars = normalized.chars();

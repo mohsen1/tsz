@@ -109,9 +109,25 @@ impl Server {
                 parts.push(serde_json::json!({"text": "property", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                let is_identifier = {
+                    let mut chars = name.chars();
+                    match chars.next() {
+                        Some(first) => {
+                            (first.is_ascii_alphabetic() || first == '_' || first == '$')
+                                && chars
+                                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                        }
+                        None => false,
+                    }
+                };
+                let display_name = if is_identifier {
+                    name.to_string()
+                } else {
+                    format!("\"{name}\"")
+                };
                 let qualified_name = member_parent
-                    .map(|parent| format!("{parent}.{name}"))
-                    .unwrap_or_else(|| name.to_string());
+                    .map(|parent| format!("{parent}.{display_name}"))
+                    .unwrap_or(display_name);
                 parts.push(serde_json::json!({"text": qualified_name, "kind": "propertyName"}));
                 let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,

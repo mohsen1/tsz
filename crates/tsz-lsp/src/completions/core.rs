@@ -117,7 +117,11 @@ impl<'a> Completions<'a> {
         let offset = self
             .line_map
             .position_to_offset(position, self.source_text)?;
-        let is_member = self.is_member_context(offset);
+        let node_idx = self.find_completions_node(root, offset);
+        let member_target = self
+            .member_completion_target(node_idx, offset)
+            .or_else(|| self.marker_comment_member_completion_target(offset));
+        let is_member = member_target.is_some() || self.is_member_context(offset);
         let is_new_id = if is_member {
             false
         } else {
@@ -197,18 +201,25 @@ impl<'a> Completions<'a> {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // 4. Filter out positions where completions should not appear
+        // 4. Resolve member completion targets before lexical suppression checks.
+        // Fourslash marker comments (e.g. `obj./**/`) often place the cursor inside
+        // comment trivia where no-completion filters would otherwise short-circuit.
+        let member_target = self
+            .member_completion_target(node_idx, offset)
+            .or_else(|| self.marker_comment_member_completion_target(offset));
+        if let Some(expr_idx) = member_target
+            && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
+            && !items.is_empty() {
+                return Some(items);
+            }
+        let member_request = member_target.is_some() || self.is_member_context(offset);
+        let global_this_member_fallback = member_target
+            .and_then(|idx| self.arena.get_identifier_text(idx))
+            .is_some_and(|name| name == "globalThis");
+
+        // 5. Filter out positions where completions should not appear
         if self.is_in_no_completion_context(offset) {
             return Some(Vec::new());
-        }
-
-        // 5. Check for member completion (after a dot)
-        if let Some(expr_idx) = self
-            .member_completion_target(node_idx, offset)
-            .or_else(|| self.marker_comment_member_completion_target(offset))
-            && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
-        {
-            return if items.is_empty() { None } else { Some(items) };
         }
 
         // 6. Check for object literal property completion (contextual completions)
@@ -220,88 +231,111 @@ impl<'a> Completions<'a> {
         }
 
         // 7. Get the scope chain at this position
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let scope_chain = if let Some(scope_cache) = scope_cache {
-            Cow::Borrowed(walker.get_scope_chain_cached(root, node_idx, scope_cache, scope_stats))
-        } else {
-            Cow::Owned(walker.get_scope_chain(root, node_idx))
-        };
-
-        // 8. Collect all visible identifiers from the scope chain
         let mut completions = Vec::new();
         let mut seen_names = FxHashSet::default();
 
-        // Walk scopes from innermost to outermost
-        for scope in scope_chain.iter().rev() {
-            for (name, symbol_id) in scope.iter() {
-                if seen_names.contains(name) {
-                    continue;
-                }
+        if !global_this_member_fallback {
+            let mut walker = ScopeWalker::new(self.arena, self.binder);
+            let scope_chain = if let Some(scope_cache) = scope_cache {
+                Cow::Borrowed(walker.get_scope_chain_cached(
+                    root,
+                    node_idx,
+                    scope_cache,
+                    scope_stats,
+                ))
+            } else {
+                Cow::Owned(walker.get_scope_chain(root, node_idx))
+            };
 
-                if let Some(symbol) = self.binder.symbols.get(*symbol_id) {
-                    // Synthetic CommonJS helpers should not appear in globals-style completion lists.
-                    // Keep user-declared symbols with these names by requiring no declarations.
-                    if matches!(
-                        name.as_str(),
-                        "exports" | "require" | "module" | "__dirname" | "__filename"
-                    ) && symbol.declarations.is_empty()
-                        && symbol.value_declaration.is_none()
-                    {
+            // 8. Collect all visible identifiers from the scope chain
+            // Walk scopes from innermost to outermost
+            for scope in scope_chain.iter().rev() {
+                for (name, symbol_id) in scope.iter() {
+                    if seen_names.contains(name) {
                         continue;
                     }
 
-                    seen_names.insert(name.clone());
-                    let mut kind = self.determine_completion_kind(symbol);
-                    if kind == CompletionItemKind::Variable && self.symbol_is_parameter(symbol) {
-                        kind = CompletionItemKind::Parameter;
-                    }
-                    let mut item = CompletionItem::new(name.clone(), kind);
-                    item.sort_text = Some(default_sort_text(kind).to_string());
-
-                    if kind == CompletionItemKind::Parameter
-                        && let Some(param_type) = self.parameter_annotation_text(symbol)
-                    {
-                        item = item.with_detail(param_type);
-                    } else if let Some(detail) = self.get_symbol_detail(symbol) {
-                        item = item.with_detail(detail);
-                    }
-                    if let Some(modifiers) = self.build_kind_modifiers(symbol) {
-                        item.kind_modifiers = Some(modifiers);
-                    }
-                    if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
-                        item.insert_text = Some(format!("{name}($1)"));
-                        item.is_snippet = true;
-                    }
-
-                    let decl_node = if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else {
-                        symbol
-                            .declarations
-                            .first()
-                            .copied()
-                            .unwrap_or(NodeIndex::NONE)
-                    };
-                    if decl_node.is_some() {
-                        let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
-                        if !doc.is_empty() {
-                            item = item.with_documentation(doc);
+                    if let Some(symbol) = self.binder.symbols.get(*symbol_id) {
+                        // Synthetic CommonJS helpers should not appear in globals-style completion lists.
+                        // Keep user-declared symbols with these names by requiring no declarations.
+                        if matches!(
+                            name.as_str(),
+                            "exports" | "require" | "module" | "__dirname" | "__filename"
+                        ) && symbol.declarations.is_empty()
+                            && symbol.value_declaration.is_none()
+                        {
+                            continue;
                         }
-                    }
 
-                    completions.push(item);
+                        seen_names.insert(name.clone());
+                        let mut kind = self.determine_completion_kind(symbol);
+                        if kind == CompletionItemKind::Variable && self.symbol_is_parameter(symbol)
+                        {
+                            kind = CompletionItemKind::Parameter;
+                        }
+                        let mut item = CompletionItem::new(name.clone(), kind);
+                        item.sort_text = Some(default_sort_text(kind).to_string());
+
+                        if kind == CompletionItemKind::Parameter
+                            && let Some(param_type) = self.parameter_annotation_text(symbol)
+                        {
+                            item = item.with_detail(param_type);
+                        } else if let Some(detail) = self.get_symbol_detail(symbol) {
+                            item = item.with_detail(detail);
+                        }
+                        if let Some(modifiers) = self.build_kind_modifiers(symbol) {
+                            item.kind_modifiers = Some(modifiers);
+                        }
+                        if kind == CompletionItemKind::Function
+                            || kind == CompletionItemKind::Method
+                        {
+                            item.insert_text = Some(format!("{name}($1)"));
+                            item.is_snippet = true;
+                        }
+
+                        let decl_node = if symbol.value_declaration.is_some() {
+                            symbol.value_declaration
+                        } else {
+                            symbol
+                                .declarations
+                                .first()
+                                .copied()
+                                .unwrap_or(NodeIndex::NONE)
+                        };
+                        if decl_node.is_some() {
+                            let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
+                            if !doc.is_empty() {
+                                item = item.with_documentation(doc);
+                            }
+                        }
+
+                        completions.push(item);
+                    }
                 }
             }
+        } else {
+            let _ = (scope_cache, scope_stats);
         }
 
         // 9. Add global variables (globalThis, Array, etc.)
         //    These are always available and match fourslash globalsVars order.
-        let inside_func = self.is_inside_function(offset);
+        let inside_func = if global_this_member_fallback {
+            false
+        } else {
+            self.is_inside_function(offset)
+        };
         if !seen_names.contains("globalThis") {
             seen_names.insert("globalThis".to_string());
             let mut item =
                 CompletionItem::new("globalThis".to_string(), CompletionItemKind::Module);
-            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            item.sort_text = Some(
+                if member_request {
+                    sort_priority::LOCATION_PRIORITY
+                } else {
+                    sort_priority::GLOBALS_OR_KEYWORDS
+                }
+                .to_string(),
+            );
             completions.push(item);
         }
 
@@ -311,12 +345,21 @@ impl<'a> Completions<'a> {
                 let mut item = CompletionItem::new(name.to_string(), kind);
                 let is_deprecated = DEPRECATED_GLOBALS.contains(&name);
                 if is_deprecated {
-                    item.sort_text = Some(sort_priority::deprecated(
-                        sort_priority::GLOBALS_OR_KEYWORDS,
-                    ));
+                    item.sort_text = Some(sort_priority::deprecated(if member_request {
+                        sort_priority::LOCATION_PRIORITY
+                    } else {
+                        sort_priority::GLOBALS_OR_KEYWORDS
+                    }));
                     item.kind_modifiers = Some("deprecated,declare".to_string());
                 } else {
-                    item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+                    item.sort_text = Some(
+                        if member_request {
+                            sort_priority::LOCATION_PRIORITY
+                        } else {
+                            sort_priority::GLOBALS_OR_KEYWORDS
+                        }
+                        .to_string(),
+                    );
                     item.kind_modifiers = Some("declare".to_string());
                 }
                 if kind == CompletionItemKind::Function {
@@ -331,7 +374,14 @@ impl<'a> Completions<'a> {
             seen_names.insert("undefined".to_string());
             let mut item =
                 CompletionItem::new("undefined".to_string(), CompletionItemKind::Variable);
-            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            item.sort_text = Some(
+                if member_request {
+                    sort_priority::LOCATION_PRIORITY
+                } else {
+                    sort_priority::GLOBALS_OR_KEYWORDS
+                }
+                .to_string(),
+            );
             completions.push(item);
         }
 
@@ -345,16 +395,19 @@ impl<'a> Completions<'a> {
         }
 
         // 11. Add keywords for non-member completions
-        let keywords = if inside_func {
-            KEYWORDS_INSIDE_FUNCTION
-        } else {
-            KEYWORDS
-        };
-        for kw in keywords.iter().copied() {
-            if !seen_names.contains(kw) {
-                let mut kw_item = CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
-                kw_item.sort_text = Some(sort_priority::KEYWORD.to_string());
-                completions.push(kw_item);
+        if !member_request {
+            let keywords = if inside_func {
+                KEYWORDS_INSIDE_FUNCTION
+            } else {
+                KEYWORDS
+            };
+            for kw in keywords.iter().copied() {
+                if !seen_names.contains(kw) {
+                    let mut kw_item =
+                        CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
+                    kw_item.sort_text = Some(sort_priority::KEYWORD.to_string());
+                    completions.push(kw_item);
+                }
             }
         }
 
@@ -537,6 +590,19 @@ impl<'a> Completions<'a> {
         let mut cursor = offset.min(len);
 
         loop {
+            // If cursor is inside a block comment (`/*...*/`), jump back to the
+            // marker start so member-context detection can inspect the preceding
+            // `.`/`?.` token.
+            let scan_end = cursor as usize;
+            let prefix = &self.source_text[..scan_end];
+            if let Some(block_start) = prefix.rfind("/*") {
+                let block_body = &self.source_text[block_start + 2..scan_end];
+                if !block_body.contains("*/") {
+                    cursor = block_start as u32;
+                    continue;
+                }
+            }
+
             while cursor > 0 && bytes[(cursor - 1) as usize].is_ascii_whitespace() {
                 cursor -= 1;
             }
@@ -599,6 +665,14 @@ impl<'a> Completions<'a> {
                 && node.pos <= ident_start
                 && node.end >= ident_end
             {
+                if let Some(ext) = self.arena.get_extended(current)
+                    && let Some(parent) = self.arena.get(ext.parent)
+                    && parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(parent)
+                    && access.name_or_argument == current
+                {
+                    return Some(ext.parent);
+                }
                 return Some(current);
             }
             let ext = self.arena.get_extended(current)?;
