@@ -1,7 +1,8 @@
-//! Tests for JSDoc @readonly tag support.
+//! Tests for JSDoc @readonly tag and @extends/@augments validation.
 //!
 //! Verifies that @readonly annotations on class properties cause TS2540
-//! when assigned to outside the constructor, matching tsc behavior.
+//! when assigned to outside the constructor, and that @extends/@augments
+//! on non-class declarations emits TS8022.
 
 use crate::test_utils::check_js_source_diagnostics;
 
@@ -64,6 +65,41 @@ f.y = 12
         ts2540,
         0,
         "Expected no TS2540 for non-readonly property assignment, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// @augments on a function declaration → TS8022
+#[test]
+fn test_jsdoc_augments_on_function_emits_ts8022() {
+    let source = r#"
+class A {}
+/** @augments A */
+function b() {}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
+    assert!(
+        ts8022 >= 1,
+        "Expected TS8022 for @augments on function, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// @extends on a class declaration → no TS8022
+#[test]
+fn test_jsdoc_extends_on_class_no_ts8022() {
+    let source = r#"
+class A {}
+/** @extends {A} */
+class B extends A {}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
+    assert_eq!(
+        ts8022,
+        0,
+        "Expected no TS8022 for @extends on class, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

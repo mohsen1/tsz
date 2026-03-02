@@ -329,6 +329,10 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file() {
                 let js_start = Instant::now();
                 self.check_js_grammar_statements(&sf.statements.nodes);
+
+                // TS8022: Check for orphaned @extends/@augments tags not attached to a class
+                self.check_orphaned_extends_tags(&sf.statements.nodes);
+
                 tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
 
@@ -352,6 +356,25 @@ impl<'a> CheckerState<'a> {
     fn check_js_grammar_statements(&mut self, statements: &[NodeIndex]) {
         for &stmt_idx in statements {
             self.check_js_grammar_statement(stmt_idx);
+        }
+    }
+
+    /// TS8022: Check for orphaned `@extends`/`@augments` tags not attached to a class.
+    fn check_orphaned_extends_tags(&mut self, statements: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let orphaned = self.find_orphaned_extends_tags_for_statements(statements);
+        for (tag_name, pos, len) in orphaned {
+            let message = format_message(
+                diagnostic_messages::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
+                &[tag_name],
+            );
+            self.ctx.error(
+                pos,
+                len,
+                message,
+                diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
+            );
         }
     }
 
