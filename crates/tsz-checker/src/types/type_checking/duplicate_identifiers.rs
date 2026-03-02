@@ -166,25 +166,43 @@ impl<'a> CheckerState<'a> {
 
             let mut declarations = Vec::<(NodeIndex, u32, bool, bool)>::new();
             for &decl_idx in &symbol.declarations {
-                let arena_opt = self
-                    .ctx
-                    .binder
-                    .declaration_arenas
-                    .get(&(sym_id, decl_idx))
-                    .and_then(|v| v.first())
-                    .map(|a| &**a);
-                let arena = arena_opt.unwrap_or(self.ctx.arena);
-                let is_local = arena_opt.is_none_or(|a| std::ptr::eq(a, self.ctx.arena));
+                // When a declaration NodeIndex has multiple arenas (cross-file
+                // merged symbols where different files produced the same NodeIndex),
+                // iterate ALL arenas to correctly distinguish local vs remote
+                // declarations. Using only .first() would misidentify remote
+                // declarations as local when the first arena happens to be the
+                // current file's arena.
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    for arena_arc in arenas {
+                        let arena: &tsz_parser::parser::NodeArena = arena_arc;
+                        let is_local = std::ptr::eq(arena, self.ctx.arena);
 
-                if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
-                    if has_libs
-                        && is_local
-                        && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
-                    {
-                        continue;
+                        if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
+                            if has_libs
+                                && is_local
+                                && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                            {
+                                continue;
+                            }
+                            let is_exported = self.is_declaration_exported(arena, decl_idx);
+                            declarations.push((decl_idx, flags, is_local, is_exported));
+                        }
                     }
-                    let is_exported = self.is_declaration_exported(arena, decl_idx);
-                    declarations.push((decl_idx, flags, is_local, is_exported));
+                } else {
+                    // No declaration_arenas entry: assume current arena (local)
+                    let arena = self.ctx.arena;
+                    let is_local = true;
+
+                    if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
+                        if has_libs
+                            && is_local
+                            && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                        {
+                            continue;
+                        }
+                        let is_exported = self.is_declaration_exported(arena, decl_idx);
+                        declarations.push((decl_idx, flags, is_local, is_exported));
+                    }
                 }
             }
 
