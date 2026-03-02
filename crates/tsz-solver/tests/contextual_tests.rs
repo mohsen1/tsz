@@ -773,7 +773,10 @@ fn test_conditional_function_branch_contextual_type_for_call_argument() {
         is_method: false,
     });
 
-    assert_eq!(ctx.get_parameter_type_for_call(0, 1), Some(expected_callback));
+    assert_eq!(
+        ctx.get_parameter_type_for_call(0, 1),
+        Some(expected_callback)
+    );
 }
 
 /// When union members have call signatures with SAME parameter types but

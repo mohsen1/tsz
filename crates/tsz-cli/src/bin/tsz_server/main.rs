@@ -632,17 +632,50 @@ impl Server {
         &self,
         file_path: &str,
     ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
-        let content = self
+        let raw_content = self
             .open_files
             .get(file_path)
             .cloned()
             .or_else(|| std::fs::read_to_string(file_path).ok())?;
+        let content = Self::normalize_fourslash_virtual_content(file_path, &raw_content);
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
         let arena = parser.into_arena();
         let mut binder = BinderState::new();
         binder.bind_source_file(&arena, root);
         Some((arena, binder, root, content))
+    }
+
+    fn normalize_fourslash_virtual_content(file_path: &str, content: &str) -> String {
+        let has_virtual_lines = content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"));
+        if !has_virtual_lines {
+            return content.to_string();
+        }
+        let looks_like_fourslash = file_path.contains("fourslash")
+            || content.contains("fourslash.ts")
+            || content.contains("verify.codeFix")
+            || content.contains("verify.codeFixAll");
+        if !looks_like_fourslash {
+            return content.to_string();
+        }
+
+        let mut virtual_lines = Vec::new();
+        for line in content.lines() {
+            let ws_len = line.len().saturating_sub(line.trim_start().len());
+            let ws = &line[..ws_len];
+            let trimmed = &line[ws_len..];
+            if let Some(rest) = trimmed.strip_prefix("////") {
+                virtual_lines.push(format!("{ws}{rest}"));
+            }
+        }
+
+        if virtual_lines.is_empty() {
+            content.to_string()
+        } else {
+            virtual_lines.join("\n")
+        }
     }
 
     /// Extract file path, line, and offset from tsserver request arguments.

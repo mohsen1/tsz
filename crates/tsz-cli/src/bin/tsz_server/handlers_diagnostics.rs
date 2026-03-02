@@ -358,6 +358,14 @@ impl Server {
                 {
                     diags.push(diag);
                 }
+                if diags
+                    .iter()
+                    .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                    && let Some(diag) =
+                        Self::synthetic_add_missing_const_diagnostic(file_path, &content)
+                {
+                    diags.push(diag);
+                }
                 if diags.iter().all(|d| d.code != 7043 && d.code != 7044) {
                     diags.extend(Self::synthetic_jsdoc_infer_from_usage_diagnostics(
                         file_path, &content,

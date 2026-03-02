@@ -187,6 +187,9 @@ impl<'a> CodeActionProvider<'a> {
                 if let Some(action) = self.missing_property_quickfix(diag) {
                     actions.push(action);
                 }
+                if let Some(action) = self.add_missing_const_quickfix(diag) {
+                    actions.push(action);
+                }
                 actions.extend(self.missing_import_quickfixes(
                     root,
                     diag,
@@ -502,6 +505,93 @@ impl<'a> CodeActionProvider<'a> {
                 "fixAllDescription": "Add all missing members"
             })),
         })
+    }
+
+    fn add_missing_const_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
+        let code = diag.code?;
+        if code != 2304 && code != 18004 {
+            return None;
+        }
+
+        let start_offset = self
+            .line_map
+            .position_to_offset(diag.range.start, self.source)? as usize;
+        let (line_start, line_end) = self.line_bounds(start_offset)?;
+        let line = self.source.get(line_start..line_end)?;
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("interface ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("enum ")
+        {
+            return None;
+        }
+
+        let insertion_offset = if (trimmed.starts_with("for (")
+            || trimmed.starts_with("for await ("))
+            && (trimmed.contains(" in ") || trimmed.contains(" of "))
+        {
+            let open_idx = line.find('(')?;
+            let after_open = line.get(open_idx + 1..)?.trim_start();
+            if after_open.starts_with("const ")
+                || after_open.starts_with("let ")
+                || after_open.starts_with("var ")
+            {
+                return None;
+            }
+            line_start + open_idx + 1
+        } else {
+            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+            });
+            if !starts_with_target || !trimmed.contains('=') {
+                return None;
+            }
+            line_start + line.len().saturating_sub(trimmed.len())
+        };
+
+        let insert_pos = self
+            .line_map
+            .offset_to_position(insertion_offset as u32, self.source);
+        let edit = TextEdit {
+            range: Range::new(insert_pos, insert_pos),
+            new_text: "const ".to_string(),
+        };
+
+        let mut changes = FxHashMap::default();
+        changes.insert(self.file_name.clone(), vec![edit]);
+
+        Some(CodeAction {
+            title: "Add 'const' to unresolved variable".to_string(),
+            kind: CodeActionKind::QuickFix,
+            edit: Some(WorkspaceEdit { changes }),
+            is_preferred: false,
+            data: Some(serde_json::json!({
+                "fixName": "addMissingConst",
+                "fixId": "addMissingConst",
+                "fixAllDescription": "Add 'const' to all unresolved variables"
+            })),
+        })
+    }
+
+    fn line_bounds(&self, offset: usize) -> Option<(usize, usize)> {
+        if offset > self.source.len() {
+            return None;
+        }
+        let prefix = self.source.get(..offset)?;
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let suffix = self.source.get(offset..)?;
+        let rel_end = suffix.find('\n').unwrap_or(suffix.len());
+        Some((line_start, offset + rel_end))
     }
 
     // -------------------------------------------------------------------------

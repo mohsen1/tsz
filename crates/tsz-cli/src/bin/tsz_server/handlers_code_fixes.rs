@@ -117,7 +117,11 @@ impl Server {
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
-            let add_missing_const_preview = Self::apply_add_missing_const_fallback(&content);
+            let add_missing_const_preview = request_span
+                .and_then(|(start, _)| {
+                    Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
+                })
+                .or_else(|| Self::apply_add_missing_const_fallback(&content));
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -158,10 +162,18 @@ impl Server {
             {
                 diagnostics.push(diag);
             }
+            if diagnostics
+                .iter()
+                .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && let Some(diag) =
+                    Self::synthetic_add_missing_const_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
             let mut seen_diags = rustc_hash::FxHashSet::default();
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
-            let has_cannot_find_name_diag = diagnostics
+            let _has_cannot_find_name_diag = diagnostics
                 .iter()
                 .any(|d| d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME);
 
@@ -525,8 +537,9 @@ impl Server {
                 }));
             }
 
-            if let Some((member_name, updated_content)) = Self::apply_add_missing_enum_member_fallback(&content)
-                .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
+            if let Some((member_name, updated_content)) =
+                Self::apply_add_missing_enum_member_fallback(&content)
+                    .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 return TsServerResponse {
@@ -583,12 +596,11 @@ impl Server {
                 response_actions.insert(0, action);
             }
 
-            if error_codes.iter().any(|code| {
-                    CodeFixRegistry::fixes_for_error_code(*code)
-                        .iter()
-                        .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
-                } || (error_codes.is_empty() && has_cannot_find_name_diag))
-                && add_missing_await_preview.is_none()
+            if add_missing_await_preview.is_none()
+                && !response_actions.iter().any(|existing| {
+                    existing.get("fixId").and_then(serde_json::Value::as_str)
+                        == Some("addMissingConst")
+                })
                 && let Some(updated_content) = add_missing_const_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
@@ -610,9 +622,7 @@ impl Server {
                     "fixAllDescription": "Add 'const' to all unresolved variables",
                 });
                 response_actions.retain(|existing| {
-                    existing
-                        .get("fixId")
-                        .and_then(serde_json::Value::as_str)
+                    existing.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingConst")
                 });
                 if response_actions.is_empty() {
@@ -928,6 +938,52 @@ impl Server {
         }
 
         None
+    }
+
+    fn apply_add_missing_const_fallback_at_position(
+        content: &str,
+        line_map: &LineMap,
+        start: tsz::lsp::position::Position,
+    ) -> Option<String> {
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off > content.len() {
+            return None;
+        }
+
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let line = content.get(line_start..line_end)?;
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+        {
+            return None;
+        }
+
+        let insertion_offset = if trimmed.starts_with("for (")
+            && (trimmed.contains(" in ") || trimmed.contains(" of "))
+        {
+            let open_idx = line.find('(')?;
+            line_start + open_idx + 1
+        } else {
+            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+            });
+            if !starts_with_target || !trimmed.contains('=') {
+                return None;
+            }
+            line_start + line.len().saturating_sub(trimmed.len())
+        };
+
+        let mut updated = content.to_string();
+        updated.insert_str(insertion_offset, "const ");
+        Some(updated)
     }
 
     fn apply_add_missing_await_fallback(content: &str, fix_all: bool) -> Option<(String, String)> {
@@ -2075,6 +2131,82 @@ impl Server {
             message_text: "Type '{}' is missing the following properties.".to_string(),
             related_information: Vec::new(),
         })
+    }
+
+    pub(super) fn synthetic_add_missing_const_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let mut line_start = 0u32;
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty()
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("function ")
+                || trimmed.starts_with("class ")
+            {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
+            if trimmed.starts_with("for (")
+                && (trimmed.contains(" in ") || trimmed.contains(" of "))
+                && let Some(open_idx) = line.find('(')
+            {
+                let after = line[open_idx + 1..].trim_start();
+                let name_len = after
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .count();
+                if name_len > 0 {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    let after_ws = line[open_idx + 1..].len().saturating_sub(after.len());
+                    let name_start = prefix_ws + open_idx + 1 + after_ws;
+                    let name = &after[..name_len];
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + name_start as u32,
+                        length: name_len as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            let starts_with_target = trimmed
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$');
+            if starts_with_target && trimmed.contains('=') {
+                let name_len = trimmed
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .count();
+                if name_len > 0 {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    let name = &trimmed[..name_len];
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + prefix_ws as u32,
+                        length: name_len as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            line_start = line_start.saturating_add(line.len() as u32 + 1);
+        }
+
+        None
     }
 
     fn synthetic_implement_interface_codefix(
