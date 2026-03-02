@@ -669,6 +669,113 @@ fn test_contextual_union_function_different_params_no_contextual_type() {
     assert!(ctx.get_parameter_type(0).is_some());
 }
 
+#[test]
+fn test_conditional_function_branch_contextual_parameter_type() {
+    let interner = TypeInterner::new();
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let fn_true_branch = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::NUMBER,
+        extends_type: t_param,
+        true_type: fn_true_branch,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, conditional);
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_conditional_function_branch_contextual_type_for_call_argument() {
+    let interner = TypeInterner::new();
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("n")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let true_branch = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: callback,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::NUMBER,
+        extends_type: t_param,
+        true_type: true_branch,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, conditional);
+    let callback_param = interner.intersection(vec![TypeId::NUMBER, t_param]);
+    let expected_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("n")),
+            type_id: callback_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert_eq!(ctx.get_parameter_type_for_call(0, 1), Some(expected_callback));
+}
+
 /// When union members have call signatures with SAME parameter types but
 /// different return types, the contextual parameter type IS provided.
 #[test]
