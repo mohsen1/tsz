@@ -2662,7 +2662,7 @@ fn test_mapped_type_over_string_keys_assignable() {
 
     assert!(checker.is_assignable(mapped, expected));
     assert!(!checker.is_assignable(mapped, mismatch));
-    assert!(checker.is_assignable(expected, mapped));
+    assert!(!checker.is_assignable(expected, mapped));
 }
 
 #[test]

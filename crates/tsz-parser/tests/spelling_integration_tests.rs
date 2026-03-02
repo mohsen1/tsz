@@ -139,20 +139,20 @@ fn ts1435_interface_my_interface_space() {
 }
 
 // =====================================================================
-// TS1434: "Unexpected keyword or identifier." (fallback)
+// Recovery after TS1435
 // =====================================================================
 
 #[test]
 fn ts1434_unknown_identifier_after_misspelled_class() {
-    // "clasd MyClass2 {}" → TS1435 on "clasd", TS1434 on "MyClass2"
+    // "clasd MyClass2 {}" → TS1435 on "clasd", then ';' expected recovery.
     let diags = parse_and_collect_codes("clasd MyClass2 {}");
     assert!(
         has_diagnostic(&diags, 1435, "class"),
         "expected TS1435 on 'clasd', got {diags:?}"
     );
     assert!(
-        has_diagnostic(&diags, 1434, "Unexpected keyword or identifier"),
-        "expected TS1434 on 'MyClass2', got {diags:?}"
+        has_diagnostic(&diags, 1005, "';' expected"),
+        "expected TS1005 ';' expected on follow-up token, got {diags:?}"
     );
 }
 

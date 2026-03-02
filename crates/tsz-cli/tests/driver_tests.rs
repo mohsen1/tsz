@@ -309,8 +309,12 @@ fn compile_with_jsx_preserve_emits_jsx_extension() {
             "jsx": "preserve",
             "strict": false
           },
-          "include": ["src/**/*.tsx"]
+          "include": ["src/**/*.tsx", "src/**/*.d.ts"]
         }"#,
+    );
+    write_file(
+        &base.join("src/jsx.d.ts"),
+        "declare namespace JSX { interface IntrinsicElements { div: any; } }",
     );
     write_file(
         &base.join("src/view.tsx"),
