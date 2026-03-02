@@ -1,7 +1,58 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9806/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9807/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02q — JSDoc method signature parsing and @satisfies contextual typing
+
+### Fixed: JSDoc inline object types couldn't parse method signature syntax
+
+**Area**: jsdoc (61.0% pass rate → improved, 97 failing tests)
+
+**Root cause**: `parse_jsdoc_object_literal_type()` only handled `name: Type` property syntax. Method signature syntax like `{ move(distance: number): void }` was silently ignored — the colon finder would find `:` after `)` and treat `"move(distance: number)"` as a property name.
+
+This affected both:
+- `@typedef {{ method(param: T): R }} Name` definitions
+- `@satisfies {{ method(param: T): R }}` annotations
+- `@type {{ method(param: T): R }}` annotations
+
+**Fix** (3 sub-fixes, 3 files):
+1. **jsdoc.rs**: Added `parse_jsdoc_method_signature()` — detects `name(params): ReturnType` patterns in inline object type properties and creates Callable types with proper parameter types. Also added `split_top_level_params()` helper for comma-separated parameter lists that respects angle brackets and parens.
+2. **jsdoc.rs**: Changed `type_from_jsdoc_typedef()` to use `resolve_jsdoc_type_str()` instead of `jsdoc_type_from_expression()` for base types, so inline objects in `@typedef` are correctly resolved (the narrower function doesn't handle inline objects).
+3. **variable_checking/core.rs**: Added `@satisfies` contextual typing for variable declarations without type annotations. `/** @satisfies {T} */ const x = { ... }` now sets the satisfies type as contextual type before evaluating the initializer, enabling parameter inference in arrow functions and object literal methods.
+
+**Key design insight**: `jsdoc_type_from_expression` handles primitives/generics/arrow functions but intentionally does NOT handle inline objects (to avoid breaking `@param {{ x: T }}` syntax where the double braces have different meaning). The separate `resolve_jsdoc_type_str` adds inline object handling. The typedef resolution was incorrectly using the narrower function.
+
+**Tests**: 6 unit tests in `jsdoc_satisfies_tests.rs`:
+- `test_jsdoc_satisfies_typedef_method_contextual_typing` — @typedef + @satisfies method params
+- `test_jsdoc_satisfies_inline_method_contextual_typing` — inline @satisfies method params
+- `test_jsdoc_satisfies_variable_decl_arrow_contextual_typing` — var decl @satisfies arrow params
+- `test_jsdoc_satisfies_variable_decl_excess_property` — var decl @satisfies TS2353
+- `test_jsdoc_inline_object_method_signature_parsing` — @type with method sig
+- `test_jsdoc_typedef_inline_method_signature` — @typedef with multiple methods
+
+**Impact**: +3 conformance tests (9804 → 9807, 78.0%), 0 regressions:
+- `checkJsdocSatisfiesTag3.ts` — inline @satisfies intersection with methods now resolves
+- `checkJsdocSatisfiesTag5.ts` — @typedef method sig + @satisfies contextual typing
+- `checkJsdocSatisfiesTag13.ts` — var decl @satisfies provides contextual type
+
+**Remaining jsdoc @satisfies gaps (8 tests still failing)**:
+- `checkJsdocSatisfiesTag1.ts` — fingerprint-only (TS1360 message text)
+- `checkJsdocSatisfiesTag4.ts` — fingerprint-only (TS1360 message text)
+- `checkJsdocSatisfiesTag7.ts` — fingerprint-only (TS2339/TS2353 messages)
+- `checkJsdocSatisfiesTag9.ts` — fingerprint-only (TS2353 messages)
+- `checkJsdocSatisfiesTag10.ts` — fingerprint-only (TS2339/TS2353 messages)
+- `checkJsdocSatisfiesTag11.ts` — missing TS1223 (duplicate @satisfies tag detection)
+- `checkJsdocSatisfiesTag14.ts` — missing TS1005 (parser: `}` expected)
+- `checkJsdocSatisfiesTag15.ts` — missing TS1360+TS2322 (satisfies + @type interaction)
+
+**Files changed**:
+- `crates/tsz-checker/src/types/utilities/jsdoc.rs` — method sig parsing + typedef resolution fix
+- `crates/tsz-checker/src/state/variable_checking/core.rs` — @satisfies contextual typing
+- `crates/tsz-checker/src/lib.rs` — test module registration
+- `crates/tsz-checker/tests/jsdoc_satisfies_tests.rs` — 6 unit tests
+
+---
 
 ## Session 2026-03-02p — JSDoc union, intersection, and literal type parsing
 
