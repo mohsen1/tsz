@@ -61,6 +61,20 @@ pub struct TsConfig {
     pub exclude: Option<Vec<String>>,
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    /// Project references for composite project builds
+    #[serde(default)]
+    pub references: Option<Vec<TsConfigReference>>,
+}
+
+/// A project reference entry in tsconfig.json
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TsConfigReference {
+    /// Path to the referenced project's tsconfig.json or directory
+    pub path: String,
+    /// If true, prepend the output of this project to the output of the referencing project
+    #[serde(default)]
+    pub prepend: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -130,6 +144,8 @@ pub struct CompilerOptions {
     pub out_dir: Option<String>,
     #[serde(default)]
     pub out_file: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub composite: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration: Option<bool>,
     #[serde(default)]
@@ -301,6 +317,7 @@ pub struct ResolvedCompilerOptions {
     pub out_dir: Option<PathBuf>,
     pub out_file: Option<PathBuf>,
     pub declaration_dir: Option<PathBuf>,
+    pub composite: bool,
     pub emit_declarations: bool,
     pub source_map: bool,
     pub declaration_map: bool,
@@ -653,6 +670,16 @@ pub fn resolve_compiler_options(
         && !declaration_dir.is_empty()
     {
         resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
+    }
+
+    // composite implies declaration and incremental (matching tsc behavior)
+    if let Some(composite) = options.composite {
+        resolved.composite = composite;
+        if composite {
+            // composite: true implies declaration: true and incremental: true
+            resolved.emit_declarations = true;
+            resolved.incremental = true;
+        }
     }
 
     if let Some(declaration) = options.declaration {
@@ -1365,6 +1392,46 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS6304: Composite projects may not disable declaration emit.
+        // When composite: true, declaration must not be explicitly false.
+        if option_is_truthy(compiler_opts.get("composite"))
+            && matches!(
+                compiler_opts.get("declaration"),
+                Some(serde_json::Value::Bool(false))
+            )
+        {
+            let start = find_key_offset_in_source(&stripped, "declaration");
+            let key_len = "declaration".len() as u32 + 2;
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                key_len,
+                diagnostic_messages::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT
+                    .to_string(),
+                diagnostic_codes::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_DECLARATION_EMIT,
+            ));
+        }
+
+        // TS6379: Composite projects may not disable incremental compilation.
+        // When composite: true, incremental must not be explicitly false.
+        if option_is_truthy(compiler_opts.get("composite"))
+            && matches!(
+                compiler_opts.get("incremental"),
+                Some(serde_json::Value::Bool(false))
+            )
+        {
+            let start = find_key_offset_in_source(&stripped, "incremental");
+            let key_len = "incremental".len() as u32 + 2;
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                key_len,
+                diagnostic_messages::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_INCREMENTAL_COMPILATION
+                    .to_string(),
+                diagnostic_codes::COMPOSITE_PROJECTS_MAY_NOT_DISABLE_INCREMENTAL_COMPILATION,
+            ));
+        }
+
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
         // `checkJs` requires `allowJs` to be explicitly enabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
@@ -2061,6 +2128,8 @@ fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
         include: child.include.or(base.include),
         exclude: child.exclude.or(base.exclude),
         files: child.files.or(base.files),
+        // references are not inherited from extended configs (tsc behavior)
+        references: child.references,
     }
 }
 
@@ -2104,6 +2173,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             root_dir,
             out_dir,
             out_file,
+            composite,
             declaration,
             declaration_dir,
             source_map,
@@ -4113,5 +4183,87 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should be true despite TS5024 — tsc coerces string to boolean"
         );
+    }
+
+    #[test]
+    fn test_ts6304_composite_disables_declaration() {
+        let source = r#"{"compilerOptions":{"composite":true,"declaration":false}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&6304),
+            "Expected TS6304 when composite:true but declaration:false, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6304_not_emitted_when_declaration_true() {
+        let source = r#"{"compilerOptions":{"composite":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6304),
+            "Should NOT emit TS6304 when both composite and declaration are true, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6379_composite_disables_incremental() {
+        let source = r#"{"compilerOptions":{"composite":true,"incremental":false}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&6379),
+            "Expected TS6379 when composite:true but incremental:false, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6379_not_emitted_when_incremental_omitted() {
+        // composite implies incremental, so omitting incremental is fine
+        let source = r#"{"compilerOptions":{"composite":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6379),
+            "Should NOT emit TS6379 when composite is true and incremental is omitted, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_composite_implies_declaration_and_incremental() {
+        let source = r#"{"compilerOptions":{"composite":true,"noLib":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.composite,
+            "composite should be true in resolved options"
+        );
+        assert!(
+            resolved.emit_declarations,
+            "composite should imply declaration:true"
+        );
+        assert!(
+            resolved.incremental,
+            "composite should imply incremental:true"
+        );
+    }
+
+    #[test]
+    fn test_tsconfig_references_parsed() {
+        let source = r#"{
+            "compilerOptions": { "composite": true },
+            "references": [
+                { "path": "./packages/core" },
+                { "path": "./packages/utils", "prepend": true }
+            ]
+        }"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let refs = parsed.config.references.expect("should have references");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].path, "./packages/core");
+        assert!(!refs[0].prepend);
+        assert_eq!(refs[1].path, "./packages/utils");
+        assert!(refs[1].prepend);
     }
 }
