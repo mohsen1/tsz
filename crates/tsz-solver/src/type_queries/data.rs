@@ -281,6 +281,40 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
+        Some(TypeData::Application(_)
+            | TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)) =>
+        {
+            // Try evaluating deferred/generic wrappers first so tuple/array shape
+            // becomes visible to contextual typing (e.g. conditional true branch
+            // reducing to `[A, B, C]`).
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            if evaluated != type_id {
+                return get_array_applicable_type(db, evaluated);
+            }
+            if let Some(TypeData::Conditional(cond_id)) = db.lookup(type_id) {
+                let cond = db.conditional_type(cond_id);
+                let mut applicable = Vec::new();
+                for branch in [cond.true_type, cond.false_type] {
+                    if branch == type_id {
+                        continue;
+                    }
+                    if let Some(branch_applicable) = get_array_applicable_type(db, branch) {
+                        applicable.push(branch_applicable);
+                    }
+                }
+                return match applicable.len() {
+                    0 => None,
+                    1 => Some(applicable[0]),
+                    _ => Some(db.union(applicable)),
+                };
+            }
+            None
+        }
+        Some(TypeData::TypeParameter(info)) => info
+            .constraint
+            .and_then(|constraint| get_array_applicable_type(db, constraint)),
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             let applicable: Vec<TypeId> = members
