@@ -692,6 +692,11 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         resolved.printer.no_emit_helpers.into(),
     );
 
+    // Projects
+    if resolved.composite {
+        opts.insert("composite".into(), true.into());
+    }
+
     // Other
     opts.insert("incremental".into(), resolved.incremental.into());
     opts.insert("noCheck".into(), resolved.no_check.into());
@@ -700,8 +705,25 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let mut top = serde_json::Map::new();
     top.insert("compilerOptions".into(), serde_json::Value::Object(opts));
 
-    // Include files/include/exclude from tsconfig
+    // Include files/include/exclude/references from tsconfig
     if let Some(ref cfg) = config {
+        if let Some(ref refs) = cfg.references {
+            top.insert(
+                "references".into(),
+                serde_json::Value::Array(
+                    refs.iter()
+                        .map(|r| {
+                            let mut obj = serde_json::Map::new();
+                            obj.insert("path".into(), serde_json::Value::String(r.path.clone()));
+                            if r.prepend {
+                                obj.insert("prepend".into(), true.into());
+                            }
+                            serde_json::Value::Object(obj)
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if let Some(ref files) = cfg.files {
             top.insert(
                 "files".into(),
@@ -864,6 +886,22 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             return handle_build_single_project(args, cwd, root_config_path);
         }
     };
+
+    // Validate project reference constraints (TS6306, TS6310, TS6202)
+    let ref_diagnostics = graph.validate();
+    if !ref_diagnostics.is_empty() {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stderr().is_terminal());
+        for diag in &ref_diagnostics {
+            if pretty {
+                println!("error TS{}: {}", diag.code, diag.message);
+            } else {
+                println!("error TS{}: {}", diag.code, diag.message);
+            }
+        }
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
 
     // Handle --clean: delete build artifacts for all projects
     if args.clean {
