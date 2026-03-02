@@ -4,7 +4,8 @@
 //! brace completion, comments, doc templates, indentation, classifications, etc.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::lsp::position::LineMap;
+use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
+use tsz::lsp::position::{LineMap, Position};
 
 impl Server {
     pub(crate) fn handle_breakpoint_statement(
@@ -1739,10 +1740,61 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // getSmartSelectionRange returns SelectionRange
-        // This is different from selectionRange - it's the smart version
-        // Return a minimal selection range
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = SelectionRangeProvider::new(&arena, &line_map, &source_text);
+
+            let locations = request.arguments.get("locations")?.as_array()?;
+            let positions: Vec<Position> = locations
+                .iter()
+                .filter_map(|loc| {
+                    let line = loc.get("line")?.as_u64()? as u32;
+                    let offset = loc.get("offset")?.as_u64()? as u32;
+                    Some(Self::tsserver_to_lsp_position(line, offset))
+                })
+                .collect();
+
+            let ranges = provider.get_selection_ranges(&positions);
+
+            fn selection_range_to_json(
+                sr: &tsz::lsp::editor_ranges::selection_range::SelectionRange,
+            ) -> serde_json::Value {
+                let text_span = serde_json::json!({
+                    "start": {
+                        "line": sr.range.start.line + 1,
+                        "offset": sr.range.start.character + 1,
+                    },
+                    "end": {
+                        "line": sr.range.end.line + 1,
+                        "offset": sr.range.end.character + 1,
+                    },
+                });
+                if let Some(ref parent) = sr.parent {
+                    serde_json::json!({
+                        "textSpan": text_span,
+                        "parent": selection_range_to_json(parent),
+                    })
+                } else {
+                    serde_json::json!({
+                        "textSpan": text_span,
+                    })
+                }
+            }
+
+            let body: Vec<serde_json::Value> = ranges
+                .iter()
+                .map(|opt_sr| {
+                    opt_sr
+                        .as_ref()
+                        .map(selection_range_to_json)
+                        .unwrap_or(serde_json::json!(null))
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_syntactic_classifications(
