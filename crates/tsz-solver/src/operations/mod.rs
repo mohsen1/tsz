@@ -64,7 +64,10 @@ pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 pub use compound_assignment::*;
 pub use expression_ops::*;
 pub use generics::{GenericInstantiationResult, solve_generic_instantiation};
-pub use iterators::{IteratorInfo, get_async_iterable_element_type, get_iterator_info};
+pub use iterators::{
+    IteratorInfo, extract_iterator_result_value_types, get_async_iterable_element_type,
+    get_iterator_info,
+};
 pub use widening::*;
 
 #[cfg(test)]

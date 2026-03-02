@@ -349,9 +349,13 @@ impl<'a> CheckerState<'a> {
 
     /// Follow the iterator protocol chain via checker property access.
     ///
-    /// Follows: type[Symbol.iterator] → call → .`next()` → call → .value
-    /// Falls back to solver's `get_iterator_info` on the iterator type when
-    /// `.value` returns `unknown` (happens with Application types like `IteratorResult`<T>).
+    /// Follows: type[Symbol.iterator] → call → .`next()` → call → extract yield from `IteratorResult`
+    ///
+    /// The `IteratorResult` type is a discriminated union:
+    ///   { done?: false, value: T } | { done: true, value: `TReturn` }
+    /// For for-of loops, only the yield type T matters (from done:false branches).
+    /// We use the solver's `extract_iterator_result_value_types` to properly partition
+    /// by `done` instead of naively reading `.value` (which would give T | `TReturn`).
     fn resolve_iterator_element_type_via_property_access(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::operations::property::PropertyAccessResult;
 
@@ -380,18 +384,36 @@ impl<'a> CheckerState<'a> {
             _ => return TypeId::ANY,
         };
 
-        // Step 4: Get the return type of next()
+        // Step 4: Get the return type of next() — this is the IteratorResult type
         let next_return = self.get_call_return_type(next_fn_type);
 
-        // Step 5: Get .value from the IteratorResult
+        // Step 5: Extract the yield type from IteratorResult.
+        //
+        // IteratorResult<T, TReturn> = { done?: false, value: T } | { done: true, value: TReturn }
+        // For for-of loops, only the yield type T matters (from done:false branches).
+        //
+        // First try the solver's discriminant-aware extraction on the evaluated type.
+        let resolved_result = self.ctx.types.evaluate_type(next_return);
+        let (yield_type, _return_type) =
+            tsz_solver::operations::extract_iterator_result_value_types(
+                self.ctx.types,
+                resolved_result,
+            );
+
+        if yield_type != TypeId::ANY {
+            return yield_type;
+        }
+
+        // Fallback: read .value directly (gives T | TReturn, which is less precise
+        // but works for non-standard iterator shapes)
         let value_result = self.resolve_property_access_with_env(next_return, "value");
         let value_type = match &value_result {
             PropertyAccessResult::Success { type_id, .. } => *type_id,
             _ => return TypeId::ANY,
         };
 
-        // If .value resolved to `unknown` (happens when IteratorResult is an unresolved
-        // Application type), try the solver's iterator info on the iterator object itself
+        // If .value resolved to `unknown` (unresolved Application type),
+        // try the solver's iterator info on the iterator object itself
         if value_type == TypeId::UNKNOWN {
             if let Some(info) =
                 tsz_solver::operations::get_iterator_info(self.ctx.types, iterator_type, false)
