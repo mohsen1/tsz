@@ -1094,6 +1094,125 @@ impl Server {
         source_text[line_start..i].contains("//")
     }
 
+    fn strip_trailing_fourslash_marker_text(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        if let Some(start) = trimmed.rfind("/*") {
+            let after = &trimmed[start + 2..];
+            if !after.contains("*/") {
+                return trimmed[..start].trim_end();
+            }
+        }
+        if !trimmed.ends_with("*/") {
+            return trimmed;
+        }
+        let Some(start) = trimmed.rfind("/*") else {
+            return trimmed;
+        };
+        let marker = &trimmed[start + 2..trimmed.len() - 2];
+        if marker.is_empty() || marker.bytes().all(|b| b.is_ascii_digit()) {
+            trimmed[..start].trim_end()
+        } else {
+            trimmed
+        }
+    }
+
+    fn is_import_meta_member_context(source_text: &str, offset: u32) -> bool {
+        let end = (offset as usize).min(source_text.len());
+        let trimmed = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        trimmed.ends_with("import.meta.") || trimmed.ends_with("import.meta")
+    }
+
+    fn extract_import_meta_members(source_text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut search_start = 0usize;
+        while let Some(interface_idx) = source_text[search_start..].find("interface ImportMeta") {
+            let abs = search_start + interface_idx;
+            let Some(open_rel) = source_text[abs..].find('{') else {
+                break;
+            };
+            let mut i = abs + open_rel + 1;
+            let bytes = source_text.as_bytes();
+            let mut depth = 1i32;
+            let block_start = i;
+            while i < source_text.len() && depth > 0 {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            if depth != 0 || i <= block_start {
+                break;
+            }
+            let body = &source_text[block_start..i - 1];
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.is_empty()
+                    || trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                {
+                    continue;
+                }
+                let mut chars = trimmed.chars();
+                let Some(first) = chars.next() else {
+                    continue;
+                };
+                if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+                    continue;
+                }
+                let mut name = String::new();
+                name.push(first);
+                for ch in chars {
+                    if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                        name.push(ch);
+                    } else {
+                        break;
+                    }
+                }
+                if name.is_empty() {
+                    continue;
+                }
+                let after_name = &trimmed[name.len()..].trim_start();
+                if after_name.starts_with(':') || after_name.starts_with('(') {
+                    out.push(name);
+                }
+            }
+            search_start = i;
+        }
+        out
+    }
+
+    fn import_meta_project_completion_items(&self, file_name: &str) -> Vec<CompletionItem> {
+        let mut out = Vec::new();
+        let mut seen = FxHashSet::default();
+        let scan_paths =
+            Self::fallback_class_member_scan_paths(&self.open_files, &self.external_project_files);
+        for path in scan_paths {
+            if path == file_name {
+                continue;
+            }
+            let Some(content) = self
+                .open_files
+                .get(&path)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(&path).ok())
+            else {
+                continue;
+            };
+            for name in Self::extract_import_meta_members(&content) {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                let mut item = CompletionItem::new(name, CompletionItemKind::Property);
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                out.push(item);
+            }
+        }
+        out.sort_by(|a, b| a.label.cmp(&b.label));
+        out
+    }
+
     pub(crate) fn handle_completions(
         &mut self,
         seq: u64,
@@ -1193,6 +1312,17 @@ impl Server {
                     {
                         item.replacement_span = Some((replacement_start, completion_offset));
                     }
+                }
+            }
+            if is_member_completion
+                && let Some(completion_offset) =
+                    line_map.position_to_offset(completion_position, &source_text)
+                && Self::is_import_meta_member_context(&source_text, completion_offset)
+            {
+                let project_meta_items = self.import_meta_project_completion_items(&file);
+                if !project_meta_items.is_empty() {
+                    items = Self::merge_non_member_completion_items(items, project_meta_items);
+                    Self::sort_tsserver_completion_items(&mut items);
                 }
             }
             let include_insert_text = Self::bool_pref_or_default(
