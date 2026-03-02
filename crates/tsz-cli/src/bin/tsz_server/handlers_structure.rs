@@ -407,11 +407,38 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let config_file_name = Self::find_nearest_tsconfig(file).unwrap_or_default();
+            let file_names: Vec<&str> = self
+                .open_files
+                .keys()
+                .map(std::string::String::as_str)
+                .collect();
+            Some(serde_json::json!({
+                "configFileName": config_file_name,
+                "fileNames": file_names,
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"configFileName": "", "fileNames": []})),
+            Some(result.unwrap_or(serde_json::json!({"configFileName": "", "fileNames": []}))),
         )
+    }
+
+    fn find_nearest_tsconfig(file: &str) -> Option<String> {
+        let mut current = std::path::Path::new(file).parent();
+        while let Some(dir) = current {
+            for name in ["tsconfig.json", "jsconfig.json"] {
+                let config_path = dir.join(name);
+                if config_path.exists() {
+                    return Some(config_path.to_string_lossy().to_string());
+                }
+            }
+            current = dir.parent();
+        }
+        None
     }
 
     pub(crate) fn handle_compiler_options_for_inferred(
