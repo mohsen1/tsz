@@ -12,8 +12,8 @@ use crate::operations::{
 };
 use crate::types::{
     CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
-    PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
-    Visibility,
+    PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+    TypePredicate, Visibility,
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -285,6 +285,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             (Some(TypeData::Union(s_members)), Some(TypeData::Union(t_members))) => {
+                if self
+                    .constrain_iterator_result_unions(ctx, var_map, s_members, t_members, priority)
+                {
+                    return;
+                }
+
                 // When both source and target are unions, filter source members that
                 // match fixed (non-parameterized) target members before constraining
                 // against parameterized members. This implements TypeScript's inference
@@ -1040,6 +1046,87 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => {}
         }
+    }
+
+    /// IteratorResult-specific inference: infer from yield branches only.
+    ///
+    /// For unions like `{ done: false, value: T } | { done: true, value: undefined }`,
+    /// collect candidates from non-completed branches and avoid inferring from the
+    /// completion branch (`done: true`).
+    fn constrain_iterator_result_unions(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_members: TypeListId,
+        target_members: TypeListId,
+        priority: crate::types::InferencePriority,
+    ) -> bool {
+        let done_name = self.interner.intern_string("done");
+        let value_name = self.interner.intern_string("value");
+
+        let classify_iterator_result_member = |ty: TypeId| -> Option<(bool, TypeId)> {
+            let shape_id = match self.interner.lookup(ty) {
+                Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+                _ => return None,
+            };
+            let shape = self.interner.object_shape(shape_id);
+            let done_prop = PropertyInfo::find_in_slice(&shape.properties, done_name)?;
+            let done_is_true = match self.interner.lookup(done_prop.type_id) {
+                Some(TypeData::Literal(crate::LiteralValue::Boolean(true))) => true,
+                Some(TypeData::Literal(crate::LiteralValue::Boolean(false))) => false,
+                _ => return None,
+            };
+            let value_prop = PropertyInfo::find_in_slice(&shape.properties, value_name)?;
+            Some((done_is_true, value_prop.type_id))
+        };
+
+        let source_union = self.interner.type_list(source_members);
+        let target_union = self.interner.type_list(target_members);
+
+        let mut source_has_true = false;
+        let mut source_has_false = false;
+        let mut source_values = Vec::new();
+        for &m in source_union.iter() {
+            if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
+                if done_true {
+                    source_has_true = true;
+                } else {
+                    source_has_false = true;
+                    source_values.push(value_type);
+                }
+            }
+        }
+
+        let mut target_has_true = false;
+        let mut target_has_false = false;
+        let mut target_values = Vec::new();
+        for &m in target_union.iter() {
+            if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
+                if done_true {
+                    target_has_true = true;
+                } else {
+                    target_has_false = true;
+                    target_values.push(value_type);
+                }
+            }
+        }
+
+        // Only apply this specialized path for actual IteratorResult-like unions.
+        if !(source_has_true && source_has_false && target_has_true && target_has_false) {
+            return false;
+        }
+
+        if source_values.is_empty() || target_values.is_empty() {
+            return false;
+        }
+
+        for &s in &source_values {
+            for &t in &target_values {
+                self.constrain_types(ctx, var_map, s, t, priority);
+            }
+        }
+
+        true
     }
 
     /// Find the `keyof T` inference target from a mapped type constraint,

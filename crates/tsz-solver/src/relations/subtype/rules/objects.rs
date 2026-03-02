@@ -544,15 +544,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 if found_numeric_prop {
                     SubtypeResult::True
-                } else if target.string_index.is_some() {
-                    // Target has both string and number index signatures, and source
-                    // has no numeric properties. The string index check (called earlier)
-                    // already validated all source properties, and TypeScript requires
-                    // number_index_type <: string_index_type. Since no numeric properties
-                    // exist, the number index is vacuously satisfied.
-                    SubtypeResult::True
                 } else {
-                    SubtypeResult::False
+                    // TypeScript treats number index signatures as constraining only
+                    // numerically named members. If the source has no numeric members,
+                    // the numeric index constraint is vacuously satisfied.
+                    //
+                    // Examples accepted by tsc:
+                    //   { one: number } <: { [n: number]: number }
+                    //   { length: number } <: ArrayLike<T>
+                    SubtypeResult::True
                 }
             }
         }

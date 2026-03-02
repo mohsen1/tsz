@@ -2630,9 +2630,8 @@ fn test_number_index_signature_type_mismatch() {
 
 #[test]
 fn test_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
-    // { one: number } should NOT match { [x: number]: number }
-    // because the source has no numeric index signature and no numeric properties
-    // to infer one from.
+    // TypeScript accepts this: number index signatures constrain numeric keys.
+    // A source with only non-numeric keys vacuously satisfies the index.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2655,7 +2654,7 @@ fn test_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
     };
     let target = interner.object_with_index(target_shape);
 
-    assert!(!checker.is_subtype_of(source, target));
+    assert!(checker.is_subtype_of(source, target));
 }
 
 #[test]
