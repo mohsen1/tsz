@@ -520,8 +520,8 @@ impl Server {
                 }));
             }
 
-            if let Some((member_name, updated_content)) =
-                Self::apply_add_missing_enum_member_fallback(&content)
+            if let Some((member_name, updated_content)) = Self::apply_add_missing_enum_member_fallback(&content)
+                .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 return TsServerResponse {
@@ -1400,9 +1400,11 @@ impl Server {
 
         let mut updated = lines.clone();
         if let Some(idx) = last_member_idx {
-            let prev = updated[idx].trim_end().to_string();
-            if !prev.ends_with(',') && !prev.ends_with('{') {
-                updated[idx] = format!("{prev},");
+            let prev = &updated[idx];
+            let trimmed_len = prev.trim_end().len();
+            let (head, trailing) = prev.split_at(trimmed_len);
+            if !head.ends_with(',') && !head.ends_with('{') {
+                updated[idx] = format!("{head},{trailing}");
             }
         }
 
@@ -1419,6 +1421,74 @@ impl Server {
         };
         updated.insert(end_idx, new_member_line);
         Some((member_name, updated.join("\n")))
+    }
+
+    fn apply_add_missing_enum_member_simple_fallback(content: &str) -> Option<(String, String)> {
+        let mut enum_name = None::<String>;
+        let mut member_name = None::<String>;
+        for line in content.lines() {
+            let t = line.trim().replace("/**/", "");
+            if let Some(dot) = t.find('.') {
+                let left = t[..dot]
+                    .chars()
+                    .rev()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>();
+                let right = t[dot + 1..]
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .collect::<String>();
+                if !left.is_empty() && !right.is_empty() {
+                    enum_name = Some(left);
+                    member_name = Some(right);
+                }
+            }
+        }
+        let (enum_name, member_name) = (enum_name?, member_name?);
+
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        let mut enum_start = None;
+        let mut enum_end = None;
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim();
+            if t.starts_with(&format!("enum {enum_name}"))
+                || t.starts_with(&format!("export enum {enum_name}"))
+                || t.starts_with(&format!("export const enum {enum_name}"))
+            {
+                enum_start = Some(i);
+                for j in i + 1..lines.len() {
+                    if lines[j].trim() == "}" {
+                        enum_end = Some(j);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        let (start, end) = (enum_start?, enum_end?);
+        if lines[start + 1..end]
+            .iter()
+            .any(|l| l.trim_start().starts_with(&(member_name.clone() + " ")))
+            || lines[start + 1..end]
+                .iter()
+                .any(|l| l.trim_start().starts_with(&(member_name.clone() + ",")))
+        {
+            return None;
+        }
+
+        if end > start + 1 {
+            let prev = &lines[end - 1];
+            let trimmed_len = prev.trim_end().len();
+            let (head, trailing) = prev.split_at(trimmed_len);
+            if !head.ends_with(',') && !head.ends_with('{') {
+                lines[end - 1] = format!("{head},{trailing}");
+            }
+        }
+        lines.insert(end, format!("    {member_name}"));
+        Some((member_name, lines.join("\n")))
     }
 
     pub(super) fn synthetic_jsdoc_suggestion_diagnostic(
