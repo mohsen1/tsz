@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9823/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9822/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ## Session 2026-03-02w — IteratorResult yield type extraction for for-of loops
 
