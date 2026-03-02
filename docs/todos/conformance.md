@@ -1,7 +1,112 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9756/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9762/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02h — Fix union type call resolution bypassing solver via overload path
+
+### Fixed: Union callee types incorrectly routed through overload resolution — Checker (call.rs)
+
+**Area**: types/union (unionTypeCallSignatures4.ts, unionTypeReduction2.ts) + cross-cutting
+
+**Root cause**: `classify_for_call_signatures()` collects ALL member signatures from a Union type into `MultipleSignatures`. The checker's `get_type_of_call_expression_inner` then treats `MultipleSignatures` with len > 1 as overloads and routes through `resolve_overloaded_call_with_signatures()`. Overload resolution uses "try first match" semantics — it accepts the call if ANY single signature matches. This is WRONG for union types, which require the call to be valid for ALL members.
+
+For example, `(F1 | F5)("a")` where F1 = `(a: string, b?: string) => void` and F5 = `(a: string, b: string) => void`:
+- Overload path: tries F1 first → 1 arg is valid (b is optional) → returns immediately → TS2554 missed
+- Correct union path: solver's `resolve_union_call` computes combined signature with min_required=2 → 1 arg < 2 → TS2554
+
+**Fix**: Added `callee_is_union` guard before the `overload_signatures` computation. When the callee type is a Union, `overload_signatures` is set to `None`, skipping the overload resolution path. The call falls through to the normal `resolve_call_with_checker_adapter()` → solver's `resolve_call()` → `resolve_union_call()` which correctly validates against ALL union members.
+
+**Impact**: +7 net conformance tests (9755 → 9762):
+- `unionTypeCallSignatures4.ts` — union TS2554 for too few/many args
+- `unionTypeReduction2.ts` — union TS2554 for missing required arg
+- `genericCallInferenceConditionalType1.ts` — generic call inference with conditional types
+- `genericCallInferenceConditionalType2.ts` — same
+- `privateNamesConstructorChain-1.ts` — private names with constructor chains
+- `privateNamesConstructorChain-2.ts` — same
+- `for-of46.ts` — for-of statement
+
+**Files changed**:
+- `crates/tsz-checker/src/types/computation/call.rs` — `callee_is_union` guard
+
+**Key insight**: The solver's `resolve_union_call` was already correct (11 unit tests covering various union call scenarios). The bug was entirely in the checker's routing — it never reached the solver's union-aware code path.
+
+---
+
+## Session 2026-03-02g' — Check generic SFC spread attributes against IntrinsicAttributes
+
+### Fixed: Generic SFCs skipped IntrinsicAttributes check for spread attributes — Checker (jsx_checker.rs)
+
+**Area**: jsx (tsxGenericAttributesType7.tsx, tsxGenericAttributesType8.tsx)
+
+**Root cause**: For generic SFCs like `Component<T>(props: T)`, the checker skipped ALL attribute checking because `get_sfc_props_type()` returns `None` for generic functions (can't infer type args without full inference). The fallback path only checked IntrinsicAttributes for missing required properties (TS2741), not for whole-type assignability of spread attributes.
+
+tsc builds the target type as `IntrinsicAttributes & inferred_props_type` and checks the spread type against this intersection. For unconstrained type parameters like `U` (constraint = `unknown`), `unknown` is not assignable to the `IntrinsicAttributes` interface, so tsc emits TS2322.
+
+**Fix**: Two changes:
+1. Added `check_generic_sfc_spread_intrinsic_attrs()` function that detects generic SFC components (functions with type params) and checks each spread type against `IntrinsicAttributes & spread_type`. Uses manual message formatting to match tsc's `"IntrinsicAttributes & U"` output (not `"JSX.IntrinsicAttributes & U"`).
+2. Removed overly conservative `is_type_parameter_like(props)` bail in `get_jsx_props_type_for_component()` that prevented checking non-generic SFCs whose resolved props type was a type parameter. The per-property checks already handle type parameters via `props_has_type_params` flag.
+
+**Tests**: 3 unit tests in `jsx_component_attribute_tests.rs`:
+- `test_generic_sfc_spread_unconstrained_emits_ts2322` — unconstrained U fails IntrinsicAttributes check
+- `test_generic_sfc_spread_constrained_no_error` — U extends {x: string} passes
+- `test_non_generic_sfc_no_spurious_intrinsic_attrs_check` — non-generic SFCs unaffected
+
+**Impact**: +2 conformance tests (tsxGenericAttributesType7, tsxGenericAttributesType8), 0 regressions.
+
+**Remaining JSX gaps (75 tests still failing in jsx area)**:
+- Missing TS2322 in generic components: `jsxCallElaborationCheckNoCrash1` (dynamic tag element `<TagElement />` where Tag extends string literal union — needs generic tag resolution), `checkJsxGenericTagHasCorrectInferences` (function callback inference), `tsxLibraryManagedAttributes` (complex Defaultize/InferredPropTypes — needs full type argument inference for JSX)
+- Missing TS2769 (overload resolution): 5 tests need JSX overload resolution
+- Missing TS2741 (missing required): 4 tests need improvements to missing property detection with generics
+- False positive TS1003/TS1109: parser issues with JSX syntax edge cases
+- Generic SFC type argument inference: the fundamental limitation. Without inferring type arguments from JSX attributes, many generic component checks are skipped.
+
+**Files changed**:
+- `crates/tsz-checker/src/checkers/jsx_checker.rs` — new `check_generic_sfc_spread_intrinsic_attrs()` + bail removal
+- `crates/tsz-checker/tests/jsx_component_attribute_tests.rs` — 3 new tests
+
+---
+
+## Session 2026-03-02g — Composed conditional type deferral and property collection from conditionals
+
+### Fixed: Composed Extract types (Extract<Extract<T, Foo>, Bar>) not deferred — Solver (evaluator + property collector)
+
+**Area**: types/conditional (conditionalTypes2.ts) + cross-cutting
+
+**Root cause**: Two interacting gaps:
+
+1. **Evaluator**: When `check_type` evaluates to a deferred conditional containing type parameters (e.g., `Extract<T, Foo>` → `T extends Foo ? T : never`), the outer conditional's evaluator should defer. Instead, `type_is_compound_generic()` only handles Intersection types, and the post-subtype-check deferral at line 458 only checks `contains_type_parameters(extends_type)`, not `check_type`. So the evaluator eagerly took the false branch → `never`, silently erasing all type constraints.
+
+2. **Property collector**: `collect_properties()` in `collect.rs` had no handler for `TypeData::Conditional`. When an intersection like `Extract<T,Foo> & Bar` was checked for structural subtyping, the property merger skipped the Conditional member entirely, producing only `{bar: string}` instead of `{foo: string, bar: string}`. This means even with the deferral fix, the constraint `Extract<T,Foo> & Bar` couldn't be properly checked against target types.
+
+**Fix**:
+1. **Evaluator** (`conditional.rs`): Added Step 2a' between compound-generic check and identity check. Defers when `check_type` is a Conditional containing type parameters. Evaluates true/false types for the deferred result so the Extract pattern (`true_type == check_type`) is recognized by downstream constraint computation.
+2. **Property collector** (`collect.rs`): Added `TypeData::Conditional` handler that computes the default constraint (tsc's `getConstraintOfConditionalType`). For Extract-like patterns (`true_type == check_type`): `check_type & extends_type`. For general patterns: `true_type | false_type`. Properties are then collected from the constraint.
+
+**Tests**: 4 unit tests in `conditional_comprehensive_tests.rs`:
+- `test_composed_extract_deferred_when_check_is_conditional` — Extract<Extract<T,Foo>,Bar> stays deferred
+- `test_composed_extract_not_assignable_to_missing_property` — rejects `{foo, bat}`
+- `test_composed_extract_assignable_to_matching_properties` — accepts `{foo, bar}`
+- `test_property_collection_from_conditional_in_intersection` — intersection merges conditional's properties
+
+**Impact**: +3-5 net conformance tests (non-deterministic fluctuation in for-of tests). Consistent improvements:
+- `genericCallInferenceConditionalType2.ts` — generic inference with composed conditionals
+- `privateNamesConstructorChain-1.ts` / `privateNamesConstructorChain-2.ts` — private names with conditional returns
+- `intersectionTypeInference3.ts` — intersection inference involving conditionals
+- `for-of45.ts` — non-deterministic (passes sometimes)
+
+**Files changed**:
+- `crates/tsz-solver/src/evaluation/evaluate_rules/conditional.rs` — Step 2a' deferral
+- `crates/tsz-solver/src/objects/collect.rs` — Conditional property collection
+- `crates/tsz-solver/tests/conditional_comprehensive_tests.rs` — 4 new tests
+
+**Remaining types/conditional gaps** (all fingerprint-level, error codes match):
+- conditionalTypes1.ts: 3-line offset (likely @pragma counting), type display (`DeepReadonlyArray` vs `DeepReadonlyArray<Part>`), extra TS2322 at some positions
+- conditionalTypes2.ts: 3-line offset
+- conditionalTypesExcessProperties.ts: property ordering in messages
+- inferTypes1.ts: Missing TS2344 for `infer U` constraint violation (U extends number but used as T70<U> where T70 requires string). Root cause: checker doesn't validate type argument constraints for infer types in conditional branches. Also "abstract new" vs "new" in constraint display.
+
+---
 
 ## Session 2026-03-02f — Fix type-only import detection for TS1361/TS1362
 

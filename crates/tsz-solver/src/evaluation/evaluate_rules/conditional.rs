@@ -287,6 +287,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(cond.clone());
             }
 
+            // Step 2a': Deferred conditional as check_type.
+            //
+            // When check_type evaluates to a deferred conditional containing type
+            // parameters (e.g., `Extract<T, Foo>` → `T extends Foo ? T : never`),
+            // the outer conditional is indeterminate: the inner conditional could
+            // evaluate to any type once T is instantiated, so we can't determine
+            // whether it satisfies extends_type.
+            //
+            // Example: `Extract<Extract<T, Foo>, Bar>`
+            //   check_type = (T extends Foo ? T : never)  [deferred]
+            //   extends_type = Bar
+            //   Until T is known, we can't tell if Extract<T, Foo> <: Bar.
+            //
+            // We evaluate true/false types so the deferred conditional has
+            // consistent types (enables Extract pattern recognition in the
+            // subtype checker's get_conditional_constraint).
+            if !self.type_contains_infer(extends_type)
+                && matches!(
+                    self.interner().lookup(check_type),
+                    Some(TypeData::Conditional(_))
+                )
+                && crate::visitor::contains_type_parameters(self.interner(), check_type)
+            {
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
+            }
+
             // Step 2b: Identity simplification for any type (not just type params).
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
