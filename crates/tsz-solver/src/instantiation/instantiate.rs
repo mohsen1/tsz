@@ -653,6 +653,15 @@ impl<'a> TypeInstantiator<'a> {
                 };
                 if has_lazy_extends {
                     mapped_type
+                } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
+                    // Don't eagerly evaluate when the constraint still contains type
+                    // parameters (e.g., `keyof __infer_0` during generic call inference).
+                    // Premature evaluation would resolve `keyof T` through T's constraint
+                    // (e.g., `keyof Record<string, string>` → `string`), destroying the
+                    // homomorphic `keyof T` pattern needed for reverse-mapped inference.
+                    // The constraint collection and post-inference check will evaluate
+                    // the mapped type after inference resolves the type parameters.
+                    mapped_type
                 } else {
                     crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
                 }
