@@ -1,7 +1,53 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9793/12570 (77.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9794/12570 (77.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02o — Polymorphic `this` return type inference for class methods
+
+### Fixed: Class methods returning `this` without explicit annotation inferred concrete type instead of `ThisType`
+
+**Area**: types/thisType (fluentClasses.ts, thisTypeAndConstraints.ts) + compiler (genericCallInferenceConditionalType2.ts)
+
+**Root cause**: In `class_type/core.rs` Phase 2, the class type builder pushes a partial class instance type onto `this_type_stack`. When method bodies with `return this;` are evaluated during return type inference, `this` resolves to the concrete partial type (e.g., `A`) instead of the polymorphic `ThisType`. This means the inferred return type of methods like `foo() { return this; }` is `A` (concrete), not `this` (polymorphic). Consequently, `c.foo()` where `c: C extends B extends A` returns `A` instead of `C`, breaking fluent method chaining.
+
+**Fix**: Post-process method signatures in the class type builder's Phase 2 loop. After `call_signature_from_method` infers the return type, check: if the method has no explicit return type annotation, has a body, and the inferred return type matches the partial class instance type (meaning the body returned `this`), replace it with `ThisType`. The existing `apply_this_substitution_to_call_return` path then correctly substitutes `ThisType` with the receiver type at call sites.
+
+**Key design decisions**:
+- Targeted post-processing rather than changing how `this` expression evaluates everywhere (which would break `this.property` resolution in method bodies)
+- Only fires for unannotated methods whose inferred return type IS the partial type (i.e., the body directly returns `this`)
+- Does NOT affect methods returning `this.property` (return type is the property's type, not the class type)
+- Does NOT affect methods with explicit `: this` annotations (handled separately via `type_node.rs`)
+
+**Tests**: 4 unit tests in `this_type_tests.rs`:
+- `test_fluent_class_chain_no_false_ts2339` — fluent A→B→C chain with `return this`
+- `test_explicit_return_type_not_replaced` — explicit `: A` annotation preserved
+- `test_return_this_property_stays_concrete` — `return this.x` stays `number`
+- `test_nonexistent_property_still_errors` — nonexistent prop still TS2339
+
+**Impact**: +1 conformance test (9793 → 9794), 0 regressions:
+- `fluentClasses.ts` — fluent class chain no longer has false TS2339
+- `thisTypeAndConstraints.ts` — extra TS2741 eliminated (was caused by concrete return type)
+- `genericCallInferenceConditionalType2.ts` — generic conditional inference improved
+
+**Remaining types/thisType gaps (9 tests still failing)**:
+- `contextualThisType.ts` — extra TS2345 (interface `this` parameter in contextual typing)
+- `looseThisTypeInFunctions.ts` — missing TS2339 (loose `this` in standalone functions)
+- `thisTypeAccessibility.ts` — fingerprint-only differences
+- `thisTypeErrors.ts` — missing TS2564 (definite assignment for `this` properties)
+- `thisTypeInClasses.ts` — missing TS2352 (type assertion with `this`)
+- `thisTypeInFunctionsNegative.ts` — parser issues (TS1005, TS1109, etc.)
+- `thisTypeInObjectLiterals.ts` — extra TS2339 (object literal `this` doesn't include all members)
+- `thisTypeSyntacticContext.ts` — extra TS2684 (this context mismatch)
+- `typeRelationships.ts` — missing TS2322, TS2403, TS2739 (type relationship checks)
+- `unionThisTypeInFunctions.ts` — fingerprint-only differences
+
+**Files changed**:
+- `crates/tsz-checker/src/types/class_type/core.rs` — post-process return type in Phase 2
+- `crates/tsz-checker/src/lib.rs` — test module registration
+- `crates/tsz-checker/tests/this_type_tests.rs` — 4 unit tests
+
+---
 
 ## Session 2026-03-02n — Infer class properties from JS constructor this.prop assignments
 
