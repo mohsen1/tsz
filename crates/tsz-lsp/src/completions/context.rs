@@ -227,6 +227,13 @@ impl<'a> Completions<'a> {
                 }
             }
             let current_word = &trimmed[idx..];
+            if current_word
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit())
+            {
+                return false;
+            }
 
             if matches!(
                 current_word,
@@ -379,16 +386,19 @@ impl<'a> Completions<'a> {
                     let text_before = &self.source_text[..offset as usize];
                     let in_decl_text = &text_before[node.pos as usize..];
                     let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
-                    // After `{`, `;`, `}`, or `)` in class/interface body - member position
-                    return matches!(
-                        last_non_ws,
-                        Some(b'{') | Some(b';') | Some(b'}') | Some(b')')
-                    );
+                    // After `{`, `;`, or `}` in class/interface body - member position.
+                    // `)` is excluded; inside method bodies it often trails expressions
+                    // and is not a declaration site.
+                    return matches!(last_non_ws, Some(b'{') | Some(b';') | Some(b'}'));
                 }
                 // Stop at function boundaries - we're inside a function body, not member position
                 if k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::ARROW_FUNCTION
                     || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
                     || k == syntax_kind_ext::SOURCE_FILE
                 {
                     return false;
@@ -416,6 +426,10 @@ impl<'a> Completions<'a> {
                 if k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::ARROW_FUNCTION
                     || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
                     || k == syntax_kind_ext::SOURCE_FILE
                 {
                     return false;
