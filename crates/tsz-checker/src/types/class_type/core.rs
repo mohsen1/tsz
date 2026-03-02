@@ -382,6 +382,18 @@ impl<'a> CheckerState<'a> {
                             },
                         );
                     }
+
+                    // In JS/checkJs mode, constructor body `this.prop = value`
+                    // assignments serve as property declarations.
+                    // Scan the constructor body for these patterns and add
+                    // them to the class instance type.
+                    if self.ctx.is_js_file() {
+                        self.collect_js_constructor_this_properties(
+                            ctor.body,
+                            &mut properties,
+                            current_sym,
+                        );
+                    }
                 }
                 k if k == syntax_kind_ext::INDEX_SIGNATURE => {
                     let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
@@ -1017,6 +1029,118 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+
+    /// Scan a constructor body for `this.prop = value` assignments and add
+    /// them as instance properties. This implements the JS/checkJs pattern
+    /// where constructor assignments serve as implicit property declarations.
+    ///
+    /// Only top-level expression statements in the constructor body are scanned.
+    /// Properties that already exist (from explicit declarations or parameter
+    /// properties) are skipped — explicit declarations take precedence.
+    fn collect_js_constructor_this_properties(
+        &mut self,
+        body_idx: NodeIndex,
+        properties: &mut FxHashMap<Atom, PropertyInfo>,
+        parent_sym: Option<SymbolId>,
+    ) {
+        let stmts: Vec<NodeIndex> = {
+            let Some(body_node) = self.ctx.arena.get(body_idx) else {
+                return;
+            };
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            block.statements.nodes.clone()
+        };
+
+        for &stmt_idx in &stmts {
+            let Some((prop_name, rhs_idx, is_private)) =
+                self.extract_this_property_assignment(stmt_idx)
+            else {
+                continue;
+            };
+
+            // Skip private identifiers — they have separate handling
+            if is_private {
+                continue;
+            }
+
+            let name_atom = self.ctx.types.intern_string(&prop_name);
+
+            // Don't override explicit declarations
+            if properties.contains_key(&name_atom) {
+                continue;
+            }
+
+            let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
+
+            // Determine type: JSDoc @type annotation > inferred from RHS
+            let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                jsdoc_type
+            } else if !rhs_idx.is_none() {
+                let rhs_type = self.get_type_of_node(rhs_idx);
+                if is_readonly {
+                    rhs_type
+                } else {
+                    self.widen_literal_type(rhs_type)
+                }
+            } else {
+                TypeId::ANY
+            };
+
+            properties.insert(
+                name_atom,
+                PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: is_readonly,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: parent_sym,
+                    declaration_order: 0,
+                },
+            );
+        }
+    }
+
+    /// Extract a `this.propName = rhs` pattern from an expression statement.
+    /// Returns `(property_name, rhs_node_index, is_private)` if matched.
+    fn extract_this_property_assignment(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, bool)> {
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        // Check LHS is this.propName
+        let lhs_node = self.ctx.arena.get(binary.left)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(lhs_node)?;
+        let this_node = self.ctx.arena.get(access.expression)?;
+        if this_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
+        Some((ident.escaped_text.clone(), binary.right, is_private))
     }
 }
 
