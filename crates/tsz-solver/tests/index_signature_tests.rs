@@ -467,3 +467,90 @@ fn test_classify_element_indexable_preserves_union_members() {
         }
     }
 }
+
+/// When the target has both string and number index signatures, an object with
+/// only string-keyed properties (no numeric properties) should be assignable.
+/// The number index is vacuously satisfied because the string index already
+/// covers all keys and TypeScript requires `number_index_type <: string_index_type`.
+///
+/// Regression test for: `{ foo: fn } <: { [x: string]: T; [x: number]: T }`
+/// failing with false TS2322/TS2345 when the source has no numeric properties.
+#[test]
+fn test_object_with_string_props_assignable_to_dual_index_target() {
+    let interner = TypeInterner::new();
+
+    // Source: { foo: string }
+    let source = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![PropertyInfo {
+            name: interner.intern_string("foo"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }],
+        string_index: None,
+        number_index: None,
+    });
+
+    // Target: { [x: string]: string; [x: number]: string }
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "{{ foo: string }} should be assignable to {{ [x: string]: string; [x: number]: string }}"
+    );
+}
+
+/// Same as above but the source has NO properties at all (empty object).
+/// Empty objects should also be assignable to dual index targets.
+#[test]
+fn test_empty_object_assignable_to_dual_index_target() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![]);
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "Empty object should be assignable to {{ [x: string]: string; [x: number]: string }}"
+    );
+}

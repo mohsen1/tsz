@@ -547,9 +547,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.instantiate_function_shape(&source_instantiated, &substitution);
         }
 
-        // REMOVED: generic target vs non-generic source instantiation.
-        // A non-generic source should generally not be assignable to a generic target,
-        // because it cannot fulfill the promise of operating on any type argument.
+        // Non-generic source → generic target: erase target type params to constraints.
+        // This matches tsc's `getErasedSignature` behavior in `signatureRelatedTo`.
+        // Example: `typeof MySubClass` (non-generic) is assignable to `typeof MyClass<T>`
+        // (generic) when T's constraint is satisfied — tsc erases T to its constraint
+        // (e.g., `MyInterface`) and then compares structurally.
+        if source_instantiated.type_params.is_empty() && !target_instantiated.type_params.is_empty()
+        {
+            let target_canonical =
+                erase_type_params_to_constraints(&target_instantiated.type_params);
+            target_instantiated =
+                self.instantiate_function_shape(&target_instantiated, &target_canonical);
+        }
 
         // Return type is covariant
         let return_result = self.check_return_compat(
@@ -924,10 +933,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check properties (if any), excluding private fields.
         // Sort by name (Atom) to match the merge scan's expectation in check_object_subtype.
+        //
+        // When both callables have construct signatures (class constructors), skip the
+        // `prototype` property. Its type is the instance type which is already validated
+        // by construct signature compatibility — checking it separately can fail when
+        // the target has generic type params that were erased only at the signature level.
+        let has_construct_sigs =
+            !source.construct_signatures.is_empty() && !target.construct_signatures.is_empty();
+        let should_skip_prop = |name| {
+            let resolved = self.interner.resolve_atom(name);
+            resolved.starts_with('#') || (has_construct_sigs && resolved == "prototype")
+        };
         let mut source_props: Vec<_> = source
             .properties
             .iter()
-            .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
+            .filter(|p| !should_skip_prop(p.name))
             .cloned()
             .collect();
         // Function-like sources (with call signatures) are expected to have Function members
@@ -957,7 +977,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut target_props: Vec<_> = target
             .properties
             .iter()
-            .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
+            .filter(|p| !should_skip_prop(p.name))
             .cloned()
             .collect();
         target_props.sort_by_key(|a| a.name);

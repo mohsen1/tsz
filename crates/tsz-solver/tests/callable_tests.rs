@@ -1335,3 +1335,71 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
     checker.strict_function_types = false;
     assert!(checker.check_subtype(source, target).is_true());
 }
+
+/// Non-generic construct signature source should be assignable to generic
+/// construct signature target via type parameter erasure to constraints.
+/// Models: `new() => MyClass` <: `new<T extends MyInterface>() => T`
+/// when tsc erases T to `MyInterface` for comparison.
+#[test]
+fn test_nongeneric_construct_sig_assignable_to_generic_target() {
+    let interner = TypeInterner::new();
+
+    // Create a concrete return type to represent `MyClass` (implements MyInterface)
+    let my_class = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+
+    // Source: callable with `new() => MyClass`
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: my_class,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Target: callable with `new<T extends { value: number }>() => T`
+    let constraint = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![],
+            this_type: None,
+            return_type: t_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Non-generic source should be assignable to generic target
+    // because T gets erased to its constraint { value: number }
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
