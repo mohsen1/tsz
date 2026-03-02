@@ -3,6 +3,7 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -159,8 +160,17 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.compiler_options.strict_null_checks {
             return false;
         }
-        let name = self.expression_text(expr_idx);
-        if let Some(loc) = self.get_source_location(expr_idx) {
+        let expr_text = self.expression_text(expr_idx);
+        let loc = self.get_source_location(expr_idx);
+
+        // Namespace imports are value bindings (`import * as ns`) and should not
+        // produce TS18046 when internal module namespace resolution falls back
+        // to unknown during cross-file/type-only export scenarios.
+        if self.is_namespace_import_rooted_expression(expr_idx) {
+            return false;
+        }
+        let name = expr_text;
+        if let Some(loc) = loc {
             let (code, message) = if let Some(ref name) = name {
                 (
                     diagnostic_codes::IS_OF_TYPE_UNKNOWN,
@@ -182,6 +192,79 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         false
+    }
+
+    fn is_namespace_import_rooted_expression(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(root_ident) = self.root_identifier_for_expression(expr_idx) else {
+            return false;
+        };
+        let Some(sym_id) = self.resolve_identifier_symbol(root_ident) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let symbol_is_namespace_import = symbol.import_module.is_some()
+            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"));
+        if symbol_is_namespace_import {
+            return true;
+        }
+        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited = Vec::new();
+            if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id)
+            {
+                let resolved_is_namespace_import = resolved_symbol.import_module.is_some()
+                    && (resolved_symbol.import_name.is_none()
+                        || resolved_symbol.import_name.as_deref() == Some("*"));
+                if resolved_is_namespace_import {
+                    return true;
+                }
+                if (resolved_symbol.flags & symbol_flags::MODULE) != 0 {
+                    return true;
+                }
+            }
+        } else {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(ext.parent)
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::NAMESPACE_IMPORT)
+        })
+    }
+
+    fn root_identifier_for_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = self.ctx.arena.skip_parenthesized(expr_idx);
+        loop {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return Some(current);
+            }
+
+            if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(node)
+            {
+                current = self.ctx.arena.skip_parenthesized(access.expression);
+                continue;
+            }
+
+            return None;
+        }
     }
 
     /// Report an excess property error using solver diagnostics with source tracking.

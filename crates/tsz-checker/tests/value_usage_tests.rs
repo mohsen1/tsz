@@ -967,6 +967,42 @@ function f(x: unknown) {
     );
 }
 
+#[test]
+fn test_namespace_import_unknown_does_not_emit_ts18046() {
+    let source = r#"
+import * as ns from "./missing";
+ns.foo.bar();
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18046_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18046)
+        .count();
+    assert_eq!(
+        ts18046_count, 0,
+        "Expected no TS18046 for namespace import access fallback, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 // NOTE: TS18046 for calls, binary ops, and unary ops on unknown is deferred.
 // Our type system sometimes resolves non-unknown types (e.g., iterator values,
 // unresolved imports) as TypeId::UNKNOWN. Adding TS18046 in those paths causes
