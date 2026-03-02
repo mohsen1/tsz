@@ -359,6 +359,10 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+                let has_unknown_expected_context = ctx_helper
+                    .as_ref()
+                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .is_some_and(|t| t == TypeId::UNKNOWN);
                 // TS7006: In TS files, contextual `unknown` is still a concrete contextual
                 // type and should suppress implicit-any reporting for callback parameters.
                 // Keep the old JS behavior where weak contextual `unknown` is treated as no context.
@@ -367,6 +371,7 @@ impl<'a> CheckerState<'a> {
                 // the rest param captures the "remaining" args (type `[]` for 0-param context).
                 let has_contextual_type = contextual_type
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
+                    || (has_unknown_expected_context && !is_js_file)
                     || (param.dot_dot_dot_token && ctx_helper.is_some());
 
                 // Use type annotation if present, otherwise infer from context
