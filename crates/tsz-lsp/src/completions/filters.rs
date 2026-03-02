@@ -15,6 +15,9 @@ impl<'a> Completions<'a> {
         if self.is_class_member_continuation_without_separator(offset) {
             return true;
         }
+        if self.is_ambiguous_numeric_dot_context(offset) {
+            return true;
+        }
         // Check if we're at an identifier definition location first - this works
         // even when offset == source_text.len() (cursor at end of file).
         if self.is_at_definition_location(offset) {
@@ -874,6 +877,53 @@ impl<'a> Completions<'a> {
                 // Hit the opening backtick without being in an expression
                 return true;
             }
+        }
+        true
+    }
+
+    fn is_ambiguous_numeric_dot_context(&self, offset: u32) -> bool {
+        let end = (offset as usize).min(self.source_text.len());
+        if end == 0 {
+            return false;
+        }
+        let mut prefix = &self.source_text[..end];
+        loop {
+            let trimmed = prefix.trim_end();
+            if trimmed.ends_with("*/")
+                && let Some(start) = trimmed.rfind("/*")
+            {
+                prefix = &trimmed[..start];
+                continue;
+            }
+            prefix = trimmed;
+            break;
+        }
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = Self::strip_trailing_fourslash_marker(&prefix[line_start..]).trim_end();
+        let Some(before_dot) = line.strip_suffix('.') else {
+            return false;
+        };
+        let expr = before_dot.trim_end();
+        if expr.ends_with(')') || expr.is_empty() {
+            return false;
+        }
+        let token_start = expr
+            .rfind(|c: char| !(c.is_ascii_digit() || c == '_'))
+            .map_or(0, |p| p + 1);
+        let token = &expr[token_start..];
+        if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit() || c == '_') {
+            return false;
+        }
+        let before_token = &expr[..token_start];
+        if before_token.ends_with('.') {
+            return false;
+        }
+        if before_token
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return false;
         }
         true
     }
