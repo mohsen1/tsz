@@ -729,7 +729,10 @@ impl<'a> Completions<'a> {
             .map_or(0, |idx| idx + 1);
         let line_prefix = &self.source_text[line_start..cursor as usize];
         if line_prefix.contains("//") {
-            return None;
+            let comment_pos = line_prefix.find("//").unwrap_or(usize::MAX);
+            if !(comment_pos == 0 && line_prefix.starts_with("////")) {
+                return None;
+            }
         }
 
         if cursor == 0 {
@@ -747,6 +750,15 @@ impl<'a> Completions<'a> {
         } else {
             dot
         };
+        if scan_from > 0 {
+            let node_idx = find_node_at_offset(self.arena, scan_from - 1);
+            if node_idx.is_some()
+                && let Some(node) = self.arena.get(node_idx)
+                && node.kind == SyntaxKind::RegularExpressionLiteral as u16
+            {
+                return Some(node_idx);
+            }
+        }
         let mut ident_end = scan_from;
         while ident_end > 0 && bytes[(ident_end - 1) as usize].is_ascii_whitespace() {
             ident_end -= 1;

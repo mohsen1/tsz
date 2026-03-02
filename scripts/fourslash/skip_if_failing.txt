@@ -4031,4 +4031,3 @@ unusedTypeParametersWithTrivia4
 unusedVariableInForLoop7FS
 whiteSpaceBeforeReturnTypeFormatting
 completionListInComments3
-completionListAfterRegularExpressionLiteral01
