@@ -1148,10 +1148,7 @@ impl Server {
             let body = &source_text[block_start..i - 1];
             for line in body.lines() {
                 let trimmed = line.trim_start();
-                if trimmed.is_empty()
-                    || trimmed.starts_with("//")
-                    || trimmed.starts_with("/*")
-                {
+                if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") {
                     continue;
                 }
                 let mut chars = trimmed.chars();
