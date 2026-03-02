@@ -659,3 +659,57 @@ function invoker<K extends string | number | symbol, A extends any[]>(key: K, ..
         "Expected no TS2556 for spread into generic IndexAccess callable, got {ts2556_count}. Diagnostics: {diagnostics:?}"
     );
 }
+
+// ── Mapped tuple rest parameters: evaluate_rest_param_type fix ──
+// When a rest parameter has an Application/Mapped type (e.g., TupleMapper<[string, number]>),
+// param_type_for_arg_index must evaluate it to its concrete form before extracting per-element
+// types. Without this, each argument is checked against the whole unevaluated type, producing
+// false TS2345 errors.
+
+#[test]
+fn test_mapped_tuple_rest_param_no_false_ts2345() {
+    // Core case: Application type `TupleMapper<[string, number]>` as rest param
+    // must be evaluated to a concrete tuple before element extraction.
+    let source = r#"
+type TupleMapper<T extends unknown[]> = { [K in keyof T]: T[K] };
+declare function mapped<T extends unknown[]>(...args: TupleMapper<T>): void;
+mapped("hello", 42);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Mapped tuple rest param should not produce false TS2345, got {ts2345_count}"
+    );
+}
+
+#[test]
+fn test_mapped_tuple_rest_param_with_return_type() {
+    // Same pattern but with a return type (inferRestArgumentsMappedTuple conformance test).
+    let source = r#"
+type TupleMapper<T extends unknown[]> = { [K in keyof T]: T[K] };
+declare function mapTuple<T extends unknown[]>(...args: TupleMapper<T>): T;
+const result = mapTuple("hello", 42);
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Generic mapped tuple inference should not produce false TS2345, got {ts2345_count}"
+    );
+}
+
+#[test]
+fn test_plain_tuple_rest_param_still_catches_mismatch() {
+    // Ensure the fix doesn't break normal tuple rest param type checking.
+    let source = r#"
+declare function f(...args: [string, number]): void;
+f(42, "hello");
+"#;
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert!(
+        ts2345_count >= 1,
+        "Plain tuple rest param should still reject mismatched args, got {ts2345_count} TS2345 errors"
+    );
+}
