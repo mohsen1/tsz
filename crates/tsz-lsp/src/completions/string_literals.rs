@@ -9,6 +9,100 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::*;
 
 impl<'a> Completions<'a> {
+    pub(super) fn get_contextual_string_literal_completions(
+        &self,
+        node_idx: NodeIndex,
+        type_cache: Option<&mut Option<TypeCache>>,
+    ) -> Option<Vec<CompletionItem>> {
+        let interner = self.interner?;
+        let file_name = self.file_name.as_ref()?;
+        let mut cache_ref = type_cache;
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
+            if let Some(cache_value) = cache.take() {
+                CheckerState::with_cache(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    cache_value,
+                    compiler_options,
+                )
+            } else {
+                CheckerState::new(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    compiler_options,
+                )
+            }
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                interner,
+                file_name.clone(),
+                compiler_options,
+            )
+        };
+        let mut expected = self.get_contextual_type(node_idx, &mut checker);
+        if expected.is_none() {
+            let mut current = node_idx;
+            for _ in 0..8 {
+                let Some(ext) = self.arena.get_extended(current) else {
+                    break;
+                };
+                if !ext.parent.is_some() || ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+                expected = self.get_contextual_type(current, &mut checker);
+                if expected.is_some() {
+                    break;
+                }
+            }
+        }
+        let expected = expected?;
+        let mut visited = FxHashSet::default();
+        let mut labels = FxHashSet::default();
+        self.collect_string_literal_candidates(
+            expected,
+            interner,
+            &mut checker,
+            &mut visited,
+            &mut labels,
+        );
+        if let Some(cache) = cache_ref {
+            *cache = Some(checker.extract_cache());
+        }
+        if labels.is_empty() {
+            return None;
+        }
+        let mut items: Vec<_> = labels
+            .into_iter()
+            .map(|label| {
+                let mut item =
+                    CompletionItem::new(format!("\"{label}\""), CompletionItemKind::Variable);
+                item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
+                item
+            })
+            .collect();
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        Some(items)
+    }
+
     pub(super) fn get_string_literal_completions(
         &self,
         node_idx: NodeIndex,
@@ -91,7 +185,8 @@ impl<'a> Completions<'a> {
         let mut items: Vec<_> = labels
             .into_iter()
             .map(|label| {
-                let mut item = CompletionItem::new(label, CompletionItemKind::Variable);
+                let mut item =
+                    CompletionItem::new(format!("\"{label}\""), CompletionItemKind::Variable);
                 item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
                 item
             })
@@ -151,6 +246,31 @@ impl<'a> Completions<'a> {
             let members = interner.type_list(members);
             for &member in members.iter() {
                 self.collect_string_literal_candidates(member, interner, checker, visited, labels);
+            }
+            return;
+        }
+
+        if let Some(element_type) = visitor::array_element_type(interner, type_id) {
+            self.collect_string_literal_candidates(
+                element_type,
+                interner,
+                checker,
+                visited,
+                labels,
+            );
+            return;
+        }
+
+        if let Some(tuple_list_id) = visitor::tuple_list_id(interner, type_id) {
+            let elements = interner.tuple_list(tuple_list_id);
+            for element in elements.iter() {
+                self.collect_string_literal_candidates(
+                    element.type_id,
+                    interner,
+                    checker,
+                    visited,
+                    labels,
+                );
             }
         }
     }

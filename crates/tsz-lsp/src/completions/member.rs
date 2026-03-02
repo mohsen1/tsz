@@ -309,6 +309,15 @@ impl<'a> Completions<'a> {
                 .is_some()
                 .then_some(property.type_annotation);
         }
+        if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || node.kind == syntax_kind_ext::METHOD_SIGNATURE
+        {
+            let signature = self.arena.get_signature(node)?;
+            return signature
+                .type_annotation
+                .is_some()
+                .then_some(signature.type_annotation);
+        }
         None
     }
 
@@ -387,9 +396,21 @@ impl<'a> Completions<'a> {
 
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(expr_node)
-            && let Some(sym_id) = self.resolve_member_target_symbol(access.name_or_argument)
         {
-            self.append_type_literal_annotation_members(sym_id, seen_names, items);
+            if let Some(sym_id) = self.resolve_member_target_symbol(access.name_or_argument) {
+                self.append_type_literal_annotation_members(sym_id, seen_names, items);
+                return;
+            }
+            if let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
+                && let Some(container_sym) = self.resolve_member_target_symbol(access.expression)
+            {
+                self.append_named_property_annotation_members(
+                    container_sym,
+                    prop_name,
+                    seen_names,
+                    items,
+                );
+            }
             return;
         }
 
@@ -442,6 +463,112 @@ impl<'a> Completions<'a> {
         let Some(type_node_idx) = self.symbol_type_annotation_node(sym_id) else {
             return;
         };
+        self.append_members_from_type_node(type_node_idx, seen_names, items);
+    }
+
+    fn append_named_property_annotation_members(
+        &self,
+        container_sym_id: tsz_binder::SymbolId,
+        property_name: &str,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(type_node_idx) = self.symbol_type_annotation_node(container_sym_id) else {
+            return;
+        };
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return;
+        }
+        let Some(type_ref) = self.arena.get_type_ref(type_node) else {
+            return;
+        };
+        let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name) else {
+            return;
+        };
+        let type_sym = self
+            .binder
+            .file_locals
+            .get(type_name)
+            .or_else(|| self.resolve_member_target_symbol(type_ref.type_name));
+        let Some(type_sym) = type_sym else {
+            return;
+        };
+        let Some(symbol) = self.binder.symbols.get(type_sym) else {
+            return;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            match decl_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    let Some(iface) = self.arena.get_interface(decl_node) else {
+                        continue;
+                    };
+                    for &member_idx in &iface.members.nodes {
+                        let Some(member_node) = self.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+                            && member_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+                        {
+                            continue;
+                        }
+                        let Some(signature) = self.arena.get_signature(member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.arena.get_identifier_text(signature.name) else {
+                            continue;
+                        };
+                        if name != property_name || !signature.type_annotation.is_some() {
+                            continue;
+                        }
+                        self.append_members_from_type_node(
+                            signature.type_annotation,
+                            seen_names,
+                            items,
+                        );
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    let Some(class_data) = self.arena.get_class(decl_node) else {
+                        continue;
+                    };
+                    for &member_idx in &class_data.members.nodes {
+                        let Some(member_node) = self.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                            continue;
+                        }
+                        let Some(prop) = self.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                            continue;
+                        };
+                        if name != property_name || !prop.type_annotation.is_some() {
+                            continue;
+                        }
+                        self.append_members_from_type_node(prop.type_annotation, seen_names, items);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn append_members_from_type_node(
+        &self,
+        type_node_idx: NodeIndex,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
         let Some(type_node) = self.arena.get(type_node_idx) else {
             return;
         };

@@ -113,8 +113,14 @@ impl<'a> Completions<'a> {
         // Text-based heuristic for the context token
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
+        let trimmed_without_marker = Self::strip_trailing_fourslash_marker(trimmed);
         if trimmed.is_empty() {
             return false;
+        }
+        if trimmed_without_marker.ends_with('.')
+            && self.is_dotted_namespace_name_context(trimmed_without_marker)
+        {
+            return true;
         }
 
         // Find the last word before cursor
@@ -199,6 +205,11 @@ impl<'a> Completions<'a> {
         if trimmed.ends_with("${") {
             return true;
         }
+        // Dotted namespace/module declaration names are identifier-definition
+        // contexts: `namespace A.|` and `namespace A.B.|`.
+        if trimmed.ends_with('.') && self.is_dotted_namespace_name_context(trimmed) {
+            return true;
+        }
 
         // If the user is typing an identifier prefix in expression/member-declaration
         // context, treat this as a new identifier location.
@@ -270,6 +281,54 @@ impl<'a> Completions<'a> {
         }
 
         false
+    }
+
+    pub(super) fn is_dotted_namespace_completion_context(&self, offset: u32) -> bool {
+        let text = &self.source_text[..offset as usize];
+        let trimmed = Self::strip_trailing_fourslash_marker(text.trim_end());
+        let line_start = trimmed.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = trimmed[line_start..].trim_start();
+        if let Some(rest) = line.strip_prefix("namespace ") {
+            return rest.contains('.');
+        }
+        if let Some(rest) = line.strip_prefix("module ") {
+            return rest.contains('.');
+        }
+        false
+    }
+
+    fn is_dotted_namespace_name_context(&self, trimmed: &str) -> bool {
+        let line_start = trimmed.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = trimmed[line_start..].trim_start();
+        if let Some(rest) = line.strip_prefix("namespace ") {
+            return !rest.is_empty();
+        }
+        if let Some(rest) = line.strip_prefix("module ") {
+            return !rest.is_empty();
+        }
+        false
+    }
+
+    fn strip_trailing_fourslash_marker(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        if let Some(start) = trimmed.rfind("/*") {
+            let after = &trimmed[start + 2..];
+            if !after.contains("*/") {
+                return trimmed[..start].trim_end();
+            }
+        }
+        if !trimmed.ends_with("*/") {
+            return trimmed;
+        }
+        let Some(start) = trimmed.rfind("/*") else {
+            return trimmed;
+        };
+        let marker = &trimmed[start + 2..trimmed.len() - 2];
+        if marker.is_empty() || marker.bytes().all(|b| b.is_ascii_digit()) {
+            trimmed[..start].trim_end()
+        } else {
+            trimmed
+        }
     }
 
     /// Check if the current node is inside a JSX element/attribute context
