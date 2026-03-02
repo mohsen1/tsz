@@ -299,6 +299,12 @@ impl<'a> LoweringPass<'a> {
             && let Some(clause) = self.arena.get_import_clause(clause_node)
             && !clause.is_type_only
         {
+            if !self.import_has_value_usage_after_node(node, clause) {
+                if import_decl.import_clause.is_some() {
+                    self.visit(import_decl.import_clause);
+                }
+                return;
+            }
             // __importDefault and __importStar helpers are only needed when
             // esModuleInterop is enabled.  Without it, namespace imports
             // compile to plain `require()` calls and default imports use
@@ -382,6 +388,113 @@ impl<'a> LoweringPass<'a> {
         if import_decl.import_clause.is_some() {
             self.visit(import_decl.import_clause);
         }
+    }
+
+    fn import_has_value_usage_after_node(
+        &self,
+        node: &Node,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        let mut names = Vec::new();
+        if clause.name.is_some() {
+            let default_name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
+            if !default_name.is_empty() {
+                names.push(default_name);
+            }
+        }
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+        {
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
+                if !ns_name.is_empty() {
+                    names.push(ns_name);
+                }
+            } else {
+                for &spec_idx in &named_imports.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if spec.is_type_only {
+                        continue;
+                    }
+                    let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
+                    if !local_name.is_empty() {
+                        names.push(local_name);
+                    }
+                }
+            }
+        }
+        if names.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.arena.source_files.iter().find_map(|sf| {
+            if (node.pos as usize) < sf.text.len() {
+                Some(sf.text.as_ref())
+            } else {
+                None
+            }
+        }) else {
+            return true;
+        };
+        let mut start = node.end as usize;
+        if let Some(import_decl) = self.arena.get_import_decl(node)
+            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
+        {
+            start = start.max(module_node.end as usize);
+        }
+        start = start.min(source_text.len());
+        let bytes = source_text.as_bytes();
+        while start < bytes.len() {
+            match bytes[start] {
+                b';' => {
+                    start += 1;
+                    break;
+                }
+                b'\n' | b'\r' => break,
+                _ => start += 1,
+            }
+        }
+        let haystack = &source_text[start..];
+        names
+            .iter()
+            .any(|name| Self::contains_identifier_occurrence(haystack, name))
+    }
+
+    fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
+        if ident.is_empty() {
+            return false;
+        }
+        let mut search_from = 0usize;
+        while let Some(rel) = haystack[search_from..].find(ident) {
+            let pos = search_from + rel;
+            let before_ok = if pos == 0 {
+                true
+            } else {
+                haystack[..pos]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            };
+            let after_idx = pos + ident.len();
+            let after_ok = if after_idx >= haystack.len() {
+                true
+            } else {
+                haystack[after_idx..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            };
+            if before_ok && after_ok {
+                return true;
+            }
+            search_from = pos + ident.len();
+        }
+        false
     }
 
     fn visit_export_declaration(&mut self, node: &Node, _idx: NodeIndex) {

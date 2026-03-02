@@ -5,6 +5,107 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn import_has_value_usage_after_node(
+        &self,
+        node: &Node,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        let mut names = Vec::new();
+        if clause.name.is_some() {
+            let default_name = self.get_identifier_text_idx(clause.name);
+            if !default_name.is_empty() {
+                names.push(default_name);
+            }
+        }
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+        {
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                let ns_name = self.get_identifier_text_idx(named_imports.name);
+                if !ns_name.is_empty() {
+                    names.push(ns_name);
+                }
+            } else {
+                for &spec_idx in &named_imports.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if spec.is_type_only {
+                        continue;
+                    }
+                    let local_name = self.get_identifier_text_idx(spec.name);
+                    if !local_name.is_empty() {
+                        names.push(local_name);
+                    }
+                }
+            }
+        }
+        if names.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let mut start = node.end as usize;
+        if let Some(import_decl) = self.arena.get_import_decl(node)
+            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
+        {
+            start = start.max(module_node.end as usize);
+        }
+        start = start.min(source_text.len());
+        let bytes = source_text.as_bytes();
+        while start < bytes.len() {
+            match bytes[start] {
+                b';' => {
+                    start += 1;
+                    break;
+                }
+                b'\n' | b'\r' => break,
+                _ => start += 1,
+            }
+        }
+        let haystack = &source_text[start..];
+        names
+            .iter()
+            .any(|name| Self::contains_identifier_occurrence(haystack, name))
+    }
+
+    fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
+        if ident.is_empty() {
+            return false;
+        }
+        let mut search_from = 0usize;
+        while let Some(rel) = haystack[search_from..].find(ident) {
+            let pos = search_from + rel;
+            let before_ok = if pos == 0 {
+                true
+            } else {
+                haystack[..pos]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            };
+            let after_idx = pos + ident.len();
+            let after_ok = if after_idx >= haystack.len() {
+                true
+            } else {
+                haystack[after_idx..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            };
+            if before_ok && after_ok {
+                return true;
+            }
+            search_from = pos + ident.len();
+        }
+        false
+    }
+
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_import_declaration_commonjs(node);
@@ -133,6 +234,9 @@ impl<'a> Printer<'a> {
         };
 
         if clause.is_type_only {
+            return;
+        }
+        if !self.import_has_value_usage_after_node(node, clause) {
             return;
         }
 
