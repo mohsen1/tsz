@@ -561,6 +561,17 @@ impl<'a> FlowAnalyzer<'a> {
         widened
     }
 
+    /// Internal sentinel for "unreachable never" — returned by `handle_call_iterative`
+    /// when a call returns `never`. This is distinct from `TypeId::NEVER` which represents
+    /// legitimate narrowing to the empty type (e.g., exhaustive checks). This sentinel is
+    /// used only within `check_flow` and never escapes to the rest of the system.
+    ///
+    /// Matches tsc's `unreachableNeverType` vs `neverType` distinction:
+    /// - At `BRANCH_LABEL` merge points, `UNREACHABLE_NEVER` branches are filtered out
+    /// - At the final return, `UNREACHABLE_NEVER` is mapped back to `initial_type`
+    ///   (declared type), matching tsc's `getFlowTypeOfReference` behavior
+    const UNREACHABLE_NEVER: TypeId = TypeId(98);
+
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
@@ -1195,12 +1206,27 @@ impl<'a> FlowAnalyzer<'a> {
                 // are NOT present in our local `results` map.
                 result_type
             } else if flow.has_any_flags(flow_flags::BRANCH_LABEL) && !flow.antecedent.is_empty() {
-                // Union all antecedent types for branch merge points
-                let ant_types: Vec<TypeId> = flow
+                // Union all antecedent types for branch merge points.
+                // Filter out UNREACHABLE_NEVER from dead branches (e.g., branches that
+                // terminate via a never-returning function call like `fail()`).
+                // Regular NEVER (from exhaustive narrowing) is NOT filtered.
+                let is_unreachable = |t: &TypeId| *t == Self::UNREACHABLE_NEVER;
+
+                let all_ant_types: Vec<TypeId> = flow
                     .antecedent
                     .iter()
                     .filter_map(|&ant| results.get(&ant).copied())
                     .collect();
+
+                // Only filter unreachable branches if there are live branches
+                let ant_types: Vec<TypeId> = if all_ant_types.iter().any(|t| !is_unreachable(t)) {
+                    all_ant_types
+                        .into_iter()
+                        .filter(|t| !is_unreachable(t))
+                        .collect()
+                } else {
+                    all_ant_types
+                };
 
                 if ant_types.len() == 1 {
                     ant_types[0]
@@ -1219,20 +1245,33 @@ impl<'a> FlowAnalyzer<'a> {
             // Store result in global cache for future calls
             // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
-            if let Some(cache) = self.flow_cache {
-                let final_has_type_params =
-                    query::contains_type_parameters(self.interner, final_type);
+            // Also skip caching UNREACHABLE_NEVER as it's an internal sentinel.
+            if final_type != Self::UNREACHABLE_NEVER
+                && let Some(cache) = self.flow_cache {
+                    let final_has_type_params =
+                        query::contains_type_parameters(self.interner, final_type);
 
-                // Only cache if neither initial nor final types contain type parameters
-                if !initial_has_type_params && !final_has_type_params {
-                    let key = (current_flow, cache_symbol, initial_type);
-                    cache.borrow_mut().insert(key, final_type);
+                    // Only cache if neither initial nor final types contain type parameters
+                    if !initial_has_type_params && !final_has_type_params {
+                        let key = (current_flow, cache_symbol, initial_type);
+                        cache.borrow_mut().insert(key, final_type);
+                    }
                 }
-            }
         }
 
-        // Return the result for the initial flow_id
-        results.get(&flow_id).copied().unwrap_or(initial_type)
+        // Return the result for the initial flow_id.
+        // When flow analysis returns UNREACHABLE_NEVER (from a never-returning call
+        // like `fail()`), replace it with the declared type. This matches tsc's behavior
+        // where getFlowTypeOfReference returns declaredType when the result is
+        // unreachableNeverType. Unreachable code preserves the declared type so that
+        // property accesses don't produce false TS2339 errors.
+        // Regular TypeId::NEVER (from exhaustive narrowing) is NOT affected.
+        let result = results.get(&flow_id).copied().unwrap_or(initial_type);
+        if result == Self::UNREACHABLE_NEVER {
+            initial_type
+        } else {
+            result
+        }
     }
 
     /// Helper function for switch clause handling in iterative mode.
@@ -1380,6 +1419,18 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(node_types) = self.node_types else {
             return pre_type;
         };
+
+        // Check if the call expression returns `never`. If so, this branch
+        // is dead — no control flow continues past a never-returning call.
+        // Return UNREACHABLE_NEVER (not TypeId::NEVER) to distinguish from
+        // legitimate narrowing to never (e.g., exhaustive type checks).
+        // This matches tsc's getTypeAtFlowCall which returns unreachableNeverType
+        // when getReturnTypeOfSignature(signature).flags & TypeFlags.Never.
+        if let Some(&call_return_type) = node_types.get(&flow.node.0)
+            && call_return_type == TypeId::NEVER {
+                return Self::UNREACHABLE_NEVER;
+            }
+
         let Some(&callee_type) = node_types.get(&call.expression.0) else {
             return pre_type;
         };
