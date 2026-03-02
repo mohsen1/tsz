@@ -9903,3 +9903,95 @@ fn test_generic_call_conditional_constraint_accepts_nullable() {
         "Expected success for nullable argument, got {result:?}"
     );
 }
+
+// =============================================================================
+// Iterator Result Value Type Extraction Tests
+// =============================================================================
+
+/// Test that `extract_iterator_result_value_types` properly partitions
+/// `IteratorResult` into yield (done:false) and return (done:true) types.
+#[test]
+fn test_extract_iterator_result_yield_vs_return() {
+    use crate::operations::extract_iterator_result_value_types;
+
+    let interner = TypeInterner::new();
+    let done_atom = interner.intern_string("done");
+    let value_atom = interner.intern_string("value");
+
+    // Build: { done?: false, value: string } | { done: true, value: undefined }
+    // This is what IteratorResult<string, undefined> expands to.
+    let yield_branch = interner.object(vec![
+        PropertyInfo::opt(done_atom, TypeId::BOOLEAN_FALSE), // done?: false
+        PropertyInfo::new(value_atom, TypeId::STRING),       // value: string
+    ]);
+
+    let return_branch = interner.object(vec![
+        PropertyInfo::new(done_atom, TypeId::BOOLEAN_TRUE), // done: true
+        PropertyInfo::new(value_atom, TypeId::UNDEFINED),   // value: undefined
+    ]);
+
+    let iterator_result = interner.union(vec![yield_branch, return_branch]);
+
+    let (yield_type, return_type) = extract_iterator_result_value_types(&interner, iterator_result);
+
+    assert_eq!(
+        yield_type,
+        TypeId::STRING,
+        "yield type should be string (from done:false branch)"
+    );
+    assert_eq!(
+        return_type,
+        TypeId::UNDEFINED,
+        "return type should be undefined (from done:true branch)"
+    );
+}
+
+/// Test that `extract_iterator_result_value_types` extracts args from Application types.
+/// For `IteratorResult<T, TReturn>`, args[0] = T (yield), args[1] = `TReturn` (return).
+#[test]
+fn test_extract_iterator_result_application_extracts_args() {
+    use crate::operations::extract_iterator_result_value_types;
+
+    let interner = TypeInterner::new();
+
+    // Simulate IteratorResult<string, undefined> as an Application type
+    // base=some_type, args=[string, undefined]
+    let app = interner.application(TypeId::STRING, vec![TypeId::STRING, TypeId::UNDEFINED]);
+    let (yield_type, return_type) = extract_iterator_result_value_types(&interner, app);
+
+    assert_eq!(
+        yield_type,
+        TypeId::STRING,
+        "should extract args[0] as yield type from Application"
+    );
+    assert_eq!(
+        return_type,
+        TypeId::UNDEFINED,
+        "should extract args[1] as return type from Application"
+    );
+}
+
+/// Test that a single-object `IteratorResult` (no union) extracts value as yield type.
+#[test]
+fn test_extract_iterator_result_single_object() {
+    use crate::operations::extract_iterator_result_value_types;
+
+    let interner = TypeInterner::new();
+    let value_atom = interner.intern_string("value");
+
+    // Build: { value: number } — a simple object with a value property
+    let obj = interner.object(vec![PropertyInfo::new(value_atom, TypeId::NUMBER)]);
+
+    let (yield_type, return_type) = extract_iterator_result_value_types(&interner, obj);
+
+    assert_eq!(
+        yield_type,
+        TypeId::NUMBER,
+        "single object yield should be the value type"
+    );
+    assert_eq!(
+        return_type,
+        TypeId::ANY,
+        "single object return should be ANY"
+    );
+}

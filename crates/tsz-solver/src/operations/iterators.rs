@@ -271,7 +271,7 @@ fn extract_iterator_result_types(
 ///
 /// Returns (`yield_type`, `return_type`). Yield comes from done:false branches,
 /// return comes from done:true branches.
-fn extract_iterator_result_value_types(
+pub fn extract_iterator_result_value_types(
     db: &dyn crate::caches::db::QueryDatabase,
     iterator_result_type: TypeId,
 ) -> (TypeId, TypeId) {
@@ -349,6 +349,18 @@ fn extract_iterator_result_value_types(
                 .find(|p| p.name == value_atom)
                 .map_or(TypeId::ANY, |p| p.type_id);
             (value_type, TypeId::ANY)
+        }
+        // Application type: IteratorResult<T, TReturn> not yet expanded.
+        // Extract T from args[0] (yield type) and TReturn from args[1] if present.
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            let yield_type = app.args.first().copied().unwrap_or(TypeId::ANY);
+            let return_type = if app.args.len() > 1 {
+                app.args[1]
+            } else {
+                TypeId::ANY
+            };
+            (yield_type, return_type)
         }
         _ => (TypeId::ANY, TypeId::ANY),
     }
