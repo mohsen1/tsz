@@ -45,6 +45,9 @@ impl Server {
         else {
             return probes;
         };
+        let marker_end = source_text[marker_start as usize..]
+            .find("*/")
+            .map(|rel_end| marker_start + rel_end as u32 + 2);
         let line_start = source_text[..marker_start as usize]
             .rfind('\n')
             .map_or(0, |idx| idx + 1);
@@ -62,6 +65,16 @@ impl Server {
                 let probe = line_map.offset_to_position(candidate, source_text);
                 if !probes.contains(&probe) {
                     probes.push(probe);
+                }
+            }
+        }
+        if let Some(marker_end) = marker_end {
+            for candidate in [marker_end, marker_end.saturating_add(1)] {
+                if candidate < len {
+                    let probe = line_map.offset_to_position(candidate, source_text);
+                    if !probes.contains(&probe) {
+                        probes.push(probe);
+                    }
                 }
             }
         }
@@ -112,6 +125,7 @@ impl Server {
         source_text: &str,
     ) -> (Position, Option<tsz::lsp::completions::CompletionResult>) {
         let probe_positions = Self::completion_probe_positions(position, line_map, source_text);
+        let has_multiple_probes = probe_positions.len() > 1;
         let mut selected_position = position;
         let mut selected_result = None;
         let mut selected_score = (false, 0usize);
@@ -139,6 +153,8 @@ impl Server {
                 true
             } else if candidate_is_member && selected_is_member {
                 score.1 > selected_score.1
+            } else if has_multiple_probes && !candidate_is_member && !selected_is_member {
+                score.1 > 0 && (selected_score.1 == 0 || score.1 < selected_score.1)
             } else {
                 false
             };
@@ -1088,6 +1104,51 @@ impl Server {
         source_text[..end].rfind("?.").map(|idx| idx as u32)
     }
 
+    fn quoted_property_name_replacement_span(source_text: &str, offset: u32) -> Option<(u32, u32)> {
+        let i = (offset as usize).min(source_text.len());
+        let bytes = source_text.as_bytes();
+
+        let mut quote_start = None;
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            let b = bytes[j];
+            if b == b'\n' || b == b'\r' {
+                break;
+            }
+            if b == b'"' || b == b'\'' {
+                quote_start = Some((j, b));
+                break;
+            }
+        }
+        let (start, quote) = quote_start?;
+        let mut end = i;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b == quote {
+                break;
+            }
+            if b == b'\n' || b == b'\r' {
+                return None;
+            }
+            end += 1;
+        }
+        if end >= bytes.len() || bytes[end] != quote {
+            return None;
+        }
+        let mut k = end + 1;
+        while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+            if bytes[k] == b'\n' || bytes[k] == b'\r' {
+                return None;
+            }
+            k += 1;
+        }
+        if k >= bytes.len() || bytes[k] != b':' {
+            return None;
+        }
+        Some(((start + 1) as u32, end as u32))
+    }
+
     fn is_line_comment_position(source_text: &str, offset: u32) -> bool {
         let i = (offset as usize).min(source_text.len());
         let line_start = source_text[..i].rfind('\n').map_or(0, |p| p + 1);
@@ -1385,6 +1446,15 @@ impl Server {
                 && let Some(completion_offset) =
                     line_map.position_to_offset(completion_position, &source_text)
             {
+                if let Some((replacement_start, replacement_end)) =
+                    Self::quoted_property_name_replacement_span(&source_text, completion_offset)
+                {
+                    for item in &mut items {
+                        if item.replacement_span.is_none() {
+                            item.replacement_span = Some((replacement_start, replacement_end));
+                        }
+                    }
+                }
                 let blocked = Self::trailing_function_parameter_names_at_declaration_end(
                     &source_text,
                     completion_offset,
