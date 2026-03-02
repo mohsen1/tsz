@@ -597,10 +597,6 @@ impl Server {
             }
 
             if add_missing_await_preview.is_none()
-                && !response_actions.iter().any(|existing| {
-                    existing.get("fixId").and_then(serde_json::Value::as_str)
-                        == Some("addMissingConst")
-                })
                 && let Some(updated_content) = add_missing_const_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
@@ -625,11 +621,7 @@ impl Server {
                     existing.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingConst")
                 });
-                if response_actions.is_empty() {
-                    response_actions.push(const_action);
-                } else {
-                    response_actions.push(const_action);
-                }
+                response_actions.push(const_action);
             }
 
             if let Some(action) = self.synthetic_implement_interface_codefix(
@@ -899,45 +891,60 @@ impl Server {
         None
     }
 
-    fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
-        let lines: Vec<&str> = content.lines().collect();
-        for (idx, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty()
-                || trimmed.starts_with("const ")
-                || trimmed.starts_with("let ")
-                || trimmed.starts_with("var ")
-                || trimmed.starts_with("import ")
-                || trimmed.starts_with("export ")
-            {
-                continue;
-            }
+    fn add_missing_const_line(line: &str) -> Option<String> {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+        {
+            return None;
+        }
 
-            let absolute_line_start = lines.iter().take(idx).map(|l| l.len() + 1).sum::<usize>();
+        if trimmed.starts_with("for (")
+            && (trimmed.contains(" in ") || trimmed.contains(" of "))
+            && let Some(open_idx) = line.find('(')
+        {
+            let mut updated = line.to_string();
+            updated.insert_str(open_idx + 1, "const ");
+            return Some(updated);
+        }
 
-            if trimmed.starts_with("for (")
-                && (trimmed.contains(" in ") || trimmed.contains(" of "))
-                && let Some(open_idx) = line.find('(')
-            {
-                let mut updated = content.to_string();
-                updated.insert_str(absolute_line_start + open_idx + 1, "const ");
-                return Some(updated);
-            }
-
-            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
-                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
-            });
-            if starts_with_target && trimmed.contains('=') {
-                let indent_len = line.len().saturating_sub(trimmed.len());
-                let indent = &line[..indent_len];
-                let mut updated_lines: Vec<String> =
-                    lines.iter().map(|s| (*s).to_string()).collect();
-                updated_lines[idx] = format!("{indent}const {trimmed}");
-                return Some(updated_lines.join("\n"));
-            }
+        let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+            ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+        });
+        if starts_with_target && trimmed.contains('=') {
+            let indent_len = line.len().saturating_sub(trimmed.len());
+            let indent = &line[..indent_len];
+            return Some(format!("{indent}const {trimmed}"));
         }
 
         None
+    }
+
+    fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        for idx in 0..lines.len() {
+            if let Some(updated_line) = Self::add_missing_const_line(&lines[idx]) {
+                lines[idx] = updated_line;
+                return Some(lines.join("\n"));
+            }
+        }
+        None
+    }
+
+    fn apply_add_missing_const_fix_all_fallback(content: &str) -> Option<String> {
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        let mut changed = false;
+        for line in &mut lines {
+            if let Some(updated_line) = Self::add_missing_const_line(line) {
+                *line = updated_line;
+                changed = true;
+            }
+        }
+        changed.then(|| lines.join("\n"))
     }
 
     fn apply_add_missing_const_fallback_at_position(
@@ -2657,11 +2664,12 @@ impl Server {
                 }));
             }
 
-            if all_changes.is_empty()
-                && fix_id == "addMissingConst"
-                && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
+            if fix_id == "addMissingConst"
+                && let Some(updated_content) =
+                    Self::apply_add_missing_const_fix_all_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.clear();
                 all_changes.push(serde_json::json!({
                     "fileName": file_path,
                     "textChanges": [{
