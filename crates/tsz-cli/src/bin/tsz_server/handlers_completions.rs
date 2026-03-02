@@ -1133,7 +1133,7 @@ impl Server {
                         && item
                             .insert_text
                             .as_deref()
-                            .is_some_and(|text| text.starts_with("?.["))
+                            .is_some_and(|text| text.starts_with("?."))
                     {
                         item.replacement_span = Some((replacement_start, completion_offset));
                     }

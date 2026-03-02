@@ -121,9 +121,13 @@ impl<'a> Completions<'a> {
         let member_target = self
             .member_completion_target(node_idx, offset)
             .or_else(|| self.marker_comment_member_completion_target(offset));
-        let is_member = member_target.is_some() || self.is_member_context(offset);
+        let is_dotted_namespace = self.is_dotted_namespace_completion_context(offset);
+        let is_member =
+            !is_dotted_namespace && (member_target.is_some() || self.is_member_context(offset));
         let is_new_id = if is_member {
             false
+        } else if is_dotted_namespace {
+            true
         } else {
             self.compute_is_new_identifier_location(root, offset)
         };
@@ -189,6 +193,9 @@ impl<'a> Completions<'a> {
 
         // 2. Find the node at this offset using improved lookup
         let node_idx = self.find_completions_node(root, offset);
+        if self.is_dotted_namespace_completion_context(offset) {
+            return Some(Vec::new());
+        }
 
         // 3. Contextual string-literal completions for call arguments.
         // This path intentionally runs before no-completion suppression, because
@@ -197,6 +204,13 @@ impl<'a> Completions<'a> {
             && self.file_name.is_some()
             && let Some(items) =
                 self.get_string_literal_completions(node_idx, offset, type_cache.as_deref_mut())
+        {
+            return if items.is_empty() { None } else { Some(items) };
+        }
+        if self.interner.is_some()
+            && self.file_name.is_some()
+            && let Some(items) =
+                self.get_contextual_string_literal_completions(node_idx, type_cache.as_deref_mut())
         {
             return if items.is_empty() { None } else { Some(items) };
         }
