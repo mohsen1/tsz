@@ -930,7 +930,6 @@ codeFixImportNonExportedMember_all4
 completionListInTypeLiteralInTypeParameter19
 codeFixOverrideModifier9
 codeFixSpelling5
-completionListAfterSlash
 completionInJsDoc
 codeFixSpellingJs9
 codeFixPropertyOverrideAccess5
