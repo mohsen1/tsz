@@ -1699,7 +1699,6 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern22
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern23.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern24.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern26.ts
-FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern27.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern28.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern29.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/missingAndExcessProperties.ts
@@ -2587,7 +2586,6 @@ FAIL TypeScript/tests/cases/conformance/types/primitives/void/invalidVoidValues.
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestArity.ts
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestArityStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters1.ts
-FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters2.ts
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts
 FAIL TypeScript/tests/cases/conformance/types/rest/objectRestNegative.ts
 FAIL TypeScript/tests/cases/conformance/types/rest/restTuplesFromContextualTypes.ts
@@ -8999,6 +8997,7 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern19
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern2.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern20.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern25.ts
+PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern27.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern3.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern30.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern4.ts
@@ -12054,6 +12053,7 @@ PASS TypeScript/tests/cases/conformance/types/primitives/undefined/validUndefine
 PASS TypeScript/tests/cases/conformance/types/primitives/void/validVoidAssignments.ts
 PASS TypeScript/tests/cases/conformance/types/primitives/void/validVoidValues.ts
 PASS TypeScript/tests/cases/conformance/types/rest/genericObjectRest.ts
+PASS TypeScript/tests/cases/conformance/types/rest/genericRestParameters2.ts
 PASS TypeScript/tests/cases/conformance/types/rest/objectRest.ts
 PASS TypeScript/tests/cases/conformance/types/rest/objectRest2.ts
 PASS TypeScript/tests/cases/conformance/types/rest/objectRestAssignment.ts
