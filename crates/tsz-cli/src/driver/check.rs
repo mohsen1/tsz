@@ -8,13 +8,6 @@ fn is_declaration_file(name: &str) -> bool {
     name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
 }
 
-/// Check if a filename is a declaration file inside node_modules.
-/// tsc doesn't report diagnostics for external library declaration files.
-fn is_node_modules_declaration_file(name: &str) -> bool {
-    is_declaration_file(name)
-        && (name.contains("/node_modules/") || name.contains("\\node_modules\\"))
-}
-
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
 /// This function reuses already-loaded lib files from the binding phase, avoiding a second
@@ -695,13 +688,6 @@ pub(super) fn collect_diagnostics(
                 continue;
             }
 
-            // Skip semantic checking of declaration files in node_modules.
-            // tsc doesn't report diagnostics for external library files.
-            if is_node_modules_declaration_file(&file.file_name) {
-                diagnostics.extend(file_diagnostics);
-                continue;
-            }
-
             // Note: We always run checking for all files (JS and TS).
             // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
             // even for JS files without checkJs. Only type-level errors are gated by checkJs.
@@ -952,18 +938,6 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
-    // Skip semantic checking of declaration files in node_modules but still report
-    // parse errors. tsc suppresses semantic diagnostics for external library files
-    // but does surface syntax errors (e.g. a broken .d.ts in a published package).
-    if is_node_modules_declaration_file(&file.file_name) {
-        return (
-            file.parse_diagnostics
-                .iter()
-                .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
-                .collect(),
-            None,
-        );
-    }
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
     // Build resolved_modules from the pre-computed resolved module maps
@@ -1116,33 +1090,6 @@ mod tests {
         assert!(!is_declaration_file("index.mts"));
         assert!(!is_declaration_file("index.cts"));
         assert!(!is_declaration_file("index.js"));
-    }
-
-    #[test]
-    fn test_is_node_modules_declaration_file() {
-        assert!(is_node_modules_declaration_file(
-            "/project/node_modules/pkg/index.d.ts"
-        ));
-        assert!(is_node_modules_declaration_file(
-            "/project/node_modules/inner/index.d.cts"
-        ));
-        assert!(is_node_modules_declaration_file(
-            "/project/node_modules/inner/index.d.mts"
-        ));
-        // Windows paths
-        assert!(is_node_modules_declaration_file(
-            "C:\\project\\node_modules\\pkg\\index.d.ts"
-        ));
-
-        // Not in node_modules
-        assert!(!is_node_modules_declaration_file("/project/src/types.d.ts"));
-        // In node_modules but not a declaration file
-        assert!(!is_node_modules_declaration_file(
-            "/project/node_modules/pkg/index.ts"
-        ));
-        assert!(!is_node_modules_declaration_file(
-            "/project/node_modules/pkg/index.js"
-        ));
     }
 
     #[test]
