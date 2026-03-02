@@ -1886,10 +1886,40 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.build_project_for_file(file)?;
+
+            // Dependency graph is populated by set_file() during project construction
+            let dependents = project.get_file_dependents(file);
+            let refs: Vec<serde_json::Value> = dependents
+                .iter()
+                .map(|dep_file| {
+                    serde_json::json!({
+                        "file": dep_file,
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": 1, "offset": 1 },
+                        "lineText": "",
+                        "isWriteAccess": false,
+                        "isDefinition": false,
+                    })
+                })
+                .collect();
+
+            let file_name = std::path::Path::new(file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file);
+
+            Some(serde_json::json!({
+                "refs": refs,
+                "symbolName": format!("\"{}\"", file_name),
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"refs": [], "symbolName": ""})),
+            Some(result.unwrap_or(serde_json::json!({"refs": [], "symbolName": ""}))),
         )
     }
 }
