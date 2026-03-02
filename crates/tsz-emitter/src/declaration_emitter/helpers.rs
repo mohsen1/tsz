@@ -1867,23 +1867,54 @@ impl<'a> DeclarationEmitter<'a> {
             } else if is_const_null_or_undefined {
                 self.write(": any");
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
-                // For const declarations referencing another const with a literal type,
-                // tsc uses `= value` form (e.g., `const c3 = c1` → `declare const c3 = "abc"`).
-                // Only apply when the initializer is a simple Identifier reference,
-                // not function calls or complex expressions (those use `: type` form).
-                let is_simple_ref = has_initializer
-                    && self
-                        .arena
-                        .get(initializer)
-                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                 if keyword == "const"
-                    && is_simple_ref
                     && let Some(interner) = self.type_interner
-                    && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(" = ");
-                    self.write(&Self::format_literal_initializer(&lit, interner));
-                } else if let Some(typeof_text) =
+                    if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+                        self.write(" = ");
+                        self.write(&Self::format_literal_initializer(&lit, interner));
+                        return;
+                    }
+
+                    if let Some(union_id) = tsz_solver::visitor::union_list_id(interner, type_id) {
+                        let members = interner.type_list(union_id);
+                        let mut saw_member = false;
+                        let mut kind: Option<&'static str> = None;
+                        let mut mixed = false;
+                        for &member in members.iter() {
+                            let member_kind =
+                                match tsz_solver::visitor::literal_value(interner, member) {
+                                    Some(tsz_solver::types::LiteralValue::String(_)) => "string",
+                                    Some(tsz_solver::types::LiteralValue::Number(_)) => "number",
+                                    Some(tsz_solver::types::LiteralValue::Boolean(_)) => "boolean",
+                                    Some(tsz_solver::types::LiteralValue::BigInt(_)) => "bigint",
+                                    None => {
+                                        mixed = true;
+                                        break;
+                                    }
+                                };
+                            saw_member = true;
+                            if let Some(existing) = kind {
+                                if existing != member_kind {
+                                    mixed = true;
+                                    break;
+                                }
+                            } else {
+                                kind = Some(member_kind);
+                            }
+                        }
+                        if saw_member
+                            && !mixed
+                            && let Some(k) = kind
+                        {
+                            self.write(": ");
+                            self.write(k);
+                            return;
+                        }
+                    }
+                }
+
+                if let Some(typeof_text) =
                     self.typeof_prefix_for_value_entity(initializer, has_initializer, Some(type_id))
                 {
                     // Bare identifier referencing an enum/module → emit typeof
