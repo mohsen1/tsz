@@ -515,7 +515,19 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name_atom = self.ctx.types.intern_string(&name);
-                let signature = self.call_signature_from_method(method, member_idx);
+                let mut signature = self.call_signature_from_method(method, member_idx);
+                // When a class method without an explicit return type annotation
+                // infers its return type from the body and the result is the partial
+                // class instance type (i.e. the body does `return this;`), replace
+                // with polymorphic `ThisType`.  This enables fluent method chaining
+                // on subclass instances:  c.foo().bar().baz()  where each method is
+                // defined on a different class in the hierarchy.
+                if method.body.is_some()
+                    && method.type_annotation.is_none()
+                    && signature.return_type == partial_type
+                {
+                    signature.return_type = self.ctx.types.this_type();
+                }
                 let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                 let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                     overload_signatures: Vec::new(),

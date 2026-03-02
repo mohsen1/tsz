@@ -134,6 +134,9 @@ mod string_literal_arithmetic_tests;
 #[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
+#[path = "../tests/this_type_tests.rs"]
+mod this_type_tests;
+#[cfg(test)]
 #[path = "../tests/ts1214_let_strict_mode_tests.rs"]
 mod ts1214_let_strict_mode_tests;
 #[cfg(test)]
