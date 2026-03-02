@@ -3,6 +3,40 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9815/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02t — Fix cross-file type-only export detection in value binding check
+
+### Fixed: source_file_has_value_import_binding_named missing cross-file type-only chains
+
+**Area**: externalModules/typeOnly (63.1% → 69.1% pass rate, 41 → 47 passing of 68)
+
+**Root cause**: `source_file_has_value_import_binding_named` in `identifier.rs` only checked syntactic type-only markers (`import type` keyword or `type` specifier modifier). It did NOT check whether the import target was type-only through a re-export chain (e.g., `import { A } from './b'` where `b.ts` has `export type * from './a'`). This caused the function to return `true` (claiming a value binding exists), which suppressed the TS1362 diagnostic.
+
+**Fix**: After matching a named or default import specifier, also call `is_export_type_only_across_binders` to check the cross-file export chain. If the export is type-only through re-exports, `continue` past it instead of returning `true`. Added `get_import_module_specifier` helper to extract the module specifier text from an import declaration.
+
+**Files modified**:
+- `crates/tsz-checker/src/types/computation/identifier.rs` — main fix in `source_file_has_value_import_binding_named`, new `get_import_module_specifier` helper
+- `crates/tsz-checker/src/error_reporter/mod.rs` — `#[derive(Debug)]` on `TypeOnlyKind`
+- `tests/checker_state_tests.rs` — un-ignored `test_import_type_value_usage_errors`, added TS1361 assertion
+
+**Tests**: Un-ignored existing `test_import_type_value_usage_errors` (TS1361 now correctly emitted for `import type` used as value).
+
+**Impact**: +6 conformance tests (9809 → 9815), 0 regressions:
+- `exportNamespace2.ts` — PASS (was missing TS1361)
+- `exportNamespace4.ts` — PASS (was missing TS1362)
+- `exportNamespace12.ts` — PASS (was missing TS1362)
+- `extendsClause.ts` — PASS (was missing TS1362)
+- `typeOnlyMerge2.ts` — PASS (was missing TS1362)
+- `privateNamesConstructorChain-1.ts` — PASS (bonus, likely nondeterministic in old snapshot)
+- `privateNamesConstructorChain-2.ts` — PASS (bonus, likely nondeterministic in old snapshot)
+
+**Remaining typeOnly failures** (21 tests, separate root causes):
+- `exportSpecifiers.ts` — extra TS1362 for `type` identifier (const named `type`, not type-only export)
+- `exportNamespace8/9` — missing TS2308
+- `typeOnlyMerge3` — missing TS2349
+- Others: missing TS1361/TS2741, extra TS2503/TS2322, parse/module resolution gaps
+
+---
+
 ## Session 2026-03-02s — Display `| undefined` for optional properties and params in diagnostics
 
 ### Fixed: Type printer missing `| undefined` for optional properties and function parameters
