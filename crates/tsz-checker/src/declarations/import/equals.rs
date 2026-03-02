@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_common::ModuleKind;
 
 /// Whether a type-only reference came from `import type` or `export type`.
 #[derive(Debug)]
@@ -607,6 +608,7 @@ impl<'a> CheckerState<'a> {
         // Exception: `import type X = require(...)` is a type-only form and never emits TS1202.
         let is_ambient_context = self.is_ambient_declaration(stmt_idx);
         if self.ctx.compiler_options.module.is_es_module()
+            && self.ctx.compiler_options.module != ModuleKind::Preserve
             && !is_ambient_context
             && !import.is_type_only
         {
