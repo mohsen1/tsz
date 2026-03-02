@@ -526,11 +526,8 @@ impl Server {
 
             if let Some((member_name, updated_content)) =
                 Self::apply_add_missing_enum_member_fallback(&content)
-                && let Some((start_off, end_off, replacement)) =
-                    Self::compute_minimal_edit(&content, &updated_content)
             {
-                let start_pos = line_map.offset_to_position(start_off, &content);
-                let end_pos = line_map.offset_to_position(end_off, &content);
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 response_actions.clear();
                 response_actions.push(serde_json::json!({
                     "fixName": "addMissingMember",
@@ -538,9 +535,9 @@ impl Server {
                     "changes": [{
                         "fileName": file_path,
                         "textChanges": [{
-                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "start": { "line": 1, "offset": 1 },
                             "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
-                            "newText": replacement
+                            "newText": updated_content
                         }]
                     }],
                     "fixId": "fixMissingMember",
@@ -1062,25 +1059,45 @@ impl Server {
         let mut enum_name = String::new();
         let mut member_name = String::new();
         for line in &lines {
-            let trimmed = line.trim();
+            let trimmed = line.trim().replace("/**/", "");
             if trimmed.starts_with("enum ")
                 || trimmed.starts_with("export enum ")
                 || trimmed.starts_with("export const enum ")
             {
                 continue;
             }
-            let Some(dot) = trimmed.find('.') else {
-                continue;
-            };
-            let left = trimmed[..dot].trim();
-            let right = trimmed[dot + 1..]
-                .trim()
-                .trim_end_matches(';')
-                .trim_end_matches(',')
-                .trim();
-            if is_ident(left) && is_ident(right) {
-                enum_name = left.to_string();
-                member_name = right.to_string();
+
+            let bytes = trimmed.as_bytes();
+            for (idx, ch) in trimmed.char_indices() {
+                if ch != '.' {
+                    continue;
+                }
+
+                let mut left_start = idx;
+                while left_start > 0 {
+                    let c = bytes[left_start - 1] as char;
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                        left_start -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                let left = trimmed[left_start..idx].trim();
+
+                let mut right_end = idx + 1;
+                while right_end < trimmed.len() {
+                    let c = bytes[right_end] as char;
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                        right_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let right = trimmed[idx + 1..right_end].trim();
+                if is_ident(left) && is_ident(right) {
+                    enum_name = left.to_string();
+                    member_name = right.to_string();
+                }
             }
         }
         if enum_name.is_empty() || member_name.is_empty() {
