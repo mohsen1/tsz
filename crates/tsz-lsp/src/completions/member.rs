@@ -900,6 +900,9 @@ impl<'a> Completions<'a> {
         let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
         let before_dot = prefix.strip_suffix('.')?;
         let expr = before_dot.trim_end();
+        if expr.ends_with("import.meta") {
+            return Some("ImportMeta".to_string());
+        }
         let token_start = expr
             .rfind(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
             .map_or(0, |idx| idx + 1);
