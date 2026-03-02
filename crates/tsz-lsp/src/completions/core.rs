@@ -235,6 +235,9 @@ impl<'a> Completions<'a> {
         {
             return Some(items);
         }
+        if let Some(items) = self.get_meta_property_completions(offset) {
+            return Some(items);
+        }
         let member_request = member_target.is_some() || self.is_member_context(offset);
         let global_this_member_fallback = member_target
             .and_then(|idx| self.arena.get_identifier_text(idx))
@@ -706,6 +709,43 @@ impl<'a> Completions<'a> {
             && init_text.chars().any(|ch| ch.is_ascii_digit())
         {
             return Some(init_text.to_string());
+        }
+        None
+    }
+
+    fn get_meta_property_completions(&self, offset: u32) -> Option<Vec<CompletionItem>> {
+        let end = (offset as usize).min(self.source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        let before_dot = prefix.strip_suffix('.')?;
+        let expr = before_dot.trim_end();
+        let token_start = expr
+            .rfind(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+            .map_or(0, |idx| idx + 1);
+        let token = &expr[token_start..];
+        let before_token = &expr[..token_start];
+        let has_ident_before = before_token
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+        if has_ident_before {
+            return None;
+        }
+
+        if token == "import" {
+            let mut item = CompletionItem::new("meta".to_string(), CompletionItemKind::Property);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            item = item.with_detail("ImportMeta".to_string());
+            return Some(vec![item]);
+        }
+        if token == "new" {
+            if self.is_inside_function(offset) {
+                let mut item =
+                    CompletionItem::new("target".to_string(), CompletionItemKind::Property);
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                item = item.with_detail("() => void".to_string());
+                return Some(vec![item]);
+            }
+            return Some(Vec::new());
         }
         None
     }
