@@ -130,8 +130,20 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_single_or_union(self.interner, param_types);
         }
 
-        // Handle Application explicitly - unwrap to base type
+        // Handle Application explicitly.
+        // First try evaluating the applied type so type arguments are preserved
+        // (e.g. GenericFn<string> -> (x: string) => ...). Falling back directly
+        // to `base` loses substitution information and causes false TS7006.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    evaluated,
+                    self.no_implicit_any,
+                );
+                return ctx.get_parameter_type(index);
+            }
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected_and_options(
                 self.interner,
@@ -161,6 +173,27 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
+            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
+                let cond = self.interner.conditional_type(cond_id);
+                let mut branch_param_types = Vec::new();
+                for branch in [cond.true_type, cond.false_type] {
+                    // Guard against self-recursive aliases.
+                    if branch == expected {
+                        continue;
+                    }
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        branch,
+                        self.no_implicit_any,
+                    );
+                    if let Some(ty) = ctx.get_parameter_type(index) {
+                        branch_param_types.push(ty);
+                    }
+                }
+                if let Some(resolved) = collect_single_or_union(self.interner, branch_param_types) {
+                    return Some(resolved);
+                }
+            }
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected_and_options(
@@ -212,8 +245,14 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_single_or_union(self.interner, param_types);
         }
 
-        // Handle Application explicitly - unwrap to base type
+        // Handle Application explicitly.
+        // Evaluate first to keep type-argument substitution in contextual extraction.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_parameter_type_for_call(index, arg_count);
+            }
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_parameter_type_for_call(index, arg_count);
@@ -246,6 +285,36 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
+            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
+                let cond = self.interner.conditional_type(cond_id);
+                let mut branch_param_types = Vec::new();
+                for (is_true_branch, branch) in
+                    [(true, cond.true_type), (false, cond.false_type)]
+                {
+                    // Guard against self-recursive aliases.
+                    if branch == expected {
+                        continue;
+                    }
+                    let ctx = ContextualTypeContext::with_expected(self.interner, branch);
+                    if let Some(ty) = ctx.get_parameter_type_for_call(index, arg_count) {
+                        if is_true_branch {
+                            // Mirror tsc's conditional true-branch substitution for
+                            // nested callback parameter positions:
+                            //   (n: Check) => ...  becomes  (n: Check & Extends) => ...
+                            // This prevents false TS2345 inside callbacks while preserving
+                            // direct-argument contextual types like `arg(10)`.
+                            branch_param_types.push(
+                                self.apply_conditional_true_branch_param_substitution(ty, &cond),
+                            );
+                        } else {
+                            branch_param_types.push(ty);
+                        }
+                    }
+                }
+                if let Some(resolved) = collect_single_or_union(self.interner, branch_param_types) {
+                    return Some(resolved);
+                }
+            }
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
@@ -852,6 +921,51 @@ impl<'a> ContextualTypeContext<'a> {
                     .any(|sig| sig.params.len() > index || sig.params.iter().any(|p| p.rest))
             }
             _ => false,
+        }
+    }
+
+    fn apply_conditional_true_branch_param_substitution(
+        &self,
+        ty: TypeId,
+        cond: &crate::types::ConditionalType,
+    ) -> TypeId {
+        use crate::types::TypeData;
+        match self.interner.lookup(ty) {
+            Some(TypeData::Function(func_id)) => {
+                let mut shape = (*self.interner.function_shape(func_id)).clone();
+                for p in &mut shape.params {
+                    p.type_id = self.substitute_conditional_param_type(p.type_id, cond);
+                }
+                self.interner.function(shape)
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let mut shape = (*self.interner.callable_shape(callable_id)).clone();
+                for sig in &mut shape.call_signatures {
+                    for p in &mut sig.params {
+                        p.type_id = self.substitute_conditional_param_type(p.type_id, cond);
+                    }
+                }
+                for sig in &mut shape.construct_signatures {
+                    for p in &mut sig.params {
+                        p.type_id = self.substitute_conditional_param_type(p.type_id, cond);
+                    }
+                }
+                self.interner.callable(shape)
+            }
+            _ => ty,
+        }
+    }
+
+    fn substitute_conditional_param_type(
+        &self,
+        param_type: TypeId,
+        cond: &crate::types::ConditionalType,
+    ) -> TypeId {
+        if param_type == cond.check_type {
+            self.interner
+                .intersection(vec![param_type, cond.extends_type])
+        } else {
+            param_type
         }
     }
 }
