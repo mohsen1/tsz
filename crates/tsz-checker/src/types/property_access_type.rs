@@ -433,6 +433,36 @@ impl<'a> CheckerState<'a> {
             let property_name = &ident.escaped_text;
 
             if self.is_type_only_import_equals_namespace_expr(access.expression) {
+                let has_scoped_value_or_alias = self
+                    .entity_name_text(access.expression)
+                    .map(|entity_name| {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .resolve_identifier_with_filter(
+                                self.ctx.arena,
+                                access.expression,
+                                &lib_binders,
+                                |sid| {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(sid, &lib_binders)
+                                        .is_some_and(|s| {
+                                            (s.flags & symbol_flags::VALUE) != 0
+                                                || ((s.flags & symbol_flags::ALIAS) != 0
+                                                    && !s.is_type_only
+                                                    && s.escaped_name == entity_name)
+                                        })
+                                },
+                            )
+                            .is_some()
+                    })
+                    .unwrap_or(false);
+                if has_scoped_value_or_alias {
+                    // A value-capable alias is visible in scope (e.g. duplicate
+                    // `import M = ...` where one target is value-bearing). Defer to
+                    // regular member resolution instead of forcing TS2693/TS2708.
+                } else {
                 if let Some(ns_name) = self.entity_name_text(access.expression) {
                     self.error_namespace_used_as_value_at(&ns_name, access.expression);
                     if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
@@ -442,6 +472,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return TypeId::ERROR;
+                }
             }
 
             if let Some(member_type) =
