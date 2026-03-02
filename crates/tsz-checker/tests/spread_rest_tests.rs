@@ -804,3 +804,76 @@ f10(...bad);
         "Mismatched variadic rest type should produce TS2345, got {ts2345_count}"
     );
 }
+
+/// Test: spreading a tuple with optional element produces TS2345 when the
+/// optional element's `T | undefined` is not assignable to the parameter type.
+/// Fixes callWithSpread5.ts: `fn(...nnnu, x)` where nnnu = [number, number, number?].
+#[test]
+fn test_optional_tuple_spread_emits_ts2345() {
+    let source = r"
+declare const nnnu: [number, number, number?];
+declare const x: number;
+declare function fn(a: number, b: number, bb: number, ...c: number[]): number;
+fn(...nnnu, x);
+";
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert!(
+        ts2345_count >= 1,
+        "Optional tuple element spread should emit TS2345 for number | undefined vs number, got {ts2345_count}"
+    );
+}
+
+/// Test: spreading a fixed-length tuple into a non-rest function emits TS2554
+/// when the expanded argument count exceeds the expected parameter count.
+/// Fixes callWithSpread3.ts: `fs2('a', ...s2)` where s2 = [string, string].
+#[test]
+fn test_tuple_spread_too_many_args_emits_ts2554() {
+    let source = r#"
+declare const s2: [string, string];
+declare function fs2(a: string, b: string): void;
+fs2("a", ...s2);
+"#;
+    let diagnostics = check_source(source);
+    let ts2554_count = diagnostics.iter().filter(|d| d.code == 2554).count();
+    assert!(
+        ts2554_count >= 1,
+        "Tuple spread with too many args should emit TS2554, got {ts2554_count}"
+    );
+}
+
+/// Test: valid tuple spread that exactly fills parameters should not error.
+#[test]
+fn test_tuple_spread_exact_args_no_error() {
+    let source = r#"
+declare const s2: [string, string];
+declare function fs2(a: string, b: string): void;
+fs2(...s2);
+"#;
+    let diagnostics = check_source(source);
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| d.code == 2554 || d.code == 2556 || d.code == 2345)
+        .count();
+    assert_eq!(
+        error_count, 0,
+        "Exact tuple spread should not error, got {error_count}"
+    );
+}
+
+/// Test: non-tuple array spread emits TS2556 only once per call, not once
+/// per spread. Fixes callWithSpread3.ts: `fs2_(...s_, ...s_)`.
+#[test]
+fn test_non_tuple_spread_emits_ts2556_only_once() {
+    let source = r#"
+declare const s_: string[];
+declare function fs2_(a: string, b: string, ...c: string[]): void;
+fs2_(...s_, ...s_);
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert_eq!(
+        ts2556_count, 1,
+        "Non-tuple spread should emit exactly 1 TS2556 per call, got {ts2556_count}"
+    );
+}

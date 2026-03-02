@@ -263,6 +263,9 @@ impl<'a> CheckerState<'a> {
 
         let mut arg_types = Vec::with_capacity(expanded_count);
         let mut effective_index = 0usize;
+        // Track whether TS2556 was already emitted in this call.
+        // tsc only reports TS2556 on the first non-tuple spread, not subsequent ones.
+        let mut emitted_ts2556 = false;
 
         for (i, &arg_idx) in args.iter().enumerate() {
             // Skip sensitive arguments in Round 1 of two-pass generic inference.
@@ -319,14 +322,30 @@ impl<'a> CheckerState<'a> {
                                                 effective_index += 1;
                                             }
                                         } else {
-                                            arg_types.push(sub.type_id);
+                                            let sub_type = if sub.optional {
+                                                self.ctx
+                                                    .types
+                                                    .factory()
+                                                    .union(vec![sub.type_id, TypeId::UNDEFINED])
+                                            } else {
+                                                sub.type_id
+                                            };
+                                            arg_types.push(sub_type);
                                             effective_index += 1;
                                         }
                                     }
                                 }
                                 // else: unknown rest type — skip (no args pushed)
                             } else {
-                                arg_types.push(elem.type_id);
+                                let elem_type = if elem.optional {
+                                    self.ctx
+                                        .types
+                                        .factory()
+                                        .union(vec![elem.type_id, TypeId::UNDEFINED])
+                                } else {
+                                    elem.type_id
+                                };
+                                arg_types.push(elem_type);
                                 effective_index += 1;
                             }
                         }
@@ -425,11 +444,17 @@ impl<'a> CheckerState<'a> {
                                 if current_expected.is_none() {
                                     // No parameter at this position and not at rest:
                                     // the spread exceeds all declared params → TS2556.
-                                    self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                    if !emitted_ts2556 {
+                                        self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                        emitted_ts2556 = true;
+                                    }
                                     continue;
                                 }
                                 // Non-tuple array spread at a non-rest parameter → TS2556
-                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                if !emitted_ts2556 {
+                                    self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                    emitted_ts2556 = true;
+                                }
                                 // Push ANY to suppress subsequent TS2345 — tsc
                                 // only reports TS2556 here.
                                 arg_types.push(TypeId::ANY);
@@ -473,10 +498,16 @@ impl<'a> CheckerState<'a> {
                         if !at_rest_position {
                             if current_expected.is_none() {
                                 // No parameter at this position and not at rest → TS2556.
-                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                if !emitted_ts2556 {
+                                    self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                    emitted_ts2556 = true;
+                                }
                                 continue;
                             }
-                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            if !emitted_ts2556 {
+                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                emitted_ts2556 = true;
+                            }
                             // When TS2556 is emitted, push ANY to suppress a
                             // subsequent TS2345 — tsc only reports TS2556 here.
                             arg_types.push(TypeId::ANY);
