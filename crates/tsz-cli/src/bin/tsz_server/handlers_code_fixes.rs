@@ -315,6 +315,13 @@ impl Server {
                         .and_then(serde_json::Value::as_str)
                         != Some("addMissingConst")
                 });
+            } else {
+                response_actions.retain(|action| {
+                    action
+                        .get("fixId")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("addMissingAwait")
+                });
             }
 
             if let Some(updated_content) = Self::apply_simple_jsdoc_annotation_fallback(&content)
@@ -517,6 +524,30 @@ impl Server {
                 }));
             }
 
+            if let Some((member_name, updated_content)) =
+                Self::apply_add_missing_enum_member_fallback(&content)
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.clear();
+                response_actions.push(serde_json::json!({
+                    "fixName": "addMissingMember",
+                    "description": format!("Add missing enum member '{member_name}'"),
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                    "fixId": "fixMissingMember",
+                    "fixAllDescription": "Add all missing members",
+                }));
+            }
+
             if (error_codes.iter().any(|code| {
                 CodeFixRegistry::fixes_for_error_code(*code)
                     .iter()
@@ -558,7 +589,8 @@ impl Server {
                     CodeFixRegistry::fixes_for_error_code(*code)
                         .iter()
                         .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
-                } || (error_codes.is_empty() && has_cannot_find_name_diag))
+                } || (error_codes.is_empty() && has_cannot_find_name_diag)
+                    || (error_codes.is_empty() && response_actions.is_empty()))
                 && add_missing_await_preview.is_none()
                 && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
                 && let Some((start_off, end_off, replacement)) =
@@ -1015,6 +1047,112 @@ impl Server {
         }
 
         None
+    }
+
+    fn apply_add_missing_enum_member_fallback(content: &str) -> Option<(String, String)> {
+        let lines: Vec<String> = content.lines().map(str::to_string).collect();
+
+        fn is_ident(s: &str) -> bool {
+            !s.is_empty()
+                && s.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                && s.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+        }
+
+        let mut enum_name = String::new();
+        let mut member_name = String::new();
+        for line in &lines {
+            let trimmed = line.trim();
+            if trimmed.starts_with("enum ")
+                || trimmed.starts_with("export enum ")
+                || trimmed.starts_with("export const enum ")
+            {
+                continue;
+            }
+            let Some(dot) = trimmed.find('.') else {
+                continue;
+            };
+            let left = trimmed[..dot].trim();
+            let right = trimmed[dot + 1..]
+                .trim()
+                .trim_end_matches(';')
+                .trim_end_matches(',')
+                .trim();
+            if is_ident(left) && is_ident(right) {
+                enum_name = left.to_string();
+                member_name = right.to_string();
+            }
+        }
+        if enum_name.is_empty() || member_name.is_empty() {
+            return None;
+        }
+
+        let mut start_idx = None;
+        let mut end_idx = None;
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            let enum_header_match = trimmed.starts_with(&format!("enum {enum_name}"))
+                || trimmed.starts_with(&format!("export enum {enum_name}"))
+                || trimmed.starts_with(&format!("export const enum {enum_name}"));
+            if enum_header_match {
+                start_idx = Some(idx);
+                for j in idx + 1..lines.len() {
+                    if lines[j].trim() == "}" {
+                        end_idx = Some(j);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+
+        let (start_idx, end_idx) = (start_idx?, end_idx?);
+        let mut has_string_initializer = false;
+        let mut already_exists = false;
+        let mut last_member_idx: Option<usize> = None;
+
+        for idx in start_idx + 1..end_idx {
+            let trimmed = lines[idx].trim().trim_end_matches(',');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let name = trimmed
+                .split(['=', ' ', '\t'])
+                .next()
+                .unwrap_or_default()
+                .trim();
+            if name == member_name {
+                already_exists = true;
+                break;
+            }
+            if let Some(eq_idx) = trimmed.find('=') {
+                let rhs = trimmed[eq_idx + 1..].trim();
+                if rhs.starts_with('"') || rhs.starts_with('\'') {
+                    has_string_initializer = true;
+                }
+            }
+            last_member_idx = Some(idx);
+        }
+        if already_exists {
+            return None;
+        }
+
+        let mut updated = lines.clone();
+        if let Some(idx) = last_member_idx {
+            let prev = updated[idx].trim_end().to_string();
+            if !prev.ends_with(',') && !prev.ends_with('{') {
+                updated[idx] = format!("{prev},");
+            }
+        }
+
+        let indent = "    ";
+        let new_member_line = if has_string_initializer {
+            format!("{indent}{member_name} = \"{member_name}\"")
+        } else {
+            format!("{indent}{member_name}")
+        };
+        updated.insert(end_idx, new_member_line);
+        Some((member_name, updated.join("\n")))
     }
 
     pub(super) fn synthetic_jsdoc_suggestion_diagnostic(
