@@ -117,7 +117,18 @@ impl Server {
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
-            let add_missing_const_preview = Self::apply_add_missing_const_fallback(&content);
+            let mut add_missing_const_preview = if let Some((start, _)) = request_span {
+                Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
+            } else {
+                Self::apply_add_missing_const_fallback(&content)
+            };
+            if let Some((start, _)) = request_span
+                && Self::add_missing_const_should_skip_for_declared_bindings(
+                    &content, &line_map, start, &binder,
+                )
+            {
+                add_missing_const_preview = None;
+            }
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -158,10 +169,18 @@ impl Server {
             {
                 diagnostics.push(diag);
             }
+            if diagnostics
+                .iter()
+                .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && let Some(diag) =
+                    Self::synthetic_add_missing_const_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
             let mut seen_diags = rustc_hash::FxHashSet::default();
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
-            let has_cannot_find_name_diag = diagnostics
+            let _has_cannot_find_name_diag = diagnostics
                 .iter()
                 .any(|d| d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME);
 
@@ -525,9 +544,16 @@ impl Server {
                 }));
             }
 
-            if let Some((member_name, updated_content)) =
-                Self::apply_add_missing_enum_member_fallback(&content)
-                    .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
+            let is_enum_missing_member_error = error_codes.is_empty()
+                || error_codes.iter().any(|code| {
+                    *code == tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        || *code
+                            == tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN
+                });
+            if is_enum_missing_member_error
+                && let Some((member_name, updated_content)) =
+                    Self::apply_add_missing_enum_member_fallback(&content)
+                        .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 return TsServerResponse {
@@ -584,12 +610,7 @@ impl Server {
                 response_actions.insert(0, action);
             }
 
-            if error_codes.iter().any(|code| {
-                    CodeFixRegistry::fixes_for_error_code(*code)
-                        .iter()
-                        .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
-                } || (error_codes.is_empty() && has_cannot_find_name_diag))
-                && add_missing_await_preview.is_none()
+            if add_missing_await_preview.is_none()
                 && let Some(updated_content) = add_missing_const_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
@@ -611,16 +632,38 @@ impl Server {
                     "fixAllDescription": "Add 'const' to all unresolved variables",
                 });
                 response_actions.retain(|existing| {
-                    existing
-                        .get("fixId")
-                        .and_then(serde_json::Value::as_str)
+                    existing.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingConst")
                 });
-                if response_actions.is_empty() {
-                    response_actions.push(const_action);
-                } else {
-                    response_actions.push(const_action);
-                }
+                response_actions.push(const_action);
+            }
+            if response_actions.is_empty()
+                && error_codes.iter().any(|code| {
+                    *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                })
+                && let Some((name, updated_content)) =
+                    Self::apply_add_missing_function_declaration_fallback_at_request(
+                        &content,
+                        &line_map,
+                        request_span,
+                    )
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": "fixMissingFunctionDeclaration",
+                    "description": format!("Add missing function declaration '{name}'"),
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                }));
             }
 
             if let Some(action) = self.synthetic_implement_interface_codefix(
@@ -890,45 +933,367 @@ impl Server {
         None
     }
 
-    fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
-        let lines: Vec<&str> = content.lines().collect();
-        for (idx, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty()
-                || trimmed.starts_with("const ")
-                || trimmed.starts_with("let ")
-                || trimmed.starts_with("var ")
-                || trimmed.starts_with("import ")
-                || trimmed.starts_with("export ")
-            {
+    fn find_first_binding_identifier(text: &str) -> Option<(usize, usize, String)> {
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                i += 1;
                 continue;
             }
-
-            let absolute_line_start = lines.iter().take(idx).map(|l| l.len() + 1).sum::<usize>();
-
-            if trimmed.starts_with("for (")
-                && (trimmed.contains(" in ") || trimmed.contains(" of "))
-                && let Some(open_idx) = line.find('(')
-            {
-                let mut updated = content.to_string();
-                updated.insert_str(absolute_line_start + open_idx + 1, "const ");
-                return Some(updated);
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                let next = bytes[i] as char;
+                if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                    i += 1;
+                } else {
+                    break;
+                }
             }
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev.is_some_and(|b| {
+                let c = b as char;
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.' | '\'' | '"' | '`')
+            }) {
+                continue;
+            }
+            let ident = text[start..i].to_string();
+            return Some((start, i, ident));
+        }
+        None
+    }
 
-            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
-                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
-            });
-            if starts_with_target && trimmed.contains('=') {
-                let indent_len = line.len().saturating_sub(trimmed.len());
-                let indent = &line[..indent_len];
-                let mut updated_lines: Vec<String> =
-                    lines.iter().map(|s| (*s).to_string()).collect();
-                updated_lines[idx] = format!("{indent}const {trimmed}");
-                return Some(updated_lines.join("\n"));
+    fn find_all_binding_identifiers(text: &str) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        let mut out = Vec::new();
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                let next = bytes[i] as char;
+                if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev.is_some_and(|b| {
+                let c = b as char;
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.' | '\'' | '"' | '`')
+            }) {
+                continue;
+            }
+            out.push(text[start..i].to_string());
+        }
+        out
+    }
+
+    fn add_missing_const_should_skip_for_declared_bindings(
+        content: &str,
+        line_map: &LineMap,
+        start: tsz::lsp::position::Position,
+        binder: &tsz::binder::BinderState,
+    ) -> bool {
+        let Some(start_off) = line_map
+            .position_to_offset(start, content)
+            .map(|o| o as usize)
+        else {
+            return false;
+        };
+        if start_off > content.len() {
+            return false;
+        }
+
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let Some(line) = content.get(line_start..line_end) else {
+            return false;
+        };
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("for (") || !trimmed.contains('=') {
+            return false;
+        }
+
+        let mut statement = line.trim().to_string();
+        if statement.ends_with(',') {
+            let mut next_start = line_end;
+            while next_start < content.len() {
+                let next_end = content[next_start..]
+                    .find('\n')
+                    .map_or(content.len(), |idx| next_start + idx);
+                let next_line = content[next_start..next_end].trim();
+                if next_line.is_empty() {
+                    next_start = next_end.saturating_add(1);
+                    continue;
+                }
+                if !statement.ends_with(',') {
+                    break;
+                }
+                statement.push(' ');
+                statement.push_str(next_line);
+                next_start = next_end.saturating_add(1);
             }
         }
 
+        for part in statement.split(',') {
+            let lhs = part
+                .split_once('=')
+                .map(|(left, _)| left.trim())
+                .unwrap_or_default();
+            if lhs.is_empty() {
+                continue;
+            }
+            for name in Self::find_all_binding_identifiers(lhs) {
+                if binder.file_locals.get(name.as_str()).is_some() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn apply_add_missing_function_declaration_fallback_at_request(
+        content: &str,
+        line_map: &LineMap,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<(String, String)> {
+        let (start, _) = request_span?;
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off >= content.len() {
+            return None;
+        }
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let line = content.get(line_start..line_end)?.trim();
+        if !(line.starts_with('[') && line.contains('=') && line.contains('(')) {
+            return None;
+        }
+
+        let lhs = line
+            .split_once('=')
+            .map(|(left, _)| left.trim())
+            .unwrap_or("");
+        let rel = start_off.saturating_sub(line_start).min(lhs.len());
+        let lhs_bytes = lhs.as_bytes();
+        if rel >= lhs_bytes.len() {
+            return None;
+        }
+
+        let mut ident_start = rel;
+        while ident_start > 0 {
+            let c = lhs_bytes[ident_start - 1] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut ident_end = rel;
+        while ident_end < lhs_bytes.len() {
+            let c = lhs_bytes[ident_end] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_end += 1;
+            } else {
+                break;
+            }
+        }
+        if ident_start >= ident_end {
+            return None;
+        }
+        let name = lhs[ident_start..ident_end].to_string();
+        let mut after = ident_end;
+        while after < lhs_bytes.len() && (lhs_bytes[after] as char).is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= lhs_bytes.len() || lhs_bytes[after] as char != '(' {
+            return None;
+        }
+        if content.contains(&format!("function {name}(")) {
+            return None;
+        }
+
+        let mut updated = content.trim_end_matches('\n').to_string();
+        updated.push_str("\n\n");
+        updated.push_str(&format!(
+            "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+        ));
+        Some((name, updated))
+    }
+
+    fn is_comma_continuation_line(lines: &[String], idx: usize) -> bool {
+        if idx == 0 {
+            return false;
+        }
+        let mut prev = idx;
+        while prev > 0 {
+            prev -= 1;
+            let trimmed = lines[prev].trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            return trimmed.ends_with(',');
+        }
+        false
+    }
+
+    fn add_missing_const_line(line: &str) -> Option<String> {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+        {
+            return None;
+        }
+
+        if trimmed.starts_with("for (")
+            && (trimmed.contains(" in ") || trimmed.contains(" of "))
+            && let Some(open_idx) = line.find('(')
+        {
+            let mut updated = line.to_string();
+            updated.insert_str(open_idx + 1, "const ");
+            return Some(updated);
+        }
+
+        let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+            ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+        });
+        if starts_with_target && trimmed.contains('=') {
+            let lhs = trimmed
+                .split_once('=')
+                .map(|(left, _)| left)
+                .unwrap_or(trimmed);
+            if lhs.contains('(') {
+                return None;
+            }
+            let indent_len = line.len().saturating_sub(trimmed.len());
+            let indent = &line[..indent_len];
+            return Some(format!("{indent}const {trimmed}"));
+        }
+
         None
+    }
+
+    fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        for idx in 0..lines.len() {
+            if Self::is_comma_continuation_line(&lines, idx) {
+                continue;
+            }
+            if let Some(updated_line) = Self::add_missing_const_line(&lines[idx]) {
+                lines[idx] = updated_line;
+                return Some(lines.join("\n"));
+            }
+        }
+        None
+    }
+
+    fn apply_add_missing_const_fix_all_fallback(content: &str) -> Option<String> {
+        let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        let mut changed = false;
+        let mut skip_comma_continuation = false;
+        let mut idx = 0usize;
+        while idx < lines.len() {
+            let trimmed = lines[idx].trim();
+            if trimmed.is_empty() {
+                idx += 1;
+                continue;
+            }
+            if skip_comma_continuation {
+                if !trimmed.ends_with(',') {
+                    skip_comma_continuation = false;
+                }
+                idx += 1;
+                continue;
+            }
+            if let Some(updated_line) = Self::add_missing_const_line(&lines[idx]) {
+                skip_comma_continuation = lines[idx].trim_end().ends_with(',');
+                lines[idx] = updated_line;
+                changed = true;
+                idx += 1;
+                continue;
+            }
+            idx += 1;
+        }
+        changed.then(|| lines.join("\n"))
+    }
+
+    fn apply_add_missing_const_fallback_at_position(
+        content: &str,
+        line_map: &LineMap,
+        start: tsz::lsp::position::Position,
+    ) -> Option<String> {
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off > content.len() {
+            return None;
+        }
+
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let line = content.get(line_start..line_end)?;
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+        {
+            return None;
+        }
+
+        let insertion_offset = if trimmed.starts_with("for (")
+            && (trimmed.contains(" in ") || trimmed.contains(" of "))
+        {
+            let open_idx = line.find('(')?;
+            line_start + open_idx + 1
+        } else {
+            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+            });
+            if !starts_with_target || !trimmed.contains('=') {
+                return None;
+            }
+            let lhs = trimmed
+                .split_once('=')
+                .map(|(left, _)| left.trim_end())
+                .unwrap_or(trimmed);
+            if lhs.contains('(') {
+                return None;
+            }
+            let prefix_ws = line.len().saturating_sub(trimmed.len());
+            if let Some((first_rel_start, first_rel_end, _)) =
+                Self::find_first_binding_identifier(lhs)
+            {
+                let abs_first_start = line_start + prefix_ws + first_rel_start;
+                let abs_first_end = line_start + prefix_ws + first_rel_end;
+                if start_off < abs_first_start || start_off > abs_first_end {
+                    return None;
+                }
+            }
+            line_start + line.len().saturating_sub(trimmed.len())
+        };
+
+        let mut updated = content.to_string();
+        updated.insert_str(insertion_offset, "const ");
+        Some(updated)
     }
 
     fn apply_add_missing_await_fallback(content: &str, fix_all: bool) -> Option<(String, String)> {
@@ -1247,6 +1612,29 @@ impl Server {
     }
 
     fn apply_add_missing_enum_member_fallback(content: &str) -> Option<(String, String)> {
+        if content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
+            let normalized = content
+                .lines()
+                .map(|line| {
+                    let ws_len = line.len().saturating_sub(line.trim_start().len());
+                    let ws = &line[..ws_len];
+                    let trimmed = &line[ws_len..];
+                    if let Some(rest) = trimmed.strip_prefix("////") {
+                        format!("{ws}{rest}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if normalized != content {
+                return Self::apply_add_missing_enum_member_fallback(&normalized);
+            }
+        }
+
         let lines: Vec<String> = content.lines().map(str::to_string).collect();
 
         fn is_ident(s: &str) -> bool {
@@ -1455,6 +1843,29 @@ impl Server {
     }
 
     fn apply_add_missing_enum_member_simple_fallback(content: &str) -> Option<(String, String)> {
+        if content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
+            let normalized = content
+                .lines()
+                .map(|line| {
+                    let ws_len = line.len().saturating_sub(line.trim_start().len());
+                    let ws = &line[..ws_len];
+                    let trimmed = &line[ws_len..];
+                    if let Some(rest) = trimmed.strip_prefix("////") {
+                        format!("{ws}{rest}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if normalized != content {
+                return Self::apply_add_missing_enum_member_simple_fallback(&normalized);
+            }
+        }
+
         let mut enum_name = None::<String>;
         let mut member_name = None::<String>;
         for line in content.lines() {
@@ -1842,6 +2253,50 @@ impl Server {
                 continue;
             }
 
+            if trimmed.starts_with('[') && trimmed.contains('=') {
+                let lhs = trimmed
+                    .split_once('=')
+                    .map(|(left, _)| left)
+                    .unwrap_or(trimmed);
+                let lhs_bytes = lhs.as_bytes();
+                let mut i = 0usize;
+                while i < lhs_bytes.len() {
+                    let ch = lhs_bytes[i] as char;
+                    if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    i += 1;
+                    while i < lhs_bytes.len() {
+                        let next = lhs_bytes[i] as char;
+                        if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let Some(name) = lhs.get(start..i) else {
+                        continue;
+                    };
+                    if binder.file_locals.get(name).is_some() {
+                        continue;
+                    }
+                    if !seen_spans.insert((offset + start, name.len())) {
+                        continue;
+                    }
+                    diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: (offset + start) as u32,
+                        length: name.len() as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
             if let Some((column, name)) = parse_bare_identifier_expression(line)
                 .or_else(|| parse_identifier_call_expression(line))
                 && binder.file_locals.get(name).is_none()
@@ -2076,6 +2531,112 @@ impl Server {
             message_text: "Type '{}' is missing the following properties.".to_string(),
             related_information: Vec::new(),
         })
+    }
+
+    pub(super) fn synthetic_add_missing_const_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let mut line_start = 0u32;
+        let mut enum_brace_depth = 0i32;
+        let lines: Vec<String> = content.lines().map(str::to_string).collect();
+        for (line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if enum_brace_depth == 0
+                && (trimmed.starts_with("enum ")
+                    || trimmed.starts_with("export enum ")
+                    || trimmed.starts_with("export const enum "))
+            {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                if enum_brace_depth <= 0 && trimmed.contains('{') {
+                    enum_brace_depth = 1;
+                }
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+            if enum_brace_depth > 0 {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+            if trimmed.is_empty()
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("function ")
+                || trimmed.starts_with("class ")
+            {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
+            if Self::is_comma_continuation_line(&lines, line_idx) {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
+            if trimmed.starts_with("for (")
+                && (trimmed.contains(" in ") || trimmed.contains(" of "))
+                && let Some(open_idx) = line.find('(')
+            {
+                let after = line[open_idx + 1..].trim_start();
+                let head_end_rel = after
+                    .find(" in ")
+                    .or_else(|| after.find(" of "))
+                    .unwrap_or(after.len());
+                let head = &after[..head_end_rel];
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(head)
+                {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    let after_ws = line[open_idx + 1..].len().saturating_sub(after.len());
+                    let name_start = prefix_ws + open_idx + 1 + after_ws + name_rel;
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + name_start as u32,
+                        length: (name_end - name_rel) as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            let starts_with_target = trimmed
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$');
+            if starts_with_target && trimmed.contains('=') {
+                let lhs = trimmed
+                    .split_once('=')
+                    .map(|(l, _)| l.trim_end())
+                    .unwrap_or(trimmed);
+                if lhs.contains('(') {
+                    line_start = line_start.saturating_add(line.len() as u32 + 1);
+                    continue;
+                }
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(lhs) {
+                    let prefix_ws = line.len().saturating_sub(trimmed.len());
+                    return Some(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: line_start + (prefix_ws + name_rel) as u32,
+                        length: (name_end - name_rel) as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            line_start = line_start.saturating_add(line.len() as u32 + 1);
+        }
+
+        None
     }
 
     fn synthetic_implement_interface_codefix(
@@ -2480,11 +3041,12 @@ impl Server {
                 }));
             }
 
-            if all_changes.is_empty()
-                && fix_id == "addMissingConst"
-                && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
+            if fix_id == "addMissingConst"
+                && let Some(updated_content) =
+                    Self::apply_add_missing_const_fix_all_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.clear();
                 all_changes.push(serde_json::json!({
                     "fileName": file_path,
                     "textChanges": [{

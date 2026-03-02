@@ -23,7 +23,7 @@ impl Server {
             return probes;
         };
         let len = source_text.len() as u32;
-        let Some(marker_start) = Self::numeric_marker_comment_start(source_text, base_offset)
+        let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, base_offset)
         else {
             return probes;
         };
@@ -32,6 +32,7 @@ impl Server {
         for candidate in [
             marker_start.saturating_sub(1),
             marker_start.saturating_sub(2),
+            marker_start.saturating_sub(3),
         ] {
             if candidate < len {
                 let probe = line_map.offset_to_position(candidate, source_text);
@@ -46,10 +47,10 @@ impl Server {
         probes
     }
 
-    fn numeric_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
+    fn fourslash_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
         let bytes = source_text.as_bytes();
         let len = bytes.len() as u32;
-        if len < 5 {
+        if len < 4 {
             return None;
         }
         let offset = base_offset.min(len.saturating_sub(1));
@@ -63,7 +64,9 @@ impl Server {
             while end + 1 < len && end - start <= 8 {
                 if bytes[end as usize] == b'*' && bytes[(end + 1) as usize] == b'/' {
                     let digits = &bytes[(start + 2) as usize..end as usize];
-                    if !digits.is_empty() && digits.iter().all(u8::is_ascii_digit) {
+                    let is_fourslash_marker =
+                        digits.is_empty() || digits.iter().all(u8::is_ascii_digit);
+                    if is_fourslash_marker {
                         let comment_end = end + 1;
                         if offset >= start && offset <= comment_end {
                             return Some(start);
@@ -998,18 +1001,18 @@ impl Server {
             "kindModifiers": item.kind_modifiers.clone().unwrap_or_default(),
         });
 
+        let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
+        if include_insert_text
+            && let Some(insert_text) = item.insert_text.clone().or_else(|| {
+                is_class_member_snippet
+                    .then(|| Self::class_member_snippet_insert_text(item))
+                    .flatten()
+            })
+        {
+            entry["insertText"] = serde_json::json!(insert_text);
+        }
         if item.has_action {
             entry["hasAction"] = serde_json::json!(true);
-            let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
-            if include_insert_text
-                && let Some(insert_text) = item.insert_text.clone().or_else(|| {
-                    is_class_member_snippet
-                        .then(|| Self::class_member_snippet_insert_text(item))
-                        .flatten()
-                })
-            {
-                entry["insertText"] = serde_json::json!(insert_text);
-            }
             if item.is_snippet {
                 entry["filterText"] = serde_json::json!(item.label.clone());
                 if !is_class_member_snippet {
@@ -1035,6 +1038,11 @@ impl Server {
         }
 
         entry
+    }
+
+    fn last_optional_chain_token_start(source_text: &str, offset: u32) -> Option<u32> {
+        let end = (offset as usize).min(source_text.len());
+        source_text[..end].rfind("?.").map(|idx| idx as u32)
     }
 
     pub(crate) fn handle_completions(
@@ -1110,6 +1118,24 @@ impl Server {
                 self.maybe_add_verbatim_commonjs_auto_import_items(&file, &source_text, items);
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
+            let mut items = items;
+            if is_member_completion
+                && let Some(completion_offset) =
+                    line_map.position_to_offset(completion_position, &source_text)
+                && let Some(replacement_start) =
+                    Self::last_optional_chain_token_start(&source_text, completion_offset)
+            {
+                for item in &mut items {
+                    if item.replacement_span.is_none()
+                        && item
+                            .insert_text
+                            .as_deref()
+                            .is_some_and(|text| text.starts_with("?.["))
+                    {
+                        item.replacement_span = Some((replacement_start, completion_offset));
+                    }
+                }
+            }
             let include_insert_text = Self::bool_pref_or_default(
                 Some(preferences),
                 "includeCompletionsWithInsertText",

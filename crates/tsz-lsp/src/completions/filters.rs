@@ -162,6 +162,12 @@ impl<'a> Completions<'a> {
 
         // Check if we have whitespace after the last word (before cursor)
         let has_trailing_ws = text.len() > trimmed.len();
+        let trailing_ws = if has_trailing_ws {
+            &text[trimmed.len()..]
+        } else {
+            ""
+        };
+        let trailing_has_line_break = trailing_ws.contains('\n') || trailing_ws.contains('\r');
 
         let definition_keywords = [
             "var",
@@ -191,6 +197,7 @@ impl<'a> Completions<'a> {
 
         // Case 1: "keyword |" - cursor after keyword + whitespace
         if has_trailing_ws
+            && !trailing_has_line_break
             && definition_keywords
                 .iter()
                 .any(|kw| is_whole_word(trimmed, kw))
