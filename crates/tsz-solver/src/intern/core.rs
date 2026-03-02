@@ -1106,6 +1106,28 @@ impl TypeInterner {
                         }
                     }
                 }
+                // Application types (generic instantiations like I1<number>):
+                // sort by base type first (which typically resolves to a Lazy(DefId)),
+                // then by type arguments lexicographically.
+                (TypeData::Application(app1), TypeData::Application(app2)) => {
+                    let a1 = self.type_application(*app1);
+                    let a2 = self.type_application(*app2);
+                    let cmp = self.compare_union_members(a1.base, a2.base);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                    // Same base type — compare args lexicographically
+                    for (arg1, arg2) in a1.args.iter().zip(a2.args.iter()) {
+                        let cmp = self.compare_union_members(*arg1, *arg2);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                    let cmp = a1.args.len().cmp(&a2.args.len());
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
                 _ => {}
             }
         }
