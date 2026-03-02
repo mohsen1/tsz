@@ -1,7 +1,63 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9799/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9793/12570 (77.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02n — Infer class properties from JS constructor this.prop assignments
+
+### Fixed: Constructor body `this.prop = value` not included in class instance type (JS/checkJs mode)
+
+**Area**: jsdoc + salsa (cross-cutting JS/checkJs class handling)
+
+**Root cause**: In `class_type/core.rs`, the class instance type construction only processed:
+1. Explicit property declarations (`class C { x = 5 }`)
+2. Constructor parameter properties (`constructor(public x: number)`)
+
+It did NOT scan constructor bodies for `this.prop = value` assignments, which in JS/checkJs mode serve as implicit property declarations. This caused false TS2339 ("Property X does not exist on type Y") whenever code accessed constructor-assigned properties on class instances.
+
+**Fix**: Added `collect_js_constructor_this_properties()` method to scan constructor bodies for `this.prop = value` patterns and include them in the class instance type. Guarded by `is_js_file()` so TypeScript-only type checking is unaffected.
+
+Features:
+- Scans top-level expression statements in constructor body
+- Detects `this.propName = expr` patterns via AST inspection
+- Respects JSDoc `@type` annotations on the assignment statement
+- Respects JSDoc `@readonly` tags (marks property as readonly)
+- Explicit declarations take precedence (no override)
+- Widens literal types for mutable properties
+- Skips private identifiers (separate handling)
+
+**Tests**: 5 unit tests in `js_constructor_property_tests.rs`:
+- `test_js_constructor_this_prop_no_false_ts2339` — basic this.p1/p2 assignment
+- `test_js_constructor_this_prop_with_jsdoc_type` — JSDoc @type on this.name
+- `test_js_constructor_this_prop_explicit_declaration_precedence` — explicit > constructor
+- `test_js_constructor_this_prop_in_subclass` — derived class constructor properties
+- `test_js_constructor_nonexistent_prop_still_errors` — regression guard
+
+**Impact**: +18 conformance tests overall (9775 → 9793), 0 regressions:
+- jsdoc area: 227/341 → 232/341 (+5)
+- salsa area: 115/190 → 123/190 (+8)
+- Other areas: additional +5 from cross-cutting JS class tests
+- Extra TS2339 in jsdoc dropped from 21 → 6
+
+**Specific tests improved** (confirmed with verbose fingerprint comparison):
+- `jsDeclarationsClasses.ts` — 6 false TS2339 on `p1/p2/prop/another/another2` eliminated
+- `jsdocAccessibilityTags.ts` — 7 false TS2339 on `priv2/prot2/pub2` eliminated
+- `jsdocTemplateClass.ts` — 3 false TS2339 on `a` eliminated (diff 3→1, now only missing TS2322)
+- Multiple salsa tests flipped from FAIL to PASS
+
+**Remaining false TS2339 in jsdoc (6 extra)**: Different root causes:
+- `checkExportsObjectAssignProperty.ts` — Object.defineProperty/assign not recognized
+- `checkObjectDefineProperty.ts` — same pattern
+- `jsdocImportType.ts` / `jsdocImportType2.ts` — import type member resolution
+- `jsdocParamTagTypeLiteral.ts` — nested @param type literal not built for lowercase `object`
+- `jsdocTemplateConstructorFunction2.ts` — nested @param for `object` type
+
+**Files changed**:
+- `crates/tsz-checker/src/types/class_type/core.rs` — `collect_js_constructor_this_properties` + `extract_this_property_assignment`
+- `crates/tsz-checker/src/lib.rs` — test module registration
+- `crates/tsz-checker/tests/js_constructor_property_tests.rs` — 5 unit tests
+
+---
 
 ## Session 2026-03-02m' — Fix Application type ordering in union normalization
 
