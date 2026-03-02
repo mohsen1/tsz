@@ -874,6 +874,9 @@ impl<'a> Completions<'a> {
         let offset = self
             .line_map
             .position_to_offset(position, self.source_text)?;
+        if let Some(parent) = self.meta_property_parent_type_name(offset) {
+            return Some(parent);
+        }
         let node_idx = self.find_completions_node(root, offset);
         let expr_idx = self.member_completion_target(node_idx, offset)?;
 
@@ -890,6 +893,32 @@ impl<'a> Completions<'a> {
                 ((symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) != 0)
                     .then(|| symbol.escaped_name.clone())
             })
+    }
+
+    fn meta_property_parent_type_name(&self, offset: u32) -> Option<String> {
+        let end = (offset as usize).min(self.source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        let before_dot = prefix.strip_suffix('.')?;
+        let expr = before_dot.trim_end();
+        let token_start = expr
+            .rfind(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+            .map_or(0, |idx| idx + 1);
+        let token = &expr[token_start..];
+        let before_token = &expr[..token_start];
+        let has_ident_before = before_token
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+        if has_ident_before {
+            return None;
+        }
+        if token == "import" {
+            return Some("ImportMetaExpression".to_string());
+        }
+        if token == "new" && self.is_inside_function(offset) {
+            return Some("NewTargetExpression".to_string());
+        }
+        None
     }
 
     fn normalize_member_parent_type_name(type_text: &str) -> Option<String> {
