@@ -172,6 +172,9 @@ impl<'a> Completions<'a> {
             // After `=` in variable declarations and property assignments,
             // but NOT after `==`, `===`, `!=`, `>=`, `<=`
             Some(b'=') => {
+                if self.is_in_parameter_list(offset) {
+                    return false;
+                }
                 let before = &trimmed_without_marker[..trimmed_without_marker.len() - 1];
                 let prev = before.as_bytes().last().copied();
                 if prev != Some(b'=')
@@ -322,7 +325,10 @@ impl<'a> Completions<'a> {
         false
     }
 
-    fn fourslash_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
+    pub(super) fn fourslash_marker_comment_start(
+        source_text: &str,
+        base_offset: u32,
+    ) -> Option<u32> {
         let bytes = source_text.as_bytes();
         let len = bytes.len() as u32;
         if len < 4 {

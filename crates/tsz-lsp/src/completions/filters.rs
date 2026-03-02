@@ -1033,14 +1033,46 @@ impl<'a> Completions<'a> {
     /// Find the best node for completions at the given offset.
     /// When the cursor is in whitespace, finds the smallest containing scope node.
     pub(super) fn find_completions_node(&self, root: NodeIndex, offset: u32) -> NodeIndex {
+        let mut lookup_offset = offset;
+        if let Some(marker_start) = Self::fourslash_marker_comment_start(self.source_text, offset) {
+            if marker_start > 0 && self.source_text.as_bytes()[(marker_start - 1) as usize] == b'}'
+            {
+                let mut current = find_node_at_offset(self.arena, marker_start - 1);
+                let mut depth = 0;
+                while current.is_some() && depth < 16 {
+                    if let Some(node) = self.arena.get(current)
+                        && (node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            || node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                        && let Some(ext) = self.arena.get_extended(current)
+                    {
+                        return ext.parent;
+                    }
+                    if let Some(ext) = self.arena.get_extended(current) {
+                        if ext.parent == current {
+                            break;
+                        }
+                        current = ext.parent;
+                    } else {
+                        break;
+                    }
+                    depth += 1;
+                }
+            }
+            let suffix = &self.source_text[marker_start as usize..];
+            if let Some(rel_end) = suffix.find("*/") {
+                lookup_offset = marker_start + rel_end as u32 + 2;
+            }
+        }
         // Try exact offset first
-        let mut node_idx = find_node_at_offset(self.arena, offset);
+        let mut node_idx = find_node_at_offset(self.arena, lookup_offset);
         if node_idx.is_some() {
             return node_idx;
         }
         // Try offset-1 (common when cursor is right after a token boundary)
-        if offset > 0 {
-            node_idx = find_node_at_offset(self.arena, offset - 1);
+        if lookup_offset > 0 {
+            node_idx = find_node_at_offset(self.arena, lookup_offset - 1);
             if node_idx.is_some() {
                 return node_idx;
             }
@@ -1050,7 +1082,7 @@ impl<'a> Completions<'a> {
         let mut best = root;
         let mut best_len = u32::MAX;
         for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.pos <= offset && node.end >= offset {
+            if node.pos <= lookup_offset && node.end >= lookup_offset {
                 let len = node.end - node.pos;
                 if len < best_len {
                     best_len = len;

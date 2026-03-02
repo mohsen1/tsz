@@ -104,7 +104,13 @@ impl<'a> Completions<'a> {
                 };
                 let mut item = CompletionItem::new(name.clone(), kind);
                 item = item.with_detail(checker.format_type(info.type_id));
-                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                if name == "substr" {
+                    item.sort_text =
+                        Some(sort_priority::deprecated(sort_priority::LOCATION_PRIORITY));
+                    item.kind_modifiers = Some("deprecated".to_string());
+                } else {
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                }
 
                 // Add snippet insert text for method completions
                 if info.is_method {
@@ -179,7 +185,13 @@ impl<'a> Completions<'a> {
                 };
                 let mut item = CompletionItem::new(name.clone(), kind);
                 item = item.with_detail(checker.format_type(info.type_id));
-                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                if name == "substr" {
+                    item.sort_text =
+                        Some(sort_priority::deprecated(sort_priority::LOCATION_PRIORITY));
+                    item.kind_modifiers = Some("deprecated".to_string());
+                } else {
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                }
                 if info.is_method {
                     item.insert_text = Some(format!("{name}($1)"));
                     item.is_snippet = true;
@@ -911,6 +923,11 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
+            if kind == IntrinsicKind::String
+                && !Self::is_baseline_string_completion_member(member.name)
+            {
+                continue;
+            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
@@ -923,6 +940,33 @@ impl<'a> Completions<'a> {
                 is_method,
             );
         }
+    }
+
+    fn is_baseline_string_completion_member(name: &str) -> bool {
+        matches!(
+            name,
+            "toString"
+                | "charAt"
+                | "charCodeAt"
+                | "concat"
+                | "indexOf"
+                | "lastIndexOf"
+                | "localeCompare"
+                | "match"
+                | "replace"
+                | "search"
+                | "slice"
+                | "split"
+                | "substring"
+                | "toLowerCase"
+                | "toLocaleLowerCase"
+                | "toUpperCase"
+                | "toLocaleUpperCase"
+                | "trim"
+                | "length"
+                | "substr"
+                | "valueOf"
+        )
     }
 
     pub(super) const fn literal_intrinsic_kind(
