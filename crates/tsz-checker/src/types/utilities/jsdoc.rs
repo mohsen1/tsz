@@ -222,40 +222,16 @@ impl<'a> CheckerState<'a> {
         let sf = self.ctx.arena.source_files.first()?;
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
-        let node = self.ctx.arena.get(idx)?;
         let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
-        self.jsdoc_type_from_expression(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, idx, node.pos, comments, source_text)
-                .or_else(|| {
-                    if let Some((module_specifier, member_name)) =
-                        Self::parse_jsdoc_import_type(type_expr)
-                        && let Some(sym_id) =
-                            self.resolve_cross_file_export(&module_specifier, &member_name)
-                    {
-                        let resolved = self.type_reference_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR {
-                            return Some(resolved);
-                        }
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
-                            || (symbol.flags & symbol_flags::CLASS) != 0
-                            || (symbol.flags & symbol_flags::INTERFACE) != 0
-                            || (symbol.flags & symbol_flags::ENUM) != 0
-                        {
-                            let resolved = self.type_reference_symbol_type(sym_id);
-                            if resolved != TypeId::ERROR {
-                                return Some(resolved);
-                            }
-                        }
-                    }
-                    None
-                })
-        })
+        // Use the comprehensive type expression resolver that handles generics,
+        // inline object types, and all fallback strategies.
+        let resolved = self.resolve_jsdoc_type_str(type_expr)?;
+        // Evaluate to expand mapped types, conditionals, etc. so that excess
+        // property checks and assignability see the final structural type.
+        Some(self.judge_evaluate(resolved))
     }
 
     fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
@@ -616,9 +592,254 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // Handle generic type references: Name<TypeArg1, TypeArg2, ...>
+                // e.g., Partial<Record<Keys, unknown>>, Record<string, Color>
+                if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
+                    let base_name = type_expr[..angle_idx].trim();
+                    if type_expr.ends_with('>') {
+                        let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
+                        let arg_strs = Self::split_type_args_respecting_nesting(args_str);
+                        let mut type_args = Vec::new();
+                        for arg in &arg_strs {
+                            type_args.push(self.resolve_jsdoc_type_str(arg.trim())?);
+                        }
+                        return self.resolve_jsdoc_generic_type(base_name, type_args);
+                    }
+                }
+
                 None
             }
         }
+    }
+
+    /// Resolve a JSDoc type expression string to a `TypeId`, trying all resolution strategies.
+    ///
+    /// Resolution order:
+    /// 1. `jsdoc_type_from_expression` — handles primitives, type params, generics, special patterns
+    /// 2. File-local symbols — type aliases, classes, interfaces, enums (includes merged lib types)
+    /// 3. `@typedef` resolution — searches JSDoc comments for `@typedef` declarations
+    fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
+        let type_expr = type_expr.trim();
+
+        // 1. Try the expression parser (handles primitives, type params, generics, etc.)
+        if let Some(ty) = self.jsdoc_type_from_expression(type_expr) {
+            return Some(ty);
+        }
+
+        // 2. Try inline object literal types: { propName: Type, ... }
+        //    This is only in resolve_jsdoc_type_str (not jsdoc_type_from_expression)
+        //    because @param {{ x: T }} already handles nested braces separately,
+        //    and adding this to the general parser would change @param behavior.
+        if type_expr.starts_with('{') && type_expr.ends_with('}')
+            && let Some(ty) = self.parse_jsdoc_object_literal_type(type_expr) {
+                return Some(ty);
+            }
+
+        // 3. Try file-local symbols (type aliases, classes, interfaces — includes merged lib types)
+        self.resolve_jsdoc_type_name(type_expr)
+    }
+
+    /// Resolve a simple type name (no generics) from the symbol table or @typedef declarations.
+    fn resolve_jsdoc_type_name(&mut self, name: &str) -> Option<TypeId> {
+        // Check file_locals for type aliases, classes, interfaces, enums
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags
+                    & (symbol_flags::TYPE_ALIAS
+                        | symbol_flags::CLASS
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::ENUM))
+                    != 0
+                {
+                    let resolved = self.type_reference_symbol_type(sym_id);
+                    if resolved != TypeId::ERROR {
+                        return Some(resolved);
+                    }
+                }
+
+        // Try @typedef resolution from JSDoc comments
+        if let Some(sf) = self.ctx.arena.source_files.first() {
+            let comments = sf.comments.clone();
+            let source_text: String = sf.text.to_string();
+            if let Some(ty) = self.resolve_jsdoc_typedef_type(
+                name,
+                NodeIndex(0),
+                u32::MAX,
+                &comments,
+                &source_text,
+            ) {
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a generic type reference from JSDoc: `Name<Arg1, Arg2, ...>`.
+    ///
+    /// Uses `type_reference_symbol_type_with_params` to get both the type body and
+    /// its parameters, then directly instantiates with `instantiate_generic`.
+    /// This avoids creating Application types that may not evaluate correctly
+    /// when the base is a structural type (not Lazy(DefId)).
+    fn resolve_jsdoc_generic_type(
+        &mut self,
+        base_name: &str,
+        type_args: Vec<TypeId>,
+    ) -> Option<TypeId> {
+        // Look up the base type in file_locals (includes merged lib types like Partial, Record)
+        let sym_id = self.ctx.binder.file_locals.get(base_name)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM))
+            == 0
+        {
+            return None;
+        }
+
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body_type == TypeId::ERROR {
+            return None;
+        }
+
+        if type_params.is_empty() || type_args.is_empty() {
+            return Some(body_type);
+        }
+
+        // Directly instantiate the type body with the provided type arguments.
+        // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_for_node)
+        // calls judge_evaluate, which will expand mapped types while preserving
+        // Lazy(DefId) references in value positions for correct type name display.
+        use tsz_solver::instantiate_generic;
+        let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+        Some(instantiated)
+    }
+
+    /// Find the first occurrence of a character at the top level (not nested inside `<>`, `()`, `{}`).
+    fn find_top_level_char(s: &str, target: char) -> Option<usize> {
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        for (i, ch) in s.char_indices() {
+            // Check for target at top level BEFORE adjusting depth,
+            // so searching for '<' finds the first unmatched '<'.
+            if ch == target && angle_depth == 0 && paren_depth == 0 && brace_depth == 0 {
+                return Some(i);
+            }
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Split a comma-separated list of type arguments, respecting `<>`, `()`, `{}` nesting.
+    fn split_type_args_respecting_nesting(s: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                ',' if angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                    parts.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if start < s.len() {
+            parts.push(&s[start..]);
+        }
+        parts
+    }
+
+    /// Parse an inline object literal type expression: `{ propName: Type, ... }`.
+    fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
+        let inner = type_expr[1..type_expr.len() - 1].trim();
+        if inner.is_empty() {
+            // Empty object type: {}
+            return Some(self.ctx.types.factory().object(Vec::new()));
+        }
+
+        // Split properties by ',' or ';' at top level
+        let prop_strs = Self::split_object_properties(inner);
+        let mut properties = Vec::new();
+
+        for prop_str in &prop_strs {
+            let prop_str = prop_str.trim();
+            if prop_str.is_empty() {
+                continue;
+            }
+            // Find the first ':' at top level (property separator)
+            if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
+                let name = prop_str[..colon_idx].trim();
+                let type_str = prop_str[colon_idx + 1..].trim();
+                if !name.is_empty() {
+                    let prop_type = self.resolve_jsdoc_type_str(type_str)?;
+                    let name_atom = self.ctx.types.intern_string(name);
+                    properties.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: prop_type,
+                        write_type: prop_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: properties.len() as u32,
+                    });
+                }
+            }
+        }
+
+        if properties.is_empty() {
+            return None;
+        }
+        Some(self.ctx.types.factory().object(properties))
+    }
+
+    /// Split object literal properties by ',' or ';' at the top level.
+    fn split_object_properties(s: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                ',' | ';' if angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                    parts.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if start < s.len() {
+            parts.push(&s[start..]);
+        }
+        parts
     }
 
     /// Resolve a typedef referenced by a `JSDoc` type annotation (e.g., `Foo`) from
