@@ -1,7 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9822/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9823/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02w — IteratorResult yield type extraction for for-of loops
+
+### Fixed: False positive TS2322 in for-of loops over custom iterables
+
+**Area**: es6/for-ofStatements (61% → improved), cross-cutting iterator protocol handling
+
+**Root cause**: `resolve_iterator_element_type_via_property_access()` in `iterable_checker.rs` was
+reading `.value` from the full `IteratorResult<T, TReturn>` union type, producing `T | TReturn`
+instead of just the yield type `T`. For `IteratorResult<string, undefined>` (from `[].values()`),
+this meant the iterated type was `string | undefined` instead of `string`, triggering a false
+positive TS2322 "Type 'string | undefined' is not assignable to type 'string'".
+
+**Fix** (3 files, solver-first approach):
+1. **solver `iterators.rs` — `extract_iterator_result_value_types()`**: Made public and added
+   Application type handling. For unexpanded `IteratorResult<T, TReturn>` Application types,
+   extracts `T` from `args[0]` and `TReturn` from `args[1]` instead of returning (ANY, ANY).
+2. **solver `mod.rs`**: Re-exported `extract_iterator_result_value_types` for checker use.
+3. **checker `iterable_checker.rs`**: Replaced naive `.value` property read with solver's
+   discriminant-aware extraction. Falls through to `.value` only as last resort for non-standard
+   iterator shapes.
+
+**Architecture note**: Initial implementation had checker calling `.lookup()` to inspect
+`TypeData::Application` directly — pre-commit guardrail caught this. Moved the Application arg
+extraction into the solver's `extract_iterator_result_value_types` where it belongs.
+
+**Tests**: 3 unit tests added in `operations_tests.rs`:
+- Union partitioning by `done` discriminant
+- Application type arg extraction
+- Single object fallback
+
+**Conformance delta**: +5 tests (9818 → 9823), 0 regressions.
 
 ## Session 2026-03-02v — Never-returning function call flow narrowing
 
