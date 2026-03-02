@@ -117,11 +117,11 @@ impl Server {
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
-            let mut add_missing_const_preview = request_span
-                .and_then(|(start, _)| {
-                    Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
-                })
-                .or_else(|| Self::apply_add_missing_const_fallback(&content));
+            let mut add_missing_const_preview = if let Some((start, _)) = request_span {
+                Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
+            } else {
+                Self::apply_add_missing_const_fallback(&content)
+            };
             if let Some((start, _)) = request_span
                 && Self::add_missing_const_should_skip_for_declared_bindings(
                     &content, &line_map, start, &binder,
@@ -637,6 +637,34 @@ impl Server {
                 });
                 response_actions.push(const_action);
             }
+            if response_actions.is_empty()
+                && error_codes.iter().any(|code| {
+                    *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                })
+                && let Some((name, updated_content)) =
+                    Self::apply_add_missing_function_declaration_fallback_at_request(
+                        &content,
+                        &line_map,
+                        request_span,
+                    )
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": "fixMissingFunctionDeclaration",
+                    "description": format!("Add missing function declaration '{name}'"),
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                }));
+            }
 
             if let Some(action) = self.synthetic_implement_interface_codefix(
                 file_path,
@@ -1030,6 +1058,73 @@ impl Server {
             }
         }
         false
+    }
+
+    fn apply_add_missing_function_declaration_fallback_at_request(
+        content: &str,
+        line_map: &LineMap,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<(String, String)> {
+        let (start, _) = request_span?;
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off >= content.len() {
+            return None;
+        }
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let line = content.get(line_start..line_end)?.trim();
+        if !(line.starts_with('[') && line.contains('=') && line.contains('(')) {
+            return None;
+        }
+
+        let lhs = line.split_once('=').map(|(left, _)| left.trim()).unwrap_or("");
+        let rel = start_off.saturating_sub(line_start).min(lhs.len());
+        let lhs_bytes = lhs.as_bytes();
+        if rel >= lhs_bytes.len() {
+            return None;
+        }
+
+        let mut ident_start = rel;
+        while ident_start > 0 {
+            let c = lhs_bytes[ident_start - 1] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut ident_end = rel;
+        while ident_end < lhs_bytes.len() {
+            let c = lhs_bytes[ident_end] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_end += 1;
+            } else {
+                break;
+            }
+        }
+        if ident_start >= ident_end {
+            return None;
+        }
+        let name = lhs[ident_start..ident_end].to_string();
+        let mut after = ident_end;
+        while after < lhs_bytes.len() && (lhs_bytes[after] as char).is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= lhs_bytes.len() || lhs_bytes[after] as char != '(' {
+            return None;
+        }
+        if content.contains(&format!("function {name}(")) {
+            return None;
+        }
+
+        let mut updated = content.trim_end_matches('\n').to_string();
+        updated.push_str("\n\n");
+        updated.push_str(&format!(
+            "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+        ));
+        Some((name, updated))
     }
 
     fn is_comma_continuation_line(lines: &[String], idx: usize) -> bool {
