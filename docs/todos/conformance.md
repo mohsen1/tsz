@@ -3,6 +3,39 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9774/12569 (77.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02c — Fix variadic type-parameter tuple assignability in solver
+
+### Fixed: Concrete tuples incorrectly assignable to variadic type-parameter spreads — Solver (relations/subtype/rules/tuples.rs)
+
+**Area**: types/tuple (variadicTuples3.ts)
+
+**Root cause**: In `check_tuple_subtype`, when a target tuple has rest elements that spread type parameters (e.g., `[...T, ...P]` where `T extends any[]`, `P extends any[]`), the solver was matching concrete source elements against the type parameter variadics. For `[any, any] <: [...T, ...P]`, it would check `any <: P` (True via any-propagation) and `any <: T` (True), incorrectly accepting the assignment.
+
+TSC rejects this with: *"Source provides no match for variadic element at position N in target."* — a concrete tuple cannot be split across unresolved type parameter spreads because the partition is ambiguous.
+
+**Fix**: Two changes in the tuple subtype checker:
+1. **Suffix matching**: When a tail element is a rest spread of a type parameter, require the source to have a matching rest element (not a concrete element).
+2. **Variadic matching**: When the expanded variadic is a type parameter, reject concrete (non-rest) source elements.
+
+The same logic was mirrored in `explain_tuple_failure` for consistent diagnostic rendering.
+
+**Tests**: 3 unit tests in `tuple_comprehensive_tests.rs`:
+- `test_concrete_tuple_not_assignable_to_double_type_param_spread` — `[any, any] <: [...T, ...P]` → False
+- `test_concrete_tuple_not_assignable_to_single_type_param_spread` — `[any, any] <: [...T]` → False
+- `test_concrete_tuple_assignable_to_concrete_array_spread` — `[any, any] <: [...any[]]` → True
+
+**Impact**: +6 conformance tests flipped (variadicTuples3 + 5 others via indirect improvements), 0 regressions from the tuple fix itself.
+
+**Files changed**:
+- `crates/tsz-solver/src/relations/subtype/rules/tuples.rs` — type-parameter variadic guard in suffix + variadic matching
+- `crates/tsz-solver/src/relations/subtype/explain.rs` — mirror for diagnostic path
+- `crates/tsz-solver/tests/tuple_comprehensive_tests.rs` — 3 new tests
+- `crates/tsz-cli/src/bin/tsz_server/handlers_diagnostics.rs` — remove dead code reference
+
+**Note**: After rebasing on upstream changes (8cfc426d27), the overall pass rate dropped to 56.8% due to upstream checker changes (value-lookup, import-equals, strict-mode diagnostics). This is unrelated to the tuple fix.
+
+---
+
 ## Direction (2026-03-02)
 
 ### Where we are

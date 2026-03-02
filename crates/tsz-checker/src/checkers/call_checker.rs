@@ -525,6 +525,9 @@ impl<'a> CheckerState<'a> {
                 && expected != TypeId::UNKNOWN
                 && let Some(arg_node) = self.ctx.arena.get(arg_idx)
                 && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                // Skip excess property checking for type parameters - the type parameter
+                // captures the full object type, so extra properties are allowed.
+                && !is_type_parameter_type(self.ctx.types, expected)
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);

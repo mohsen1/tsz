@@ -319,6 +319,12 @@ impl<'a> InferenceContext<'a> {
             self.widen_candidate_types(&filtered_no_never)
         };
         let resolved = self.best_common_type(&widened);
+        // NOTE: Deep-widening of object literal inference results (e.g., { c: false } → { c: boolean })
+        // is not yet implemented. TSC calls getWidenedType() in getInferredType() for this purpose.
+        // Calling widen_type() here or in generic_call.rs creates side-effect types in the interner
+        // that can disrupt inference for other type parameters due to interner ordering sensitivity.
+        // A proper fix requires either: (1) fixing the interner sensitivity, or (2) implementing
+        // RequiresWidening flag propagation like TSC.
         if all_from_object_properties
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
         {
@@ -419,7 +425,7 @@ impl<'a> InferenceContext<'a> {
         candidates
             .iter()
             .map(|candidate| {
-                // Always widen fresh literal candidates to their base type.
+                // Widen fresh literal candidates to their base type.
                 // TypeScript widens fresh literals (0 → number, false → boolean)
                 // during inference resolution. Const type parameters are protected
                 // by the is_const check in resolve_from_candidates which uses

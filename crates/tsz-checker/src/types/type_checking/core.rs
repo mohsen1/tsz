@@ -1540,6 +1540,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // When an `as` clause is present (e.g., `[Key in T as ...]`), the constraint
+        // type T doesn't need to be a key type directly — the keys are produced by the
+        // `as` clause. TSC skips this validation for mapped types with name remapping.
+        if data.name_type != NodeIndex::NONE {
+            return;
+        }
+
         // Get the constraint node from the mapped type's type parameter.
         let Some(tp_node) = self.ctx.arena.get(data.type_parameter) else {
             return;

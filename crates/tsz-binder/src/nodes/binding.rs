@@ -1110,6 +1110,43 @@ impl BinderState {
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 return sym_id;
             }
+            // In merged namespace blocks, a non-exported variable must not merge with an
+            // exported variable of the same name from a prior block. In tsc, these are
+            // distinct symbols: `export var Origin: Point` in block 1 and `var Origin: string`
+            // in block 2 are separate — the non-exported one is a local variable that shadows
+            // the exported member within that block's scope, without affecting the namespace's
+            // exported type.
+            let is_in_module_scope = self
+                .scope_chain
+                .get(self.current_scope_idx)
+                .is_some_and(|ctx| ctx.container_kind == ContainerKind::Module);
+            let existing_is_exported = self.symbols.get(existing_id).is_some_and(|s| s.is_exported);
+            if is_in_module_scope
+                && existing_is_exported
+                && !is_exported
+                && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+            {
+                let sym_id = self.symbols.alloc(flags, name.to_string());
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.declarations.push(declaration);
+                    if (flags & symbol_flags::VALUE) != 0 {
+                        sym.value_declaration = declaration;
+                    }
+                    sym.is_exported = false;
+                    if let Some(parent_id) = container_sym {
+                        sym.parent = parent_id;
+                    }
+                }
+                self.current_scope.set(name.to_string(), sym_id);
+                self.node_symbols.insert(declaration.0, sym_id);
+                self.declare_in_persistent_scope(name.to_string(), sym_id);
+                return sym_id;
+            }
+
             let can_merge = Self::can_merge_flags(existing_flags, flags);
 
             let combined_flags = if can_merge {
