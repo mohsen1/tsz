@@ -388,10 +388,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        let in_non_ambient_class = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| !c.is_declared)
+            || self.is_within_non_ambient_class_body(decl_idx);
+
         if !is_ambient
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
+            && !(name.as_str() == "arguments" && in_non_ambient_class)
         {
             self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
         }
@@ -401,8 +409,25 @@ impl<'a> CheckerState<'a> {
         if !is_ambient
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
+            && name.as_str() == "arguments"
+            && in_non_ambient_class
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                &[name],
+            );
+            self.error_at_node(
+                var_decl.name,
+                &message,
+                diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+            );
+        }
+        if !is_ambient
+            && self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
             && crate::state_checking::is_eval_or_arguments(name)
-            && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
+            && !(in_non_ambient_class && name.as_str() == "arguments")
         {
             self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
         }
@@ -1251,6 +1276,36 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn is_within_non_ambient_class_body(&self, mut idx: NodeIndex) -> bool {
+        let mut guard = 0u32;
+        while idx.is_some() {
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                if let Some(class_data) = self.ctx.arena.get_class(node) {
+                    return !self.has_declare_modifier(&class_data.modifiers);
+                }
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            idx = ext.parent;
+        }
+        false
     }
 
     /// TS2481: Check if a `var` declaration shadows a block-scoped declaration (`let`/`const`)

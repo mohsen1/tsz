@@ -156,6 +156,47 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Key checks:
         // - Type annotation vs initializer type compatibility
         // - Adding variable to scope
+        if self.ctx.is_js_file()
+            && self.is_strict_mode_for_node(decl_data.name)
+            && let Some(name_node) = self.ctx.arena.get(decl_data.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && crate::state_checking::is_eval_or_arguments(&ident.escaped_text)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            if ident.escaped_text == "arguments"
+                && self
+                    .ctx
+                    .enclosing_class
+                    .as_ref()
+                    .is_some_and(|c| !c.is_declared)
+            {
+                let message = format_message(
+                    diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    &[&ident.escaped_text],
+                );
+                if let Some((pos, end)) = self.ctx.get_node_span(decl_data.name) {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        message,
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    );
+                }
+            } else {
+                let message = format_message(
+                    diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE,
+                    &[&ident.escaped_text],
+                );
+                if let Some((pos, end)) = self.ctx.get_node_span(decl_data.name) {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        message,
+                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                    );
+                }
+            }
+        }
     }
 
     /// Check a function declaration.
