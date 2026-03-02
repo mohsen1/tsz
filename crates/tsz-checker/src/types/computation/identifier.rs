@@ -441,6 +441,24 @@ impl<'a> CheckerState<'a> {
                     );
                     return self.check_flow_usage(idx, value_type, sym_id);
                 }
+                let lib_binders = self.get_lib_binders();
+                let has_scoped_value_or_alias = self
+                    .ctx
+                    .binder
+                    .resolve_identifier_with_filter(self.ctx.arena, idx, &lib_binders, |sid| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sid, &lib_binders)
+                            .is_some_and(|s| {
+                                (s.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                    || ((s.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                                        && !s.is_type_only)
+                            })
+                    })
+                    .is_some();
+                if has_scoped_value_or_alias {
+                    return TypeId::ANY;
+                }
                 // If this file has a non-type-only import binding for the same local
                 // name, prefer that value binding over a merged type-only symbol.
                 if self.source_file_has_value_import_binding_named(idx, name) {
@@ -1022,11 +1040,19 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             current = ext.parent;
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+                    || node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK)
+            {
+                break;
+            }
         }
         let Some(root) = self.ctx.arena.get(current) else {
             return false;
         };
-        if root.kind != tsz_parser::parser::syntax_kind_ext::SOURCE_FILE {
+        if root.kind != tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+            && root.kind != tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+        {
             return false;
         }
 
@@ -1034,13 +1060,21 @@ impl<'a> CheckerState<'a> {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_DECLARATION {
+            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_DECLARATION
+                && stmt_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
                 continue;
             }
             let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
                 continue;
             };
             if import_decl.is_type_only {
+                continue;
+            }
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if self.ctx.arena.get_identifier_text(import_decl.import_clause) == Some(name) {
+                    return true;
+                }
                 continue;
             }
             let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
@@ -1079,6 +1113,7 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
 }
 
 #[cfg(test)]
