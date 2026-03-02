@@ -787,6 +787,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
+        // For fixed-length tuples, .length returns a literal numeric type (e.g., 2 for [string, number])
+        // instead of the generic `number` from the Array<T> interface.
+        if prop_name == "length"
+            && let Some(len) = self.compute_tuple_fixed_length(array_type) {
+                let literal = self.interner().literal_number(len as f64);
+                return PropertyAccessResult::simple(literal);
+            }
+
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
@@ -983,6 +991,63 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {
         self.interner().union2(element_type, TypeId::UNDEFINED)
+    }
+
+    /// Compute the fixed length of a tuple type, if it has one.
+    /// Returns `None` for arrays, variable-length tuples, or non-tuple types.
+    fn compute_tuple_fixed_length(&self, type_id: TypeId) -> Option<usize> {
+        const MAX_FIXED_LENGTH: usize = 1000;
+
+        let list_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(id)) => id,
+            _ => return None,
+        };
+
+        let elements = self.interner().tuple_list(list_id);
+        let mut total = 0usize;
+        let mut rest_type: Option<TypeId> = None;
+        let mut rest_count = 0;
+
+        for elem in elements.iter() {
+            if elem.rest {
+                rest_count += 1;
+                if rest_count > 1 {
+                    return None;
+                }
+                rest_type = Some(elem.type_id);
+            } else {
+                total += 1;
+                if total > MAX_FIXED_LENGTH {
+                    return None;
+                }
+            }
+        }
+
+        // Iteratively descend into single-rest chains (e.g., [T, ...Acc])
+        while let Some(rest_id) = rest_type.take() {
+            let inner_list_id = match self.interner().lookup(rest_id) {
+                Some(TypeData::Tuple(id)) => id,
+                _ => return None, // Rest spreads a non-tuple → variable length
+            };
+            let inner_elements = self.interner().tuple_list(inner_list_id);
+            let mut inner_rest_count = 0;
+            for elem in inner_elements.iter() {
+                if elem.rest {
+                    inner_rest_count += 1;
+                    if inner_rest_count > 1 {
+                        return None;
+                    }
+                    rest_type = Some(elem.type_id);
+                } else {
+                    total += 1;
+                    if total > MAX_FIXED_LENGTH {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(total)
     }
 
     pub(super) fn resolve_function_property(
