@@ -289,6 +289,14 @@ impl<'a> Completions<'a> {
                         {
                             continue;
                         }
+                        if self
+                            .parameter_declaration_node(symbol)
+                            .is_some_and(|param_decl| {
+                                !self.parameter_symbol_visible_at_offset(param_decl, offset)
+                            })
+                        {
+                            continue;
+                        }
 
                         seen_names.insert(name.clone());
                         let mut kind = self.determine_completion_kind(symbol);
@@ -543,16 +551,45 @@ impl<'a> Completions<'a> {
     }
 
     fn symbol_is_parameter(&self, symbol: &tsz_binder::Symbol) -> bool {
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first) = symbol.declarations.first() {
-            first
-        } else {
-            return false;
-        };
-        self.arena
-            .get(decl)
-            .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+        self.parameter_declaration_node(symbol).is_some()
+    }
+
+    fn parameter_declaration_node(&self, symbol: &tsz_binder::Symbol) -> Option<NodeIndex> {
+        if symbol.value_declaration.is_some() {
+            if self
+                .arena
+                .get(symbol.value_declaration)
+                .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+            {
+                return Some(symbol.value_declaration);
+            }
+            if let Some(ext) = self.arena.get_extended(symbol.value_declaration)
+                && self
+                    .arena
+                    .get(ext.parent)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+            {
+                return Some(ext.parent);
+            }
+        }
+        for decl in symbol.declarations.iter().copied() {
+            if self
+                .arena
+                .get(decl)
+                .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+            {
+                return Some(decl);
+            }
+            if let Some(ext) = self.arena.get_extended(decl)
+                && self
+                    .arena
+                    .get(ext.parent)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+            {
+                return Some(ext.parent);
+            }
+        }
+        None
     }
 
     fn parameter_annotation_text(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
@@ -590,6 +627,32 @@ impl<'a> Completions<'a> {
             }
             text
         })
+    }
+
+    fn parameter_symbol_visible_at_offset(&self, param_decl: NodeIndex, offset: u32) -> bool {
+        let mut current = param_decl;
+        for _ in 0..16 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            let Some(node) = self.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                if let Some(function) = self.arena.get_function(node)
+                    && function.body.is_some()
+                    && let Some(body_node) = self.arena.get(function.body)
+                {
+                    return offset <= body_node.end;
+                }
+                return offset <= node.end;
+            }
+        }
+        true
     }
 
     fn variable_completion_type_detail(
