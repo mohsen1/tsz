@@ -1,7 +1,40 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9794/12570 (77.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9806/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02p — JSDoc union, intersection, and literal type parsing
+
+### Fixed: `jsdoc_type_from_expression` couldn't parse compound types
+
+**Area**: jsdoc (61.0% pass rate, 97 failing tests)
+
+**Root cause**: `jsdoc_type_from_expression()` only handled simple primitives and named type references. It couldn't parse:
+- Union types: `string | number`
+- Intersection types: `{ } & { name?: string }`
+- String literal types: `"foo"`, `'bar'`
+- Boolean literal types: `true`, `false`
+- Numeric literal types: `0`, `42`, `3.14`
+- JSDoc `*` (any) syntax
+
+This meant `@satisfies`, `@type`, and `@typedef` annotations with compound types silently failed to resolve, producing no diagnostics where tsc would.
+
+**Fix** (5 files, 3 sub-fixes):
+1. **jsdoc.rs**: Added `split_top_level_binary()` helper that splits type expressions on `|` or `&` while respecting `<>`, `()`, `{}`, and quote nesting. Added literal type parsing (string, boolean, numeric). Added `"*" => TypeId::ANY` mapping.
+2. **assignability_checker.rs**: Suppress TS1360 when TS2353 excess property error already emitted (matching tsc which doesn't double-report).
+3. **expr.rs + computed.rs + core.rs**: Fix regression where `const x = /** @type {*} */(null)` in JS files got type `null` instead of `any`. Three code paths needed patching:
+   - `ExpressionChecker` now delegates parenthesized expressions in JS files to the JSDoc-aware `ExpressionDispatcher`
+   - `compute_type_of_symbol` checks JSDoc cast type before `literal_type_from_initializer`
+   - `compute_final_type` guards `literal_type_from_initializer` when `init_type` is `any`/`unknown`
+
+**Key design insight**: The regression was a chain reaction: intersection parsing made `@typedef {{ } & { name?: string }} P` resolvable → `@type {P}` casts now ran overlap checks → but `literal_type_from_initializer` looked through parentheses ignoring JSDoc casts, returning `null` instead of `any`. Three separate code paths each had their own way of extracting const literal types, all ignoring JSDoc type assertions.
+
+**Tests**: Updated `test_ts2322_check_js_true_reports_annotation_union_mismatch` to expect TS2322 (now correctly fires with union parsing).
+
+**Impact**: +3 conformance tests (9803 → 9806, 78.0%), 0 regressions:
+- `parenthesizedJSDocCastDoesNotNarrow.ts` — parenthesized JSDoc cast now handled
+- `typeSatisfaction_propertyNameFulfillment.ts` — @satisfies with union types resolved
+- `declarationEmitCastReusesTypeNode4.ts` — intersection in @typedef + @type {*} cast preserved
 
 ## Session 2026-03-02o — Polymorphic `this` return type inference for class methods
 
