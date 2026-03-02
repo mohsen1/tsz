@@ -218,11 +218,11 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn type_of_value_declaration(&mut self, decl_idx: NodeIndex) -> TypeId {
         if decl_idx.is_none() {
-            return TypeId::UNKNOWN;
+            return TypeId::ERROR;
         }
 
         let Some(node) = self.ctx.arena.get(decl_idx) else {
-            return TypeId::UNKNOWN;
+            return TypeId::ERROR;
         };
 
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
@@ -255,7 +255,7 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
     ) -> TypeId {
         if decl_idx.is_none() {
-            return TypeId::UNKNOWN;
+            return TypeId::ERROR;
         }
 
         // Check declaration_arenas FIRST for the precise arena mapping.
@@ -286,7 +286,7 @@ impl<'a> CheckerState<'a> {
             None
         };
         let Some(decl_arena) = decl_arena else {
-            return TypeId::UNKNOWN;
+            return TypeId::ERROR;
         };
         if std::ptr::eq(decl_arena.as_ref(), self.ctx.arena) {
             return self.type_of_value_declaration(decl_idx);
@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
 
         // Guard against deep cross-arena recursion (shared with all delegation points)
         if !Self::enter_cross_arena_delegation() {
-            return TypeId::UNKNOWN;
+            return TypeId::ERROR;
         }
 
         let mut checker = Box::new(CheckerState::with_parent_cache(
