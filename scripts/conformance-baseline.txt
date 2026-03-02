@@ -1026,7 +1026,6 @@ FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash2.ts
 FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash3.ts
 FAIL TypeScript/tests/cases/compiler/paramsOnlyHaveLiteralTypesWhenAppropriatelyContextualized.ts
-FAIL TypeScript/tests/cases/compiler/parenthesizedJSDocCastDoesNotNarrow.ts
 FAIL TypeScript/tests/cases/compiler/parseAssertEntriesError.ts
 FAIL TypeScript/tests/cases/compiler/parseBigInt.ts
 FAIL TypeScript/tests/cases/compiler/parseCommaSeparatedNewlineNew.ts
@@ -1819,6 +1818,7 @@ FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-arguments.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-emitDecoratorMetadata.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
+FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiteralInference.ts
 FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentLHSIsValue.ts
 FAIL TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts
@@ -1908,7 +1908,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfa
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_contextualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_js.ts
-FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyNameFulfillment.ts
 FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorInvalidOperations.ts
 FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithAnyOtherTypeInvalidOperations.ts
 FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithEnumType.ts
@@ -2514,7 +2513,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -6609,6 +6607,7 @@ PASS TypeScript/tests/cases/compiler/parenthesizedArrowExpressionASI.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedAsyncArrowFunction.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedExpressionInternalComments.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastAtReturnStatement.ts
+PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastDoesNotNarrow.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedSatisfiesExpressionWithComments.ts
 PASS TypeScript/tests/cases/compiler/parse1.ts
 PASS TypeScript/tests/cases/compiler/parse2.ts
@@ -9679,7 +9678,6 @@ PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetada
 PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetadata5.ts
 PASS TypeScript/tests/cases/conformance/esnext/esnextSharedMemory.ts
 PASS TypeScript/tests/cases/conformance/esnext/logicalAssignment/logicalAssignment11.ts
-PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiteralInference.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals2ES5.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals2ES6.ts
@@ -9895,6 +9893,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfa
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_contextualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_ensureInterfaceImpl.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_optionalMemberConformance.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyNameFulfillment.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance1.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance2.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance3.ts
@@ -11838,6 +11837,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts

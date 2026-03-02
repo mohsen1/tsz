@@ -749,16 +749,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Track whether excess property checking emits diagnostics.
+        // When TS2353 is emitted for excess properties, tsc does NOT also emit TS1360.
+        let mut had_excess_property_error = false;
         if let Some(node) = self.ctx.arena.get(source_idx)
             && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
+            let diags_before = self.ctx.diagnostics.len();
             self.check_object_literal_excess_properties(source, target, source_idx);
+            had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
         }
 
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, source_idx)
         {
             return true;
+        }
+
+        // If excess property errors were already emitted, skip the general TS1360.
+        // This matches tsc: when TS2353 is reported, the "does not satisfy" error
+        // is suppressed to avoid redundant diagnostics.
+        if had_excess_property_error {
+            return false;
         }
 
         // Elaborate: for object literal sources, drill into property-level errors

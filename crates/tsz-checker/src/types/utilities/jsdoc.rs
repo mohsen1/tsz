@@ -300,6 +300,65 @@ impl<'a> CheckerState<'a> {
     /// and fallback symbol resolution.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
+
+        // Handle union types: "A | B | C" → split on top-level | and build union.
+        // Must come before primitive matching so "string | number" is handled.
+        if let Some(parts) = Self::split_top_level_binary(type_expr, '|') {
+            let mut members = Vec::new();
+            for part in &parts {
+                members.push(self.resolve_jsdoc_type_str(part.trim())?);
+            }
+            return if members.len() == 1 {
+                Some(members.remove(0))
+            } else {
+                let factory = self.ctx.types.factory();
+                Some(factory.union(members))
+            };
+        }
+
+        // Handle intersection types: "A & B" → split on top-level & and build intersection.
+        if let Some(parts) = Self::split_top_level_binary(type_expr, '&') {
+            let mut members = Vec::new();
+            for part in &parts {
+                members.push(self.resolve_jsdoc_type_str(part.trim())?);
+            }
+            return if members.len() == 1 {
+                Some(members.remove(0))
+            } else {
+                let factory = self.ctx.types.factory();
+                Some(factory.intersection(members))
+            };
+        }
+
+        // Handle string literal types: "foo" or 'bar'
+        if ((type_expr.starts_with('"') && type_expr.ends_with('"'))
+            || (type_expr.starts_with('\'') && type_expr.ends_with('\'')))
+            && type_expr.len() >= 2 {
+                let inner = &type_expr[1..type_expr.len() - 1];
+                let factory = self.ctx.types.factory();
+                return Some(factory.literal_string(inner));
+            }
+
+        // Handle boolean literal types: true, false
+        if type_expr == "true" {
+            let factory = self.ctx.types.factory();
+            return Some(factory.literal_boolean(true));
+        }
+        if type_expr == "false" {
+            let factory = self.ctx.types.factory();
+            return Some(factory.literal_boolean(false));
+        }
+
+        // Handle numeric literal types: 0, 1, 42, 3.14, -1
+        if let Ok(n) = type_expr.parse::<f64>()
+            && type_expr
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            {
+                let factory = self.ctx.types.factory();
+                return Some(factory.literal_number(n));
+            }
+
         let factory = self.ctx.types.factory();
 
         match type_expr {
@@ -307,7 +366,7 @@ impl<'a> CheckerState<'a> {
             "number" => Some(TypeId::NUMBER),
             "boolean" => Some(TypeId::BOOLEAN),
             "object" => Some(TypeId::OBJECT),
-            "any" => Some(TypeId::ANY),
+            "any" | "*" => Some(TypeId::ANY),
             "unknown" => Some(TypeId::UNKNOWN),
             "undefined" => Some(TypeId::UNDEFINED),
             "null" => Some(TypeId::NULL),
@@ -741,6 +800,43 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Split a type expression on a top-level binary operator (`|` or `&`), respecting
+    /// `<>`, `()`, `{}`, and string literal quoting. Returns `None` if the operator does
+    /// not appear at the top level (meaning the expression is not a binary type).
+    /// Returns `Some(parts)` with >= 2 parts if it is.
+    fn split_top_level_binary(s: &str, op: char) -> Option<Vec<&str>> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ if in_single_quote || in_double_quote => continue,
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                c if c == op && angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                    parts.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if parts.is_empty() {
+            return None; // no split found — not a binary type
+        }
+        parts.push(&s[start..]);
+        Some(parts)
     }
 
     /// Split a comma-separated list of type arguments, respecting `<>`, `()`, `{}` nesting.

@@ -702,8 +702,15 @@ impl<'a> CheckerState<'a> {
                 // Fresh vs non-fresh object types are interned distinctly.
 
                 if checker.is_const_variable_declaration(decl_idx) {
-                    if let Some(literal_type) =
-                        checker.literal_type_from_initializer(var_decl.initializer)
+                    // When the initializer type is `any` or `unknown` (e.g. from
+                    // a JSDoc `@type {*}` cast), the assertion determines the type.
+                    // `literal_type_from_initializer` looks through parenthesized
+                    // expressions and would find the inner literal (`null`), incorrectly
+                    // overriding the cast result.
+                    if init_type != TypeId::ANY
+                        && init_type != TypeId::UNKNOWN
+                        && let Some(literal_type) =
+                            checker.literal_type_from_initializer(var_decl.initializer)
                     {
                         return literal_type;
                     }

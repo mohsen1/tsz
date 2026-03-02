@@ -159,8 +159,14 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             // void expression always returns undefined (context doesn't affect void)
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
 
-            // Parenthesized expression - pass through context to inner expression
+            // Parenthesized expression - pass through context to inner expression.
+            // In JS files, parenthesized expressions may carry JSDoc type casts
+            // (e.g., `/** @type {T} */(expr)`) that need full CheckerState handling.
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if self.ctx.is_js_file() {
+                    // Delegate to CheckerState which handles JSDoc @type and @satisfies
+                    return TypeId::DELEGATE;
+                }
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
                     // Check if expression is missing (parse error: empty parentheses)
                     if paren.expression.is_none() {

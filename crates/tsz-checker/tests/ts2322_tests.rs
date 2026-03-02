@@ -1125,8 +1125,8 @@ fn test_ts2322_check_js_true_reports_annotation_union_mismatch() {
         .iter()
         .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
-        !has_2322,
-        "Union JSDoc in JS mode is currently treated as assignment-safe and should not emit TS2322 in this branch, got: {diagnostics:?}"
+        has_2322,
+        "Expected TS2322 when assigning `{{}}` to `number | string` in JS mode, got: {diagnostics:?}"
     );
 }
 
