@@ -261,6 +261,9 @@ mod generic_inference_manual;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_readonly_tests.rs"]
+mod jsdoc_readonly_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]
