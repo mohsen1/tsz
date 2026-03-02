@@ -505,6 +505,34 @@ impl Server {
                 }));
             }
 
+            if error_codes.iter().any(|code| {
+                    CodeFixRegistry::fixes_for_error_code(*code)
+                        .iter()
+                        .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
+                })
+                && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.clear();
+                response_actions.push(serde_json::json!({
+                    "fixName": "addMissingConst",
+                    "description": "Add 'const' to unresolved variable",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                    "fixId": "addMissingConst",
+                    "fixAllDescription": "Add 'const' to all unresolved variables",
+                }));
+            }
+
             if let Some(action) = self.synthetic_implement_interface_codefix(
                 file_path,
                 &content,
@@ -734,6 +762,51 @@ impl Server {
                 if !name.is_empty() {
                     return Some(name);
                 }
+            }
+        }
+
+        None
+    }
+
+    fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
+        let lines: Vec<&str> = content.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty()
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+            {
+                continue;
+            }
+
+            let absolute_line_start = lines
+                .iter()
+                .take(idx)
+                .map(|l| l.len() + 1)
+                .sum::<usize>();
+
+            if trimmed.starts_with("for (")
+                && (trimmed.contains(" in ") || trimmed.contains(" of "))
+                && let Some(open_idx) = line.find('(')
+            {
+                let mut updated = content.to_string();
+                updated.insert_str(absolute_line_start + open_idx + 1, "const ");
+                return Some(updated);
+            }
+
+            let starts_with_target = trimmed
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{');
+            if starts_with_target && trimmed.contains('=') {
+                let indent_len = line.len().saturating_sub(trimmed.len());
+                let indent = &line[..indent_len];
+                let mut updated_lines: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
+                updated_lines[idx] = format!("{indent}const {trimmed}");
+                return Some(updated_lines.join("\n"));
             }
         }
 
@@ -1670,6 +1743,21 @@ impl Server {
             if all_changes.is_empty()
                 && fix_id == "fixMissingAttributes"
                 && let Some(updated_content) = Self::apply_missing_attributes_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "addMissingConst"
+                && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.push(serde_json::json!({
