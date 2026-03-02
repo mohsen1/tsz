@@ -18,6 +18,12 @@ impl<'a> Completions<'a> {
         if self.is_ambiguous_numeric_dot_context(offset) {
             return true;
         }
+        if self.is_ambiguous_slash_dot_context(offset) {
+            return true;
+        }
+        if self.is_ambiguous_slash_dot_context(offset) {
+            return true;
+        }
         // Check if we're at an identifier definition location first - this works
         // even when offset == source_text.len() (cursor at end of file).
         if self.is_at_definition_location(offset) {
@@ -879,6 +885,28 @@ impl<'a> Completions<'a> {
             }
         }
         true
+    }
+
+    fn is_ambiguous_slash_dot_context(&self, offset: u32) -> bool {
+        let end = (offset as usize).min(self.source_text.len());
+        if end == 0 {
+            return false;
+        }
+        let mut prefix = &self.source_text[..end];
+        loop {
+            let trimmed = prefix.trim_end();
+            if trimmed.ends_with("*/")
+                && let Some(start) = trimmed.rfind("/*")
+            {
+                prefix = &trimmed[..start];
+                continue;
+            }
+            prefix = trimmed;
+            break;
+        }
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = Self::strip_trailing_fourslash_marker(&prefix[line_start..]).trim_end();
+        line.ends_with("/.")
     }
 
     fn is_ambiguous_numeric_dot_context(&self, offset: u32) -> bool {
