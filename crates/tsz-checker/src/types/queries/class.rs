@@ -141,11 +141,10 @@ impl<'a> CheckerState<'a> {
                             remote_decl_indices.push((std::sync::Arc::clone(arena_arc), decl_idx));
                         }
                     }
-                    if has_local
-                        && let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                            pos_start = pos_start.min(decl_node.pos);
-                            pos_end = pos_end.max(decl_node.end);
-                        }
+                    if has_local && let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                        pos_start = pos_start.min(decl_node.pos);
+                        pos_end = pos_end.max(decl_node.end);
+                    }
                 } else {
                     // No declaration_arenas entry: assume local
                     if let Some(decl_node) = self.ctx.arena.get(decl_idx) {

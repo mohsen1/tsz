@@ -160,9 +160,9 @@ impl Server {
             let mut seen_diags = rustc_hash::FxHashSet::default();
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
-            let has_cannot_find_name_diag = diagnostics.iter().any(|d| {
-                d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
-            });
+            let has_cannot_find_name_diag = diagnostics
+                .iter()
+                .any(|d| d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME);
 
             let to_lsp_diag =
                 |d: &tsz::checker::diagnostics::Diagnostic| tsz::lsp::diagnostics::LspDiagnostic {
@@ -310,16 +310,12 @@ impl Server {
                 .collect();
             if add_missing_await_preview.is_some() {
                 response_actions.retain(|action| {
-                    action
-                        .get("fixId")
-                        .and_then(serde_json::Value::as_str)
+                    action.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingConst")
                 });
             } else {
                 response_actions.retain(|action| {
-                    action
-                        .get("fixId")
-                        .and_then(serde_json::Value::as_str)
+                    action.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingAwait")
                 });
             }
@@ -536,19 +532,19 @@ impl Server {
                     success: true,
                     message: None,
                     body: Some(serde_json::json!([serde_json::json!({
-                    "fixName": "addMissingMember",
-                    "description": format!("Add missing enum member '{member_name}'"),
-                    "changes": [{
-                        "fileName": file_path,
-                        "textChanges": [{
-                            "start": { "line": 1, "offset": 1 },
-                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
-                            "newText": updated_content
-                        }]
-                    }],
-                    "fixId": "fixMissingMember",
-                    "fixAllDescription": "Add all missing members",
-                })])),
+                        "fixName": "addMissingMember",
+                        "description": format!("Add missing enum member '{member_name}'"),
+                        "changes": [{
+                            "fileName": file_path,
+                            "textChanges": [{
+                                "start": { "line": 1, "offset": 1 },
+                                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                                "newText": updated_content
+                            }]
+                        }],
+                        "fixId": "fixMissingMember",
+                        "fixAllDescription": "Add all missing members",
+                    })])),
                 };
             }
 
@@ -576,9 +572,7 @@ impl Server {
                         serde_json::json!("Fix all expressions possibly missing 'await'");
                 }
                 response_actions.retain(|existing| {
-                    existing
-                        .get("fixId")
-                        .and_then(serde_json::Value::as_str)
+                    existing.get("fixId").and_then(serde_json::Value::as_str)
                         != Some("addMissingAwait")
                 });
                 response_actions.insert(0, action);
@@ -879,11 +873,7 @@ impl Server {
                 continue;
             }
 
-            let absolute_line_start = lines
-                .iter()
-                .take(idx)
-                .map(|l| l.len() + 1)
-                .sum::<usize>();
+            let absolute_line_start = lines.iter().take(idx).map(|l| l.len() + 1).sum::<usize>();
 
             if trimmed.starts_with("for (")
                 && (trimmed.contains(" in ") || trimmed.contains(" of "))
@@ -894,14 +884,14 @@ impl Server {
                 return Some(updated);
             }
 
-            let starts_with_target = trimmed
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{');
+            let starts_with_target = trimmed.chars().next().is_some_and(|ch| {
+                ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
+            });
             if starts_with_target && trimmed.contains('=') {
                 let indent_len = line.len().saturating_sub(trimmed.len());
                 let indent = &line[..indent_len];
-                let mut updated_lines: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
+                let mut updated_lines: Vec<String> =
+                    lines.iter().map(|s| (*s).to_string()).collect();
                 updated_lines[idx] = format!("{indent}const {trimmed}");
                 return Some(updated_lines.join("\n"));
             }
@@ -977,7 +967,10 @@ impl Server {
         let mut initializer_candidates: Vec<(usize, String)> = Vec::new();
         for (idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
-            if !trimmed.starts_with("const ") || !trimmed.ends_with(';') || trimmed.contains("await ") {
+            if !trimmed.starts_with("const ")
+                || !trimmed.ends_with(';')
+                || trimmed.contains("await ")
+            {
                 continue;
             }
             let Some(eq_idx) = trimmed.find('=') else {
@@ -1017,7 +1010,10 @@ impl Server {
                 let rhs = tail.trim_start();
                 lines[idx] = format!("{head} await {rhs}");
             }
-            return Some((format!("Add 'await' to initializer for '{var_name}'"), lines.join("\n")));
+            return Some((
+                format!("Add 'await' to initializer for '{var_name}'"),
+                lines.join("\n"),
+            ));
         }
 
         for idx in 0..lines.len() {
@@ -1025,7 +1021,10 @@ impl Server {
             let Some(dot_idx) = trimmed.find('.') else {
                 continue;
             };
-            if !trimmed.ends_with(';') || trimmed.starts_with("(await ") || trimmed.starts_with("await ") {
+            if !trimmed.ends_with(';')
+                || trimmed.starts_with("(await ")
+                || trimmed.starts_with("await ")
+            {
                 continue;
             }
             let ident = trimmed[..dot_idx].trim();
@@ -1068,8 +1067,11 @@ impl Server {
                         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
                     && has_promise_annotation(inside)
                 {
-                    lines[idx] =
-                        lines[idx].replacen(&format!("if ({inside})"), &format!("if (await {inside})"), 1);
+                    lines[idx] = lines[idx].replacen(
+                        &format!("if ({inside})"),
+                        &format!("if (await {inside})"),
+                        1,
+                    );
                     return Some(("Add 'await'".to_string(), lines.join("\n")));
                 }
             }
@@ -1131,7 +1133,8 @@ impl Server {
             let trimmed = lines[idx].trim_start();
             if !(trimmed.ends_with("();")
                 || trimmed.ends_with("()")
-                || (trimmed.starts_with("new ") && (trimmed.ends_with(");") || trimmed.ends_with(")")))
+                || (trimmed.starts_with("new ")
+                    && (trimmed.ends_with(");") || trimmed.ends_with(")")))
                 || trimmed.contains("await "))
             {
                 continue;
@@ -1219,7 +1222,9 @@ impl Server {
             !s.is_empty()
                 && s.chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
-                && s.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+                && s.chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
         }
 
         let mut enum_name = String::new();
