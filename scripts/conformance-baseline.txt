@@ -469,7 +469,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1717,12 +1716,15 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of32.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of33.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of34.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of35.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of55.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration3_es6.ts
@@ -5145,6 +5147,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -9006,15 +9009,12 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of28.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of31.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of36.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of4.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of42.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of44.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of5.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of52.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of53.ts
