@@ -307,11 +307,8 @@ impl<'a> CheckerState<'a> {
         // Resolve Application/Lazy types to their concrete form so that
         // union members, object shapes, and tuple elements are accessible.
         let parent_type = self.evaluate_type_for_assignability(parent_type);
-        let defer_property_not_found =
-            self.should_defer_property_not_found_for_contextual_destructuring(
-                pattern_idx,
-                parent_type,
-            );
+        let defer_property_not_found = self
+            .should_defer_property_not_found_for_contextual_destructuring(pattern_idx, parent_type);
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
