@@ -1,7 +1,42 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9820/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9821/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02v — TS2344 type parameter constraint checking
+
+### Fixed: Missing TS2344 when type param arg violates target constraint
+
+**Area**: types/tuple (variadicTuples1), compiler (styledComponents, conditionalTypes2), cross-cutting TS2344
+
+**Root cause**: `validate_type_args_against_params()` in `generic_checker.rs:319` unconditionally
+skipped constraint checking (`continue`) when the type argument contained type parameters
+(via `contains_type_parameters`). This meant patterns like `type Outer<U extends number> = Inner<U>`
+where `Inner<T extends string>` never emitted TS2344.
+
+**Fix** (2 files, 1 new solver query):
+1. **solver `data.rs` — `get_base_constraint_of_type()`**: Resolves bare `TypeParameter` to its
+   constraint (`info.constraint.unwrap_or(UNKNOWN)`). Does NOT resolve `Infer` types.
+2. **checker `generic_checker.rs`**: When type arg contains type params AND is a bare type parameter:
+   - Resolve to base constraint via `get_base_constraint_of_type`
+   - Skip if base is `UNKNOWN` (unconstrained or unpopulated call-sig params)
+   - Skip if base is a union (conditional type narrowing would produce false positives)
+   - Skip if base or target contains unresolved type parameters
+   - Otherwise, instantiate target constraint and check assignability → emit TS2344 on failure
+
+**Key findings during investigation**:
+- Call-signature type params have `TypeParamInfo.constraint = None` (binder doesn't populate it)
+- Union-constrained type params in conditional type true branches are narrowed by tsc but not by us
+- Both issues cause false positives that required conservative skip guards
+
+**Remaining gaps**:
+- Unconstrained type params (`type Bar<U> = Foo<U>` where `Foo<T extends string>`) don't emit TS2344
+  because constraint is None → base is UNKNOWN → skipped
+- JSDoc type references (`/** @type {Foo<number>} */`) don't call `validate_type_reference_type_arguments`
+- Call-signature type params need their constraints populated in binder/checker
+
+**Tests**: 4 new unit tests in `conformance_issues.rs`
+**Conformance**: 9820 → 9821 (+1, fingerprint-level; code-level improvement is larger)
 
 ## Session 2026-03-02u — Tuple .length literal type for dot-access property resolution
 
