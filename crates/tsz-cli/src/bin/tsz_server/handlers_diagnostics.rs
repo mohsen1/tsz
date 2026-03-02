@@ -385,20 +385,6 @@ impl Server {
                 {
                     diags.push(diag);
                 }
-                let semantic_diags = self.get_semantic_diagnostics_full(file_path, &content);
-                let semantic_has_name_like_errors = semantic_diags.iter().any(|d| {
-                    d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
-                        || d.code == 18004
-                });
-                if diags
-                    .iter()
-                    .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
-                    && !semantic_has_name_like_errors
-                    && let Some(diag) =
-                        Self::synthetic_add_missing_const_diagnostic(file_path, &content)
-                {
-                    diags.push(diag);
-                }
                 if diags.iter().all(|d| d.code != 7043 && d.code != 7044) {
                     diags.extend(Self::synthetic_jsdoc_infer_from_usage_diagnostics(
                         file_path, &content,

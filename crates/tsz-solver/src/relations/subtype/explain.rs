@@ -13,6 +13,7 @@ use crate::types::{
     TupleElement, TypeId, Visibility,
 };
 use crate::utils;
+use crate::visitor::is_type_parameter;
 use crate::visitor::{
     array_element_type, callable_shape_id, function_shape_id, intrinsic_kind, literal_value,
     object_shape_id, object_with_index_shape_id, readonly_inner_type, tuple_list_id, union_list_id,
@@ -1150,6 +1151,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         break;
                     }
+                    // Type parameter rest spread requires matching rest in source
+                    if tail_elem.rest && is_type_parameter(self.interner, tail_elem.type_id) {
+                        let s_elem = &source[source_end - 1];
+                        if s_elem.rest {
+                            let tp_array = self.interner.array(tail_elem.type_id);
+                            if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
+                                return Some(SubtypeFailureReason::TupleElementTypeMismatch {
+                                    index: source_end - 1,
+                                    source_element: s_elem.type_id,
+                                    target_element: tail_elem.type_id,
+                                });
+                            }
+                            source_end -= 1;
+                            continue;
+                        }
+                        return Some(SubtypeFailureReason::TypeMismatch {
+                            source_type: source.first().map(|e| e.type_id).unwrap_or(TypeId::NEVER),
+                            target_type: tail_elem.type_id,
+                        });
+                    }
                     let s_elem = &source[source_end - 1];
                     if s_elem.rest {
                         if !tail_elem.optional {
@@ -1210,18 +1231,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 if let Some(variadic) = expansion.variadic {
+                    let variadic_is_type_param = is_type_parameter(self.interner, variadic);
                     let variadic_array = self.interner.array(variadic);
                     for (j, s_elem) in source_iter {
-                        let target_type = if s_elem.rest {
-                            variadic_array
-                        } else {
-                            variadic
-                        };
-                        if !self.check_subtype(s_elem.type_id, target_type).is_true() {
+                        if s_elem.rest {
+                            if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
+                                return Some(SubtypeFailureReason::TupleElementTypeMismatch {
+                                    index: j,
+                                    source_element: s_elem.type_id,
+                                    target_element: variadic_array,
+                                });
+                            }
+                        } else if variadic_is_type_param {
+                            return Some(SubtypeFailureReason::TypeMismatch {
+                                source_type: s_elem.type_id,
+                                target_type: variadic,
+                            });
+                        } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
                             return Some(SubtypeFailureReason::TupleElementTypeMismatch {
                                 index: j,
                                 source_element: s_elem.type_id,
-                                target_element: target_type,
+                                target_element: variadic,
                             });
                         }
                     }
