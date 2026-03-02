@@ -39,6 +39,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut tail_recursion_count = 0;
 
         loop {
+            // When tail recursion reaches the limit, the type didn't converge.
+            // Flag TS2589 and return ERROR to prevent stack overflow.
+            // This matches tsc's tail recursion limit of 1000 (instantiationCount).
+            if tail_recursion_count >= Self::MAX_TAIL_RECURSION_DEPTH {
+                self.mark_depth_exceeded();
+                return TypeId::ERROR;
+            }
+
             let cond = &current_cond;
 
             // Pre-evaluation Application-level infer matching.
