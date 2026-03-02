@@ -45,6 +45,12 @@ impl Server {
         else {
             return probes;
         };
+        let line_start = source_text[..marker_start as usize]
+            .rfind('\n')
+            .map_or(0, |idx| idx + 1);
+        if source_text[line_start..marker_start as usize].contains("//") {
+            return vec![position];
+        }
         probes.clear();
         probes.push(position);
         for candidate in [
@@ -1082,6 +1088,12 @@ impl Server {
         source_text[..end].rfind("?.").map(|idx| idx as u32)
     }
 
+    fn is_line_comment_position(source_text: &str, offset: u32) -> bool {
+        let i = (offset as usize).min(source_text.len());
+        let line_start = source_text[..i].rfind('\n').map_or(0, |p| p + 1);
+        source_text[line_start..i].contains("//")
+    }
+
     pub(crate) fn handle_completions(
         &mut self,
         seq: u64,
@@ -1092,6 +1104,16 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            if let Some(base_offset) = line_map.position_to_offset(position, &source_text)
+                && Self::is_line_comment_position(&source_text, base_offset)
+            {
+                return Some(serde_json::json!({
+                    "isGlobalCompletion": false,
+                    "isMemberCompletion": false,
+                    "isNewIdentifierLocation": false,
+                    "entries": []
+                }));
+            }
             let preferences = request
                 .arguments
                 .get("preferences")
