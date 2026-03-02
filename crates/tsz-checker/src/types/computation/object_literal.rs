@@ -10,6 +10,48 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn contextual_object_literal_property_type(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let contextual_type = self.evaluate_contextual_type(contextual_type);
+        let contextual_type = self.evaluate_type_with_env(contextual_type);
+        let contextual_type = self.resolve_lazy_type(contextual_type);
+        let contextual_type = self.evaluate_application_type(contextual_type);
+
+        if contextual_type == TypeId::UNKNOWN {
+            return Some(TypeId::UNKNOWN);
+        }
+
+        if let Some(property_type) = self
+            .ctx
+            .types
+            .contextual_property_type(contextual_type, property_name)
+        {
+            return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
+        // If contextual extraction fails but the parent context is generic/deferred,
+        // preserve an `unknown` contextual slot to prevent false implicit-any
+        // diagnostics during higher-order inference rounds.
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type)
+        {
+            return Some(TypeId::UNKNOWN);
+        }
+
+        None
+    }
+
+    fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
+        if property_type == TypeId::ERROR
+            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, property_type)
+        {
+            return TypeId::UNKNOWN;
+        }
+        property_type
+    }
+
     /// Get the type of an object literal expression.
     ///
     /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.
@@ -162,13 +204,7 @@ impl<'a> CheckerState<'a> {
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        let ctx_type_evaluated = self.evaluate_contextual_type(ctx_type);
-                        let ctx_type_evaluated = self.evaluate_type_with_env(ctx_type_evaluated);
-                        let ctx_type_evaluated = self.resolve_lazy_type(ctx_type_evaluated);
-                        let ctx_type_evaluated = self.evaluate_application_type(ctx_type_evaluated);
-                        self.ctx
-                            .types
-                            .contextual_property_type(ctx_type_evaluated, &name)
+                        self.contextual_object_literal_property_type(ctx_type, &name)
                     } else {
                         None
                     };
@@ -334,15 +370,9 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
-                        let ctx_type = self.evaluate_type_with_env(ctx_type);
-                        let ctx_type = self.resolve_lazy_type(ctx_type);
-                        let ctx_type = self.evaluate_application_type(ctx_type);
                         // Use a synthetic name that won't match any named property,
                         // causing contextual_property_type to fall back to the index signature.
-                        self.ctx
-                            .types
-                            .contextual_property_type(ctx_type, "__@computed")
+                        self.contextual_object_literal_property_type(ctx_type, "__@computed")
                     } else {
                         None
                     };
@@ -371,11 +401,7 @@ impl<'a> CheckerState<'a> {
 
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
-                        let ctx_type = self.evaluate_type_with_env(ctx_type);
-                        let ctx_type = self.resolve_lazy_type(ctx_type);
-                        let ctx_type = self.evaluate_application_type(ctx_type);
-                        self.ctx.types.contextual_property_type(ctx_type, &name)
+                        self.contextual_object_literal_property_type(ctx_type, &name)
                     } else {
                         None
                     };
@@ -589,9 +615,8 @@ impl<'a> CheckerState<'a> {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.contextual_type =
-                            self.ctx.types.contextual_property_type(ctx_type, &name);
+                            self.contextual_object_literal_property_type(ctx_type, &name);
                     }
 
                     // If no explicit ThisType marker exists, use the object literal's
@@ -693,11 +718,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
-                        self.ctx.contextual_type = self
-                            .ctx
-                            .types
-                            .contextual_property_type(ctx_type, "__@computed");
+                        self.ctx.contextual_type =
+                            self.contextual_object_literal_property_type(ctx_type, "__@computed");
                     }
                     let method_type = self.get_type_of_function(elem_idx);
                     self.ctx.contextual_type = prev_context;
