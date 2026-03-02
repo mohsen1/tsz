@@ -724,6 +724,14 @@ impl<'a> Completions<'a> {
             break;
         }
 
+        let line_start = self.source_text[..cursor as usize]
+            .rfind('\n')
+            .map_or(0, |idx| idx + 1);
+        let line_prefix = &self.source_text[line_start..cursor as usize];
+        if line_prefix.contains("//") {
+            return None;
+        }
+
         if cursor == 0 {
             return None;
         }
