@@ -686,11 +686,24 @@ impl<'a> CheckerState<'a> {
                     // Suppress arity errors when the call contains non-tuple spread
                     // arguments — the spread provides an indeterminate number of values.
                     // TSC only emits TS2556 in this case, not TS2555/TS2554.
+                    // However, tuple spreads have known length, so TS2554 should
+                    // still fire for those.
                     let has_non_tuple_spread = args.iter().any(|&arg_idx| {
-                        self.ctx
-                            .arena
-                            .get(arg_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                        if let Some(n) = self.ctx.arena.get(arg_idx)
+                            && n.kind == syntax_kind_ext::SPREAD_ELEMENT
+                            && let Some(spread_data) = self.ctx.arena.get_spread(n)
+                        {
+                            let spread_type = self.get_type_of_node(spread_data.expression);
+                            let spread_type = self.resolve_type_for_property_access(spread_type);
+                            let spread_type = self.resolve_lazy_type(spread_type);
+                            crate::query_boundaries::common::tuple_elements(
+                                self.ctx.types,
+                                spread_type,
+                            )
+                            .is_none()
+                        } else {
+                            false
+                        }
                     });
                     if has_non_tuple_spread {
                         // TS2556 was already emitted; don't cascade with TS2555/TS2554.
@@ -700,7 +713,19 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // Use TS2554 for exact count, range, or too many args
                         let max = expected_max.unwrap_or(expected_min);
-                        self.error_argument_count_mismatch_at(expected_min, max, actual, idx, args);
+                        let expanded_args = self.build_expanded_args_for_error(args);
+                        let args_for_error = if expanded_args.len() > args.len() {
+                            &expanded_args
+                        } else {
+                            args
+                        };
+                        self.error_argument_count_mismatch_at(
+                            expected_min,
+                            max,
+                            actual,
+                            idx,
+                            args_for_error,
+                        );
                     }
                 }
                 // Recover with the constructor instance type so downstream checks

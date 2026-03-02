@@ -908,11 +908,24 @@ impl<'a> CheckerState<'a> {
                     // arguments. The spread could provide any number of values at
                     // runtime, so the actual argument count is indeterminate.
                     // TSC only emits TS2556 in this case, not TS2555/TS2554.
+                    // However, tuple spreads have known length, so TS2554 should
+                    // still fire for those.
                     let has_non_tuple_spread = args.iter().any(|&arg_idx| {
-                        self.ctx
-                            .arena
-                            .get(arg_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                        if let Some(n) = self.ctx.arena.get(arg_idx)
+                            && n.kind == syntax_kind_ext::SPREAD_ELEMENT
+                            && let Some(spread_data) = self.ctx.arena.get_spread(n)
+                        {
+                            let spread_type = self.get_type_of_node(spread_data.expression);
+                            let spread_type = self.resolve_type_for_property_access(spread_type);
+                            let spread_type = self.resolve_lazy_type(spread_type);
+                            crate::query_boundaries::common::tuple_elements(
+                                self.ctx.types,
+                                spread_type,
+                            )
+                            .is_none()
+                        } else {
+                            false
+                        }
                     });
                     if has_non_tuple_spread {
                         // TS2556 was already emitted by collect_call_argument_types;
@@ -923,12 +936,21 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // Use TS2554 for exact count, range, or too many args
                         let max = expected_max.unwrap_or(expected_min);
+                        // Build expanded args list: for tuple spreads, repeat the
+                        // spread node for each tuple element so that the excess
+                        // argument location logic points at the correct node.
+                        let expanded_args = self.build_expanded_args_for_error(args);
+                        let args_for_error = if expanded_args.len() > args.len() {
+                            &expanded_args
+                        } else {
+                            args
+                        };
                         self.error_argument_count_mismatch_at(
                             expected_min,
                             max,
                             actual,
                             call_idx,
-                            args,
+                            args_for_error,
                         );
                     }
                 }
@@ -1093,6 +1115,37 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    /// Build an expanded args list for TS2554 error location.
+    ///
+    /// When tuple spreads are present, the original `args` slice has fewer
+    /// entries than the expanded argument count. This method builds a new
+    /// list where tuple-spread nodes are repeated for each tuple element,
+    /// so the excess-argument location logic in `error_argument_count_mismatch_at`
+    /// can index into it correctly.
+    pub(crate) fn build_expanded_args_for_error(&mut self, args: &[NodeIndex]) -> Vec<NodeIndex> {
+        let mut expanded = Vec::with_capacity(args.len());
+        for &arg_idx in args {
+            if let Some(n) = self.ctx.arena.get(arg_idx)
+                && n.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread_data) = self.ctx.arena.get_spread(n)
+            {
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
+                if let Some(elems) =
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, spread_type)
+                {
+                    for _ in &elems {
+                        expanded.push(arg_idx);
+                    }
+                    continue;
+                }
+            }
+            expanded.push(arg_idx);
+        }
+        expanded
     }
 }
 
