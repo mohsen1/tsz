@@ -209,9 +209,10 @@ impl<'a> Completions<'a> {
             .or_else(|| self.marker_comment_member_completion_target(offset));
         if let Some(expr_idx) = member_target
             && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
-            && !items.is_empty() {
-                return Some(items);
-            }
+            && !items.is_empty()
+        {
+            return Some(items);
+        }
         let member_request = member_target.is_some() || self.is_member_context(offset);
         let global_this_member_fallback = member_target
             .and_then(|idx| self.arena.get_identifier_text(idx))

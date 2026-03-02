@@ -1002,9 +1002,8 @@ impl Server {
         });
 
         let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
-        let allow_insert_text = item.has_action
-            || item.replacement_span.is_some()
-            || !Self::is_identifier(&item.label);
+        let allow_insert_text =
+            item.has_action || item.replacement_span.is_some() || !Self::is_identifier(&item.label);
         if include_insert_text
             && allow_insert_text
             && let Some(insert_text) = item.insert_text.clone().or_else(|| {
