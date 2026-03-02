@@ -62,5 +62,9 @@ path = "tests/ts2322_tests.rs"
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
+[[test]]
+name = "ts1210_class_arguments_tests"
+path = "tests/ts1210_class_arguments_tests.rs"
+
 [lints]
 workspace = true
