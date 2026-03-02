@@ -307,6 +307,11 @@ impl<'a> CheckerState<'a> {
         // Resolve Application/Lazy types to their concrete form so that
         // union members, object shapes, and tuple elements are accessible.
         let parent_type = self.evaluate_type_for_assignability(parent_type);
+        let defer_property_not_found =
+            self.should_defer_property_not_found_for_contextual_destructuring(
+                pattern_idx,
+                parent_type,
+            );
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -529,7 +534,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         NodeIndex::NONE
                     };
-                    if element_data.initializer.is_none() {
+                    if element_data.initializer.is_none() && !defer_property_not_found {
                         self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
                     }
                     TypeId::ANY
@@ -542,6 +547,54 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    /// During contextual typing of unannotated callback parameters, inferred
+    /// parameter types can remain as unresolved type parameters temporarily.
+    /// Avoid emitting premature TS2339 from destructuring in that phase; final
+    /// assignability diagnostics (e.g. TS2322/TS2345) should drive the error.
+    fn should_defer_property_not_found_for_contextual_destructuring(
+        &self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) -> bool {
+        if !query::is_type_parameter_like(self.ctx.types, parent_type) {
+            return false;
+        }
+
+        let mut current = pattern_idx;
+        for _ in 0..32 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let Some(param) = self.ctx.arena.get_parameter(parent_node) else {
+                    return false;
+                };
+                if param.type_annotation.is_some() {
+                    return false;
+                }
+
+                let Some(param_ext) = self.ctx.arena.get_extended(parent_idx) else {
+                    return false;
+                };
+                let Some(func_node) = self.ctx.arena.get(param_ext.parent) else {
+                    return false;
+                };
+
+                return func_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || func_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+            }
+
+            current = parent_idx;
+        }
+
+        false
     }
 
     /// Compute the type for an object rest element: `{ a, b, ...rest } = obj`.
