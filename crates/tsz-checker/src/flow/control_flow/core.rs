@@ -798,17 +798,25 @@ impl<'a> FlowAnalyzer<'a> {
                         //   CALL: assertion functions
                         //   LOOP_LABEL: loop fixed-point analysis (incomplete types)
                         //   BRANCH_LABEL: merges after if-return that carry narrowed types
-                        //   ASSIGNMENT: may chain through from narrowing antecedents
-                        let ant_flags = self
-                            .binder
-                            .flow_nodes
-                            .get(ant)
-                            .map(|f| f.flags)
-                            .unwrap_or(0);
+                        //   ASSIGNMENT (targeting our ref): killing definitions that
+                        //     narrow the type (e.g. `s = new Set<number>();
+                        //     if (s instanceof Set)` — without deferring, we'd narrow
+                        //     the declared type instead of the assignment-narrowed type)
+                        let ant_flow = self.binder.flow_nodes.get(ant);
+                        let ant_flags = ant_flow.map(|f| f.flags).unwrap_or(0);
+                        let ant_is_targeting_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0
+                            && ant_flow.is_some_and(|f| {
+                                // Quick symbol check: does this assignment target our ref?
+                                let assignment_sym = self.reference_symbol(f.node);
+                                assignment_sym.is_some()
+                                    && symbol_id.is_some()
+                                    && assignment_sym == symbol_id
+                            });
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
-                            || (ant_flags & flow_flags::BRANCH_LABEL) != 0;
+                            || (ant_flags & flow_flags::BRANCH_LABEL) != 0
+                            || ant_is_targeting_assignment;
                         if ant_needs_defer {
                             if !in_worklist.contains(&ant) {
                                 worklist.push_front((ant, current_type));
@@ -895,8 +903,16 @@ impl<'a> FlowAnalyzer<'a> {
                         // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
                         // Previously: Only direct assignments (x = ...) worked
                         // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
-                        if let Some(assigned_type) =
-                            self.get_assigned_type(flow.node, reference, is_destructuring)
+                        //
+                        // Filter out ERROR types: during loop fixed-point iteration,
+                        // node_types may contain ERROR for expressions not yet type-checked
+                        // (chicken-and-egg: we need x's type to check `len(x)`, but we need
+                        // `len(x)`'s result to determine x's loop type). ERROR is "subtype of
+                        // everything" so narrow_assignment would keep all union members,
+                        // incorrectly returning the full declared type.
+                        if let Some(assigned_type) = self
+                            .get_assigned_type(flow.node, reference, is_destructuring)
+                            .filter(|&t| t != TypeId::ERROR)
                         {
                             // For logical assignments (??=, ||=, &&=), the binder creates
                             // a two-branch flow graph: one branch for the short-circuit

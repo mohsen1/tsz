@@ -4121,3 +4121,59 @@ const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
         "Contextual destructuring in Array.from callback should not emit TS2339. Got: {diagnostics:?}"
     );
 }
+
+/// Regression test: loop fixed-point should not leak declared type via ERROR-typed
+/// back-edge assignments. When `x = len(x)` hasn't been type-checked yet during
+/// loop fixed-point iteration, `node_types` returns ERROR. Since ERROR is subtype of
+/// everything, `narrow_assignment` keeps all union members, incorrectly widening to
+/// the full declared type. The fix filters out ERROR from `get_assigned_type` results.
+///
+/// Reproduces controlFlowWhileStatement.ts function h2.
+#[test]
+fn test_loop_fixed_point_no_false_ts2345_from_error_assigned_type() {
+    let source = r#"
+let cond: boolean;
+declare function len(s: string | number): number;
+function h2() {
+    let x: string | number | boolean;
+    x = "";
+    while (cond) {
+        x = len(x);
+        x; // number
+    }
+    x; // string | number
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Loop fixed-point should not widen x to string|number|boolean via ERROR back-edge. Got: {diagnostics:?}"
+    );
+}
+
+/// Regression test: loop fixed-point with function call assignment and separate
+/// declaration. The call return type (number) should be used correctly in the
+/// loop's fixed-point analysis, not the full declared type.
+///
+/// Reproduces controlFlowWhileStatement.ts function h3.
+#[test]
+fn test_loop_fixed_point_function_call_assignment_at_end() {
+    let source = r#"
+let cond: boolean;
+declare function len(s: string | number): number;
+function h3() {
+    let x: string | number | boolean;
+    x = "";
+    while (cond) {
+        x;           // string | number
+        x = len(x);
+    }
+    x; // string | number
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Loop fixed-point with call assignment at end should not widen via ERROR type. Got: {diagnostics:?}"
+    );
+}
