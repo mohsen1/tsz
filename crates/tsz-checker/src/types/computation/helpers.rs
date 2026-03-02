@@ -268,10 +268,12 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
         // This ensures type aliases (e.g., type Tup = [string, number]) are expanded
         // before checking for tuple elements and providing contextual typing
-        let resolved_contextual_type = self
-            .ctx
-            .contextual_type
-            .map(|ctx_type| self.resolve_lazy_type(ctx_type));
+        let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
+            let ctx_type = self.evaluate_contextual_type(ctx_type);
+            let ctx_type = self.evaluate_type_with_env(ctx_type);
+            let ctx_type = self.resolve_lazy_type(ctx_type);
+            self.evaluate_application_type(ctx_type)
+        });
 
         // When the contextual type is a union like `[number] | string`, narrow it to
         // only the array/tuple constituents applicable to an array literal. This ensures
@@ -330,6 +332,10 @@ impl<'a> CheckerState<'a> {
             )),
             None => None,
         };
+        let fallback_unknown_array_element_context = effective_contextual.is_some_and(|ty| {
+            ty == TypeId::UNKNOWN
+                || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+        });
 
         // Get types of all elements, applying contextual typing when available.
         // Track (type, node_index) pairs for excess property checking on array elements.
@@ -348,7 +354,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type =
                         helper.get_tuple_element_type_with_count(index, elem_count);
                 } else {
-                    self.ctx.contextual_type = helper.get_array_element_type();
+                    self.ctx.contextual_type = helper
+                        .get_array_element_type()
+                        .or_else(|| fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN));
                 }
             }
 
