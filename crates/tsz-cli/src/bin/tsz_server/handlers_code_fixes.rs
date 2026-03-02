@@ -537,7 +537,14 @@ impl Server {
                 }));
             }
 
-            if let Some((member_name, updated_content)) =
+            let is_enum_missing_member_error = error_codes.is_empty()
+                || error_codes.iter().any(|code| {
+                    *code == tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        || *code
+                            == tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN
+                });
+            if is_enum_missing_member_error
+                && let Some((member_name, updated_content)) =
                 Self::apply_add_missing_enum_member_fallback(&content)
                     .or_else(|| Self::apply_add_missing_enum_member_simple_fallback(&content))
             {
