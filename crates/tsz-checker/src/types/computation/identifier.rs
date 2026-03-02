@@ -1074,10 +1074,11 @@ impl<'a> CheckerState<'a> {
             let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
                 continue;
             };
-            if import_decl.is_type_only {
-                continue;
-            }
+            // For import-equals declarations, is_type_only lives on ImportDeclData.
             if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if import_decl.is_type_only {
+                    continue;
+                }
                 if self
                     .ctx
                     .arena
@@ -1088,19 +1089,27 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
+            // For regular import declarations, is_type_only lives on ImportClauseData,
+            // NOT on ImportDeclData (which is always false for regular imports).
             let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
                 continue;
             };
             let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
                 continue;
             };
+            // Skip the entire import if the clause is type-only (`import type { ... }`)
+            if clause.is_type_only {
+                continue;
+            }
 
+            // Default import: `import Foo from ...`
             if clause.name.is_some()
                 && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
             {
                 return true;
             }
 
+            // Named imports: `import { Foo } from ...`
             if clause.named_bindings.is_some()
                 && let Some(named_bindings_node) = self.ctx.arena.get(clause.named_bindings)
                 && named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS
@@ -1113,6 +1122,10 @@ impl<'a> CheckerState<'a> {
                     let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
                         continue;
                     };
+                    // Skip individual type-only specifiers (`import { type Foo, Bar }`)
+                    if specifier.is_type_only {
+                        continue;
+                    }
                     let local_name = specifier.name;
                     if local_name.is_none() {
                         continue;
@@ -1173,6 +1186,58 @@ mod tests {
         assert!(
             !codes.contains(&1212),
             "Should not emit TS1212 for regular identifier: {codes:?}"
+        );
+    }
+
+    /// TS1361 must fire when a type-only import is used in a value position
+    /// (object literal computed property name). Ensures that
+    /// `source_file_has_value_import_binding_named` correctly checks
+    /// `ImportClauseData::is_type_only` (not `ImportDeclData::is_type_only`,
+    /// which is always false for regular import declarations).
+    #[test]
+    fn ts1361_type_only_import_in_value_computed_property() {
+        let codes = check_source_codes(
+            r#"
+import type { onInit } from './hooks';
+const o = { [onInit]: 0 };
+"#,
+        );
+        assert!(
+            codes.contains(&1361),
+            "Expected TS1361 for type-only import used in object literal computed property: {codes:?}"
+        );
+    }
+
+    /// TS1361 must NOT fire when a regular (non-type-only) import is used
+    /// in value position. The value import binding shadows any type-only
+    /// import of the same name.
+    #[test]
+    fn no_ts1361_for_regular_import_with_same_name() {
+        let codes = check_source_codes(
+            r#"
+import { onInit } from './hooks';
+const o = { [onInit]: 0 };
+"#,
+        );
+        assert!(
+            !codes.contains(&1361),
+            "Should not emit TS1361 for regular (non-type-only) import: {codes:?}"
+        );
+    }
+
+    /// When `import { type Foo }` is used, `Foo` is type-only per-specifier.
+    /// Using `Foo` in a value position should emit TS1361.
+    #[test]
+    fn ts1361_respects_per_specifier_type_only() {
+        let codes = check_source_codes(
+            r#"
+import { type Foo } from './hooks';
+let x = Foo;
+"#,
+        );
+        assert!(
+            codes.contains(&1361),
+            "Expected TS1361 for per-specifier type-only import used as value: {codes:?}"
         );
     }
 }
