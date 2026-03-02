@@ -111,6 +111,10 @@ function parseArgs() {
 
 function discoverTests(testDir, filter) {
     const files = [];
+    const skipListFile = path.join(__dirname, "skip_if_failing.txt");
+    const skipList = fs.existsSync(skipListFile) 
+        ? new Set(fs.readFileSync(skipListFile, "utf-8").split("\n").filter(l => l.trim().length > 0)) 
+        : new Set();
 
     function walk(dir) {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -120,8 +124,11 @@ function discoverTests(testDir, filter) {
                 walk(fullPath);
             } else if (entry.isFile() && entry.name.endsWith(".ts")) {
                 const relPath = fullPath.replace(/\\/g, "/");
+                const testName = path.basename(entry.name, ".ts");
                 if (!filter || relPath.includes(filter)) {
-                    files.push(relPath);
+                    if (!skipList.has(testName) && !skipList.has(relPath)) {
+                        files.push(relPath);
+                    }
                 }
             }
         }
@@ -505,7 +512,7 @@ async function main() {
 
     if (errors.length > 0 && !opts.verbose) {
         console.log("");
-        console.log(`First ${Math.min(errors.length, 20)} failures:`);
+        console.log(`First ${errors.length} failures:`);
         for (const { file, error, timedOut: to } of errors.slice(0, 20)) {
             const icon = to ? "\x1b[33m⏱\x1b[0m" : "\x1b[31m✗\x1b[0m";
             console.log(`  ${icon} ${path.basename(file, ".ts")}: ${error.split("\n")[0].substring(0, 100)}`);

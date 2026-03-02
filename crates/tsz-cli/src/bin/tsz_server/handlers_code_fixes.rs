@@ -838,14 +838,10 @@ impl Server {
                         CodeFixRegistry::fixes_for_error_code(*code)
                             .into_iter()
                             .filter(|(_, fix_id, _, _)| {
-                                if *code
-                                    == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
-                                    && import_candidates_is_empty
-                                {
-                                    if *fix_id == "addMissingConst" {
-                                        return add_missing_const_preview.is_some();
+                                if *fix_id == "fixMissingImport" {
+                                    if *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME && import_candidates_is_empty {
+                                        return false;
                                     }
-                                    return false;
                                 }
                                 if *fix_id == "addMissingAwait" {
                                     return add_missing_await_preview.is_some();
@@ -860,18 +856,75 @@ impl Server {
                         if !seen_fixes.insert((fix_name, fix_id)) {
                             continue;
                         }
-                        let (description, fix_id, fix_all_description) = if fix_name
+                        let (mut description, fix_id, fix_all_description) = if fix_name
                             == "addMissingProperties"
                             && missing_attributes_content.is_some()
                         {
                             (
-                                "Add missing attributes",
+                                "Add missing attributes".to_string(),
                                 "fixMissingAttributes",
                                 "Add all missing attributes",
                             )
                         } else {
-                            (description, fix_id, fix_all_description)
+                            (description.to_string(), fix_id, fix_all_description)
                         };
+
+                        if fix_name == "addMissingMember" {
+                            if let Some(diag) = diagnostics.iter().find(|d| d.code == *code) {
+                                if let Some(prop_name) = diag.message_text.strip_prefix("Property '").and_then(|s| s.split('\'').next()) {
+                                    let after_name = content.get((diag.start + diag.length) as usize..).unwrap_or("");
+                                    let is_method = after_name.trim_start().starts_with('(') || after_name.trim_start().starts_with("<");
+                                    let word = if is_method { "method" } else { "property" };
+                                    description = format!("Declare {} '{}'", word, prop_name);
+                                }
+                            }
+                        }
+
+                        if fix_name == "fixClassIncorrectlyImplementsInterface" {
+                            if let Some(diag) = diagnostics.iter().find(|d| d.code == *code) {
+                                if let Some(interface_name) = diag.message_text.split("incorrectly implements interface '").nth(1).and_then(|s| s.split('\'').next()) {
+                                    description = format!("Implement interface '{}'", interface_name);
+                                }
+                            }
+                        }
+
+                        if fix_name == "fixAddMissingParam" {
+                            if let Some(diag) = diagnostics.iter().find(|d| d.code == *code) {
+                                let after_call = content.get(diag.start as usize..).unwrap_or("");
+                                if let Some(ident_end) = after_call.find('(') {
+                                    let mut i = ident_end;
+                                    let bytes = after_call.as_bytes();
+                                    while i > 0 && bytes[i - 1].is_ascii_whitespace() { i -= 1; }
+                                    let mut j = i;
+                                    while j > 0 && (bytes[j - 1].is_ascii_alphanumeric() || bytes[j - 1] == b'_' || bytes[j - 1] == b'$') { j -= 1; }
+                                    if i > j {
+                                        let func_name = &after_call[j..i];
+                                        if !func_name.is_empty() {
+                                            if *code == 2555 {
+                                                description = format!("Add missing parameters to '{}'", func_name);
+                                            } else {
+                                                description = format!("Add missing parameter to '{}'", func_name);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if fix_name == "fixOverrideModifier" {
+                            if *code == 4113 || *code == 4112 || *code == 4121 || *code == 4122 || *code == 4128 {
+                                description = "Remove 'override' modifier".to_string();
+                            }
+                        }
+
+                        if fix_name == "addMissingFunctionDeclaration" {
+                            if let Some(diag) = diagnostics.iter().find(|d| d.code == *code) {
+                                if let Some(func_name) = diag.message_text.strip_prefix("Cannot find name '").and_then(|s| s.split('\'').next()) {
+                                    description = format!("Add missing function declaration '{}'", func_name);
+                                }
+                            }
+                        }
+
                         response_actions.push(serde_json::json!({
                             "fixName": fix_name,
                             "description": description,
