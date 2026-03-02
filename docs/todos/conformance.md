@@ -3,6 +3,35 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9822/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02v — Never-returning function call flow narrowing
+
+### Fixed: Control flow narrowing after never-returning function calls
+
+**Area**: controlFlow (63.2% → stays same due to pre-existing errors in affected tests)
+
+**Root cause**: `handle_call_iterative` in `core.rs` only checked for assertion predicates on CALL flow nodes. When a function returns `never` (e.g., `fail(): never`), the call terminates the control flow branch, but tsz didn't detect this. This caused false TS18048 ("possibly undefined") errors at merge points after patterns like `if (x === undefined) fail(); x.length`.
+
+**Key insight from tsc**: tsc distinguishes `unreachableNeverType` (from dead code flow) from `neverType` (from exhaustive narrowing). At the final return of `getFlowTypeOfReference`, if the result is `unreachableNeverType`, tsc returns the declared type instead. This prevents false TS2339 errors on property access in unreachable code.
+
+**Implementation**:
+1. Added `UNREACHABLE_NEVER` sentinel (`TypeId(98)`) distinct from `TypeId::NEVER`, matching tsc's `unreachableNeverType` vs `neverType` distinction
+2. `handle_call_iterative`: detects never-returning calls via `node_types` lookup, returns `UNREACHABLE_NEVER`
+3. BRANCH_LABEL merge: filters `UNREACHABLE_NEVER` from antecedent types (dead branches don't contribute to merged type)
+4. Final return: maps `UNREACHABLE_NEVER` back to `initial_type` (declared type), preserving types in unreachable code
+5. Cache: skips caching `UNREACHABLE_NEVER` to prevent sentinel leakage
+
+**Conformance impact**: Net-neutral on pass count (affected tests have other pre-existing errors preventing them from passing). Functionally correct: verified `if (x === undefined) fail(); x.length` correctly narrows x to `string`.
+
+**Files modified**:
+- `crates/tsz-checker/src/flow/control_flow/core.rs`: 3 changes (UNREACHABLE_NEVER constant, handle_call_iterative never detection, BRANCH_LABEL filtering, final return mapping)
+- `crates/tsz-checker/tests/never_returning_narrowing_tests.rs`: new integration tests
+- `crates/tsz-checker/tests/conformance_issues.rs`: un-ignored previously-blocked test
+- `crates/tsz-checker/src/lib.rs`: added test module
+
+**Tests**: 5 new tests + 1 un-ignored test, all passing. 2556 total tests pass.
+
+---
+
 ## Session 2026-03-02u — Fix intersection type handling: suppress TS2536 on never, emit TS2322 for intersection targets
 
 ### Fixed: TS2536 false positive when indexing never-reduced intersections
