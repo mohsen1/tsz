@@ -1,7 +1,71 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9762/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9764/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02j — Fix loop fixed-point widening via ERROR back-edge types + ASSIGNMENT deferral in CONDITION
+
+### Fixed: Loop fixed-point leaks declared type via ERROR-typed back-edge assignment — Checker (core.rs)
+
+**Area**: controlFlow (controlFlowWhileStatement.ts)
+
+**Root cause 1 (loop fixed-point ERROR widening)**: During `analyze_loop_fixed_point`, the back-edge traversal calls `get_flow_type` which encounters ASSIGNMENT nodes like `x = len(x)`. The `get_assigned_type` function looks up `node_types[rhs]` for the call expression's result type. However, during the fixed-point iteration, the call hasn't been type-checked yet (chicken-and-egg: we need x's type to check `len(x)`, but we need `len(x)`'s result for x's loop type). So `node_types` contains `TypeId::ERROR` for the call expression. Since ERROR is "subtype of everything," `narrow_assignment(declared_type, ERROR)` keeps ALL union members via `are_types_mutually_subtype`, returning the full declared type (e.g., `string | number | boolean` instead of `number`).
+
+**Fix 1**: Filter out ERROR from `get_assigned_type` results with `.filter(|&t| t != TypeId::ERROR)`. When ERROR is filtered, the ASSIGNMENT handler falls through to the conservative `current_type` (the current loop assumption), which correctly propagates the pre-loop type through the back-edge.
+
+**Root cause 2 (ASSIGNMENT deferral in CONDITION)**: The CONDITION node handler defers processing when its antecedent hasn't been computed yet, but the deferral check only included CONDITION, CALL, LOOP_LABEL, and BRANCH_LABEL flags. When the antecedent is an ASSIGNMENT targeting the reference variable (e.g., `s = new Set<number>(); if (s instanceof Set)`), the CONDITION would use the declared type instead of the assignment-narrowed type, causing instanceof narrowing to operate on the wrong base type.
+
+**Fix 2**: Added conditional ASSIGNMENT deferral that checks if the antecedent ASSIGNMENT targets the same symbol via `reference_symbol()`. Only defers when the assignment is relevant to the current reference, avoiding regressions in catch/finally blocks.
+
+**Tests**: 2 unit tests in `conformance_issues.rs`:
+- `test_loop_fixed_point_no_false_ts2345_from_error_assigned_type` — h2 pattern: `x = len(x)` in loop
+- `test_loop_fixed_point_function_call_assignment_at_end` — h3 pattern: usage before assignment in loop
+
+**Impact**: +1 conformance test (controlFlowWhileStatement.ts: FAIL → PASS), controlFlow area 61→62/94
+
+**Remaining controlFlow gaps (32 tests still failing)**:
+- 6 diff=0 fingerprint-only mismatches (right error codes, wrong locations/messages)
+- 6 tests with 1 extra false positive (TS2322×3, TS2537×2, TS2339×1)
+- 6 tests with 1 missing false negative (various)
+- 14 tests with larger diffs (IIFE, optional chain, generic types, etc.)
+
+**Files changed**:
+- `crates/tsz-checker/src/flow/control_flow/core.rs` — ERROR filter + ASSIGNMENT deferral
+- `crates/tsz-checker/tests/conformance_issues.rs` — 2 new unit tests
+
+---
+
+## Session 2026-03-02i — Fix variadic tuple rest element decomposition in spread expansion
+
+### Fixed: Variadic tuple rest elements pushed as raw array type during spread expansion — Checker (call_checker.rs)
+
+**Area**: types/rest (genericRestParameters2.ts) + types/intersection (intersectionTypeInference3.ts)
+
+**Root cause**: In `collect_call_argument_types_with_context()`, when expanding a spread of a tuple type, ALL tuple elements were pushed as individual arguments using their `type_id`. For variadic tuples like `[number, string, ...boolean[]]`, the rest element (elem.rest=true, elem.type_id=boolean[]) was pushed as `boolean[]` — the whole array type. The solver's `param_type_for_arg_index` then compared `boolean[]` against the expected element type `boolean` (extracted from the parameter tuple's `...boolean[]` rest), producing false TS2345.
+
+**Fix**: In the tuple spread expansion loop, detect rest elements (`elem.rest == true`). For array-typed rest elements, extract the inner element type via `array_element_type_for_type` and push that instead of the raw array type. For nested tuple rest elements, recursively decompose fixed and rest sub-elements.
+
+**Tests**: 4 unit tests in `spread_rest_tests.rs`:
+- `test_variadic_tuple_spread_no_false_ts2345` — full variadic tuple spread matches rest param
+- `test_variadic_tuple_partial_spread_no_false_ts2345` — partial spread of variadic tuple portion
+- `test_variadic_tuple_spread_with_trailing_args` — empty tuple spread with trailing args
+- `test_variadic_tuple_spread_wrong_rest_type_still_errors` — mismatched rest type still errors
+
+**Impact**: +2 conformance tests (9762 → 9764), 0 real regressions:
+- `genericRestParameters2.ts` — 16 false TS2345 eliminated
+- `intersectionTypeInference3.ts` — intersection inference with variadic tuples
+
+**Remaining types/rest gaps (5 tests still failing)**:
+- `genericRestParameters1.ts` — spurious TS2345 in `bind()` calls (generic rest inference issue), missing TS2322 for `(a: never) => void` to `(...args: any[]) => void`
+- `genericRestParameters3.ts` — false TS2344 for CoolArray<T> not satisfying `any[]` constraint (interface-extends-Array recognition), false TS2370 for CoolArray rest param
+- `objectRestNegative.ts` — missing TS2462, TS2701, TS7008
+- `restTuplesFromContextualTypes.ts` — extra TS2322, TS2339
+
+**Files changed**:
+- `crates/tsz-checker/src/checkers/call_checker.rs` — rest element decomposition in spread expansion
+- `crates/tsz-checker/tests/spread_rest_tests.rs` — 4 new unit tests
+
+---
 
 ## Session 2026-03-02i — Defer premature TS2339 in contextual destructuring callbacks
 
