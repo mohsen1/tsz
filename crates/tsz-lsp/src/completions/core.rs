@@ -718,6 +718,15 @@ impl<'a> Completions<'a> {
         let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
         let before_dot = prefix.strip_suffix('.')?;
         let expr = before_dot.trim_end();
+        if expr.ends_with("import.meta") {
+            if let Some(target) = self.import_meta_member_target(offset)
+                && let Some(items) = self.get_member_completions(target, None)
+                && !items.is_empty()
+            {
+                return Some(items);
+            }
+            return Some(self.get_import_meta_member_completions());
+        }
         let token_start = expr
             .rfind(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
             .map_or(0, |idx| idx + 1);
@@ -746,6 +755,70 @@ impl<'a> Completions<'a> {
                 return Some(vec![item]);
             }
             return Some(Vec::new());
+        }
+        None
+    }
+
+    fn get_import_meta_member_completions(&self) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+        let mut seen = FxHashSet::default();
+        for decl_node in &self.arena.nodes {
+            if decl_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                continue;
+            }
+            let Some(iface) = self.arena.get_interface(decl_node) else {
+                continue;
+            };
+            if self.arena.get_identifier_text(iface.name) != Some("ImportMeta") {
+                continue;
+            }
+            for &member_idx in &iface.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+                    && member_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+                {
+                    continue;
+                }
+                let Some(signature) = self.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.arena.get_identifier_text(signature.name) else {
+                    continue;
+                };
+                if !seen.insert(name.to_string()) {
+                    continue;
+                }
+                let kind = if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    CompletionItemKind::Method
+                } else {
+                    CompletionItemKind::Property
+                };
+                let mut item = CompletionItem::new(name.to_string(), kind);
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                items.push(item);
+            }
+        }
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        items
+    }
+
+    fn import_meta_member_target(&self, offset: u32) -> Option<NodeIndex> {
+        let mut current = find_node_at_offset(self.arena, offset.saturating_sub(1));
+        for _ in 0..20 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(node)
+                && self.arena.get_identifier_text(access.name_or_argument) == Some("meta")
+            {
+                return Some(current);
+            }
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent == current {
+                break;
+            }
+            current = ext.parent;
         }
         None
     }
