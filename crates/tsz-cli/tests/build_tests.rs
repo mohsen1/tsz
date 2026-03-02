@@ -56,6 +56,7 @@ fn test_is_project_up_to_date_no_buildinfo() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
     };
@@ -112,6 +113,7 @@ fn test_is_project_up_to_date_with_buildinfo() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
     };
@@ -152,6 +154,7 @@ fn test_is_project_up_to_date_force_rebuild() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
     };
@@ -174,6 +177,7 @@ fn test_get_build_info_path() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: false,
+        no_emit: false,
         out_dir: None,
         declaration_dir: None,
     };
@@ -237,6 +241,7 @@ fn test_is_project_up_to_date_with_source_changes() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
     };
@@ -294,6 +299,7 @@ fn test_is_project_up_to_date_with_new_source_files() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
     };
@@ -407,6 +413,7 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
         config: serde_json::from_str("{}").unwrap(),
         resolved_references: vec![resolved_ref],
         is_composite: true,
+        no_emit: false,
         out_dir: Some(main_dir.join("dist")),
         declaration_dir: None,
     };

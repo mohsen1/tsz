@@ -81,6 +81,8 @@ pub struct ResolvedProject {
     pub resolved_references: Vec<ResolvedProjectReference>,
     /// Whether this is a composite project
     pub is_composite: bool,
+    /// Whether this project has noEmit set
+    pub no_emit: bool,
     /// Output directory for declarations
     pub declaration_dir: Option<PathBuf>,
     /// Output directory for JavaScript
@@ -358,6 +360,83 @@ impl ProjectReferenceGraph {
 
         affected
     }
+
+    /// Validate project reference constraints.
+    /// Returns a list of (error_code, message) pairs for any violations.
+    pub fn validate(&self) -> Vec<ProjectReferenceDiagnostic> {
+        let mut diagnostics = Vec::new();
+
+        for (id, project) in self.projects.iter().enumerate() {
+            for ref_info in &project.resolved_references {
+                if !ref_info.is_valid {
+                    continue;
+                }
+                if let Some(&ref_id) = self.path_to_id.get(&ref_info.config_path) {
+                    let ref_project = &self.projects[ref_id];
+
+                    // TS6306: Referenced project must have composite: true
+                    if !ref_project.is_composite {
+                        diagnostics.push(ProjectReferenceDiagnostic {
+                            code: 6306,
+                            message: format!(
+                                "Referenced project '{}' must have setting \"composite\": true.",
+                                ref_project.config_path.display()
+                            ),
+                            project_id: id,
+                            referenced_project_id: Some(ref_id),
+                        });
+                    }
+
+                    // TS6310: Referenced project may not disable emit
+                    if ref_project.no_emit {
+                        diagnostics.push(ProjectReferenceDiagnostic {
+                            code: 6310,
+                            message: format!(
+                                "Referenced project '{}' may not disable emit.",
+                                ref_project.config_path.display()
+                            ),
+                            project_id: id,
+                            referenced_project_id: Some(ref_id),
+                        });
+                    }
+                }
+            }
+        }
+
+        // TS6202: Circular references
+        let cycles = self.detect_cycles();
+        for cycle in &cycles {
+            let names: Vec<String> = cycle
+                .iter()
+                .filter_map(|&id| self.projects.get(id))
+                .map(|p| p.config_path.display().to_string())
+                .collect();
+            diagnostics.push(ProjectReferenceDiagnostic {
+                code: 6202,
+                message: format!(
+                    "Project references may not form a circular graph. Cycle detected: {}",
+                    names.join(" -> ")
+                ),
+                project_id: cycle.first().copied().unwrap_or(0),
+                referenced_project_id: None,
+            });
+        }
+
+        diagnostics
+    }
+}
+
+/// A diagnostic from project reference validation
+#[derive(Debug, Clone)]
+pub struct ProjectReferenceDiagnostic {
+    /// The diagnostic error code (e.g., 6306, 6310, 6202)
+    pub code: u32,
+    /// The diagnostic message
+    pub message: String,
+    /// The project that triggered this diagnostic
+    pub project_id: ProjectId,
+    /// The referenced project that has the issue (if applicable)
+    pub referenced_project_id: Option<ProjectId>,
 }
 
 /// Load a project from its tsconfig.json path
@@ -378,9 +457,21 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
     // Resolve project references
     let resolved_references = resolve_project_references(&root_dir, &config.references)?;
 
-    // Check if composite - CompilerOptions doesn't have composite field,
-    // so we check the raw source JSON
-    let is_composite = check_composite_from_source(&source);
+    // Check composite from the deserialized CompilerOptions field
+    let is_composite = config
+        .base
+        .compiler_options
+        .as_ref()
+        .and_then(|opts| opts.composite)
+        .unwrap_or(false);
+
+    // Check noEmit
+    let no_emit = config
+        .base
+        .compiler_options
+        .as_ref()
+        .and_then(|opts| opts.no_emit)
+        .unwrap_or(false);
 
     // Get output directories
     let declaration_dir = config
@@ -404,6 +495,7 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
         config,
         resolved_references,
         is_composite,
+        no_emit,
         declaration_dir,
         out_dir,
     })
@@ -416,21 +508,6 @@ pub fn parse_tsconfig_with_references(source: &str) -> Result<TsConfigWithRefere
     let config = serde_json::from_str(&normalized)
         .context("failed to parse tsconfig JSON with references")?;
     Ok(config)
-}
-
-/// Check if composite is set in the raw source (workaround for type limitations)
-fn check_composite_from_source(source: &str) -> bool {
-    // Use proper JSON parsing to extract the composite field
-    let stripped = strip_jsonc(source);
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&stripped) {
-        value
-            .get("compilerOptions")
-            .and_then(|opts| opts.get("composite"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-    } else {
-        false
-    }
 }
 
 /// Resolve project references to absolute paths
