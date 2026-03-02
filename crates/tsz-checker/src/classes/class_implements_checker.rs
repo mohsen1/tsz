@@ -1,7 +1,7 @@
 //! Class interface and implements checking (TS2420, TS2515, TS2654, TS2720).
 //! - Interface-extends-class accessibility checks
 
-use crate::diagnostics::diagnostic_codes;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::should_report_member_type_mismatch;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -325,6 +325,25 @@ impl<'a> CheckerState<'a> {
         if self.has_abstract_modifier(&class_data.modifiers) {
             return;
         }
+        let mut class_type_param_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        if let Some(params) = class_data.type_parameters.as_ref() {
+            for &param_idx in &params.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param_data) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(param_data.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                class_type_param_names.insert(ident.escaped_text.clone());
+            }
+        }
 
         // Collect implemented members from the class (name -> node_idx).
         // Member types are computed lazily only when needed for an interface match.
@@ -440,6 +459,21 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (type_idx, None)
                     };
+                // TS2422: a class cannot implement one of its own type parameters.
+                // This must be checked even when the type parameter resolves successfully.
+                if !class_type_param_names.is_empty()
+                    && let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                    && expr_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                    && class_type_param_names.contains(&ident.escaped_text)
+                {
+                    self.error_at_node(
+                        expr_idx,
+                        diagnostic_messages::A_CLASS_CAN_ONLY_IMPLEMENT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH_S,
+                        diagnostic_codes::A_CLASS_CAN_ONLY_IMPLEMENT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH_S,
+                    );
+                    continue;
+                }
 
                 // Resolve interface/class symbols through canonical heritage resolution so
                 // qualified names (e.g. `Promise.Thenable`) are handled correctly.
