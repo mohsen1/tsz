@@ -2,6 +2,7 @@
 //! This module is split into focused submodules for maintainability.
 
 /// Whether a type-only symbol came from `import type` or `export type`.
+#[derive(Debug)]
 pub(crate) enum TypeOnlyKind {
     Import,
     Export,

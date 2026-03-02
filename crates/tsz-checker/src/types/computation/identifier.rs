@@ -1106,7 +1106,14 @@ impl<'a> CheckerState<'a> {
             if clause.name.is_some()
                 && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
             {
-                return true;
+                // Also check cross-file type-only chain for default imports.
+                if let Some(module_specifier) = self.get_import_module_specifier(import_decl)
+                    && self.is_export_type_only_across_binders(&module_specifier, "default")
+                {
+                    // type-only through export chain — skip
+                } else {
+                    return true;
+                }
             }
 
             // Named imports: `import { Foo } from ...`
@@ -1131,12 +1138,48 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if self.ctx.arena.get_identifier_text(local_name) == Some(name) {
+                        // Also check whether this import's target is type-only through
+                        // the export chain (e.g., `import { A } from './b'` where b.ts
+                        // has `export type * from './a'`). If the target export is
+                        // type-only, this import doesn't provide a runtime value binding.
+                        if let Some(module_specifier) =
+                            self.get_import_module_specifier(import_decl)
+                        {
+                            // Get the original export name (before any rename).
+                            // For `import { Foo as Bar }`, the export name is "Foo".
+                            let export_name = if specifier.property_name.is_some() {
+                                self.ctx
+                                    .arena
+                                    .get_identifier_text(specifier.property_name)
+                                    .unwrap_or(name)
+                            } else {
+                                name
+                            };
+                            if self
+                                .is_export_type_only_across_binders(&module_specifier, export_name)
+                            {
+                                continue; // type-only through export chain — skip
+                            }
+                        }
                         return true;
                     }
                 }
             }
         }
         false
+    }
+
+    /// Extract the module specifier string from an import declaration.
+    ///
+    /// Given an `ImportDeclData`, resolves the `module_specifier` node index
+    /// to a string literal text value (without quotes).
+    fn get_import_module_specifier(
+        &self,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> Option<String> {
+        let spec_node = self.ctx.arena.get(import_decl.module_specifier)?;
+        let literal = self.ctx.arena.get_literal(spec_node)?;
+        Some(literal.text.clone())
     }
 }
 
