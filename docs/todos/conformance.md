@@ -3,6 +3,49 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9799/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02m' — Fix Application type ordering in union normalization
+
+### Fixed: Application types (generic instantiations) sorted by raw TypeId instead of base DefId
+
+**Area**: types/union (unionTypeMembers.ts) + cross-cutting (compiler, classes/members)
+
+**Root cause**: `compare_union_members()` in `crates/tsz-solver/src/intern/core.rs` handled `Lazy(DefId)`, `Enum`, `Object`, `ObjectWithIndex`, and `Callable` types for semantic ordering, but NOT `Application(TypeApplicationId)`. Generic instantiations like `I1<number>` and `I2<number>` fell through to the raw `TypeId` comparison fallback. Since TypeId allocation depends on interner insertion order (not source order), union display showed `I2<number> | I1<number>` instead of `I1<number> | I2<number>`.
+
+**Fix**: Added `Application(TypeApplicationId)` branch to `compare_union_members` that:
+1. Looks up the `TypeApplication` for each member
+2. Recursively compares by base type first (which resolves to `Lazy(DefId)` for named types)
+3. Falls back to comparing type args lexicographically if bases are equal
+4. Falls back to args length comparison
+
+**Tests**: 2 unit tests in `intern_tests.rs`:
+- `test_union_application_types_sort_by_base_def_id` — I1<number> vs I2<number> ordering
+- `test_union_application_types_same_base_sort_by_args` — Foo<number> vs Foo<string> ordering
+
+**Impact**: +1 error-code level test (9798 → 9799), +4 fingerprint-level tests, 0 regressions:
+- `unionTypeMembers.ts` — union member ordering in TS2339 messages
+- `unionTypeErrorMessageTypeRefs01.ts` — type ref ordering in TS2322 messages
+- `privateNamesConstructorChain-1.ts` — class constructor chain ordering
+- `privateNamesConstructorChain-2.ts` — class constructor chain ordering
+
+**Note on literal sorting**: Attempted to also sort `TypeData::Literal` values (strings alphabetically, numbers numerically) to fix `discriminatedUnionTypes1.ts` (`"C" | "B" | "A" | "D"` → `"A" | "B" | "C" | "D"`). This caused 5 regressions across overload resolution, narrowing, and conditional types because changing literal sort order changes interned union TypeIds, which cascades through inference caches. Reverted — literal ordering needs a different approach (perhaps display-only reordering rather than normalization-level sorting).
+
+**Remaining types/union gaps (8 tests still failing)**:
+- `contextualTypeWithUnionTypeObjectLiteral.ts` — anonymous object member ordering + container vs value diagnostic
+- `discriminatedUnionTypes1.ts` — string literal union member ordering (`"C" | "B" | "A" | "D"` vs `"A" | "B" | "C" | "D"`)
+- `discriminatedUnionTypes2.ts` — generic discriminant narrowing + intersection narrowing
+- `unionTypeCallSignatures.ts` — column offsets and TS2345 vs TS2554 in union overload resolution
+- `unionTypeCallSignatures6.ts` — fingerprint-only
+- `unionTypeConstructSignatures.ts` — fingerprint-only
+- `unionTypeFromArrayLiteral.ts` — fingerprint-only
+- `unionTypePropertyAccessibility.ts` — TS2339 vs TS2341/TS2445 for private/protected union members
+- `unionTypeWithIndexSignature.ts` — missing TS2322 for index signature resolution
+
+**Files changed**:
+- `crates/tsz-solver/src/intern/core.rs` — Application branch in `compare_union_members`
+- `crates/tsz-solver/tests/intern_tests.rs` — 2 new unit tests
+
+---
+
 ## Session 2026-03-02m — Restore checkJs `this` member typing in contextual owners
 
 ### Fixed: over-broad JS dynamic-`this` escape hatch masked real member-type errors
