@@ -10,6 +10,7 @@ use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
+use tsz::lsp::rename::linked_editing::LinkedEditingProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
@@ -693,7 +694,29 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, None)
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider = LinkedEditingProvider::new(&arena, &line_map, &source_text);
+            let linked = provider.provide_linked_editing_ranges(_root, position)?;
+            let ranges: Vec<serde_json::Value> = linked
+                .ranges
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(r.start),
+                        "end": Self::lsp_to_tsserver_position(r.end),
+                    })
+                })
+                .collect();
+            Some(serde_json::json!({
+                "ranges": ranges,
+                "wordPattern": linked.word_pattern,
+            }))
+        })();
+        self.stub_response(seq, request, result)
     }
 
     pub(crate) fn handle_prepare_call_hierarchy(
