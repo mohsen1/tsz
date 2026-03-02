@@ -4101,3 +4101,23 @@ if (c) {
         "Switch default should narrow to `never` after exhaustive cases when preceded by truthiness guard. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_array_from_contextual_destructuring_does_not_emit_ts2339() {
+    let source = r#"
+interface A { a: string; }
+interface B { b: string; }
+declare function from<T, U>(items: Iterable<T> | ArrayLike<T>, mapfn: (value: T) => U): U[];
+const inputB: B[] = [];
+const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Contextual destructuring in Array.from callback should not emit TS2339. Got: {diagnostics:?}"
+    );
+}
