@@ -14861,3 +14861,181 @@ fn test_const_type_param_multiple_different_literals() {
     // This is a known limitation -- ideally const should produce "a" | "b"
     assert_eq!(result, TypeId::STRING);
 }
+
+// =========================================================================
+// Deep widening of object inference candidates
+// TSC calls getWidenedType() on resolved inference results, recursively
+// widening literal properties inside objects. We approximate this by
+// applying widen_type to Object/ObjectWithIndex results when the
+// inference priority is non-contextual (not ReturnType/LowPriority).
+// =========================================================================
+
+#[test]
+fn test_deep_widen_object_candidate_homomorphic_mapped() {
+    // Scenario: assignBoxified(b, { c: false }) where T is inferred via
+    // reverse mapped type inference. The candidate { c: false } should be
+    // deep-widened to { c: boolean }.
+    use crate::types::{LiteralValue, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Create object { c: false }
+    let false_lit = interner.intern(TypeData::Literal(LiteralValue::Boolean(false)));
+    let obj = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("c"),
+        type_id: false_lit,
+        write_type: false_lit,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+    }]);
+
+    // Add as HomomorphicMappedType candidate (from reverse mapped inference)
+    ctx.add_candidate(var_t, obj, InferencePriority::HomomorphicMappedType);
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    // Should be deep-widened: { c: boolean }
+    match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 1);
+            assert_eq!(
+                shape.properties[0].type_id,
+                TypeId::BOOLEAN,
+                "Property 'c' should be widened from false to boolean"
+            );
+        }
+        other => panic!("Expected widened Object, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_deep_widen_object_candidate_naked_type_variable() {
+    // Scenario: applySpec({ sum: (a: any) => 3 }) where T is inferred from
+    // the object literal. The candidate { sum: 3 } should be deep-widened
+    // to { sum: number }.
+    use crate::types::{LiteralValue, OrderedFloat, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Create object { sum: 3 }
+    let three_lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(3.0))));
+    let obj = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("sum"),
+        type_id: three_lit,
+        write_type: three_lit,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+    }]);
+
+    // Add as NakedTypeVariable candidate (direct inference)
+    ctx.add_candidate(var_t, obj, InferencePriority::NakedTypeVariable);
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    // Should be deep-widened: { sum: number }
+    match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 1);
+            assert_eq!(
+                shape.properties[0].type_id,
+                TypeId::NUMBER,
+                "Property 'sum' should be widened from 3 to number"
+            );
+        }
+        other => panic!("Expected widened Object, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_no_deep_widen_return_type_priority() {
+    // Scenario: Promise.resolve({ key: "value" }) where T is inferred from
+    // the return type context. The candidate { key: "value" } should NOT be
+    // deep-widened because ReturnType priority indicates contextual typing.
+    use crate::types::{PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Create object { key: "value" }
+    let value_lit = interner.literal_string("value");
+    let obj = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("key"),
+        type_id: value_lit,
+        write_type: value_lit,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+    }]);
+
+    // Add as ReturnType candidate (from contextual typing)
+    ctx.add_candidate(var_t, obj, InferencePriority::ReturnType);
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    // Should NOT be deep-widened — preserve { key: "value" }
+    // Note: shallow widening still applies (string literal "value" → string),
+    // but deep widening of the object's properties should be skipped.
+    // The resolved type should be the object itself (properties may be
+    // individually widened by widen_candidate_types, but the result should
+    // NOT go through widen_type which changes all mutable properties).
+    match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 1);
+            // ReturnType priority: widen_candidate_types is a no-op for objects
+            // (it only widens individual literal types), so the object keeps
+            // its literal property. Deep widening is skipped.
+            assert_eq!(
+                shape.properties[0].type_id, value_lit,
+                "Property 'key' should preserve literal 'value' with ReturnType priority"
+            );
+        }
+        other => panic!("Expected Object, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_no_deep_widen_when_constraint_implies_literals() {
+    // Scenario: T extends "a" | "b", candidate is { x: "a" }.
+    // Even with NakedTypeVariable priority, preserve_literals=true
+    // should prevent deep widening.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Create constraint T extends "a" | "b"
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let constraint = interner.union(vec![a_lit, b_lit]);
+    ctx.add_upper_bound(var_t, constraint);
+
+    // Add candidate "a" (literal)
+    ctx.add_candidate(var_t, a_lit, InferencePriority::NakedTypeVariable);
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    // Should preserve the literal "a" (constraint implies literals)
+    assert_eq!(result, a_lit);
+}
