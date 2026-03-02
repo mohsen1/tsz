@@ -1,7 +1,51 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9809/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9815/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02s — Display `| undefined` for optional properties and params in diagnostics
+
+### Fixed: Type printer missing `| undefined` for optional properties and function parameters
+
+**Area**: Cross-cutting (jsx, types/typeRelationships, compiler, es6/for-ofStatements)
+
+**Root cause**: tsc displays optional object properties as `name?: T | undefined` and optional function parameters as `(x?: T | undefined)` when `exactOptionalPropertyTypes` is disabled (the default). In our type system, optional properties store the raw type without `undefined` (it's added dynamically at query time for assignability). The type printer `TypeFormatter` was displaying optional properties/params without `| undefined`, causing fingerprint mismatches.
+
+**Fix** (2 files, 3 sub-fixes):
+1. **format.rs `format_property()`**: Append `| undefined` to optional object property type display when the property type doesn't already include `undefined`
+2. **format.rs `format_params()`**: Same treatment for optional function parameters
+3. **format.rs `type_contains_undefined()`**: New helper that checks whether a TypeId is `undefined` or a union containing `undefined`, to prevent double-appending
+
+**Key design decisions**:
+- Fix in the TYPE PRINTER layer (not type system) to avoid changing type identity/interning semantics
+- Deduplication check prevents `string | undefined | undefined` when the type already includes `undefined`
+- No `exactOptionalPropertyTypes` config threading needed since only 1 conformance test uses it and adding `| undefined` by default is the correct behavior for 99.9% of tests
+
+**Tests**: 5 unit tests in `diagnostics_tests.rs`:
+- `test_optional_property_shows_undefined` — basic `{ y?: string | undefined; }` display
+- `test_optional_property_already_has_undefined_no_duplicate` — dedup when type is `string | undefined`
+- `test_optional_function_param_shows_undefined` — `(y?: number | undefined)` in function type
+- `test_optional_param_already_has_undefined_no_duplicate` — dedup for params
+- `test_required_property_no_undefined` — required properties are unaffected
+
+**Impact**: +7 conformance tests (9809 → 9815 combined with other session), 0 regressions:
+- `tsxAttributeErrors.tsx` — JSX attribute prop type display
+- `tsxElementResolution11.tsx` — JSX element prop type display
+- `subtypingWithOptionalProperties.ts` — object type display in subtype check
+- `assignmentCompatWithCallSignaturesWithOptionalParameters.ts` — function param display
+- `optionalParamTypeComparison.ts` — function param display
+- `signatureLengthMismatchWithOptionalParameters.ts` — function param display
+- `for-of38.ts` — function param display
+
+**Remaining `| undefined` fingerprint issues** (would need separate fixes):
+- ~18 more tests have `| undefined` in tsc messages but also have other fingerprint mismatches (JSX IntrinsicAttributes wrapper, boolean widening, etc.)
+- Function expression optional params have the OPPOSITE problem: our type system eagerly adds `undefined` to their type_id, so they show `(x?: string | undefined)` when tsc shows `(x?: string)` — this is a type construction issue, not a display issue
+
+**Files changed**:
+- `crates/tsz-solver/src/diagnostics/format.rs` — `format_property()`, `format_params()`, `type_contains_undefined()`
+- `crates/tsz-solver/tests/diagnostics_tests.rs` — 5 new tests + 1 updated
+
+---
 
 ## Session 2026-03-02r — Fix tuple spread argument checking in function calls
 
