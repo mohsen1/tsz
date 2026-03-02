@@ -80,7 +80,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
-            let assignable = if allow_bivariant_callbacks || self.force_bivariant_callbacks {
+            let use_bivariant_callbacks = (allow_bivariant_callbacks
+                || self.force_bivariant_callbacks)
+                && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
+                && crate::type_queries::is_callable_type(self.interner, param_type);
+
+            let assignable = if use_bivariant_callbacks {
                 self.checker
                     .is_assignable_to_bivariant_callback(expanded_arg_type, param_type)
             } else if strict {
@@ -99,7 +104,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 self.checker.is_assignable_to(expanded_arg_type, param_type)
             };
-
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,

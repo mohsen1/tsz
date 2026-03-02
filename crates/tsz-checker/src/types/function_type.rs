@@ -1244,14 +1244,16 @@ impl<'a> CheckerState<'a> {
         // In JS files, functions that reference `arguments` in their body should accept
         // any number of extra arguments (TSC adds an implicit rest parameter).
         // Only add if the function doesn't already have a rest parameter.
-        // For function declarations, the body wasn't checked yet (it's checked in
-        // check_function_declaration), so we also pre-walk the body for `arguments`.
-        let uses_arguments = self.ctx.js_body_uses_arguments
-            || (is_function_declaration && self.body_has_arguments_reference(body));
+        // Some call sites compute function types before body checking has set
+        // `js_body_uses_arguments` (notably function expressions in variable initializers).
+        // Always pre-walk the body as a fallback so JS implicit rest parameter inference
+        // remains stable across declaration/expression contexts.
+        let uses_arguments =
+            self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
         if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
             params.push(ParamInfo {
                 name: None,
-                type_id: TypeId::ANY,
+                type_id: self.ctx.types.factory().array(TypeId::ANY),
                 optional: true,
                 rest: true,
             });
