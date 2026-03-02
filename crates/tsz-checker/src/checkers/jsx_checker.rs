@@ -219,11 +219,17 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.tag_name,
                     raw_has_type_params,
                 );
-            } else if !self.is_overloaded_sfc(evaluated) {
+            } else if self.is_overloaded_sfc(evaluated) {
+                // JSX overload resolution: try each non-generic call signature against
+                // the provided attributes. If no overload matches, emit TS2769.
+                self.check_jsx_overloaded_sfc(
+                    evaluated,
+                    jsx_opening.attributes,
+                    jsx_opening.tag_name,
+                );
+            } else {
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
-                // Skip for overloaded SFCs — they have valid signatures but we can't yet
-                // resolve which overload matches (full JSX overload resolution not implemented).
                 self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
 
                 // Even when we can't extract component props (e.g., no ElementAttributesProperty),
@@ -1133,7 +1139,7 @@ impl<'a> CheckerState<'a> {
     /// expected property type from the props interface. Emits:
     /// - TS2322 for type mismatches and excess properties
     /// - TS2741 for missing required properties
-    fn check_jsx_attributes_against_props(
+    pub(crate) fn check_jsx_attributes_against_props(
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
