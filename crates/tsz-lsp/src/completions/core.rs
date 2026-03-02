@@ -235,6 +235,11 @@ impl<'a> Completions<'a> {
         {
             return Some(items);
         }
+        if let Some(items) = self.get_typeof_query_parameter_completions(node_idx, offset)
+            && !items.is_empty()
+        {
+            return Some(items);
+        }
         if let Some(items) = self.get_meta_property_completions(offset) {
             return Some(items);
         }
@@ -755,6 +760,58 @@ impl<'a> Completions<'a> {
                 return Some(vec![item]);
             }
             return Some(Vec::new());
+        }
+        None
+    }
+
+    fn get_typeof_query_parameter_completions(
+        &self,
+        node_idx: NodeIndex,
+        offset: u32,
+    ) -> Option<Vec<CompletionItem>> {
+        let end = (offset as usize).min(self.source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        if !prefix.ends_with("typeof") {
+            return None;
+        }
+
+        let mut current = node_idx;
+        let mut depth = 0;
+        while current.is_some() && depth < 32 {
+            let node = self.arena.get(current)?;
+            if (node.kind == syntax_kind_ext::FUNCTION_TYPE
+                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE)
+                && let Some(function_type) = self.arena.get_function_type(node)
+            {
+                let mut items = Vec::new();
+                let mut seen = FxHashSet::default();
+                for &param_idx in &function_type.parameters.nodes {
+                    let Some(param_node) = self.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.arena.get_identifier_text(param.name) else {
+                        continue;
+                    };
+                    if !seen.insert(name.to_string()) {
+                        continue;
+                    }
+                    let mut item =
+                        CompletionItem::new(name.to_string(), CompletionItemKind::Parameter);
+                    item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
+                    items.push(item);
+                }
+                items.sort_by(|a, b| a.label.cmp(&b.label));
+                return Some(items);
+            }
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent == current {
+                break;
+            }
+            current = ext.parent;
+            depth += 1;
         }
         None
     }
