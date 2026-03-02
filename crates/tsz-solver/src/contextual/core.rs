@@ -346,7 +346,6 @@ impl<'a> ContextualTypeContext<'a> {
         let Some(expected) = self.expected else {
             return false;
         };
-
         // Unwrap Application to base type
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
@@ -362,14 +361,26 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.is_rest_parameter_position(index, arg_count);
         }
 
-        // Evaluate Mapped/Conditional/Lazy
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Evaluate Mapped/Conditional/Lazy/IndexAccess
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.is_rest_parameter_position(index, arg_count);
+            }
+            // IndexAccess couldn't be evaluated — it still contains type parameters
+            // (e.g., T[K] where T or K is generic).
+            // When the callable shape is unknowable at the generic call site, tsc
+            // gives the benefit of the doubt and does NOT emit TS2556.
+            // Returning `true` suppresses the false positive.
+            if let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(expected) {
+                return true;
             }
         }
 

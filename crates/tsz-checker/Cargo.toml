@@ -54,5 +54,13 @@ path = "tests/ts2540_readonly_tests.rs"
 name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 
+[[test]]
+name = "ts2322_tests"
+path = "tests/ts2322_tests.rs"
+
+[[test]]
+name = "spread_rest_tests"
+path = "tests/spread_rest_tests.rs"
+
 [lints]
 workspace = true

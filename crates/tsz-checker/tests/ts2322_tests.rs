@@ -3,13 +3,13 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
-use crate::CheckerState;
-use crate::context::CheckerOptions;
-use crate::diagnostics::diagnostic_codes;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::diagnostic_codes;
+use tsz_checker::state::CheckerState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -103,9 +103,9 @@ fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> 
     );
 
     if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| tsz_checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -171,9 +171,9 @@ fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnos
         CheckerOptions::default(),
     );
     if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| tsz_checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -1437,5 +1437,35 @@ fn test_ts2322_noimplicitany_nullish_initializer_mutation_is_not_assignability_e
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected no TS2322 for mutable noImplicitAny variable with undefined initializer, got: {diagnostics:?}"
+    );
+}
+
+// ── Mapped type key constraint inside conditional types (inferTypes1 parity) ──
+
+#[test]
+fn test_ts2322_mapped_type_key_in_conditional_unconstrained_t() {
+    // `string extends T ? { [P in T]: void } : T` — T is NOT narrowed in the
+    // true branch (check type is `string`, not a type parameter), so T is still
+    // unconstrained and `[P in T]` is invalid. tsc emits TS2322 here.
+    let source = r"
+        type B<T> = string extends T ? { [P in T]: void; } : T;
+    ";
+    assert!(
+        has_error_with_code(source, 2322),
+        "Expected TS2322 for unconstrained T in mapped type key inside conditional (string extends T)"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_mapped_type_key_narrowed_by_conditional() {
+    // `T extends string ? { [P in T]: void } : T` — T IS narrowed to `T & string`
+    // in the true branch, so `[P in T]` is valid (T is string-like). No TS2322.
+    let source = r"
+        type A<T> = T extends string ? { [P in T]: void; } : T;
+    ";
+    let errors = get_all_diagnostics(source);
+    assert!(
+        !errors.iter().any(|(code, _)| *code == 2322),
+        "Expected no TS2322 for narrowed T in mapped type key (T extends string). Got: {errors:?}"
     );
 }

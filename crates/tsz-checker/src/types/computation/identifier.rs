@@ -7,6 +7,7 @@
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -430,6 +431,11 @@ impl<'a> CheckerState<'a> {
                         "get_type_of_identifier: using cross-lib VALUE type"
                     );
                     return self.check_flow_usage(idx, value_type, sym_id);
+                }
+                // If this file has a non-type-only import binding for the same local
+                // name, prefer that value binding over a merged type-only symbol.
+                if self.source_file_has_value_import_binding_named(idx, name) {
+                    return TypeId::ANY;
                 }
 
                 // Don't emit TS2693 in heritage clause context — but ONLY when the
@@ -993,6 +999,76 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, idx);
         TypeId::ERROR
+    }
+
+    fn source_file_has_value_import_binding_named(&self, idx: NodeIndex, name: &str) -> bool {
+        let mut current = idx;
+        let mut guard = 0u32;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        let Some(root) = self.ctx.arena.get(current) else {
+            return false;
+        };
+        if root.kind != tsz_parser::parser::syntax_kind_ext::SOURCE_FILE {
+            return false;
+        }
+
+        for stmt_idx in self.ctx.arena.get_children(current) {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if import_decl.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+
+            if clause.name.is_some() && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
+            {
+                return true;
+            }
+
+            if clause.named_bindings.is_some()
+                && let Some(named_bindings_node) = self.ctx.arena.get(clause.named_bindings)
+                && named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS
+                && let Some(named_imports) = self.ctx.arena.get_named_imports(named_bindings_node)
+            {
+                for &specifier_idx in &named_imports.elements.nodes {
+                    let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
+                        continue;
+                    };
+                    let local_name = specifier.name;
+                    if local_name.is_none() {
+                        continue;
+                    }
+                    if self.ctx.arena.get_identifier_text(local_name) == Some(name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 

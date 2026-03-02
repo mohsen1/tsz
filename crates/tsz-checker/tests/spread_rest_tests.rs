@@ -1,8 +1,8 @@
 //! Tests for spread and rest operator type checking
 
-use crate::diagnostics::Diagnostic;
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -20,7 +20,7 @@ fn check_source(source: &str) -> Vec<Diagnostic> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -637,5 +637,25 @@ withRest(...t);
     assert_eq!(
         ts2556_count, 0,
         "Expected no TS2556 for tuple spread (known length), got {ts2556_count}"
+    );
+}
+
+// ── Generic IndexAccess callable: no false TS2556 (inferTypes1 parity) ──
+
+#[test]
+fn test_no_ts2556_for_generic_index_access_call_with_spread() {
+    // When the callable type is a generic IndexAccess (e.g., T[K]), the rest
+    // parameter nature cannot be determined statically. tsc does NOT emit
+    // TS2556 in this case.
+    let source = r#"
+function invoker<K extends string | number | symbol, A extends any[]>(key: K, ...args: A) {
+    return <T extends Record<K, (...args: A) => any>>(obj: T): ReturnType<T[K]> => obj[key](...args)
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert_eq!(
+        ts2556_count, 0,
+        "Expected no TS2556 for spread into generic IndexAccess callable, got {ts2556_count}. Diagnostics: {diagnostics:?}"
     );
 }
