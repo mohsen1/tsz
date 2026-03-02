@@ -188,7 +188,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn param_type_for_arg_index(
-        &self,
+        &mut self,
         params: &[ParamInfo],
         arg_index: usize,
         arg_count: usize,
@@ -209,6 +209,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let rest_arg_count = arg_count.saturating_sub(rest_start);
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        // Evaluate Application/Mapped types (e.g., TupleMapper<[string, number]>) to
+        // their concrete Array/Tuple form so rest parameter spreading works correctly.
+        let rest_param_type = self.evaluate_rest_param_type(rest_param_type);
         trace!(
             rest_param_type_id = %rest_param_type.0,
             rest_param_type_key = ?self.interner.lookup(rest_param_type),
@@ -339,6 +342,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
     const MAX_UNWRAP_ITERATIONS: usize = 1000;
+
+    /// Evaluate a rest parameter type to resolve Application/Mapped types to their
+    /// concrete Array/Tuple form. This is needed because after generic instantiation,
+    /// the rest parameter type may be an Application like `TupleMapper<[string, number]>`
+    /// which needs evaluation to become a Tuple like `[MyMappedType<string>, MyMappedType<number>]`.
+    /// Without this, rest parameter spreading doesn't recognize the type as a tuple
+    /// and treats it as a single parameter type.
+    ///
+    /// Uses the checker's `evaluate_type` which has access to the full `TypeResolver`,
+    /// unlike `QueryDatabase::evaluate_type` which uses a `NoopResolver`.
+    fn evaluate_rest_param_type(&mut self, type_id: TypeId) -> TypeId {
+        match self.interner.lookup(type_id) {
+            // Application, Mapped, Intersection, or Conditional types may evaluate to Array/Tuple
+            Some(
+                TypeData::Application(_)
+                | TypeData::Mapped(_)
+                | TypeData::Intersection(_)
+                | TypeData::Conditional(_),
+            ) => {
+                let evaluated = self.checker.evaluate_type(type_id);
+                trace!(
+                    original_id = %type_id.0,
+                    evaluated_id = %evaluated.0,
+                    evaluated_key = ?self.interner.lookup(evaluated),
+                    "evaluate_rest_param_type: evaluated complex type"
+                );
+                evaluated
+            }
+            _ => type_id,
+        }
+    }
 
     pub(super) fn unwrap_readonly(&self, mut type_id: TypeId) -> TypeId {
         let mut iterations = 0;
