@@ -314,9 +314,69 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking when the type argument contains unresolved type parameters
-                // (they'll be checked later when fully instantiated)
+                // When the type argument contains type parameters, we generally skip
+                // constraint checking (deferred to instantiation time). However, when
+                // the type arg IS a bare type parameter, check its base constraint
+                // against the required constraint. This matches tsc: `U extends number`
+                // used as `T extends string` → TS2344 because `number` is not
+                // assignable to `string`.
                 if query::contains_type_parameters(self.ctx.types, type_arg) {
+                    let db = self.ctx.types.as_type_database();
+                    let base = tsz_solver::type_queries::get_base_constraint_of_type(db, type_arg);
+                    if base == type_arg {
+                        // Not a bare type parameter — composite type with type params.
+                        // Defer constraint checking to instantiation time.
+                        continue;
+                    }
+                    // base is the type parameter's constraint (or `unknown`).
+                    // Resolve lazy types in the base constraint.
+                    let base = self.resolve_lazy_type(base);
+                    // If the base constraint is `unknown`, the type parameter has no
+                    // usable constraint (e.g., unconstrained params or call-signature
+                    // type params whose constraints aren't populated). Skip.
+                    if base == TypeId::UNKNOWN {
+                        continue;
+                    }
+                    // If the base constraint is a union, skip. Union-constrained type
+                    // params often appear in conditional types where the true branch
+                    // narrows to a specific union member. Checking the full union
+                    // against the narrowed constraint would produce false positives.
+                    if tsz_solver::type_queries::get_union_members(db, base).is_some() {
+                        continue;
+                    }
+                    if query::contains_type_parameters(self.ctx.types, base) {
+                        // Base constraint itself contains type parameters
+                        // (e.g., from outer generic scope). Defer check.
+                        continue;
+                    }
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    if query::contains_type_parameters(self.ctx.types, constraint_resolved) {
+                        continue;
+                    }
+                    // Instantiate the constraint with all provided type arguments
+                    let mut subst = tsz_solver::TypeSubstitution::new();
+                    for (j, p) in type_params.iter().enumerate() {
+                        if let Some(&arg) = type_args.get(j) {
+                            subst.insert(p.name, arg);
+                        }
+                    }
+                    let inst_constraint = if subst.is_empty() {
+                        constraint_resolved
+                    } else {
+                        tsz_solver::instantiate_type(self.ctx.types, constraint_resolved, &subst)
+                    };
+                    if query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                        continue;
+                    }
+                    if !self.is_assignable_to(base, inst_constraint)
+                        && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            inst_constraint,
+                            arg_idx,
+                        );
+                    }
                     continue;
                 }
 

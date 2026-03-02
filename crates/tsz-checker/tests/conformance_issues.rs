@@ -4255,3 +4255,114 @@ function test(x: string | Error) {
         "instanceof === false should still narrow via boolean comparison. Got: {diagnostics:?}"
     );
 }
+
+/// TS2344: Type parameter constraint checking when type arg is itself a type parameter.
+///
+/// When a type parameter `U extends number` is passed to a generic that requires
+/// `T extends string`, tsc resolves `U`'s base constraint to `number` and checks
+/// `number <: string`, emitting TS2344 when it fails.
+///
+/// Previously, `validate_type_args_against_params` unconditionally skipped constraint
+/// checking when the type argument contained type parameters (via `contains_type_parameters`).
+/// Now it resolves bare type parameters to their base constraints and checks assignability.
+#[test]
+fn test_ts2344_type_param_constraint_mismatch() {
+    // Case 1: Incompatible primitive constraints → should emit TS2344
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type Foo<T extends string> = T;
+type Bar<U extends number> = Foo<U>;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 when `U extends number` is used where `T extends string` is required.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2344_type_param_object_constraint_mismatch() {
+    // Case 2: Incompatible object constraints → should emit TS2344
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type Inner<C extends { props: any }> = C;
+type Outer<WithC extends { name: string }> = Inner<WithC>;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 when `WithC extends {{ name: string }}` doesn't satisfy `{{ props: any }}`.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2344_type_param_compatible_constraint() {
+    // Case 3: Compatible constraints → should NOT emit TS2344
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type Foo<T extends string> = T;
+type Bar<U extends string> = Foo<U>;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Should NOT emit TS2344 when `U extends string` satisfies `T extends string`.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2344_no_false_positive_in_conditional_type_branch() {
+    // Case 4: Union-constrained type param in conditional type true branch.
+    // tsc narrows `TRec` to `MyRecord` in the true branch, so
+    // `MySet<TRec>` is valid. We skip union-constrained type params
+    // to avoid false positives.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+declare class MyRecord {}
+declare class MySet<TSet extends MyRecord> {}
+
+type DS<TRec extends MyRecord | { [key: string]: unknown }> =
+    TRec extends MyRecord ? MySet<TRec> : TRec[];
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Should NOT emit TS2344 for union-constrained type param in conditional type true branch.\nActual: {diagnostics:?}"
+    );
+}
