@@ -622,9 +622,7 @@ impl<'a> CheckerState<'a> {
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
-                    if marker_this_type.is_none()
-                        && self.current_this_type().is_none()
-                    {
+                    if marker_this_type.is_none() && self.current_this_type().is_none() {
                         if let Some(ctx_type) = prev_context {
                             let ctx_type = self.evaluate_contextual_type(ctx_type);
                             self.ctx.this_type_stack.push(ctx_type);
