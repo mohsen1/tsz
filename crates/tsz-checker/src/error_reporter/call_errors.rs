@@ -305,6 +305,17 @@ impl<'a> CheckerState<'a> {
         let Some(loc) = self.get_source_location(idx) else {
             return;
         };
+        // Avoid cascading TS2345 when an excess-property diagnostic (TS2353)
+        // has already been reported within this argument object literal span.
+        let arg_end = loc.start.saturating_add(loc.length());
+        if self.ctx.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                && diag.start >= loc.start
+                && diag.start < arg_end
+        }) {
+            return;
+        }
         let arg_str = self.format_type_for_assignability_message(arg_type);
         let param_str = self.format_type_for_assignability_message(param_type);
         let message = format_message(
