@@ -2532,9 +2532,29 @@ impl Server {
         content: &str,
     ) -> Option<tsz::checker::diagnostics::Diagnostic> {
         let mut line_start = 0u32;
+        let mut enum_brace_depth = 0i32;
         let lines: Vec<String> = content.lines().map(str::to_string).collect();
         for (line_idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
+            if enum_brace_depth == 0
+                && (trimmed.starts_with("enum ")
+                    || trimmed.starts_with("export enum ")
+                    || trimmed.starts_with("export const enum "))
+            {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                if enum_brace_depth <= 0 && trimmed.contains('{') {
+                    enum_brace_depth = 1;
+                }
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+            if enum_brace_depth > 0 {
+                enum_brace_depth += trimmed.chars().filter(|ch| *ch == '{').count() as i32;
+                enum_brace_depth -= trimmed.chars().filter(|ch| *ch == '}').count() as i32;
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
             if trimmed.is_empty()
                 || trimmed.starts_with("const ")
                 || trimmed.starts_with("let ")
