@@ -218,7 +218,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let is_readonly = self.has_readonly_modifier(&prop.modifiers);
+                    let is_readonly = self.has_readonly_modifier(&prop.modifiers)
+                        || self.jsdoc_has_readonly_tag(member_idx);
                     let type_id = if prop.type_annotation.is_some() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(member_idx)

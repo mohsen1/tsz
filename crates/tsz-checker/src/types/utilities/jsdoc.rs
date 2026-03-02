@@ -997,6 +997,44 @@ impl<'a> CheckerState<'a> {
         Some(after_open[..end_idx].trim())
     }
 
+    /// Check if a node has a JSDoc `@readonly` tag.
+    ///
+    /// Returns `true` if the leading JSDoc comment for the given node
+    /// contains `@readonly`. Used for JS files where `readonly` modifier
+    /// is expressed via JSDoc instead of the TypeScript keyword.
+    pub(crate) fn jsdoc_has_readonly_tag(&self, idx: NodeIndex) -> bool {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(jsdoc) = self.try_leading_jsdoc(
+            comments,
+            self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+            source_text,
+        ) else {
+            return false;
+        };
+        Self::jsdoc_contains_tag(&jsdoc, "readonly")
+    }
+
+    /// Check if a JSDoc comment string contains a specific `@tag`.
+    fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
+        let needle = format!("@{tag_name}");
+        for pos_match in jsdoc.match_indices(&needle) {
+            let after = pos_match.0 + needle.len();
+            // Ensure @readonly is not a prefix of another tag (e.g. @readonlyFoo)
+            if after >= jsdoc.len() {
+                return true;
+            }
+            let next_ch = jsdoc[after..].chars().next().unwrap();
+            if !next_ch.is_ascii_alphanumeric() {
+                return true;
+            }
+        }
+        false
+    }
+
     // JSDoc param tag validation, comment finding, and text parsing utilities
     // have been moved to jsdoc_params.rs
 }
