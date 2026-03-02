@@ -1544,9 +1544,24 @@ impl BinderState {
     }
 
     /// Detect expando property assignments of the form `X.prop = value`.
-    /// Only tracks single-level property accesses where `X` is a simple identifier
-    /// bound to a function, class, or variable in `file_locals`.
+    /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
+    /// (`A.B.prop`) so function members on namespaces can collect expandos.
     fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
+        fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right_node = arena.get(access.name_or_argument)?;
+                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+
         let Some(lhs_node) = arena.get(lhs) else {
             return;
         };
@@ -1565,30 +1580,32 @@ impl BinderState {
         };
         let prop_name = name_ident.escaped_text.clone();
 
-        // Check that the object expression is a simple identifier (single-level only)
-        let Some(obj_node) = arena.get(access.expression) else {
+        let Some(obj_key) = property_access_chain(arena, access.expression) else {
             return;
         };
-        if obj_node.kind != SyntaxKind::Identifier as u16 {
+        let root_name = obj_key.split('.').next().unwrap_or_default();
+        if root_name.is_empty() {
             return;
         }
-        let Some(obj_ident) = arena.get_identifier(obj_node) else {
-            return;
-        };
-        let obj_name = &obj_ident.escaped_text;
 
-        // Look up the identifier in file_locals (covers hoisted vars/functions)
-        let Some(sym_id) = self.file_locals.get(obj_name) else {
+        // Look up the root identifier in file_locals (covers hoisted vars/functions/modules)
+        let Some(sym_id) = self.file_locals.get(root_name) else {
             return;
         };
         let Some(symbol) = self.symbols.get(sym_id) else {
             return;
         };
 
-        // Track for functions and classes
-        if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0 {
+        // Track for functions/classes and namespace-like roots.
+        if (symbol.flags
+            & (symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE))
+            != 0
+        {
             self.expando_properties
-                .entry(obj_name.clone())
+                .entry(obj_key.clone())
                 .or_default()
                 .insert(prop_name);
             return;
@@ -1624,7 +1641,7 @@ impl BinderState {
                 || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
             {
                 self.expando_properties
-                    .entry(obj_name.clone())
+                    .entry(obj_key)
                     .or_default()
                     .insert(prop_name);
             }
