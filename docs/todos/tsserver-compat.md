@@ -7,7 +7,7 @@ passes 2,540/2,540, but some commands return empty stubs rather than real result
 ## P0 — Stubbed commands with existing infrastructure to support them
 
 - [x] `implementation` / `implementation-full` — already wired to `GoToImplementationProvider`.
-- [ ] `fileReferences` — returns `{"refs":[],"symbolName":""}`. Should scan project imports to find files that reference a given file.
+- [x] `fileReferences` — wired to `Project::get_file_dependents()` via dependency graph.
 - [x] `linkedEditingRange` — wired to `LinkedEditingProvider` for JSX tag pairs.
 - [x] `getSmartSelectionRange` — wired to `SelectionRangeProvider` (same as `selectionRange`).
 - [x] `projectInfo` — returns real tsconfig/jsconfig path via directory walk + open file list.
