@@ -7,8 +7,8 @@
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -1078,7 +1078,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                if self.ctx.arena.get_identifier_text(import_decl.import_clause) == Some(name) {
+                if self
+                    .ctx
+                    .arena
+                    .get_identifier_text(import_decl.import_clause)
+                    == Some(name)
+                {
                     return true;
                 }
                 continue;
@@ -1090,7 +1095,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if clause.name.is_some() && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
+            if clause.name.is_some()
+                && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
             {
                 return true;
             }
@@ -1119,7 +1125,6 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
-
 }
 
 #[cfg(test)]

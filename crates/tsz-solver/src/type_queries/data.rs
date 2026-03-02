@@ -281,11 +281,12 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
         // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
-        Some(TypeData::Application(_)
+        Some(
+            TypeData::Application(_)
             | TypeData::Mapped(_)
             | TypeData::Conditional(_)
-            | TypeData::Lazy(_)) =>
-        {
+            | TypeData::Lazy(_),
+        ) => {
             // Try evaluating deferred/generic wrappers first so tuple/array shape
             // becomes visible to contextual typing (e.g. conditional true branch
             // reducing to `[A, B, C]`).

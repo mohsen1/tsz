@@ -463,15 +463,15 @@ impl<'a> CheckerState<'a> {
                     // `import M = ...` where one target is value-bearing). Defer to
                     // regular member resolution instead of forcing TS2693/TS2708.
                 } else {
-                if let Some(ns_name) = self.entity_name_text(access.expression) {
-                    self.error_namespace_used_as_value_at(&ns_name, access.expression);
-                    if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
-                        && self.alias_resolves_to_type_only(sym_id)
-                    {
-                        self.error_type_only_value_at(&ns_name, access.expression);
+                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                        if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
+                            && self.alias_resolves_to_type_only(sym_id)
+                        {
+                            self.error_type_only_value_at(&ns_name, access.expression);
+                        }
                     }
-                }
-                return TypeId::ERROR;
+                    return TypeId::ERROR;
                 }
             }
 

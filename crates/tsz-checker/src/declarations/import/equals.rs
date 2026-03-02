@@ -376,57 +376,55 @@ impl<'a> CheckerState<'a> {
                 && let Some(import_sym) = self.ctx.binder.symbols.get(import_sym_id)
             {
                 let has_merged_local_value_decl = import_sym.declarations.iter().any(|&decl_idx| {
-                        if decl_idx == stmt_idx {
-                            return false;
+                    if decl_idx == stmt_idx {
+                        return false;
+                    }
+                    if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
+                        return false;
+                    }
+                    // Scope check: merged namespace blocks have separate ScopeIds
+                    // but share the same container symbol. Compare container
+                    // symbols to allow merged namespaces while excluding
+                    // module augmentations and other unrelated scopes.
+                    let decl_scope = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                        let parent = ext.parent;
+                        if parent.is_some() {
+                            self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                        } else {
+                            self.ctx
+                                .binder
+                                .find_enclosing_scope(self.ctx.arena, decl_idx)
                         }
-                        if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
-                            return false;
-                        }
-                        // Scope check: merged namespace blocks have separate ScopeIds
-                        // but share the same container symbol. Compare container
-                        // symbols to allow merged namespaces while excluding
-                        // module augmentations and other unrelated scopes.
-                        let decl_scope = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
-                            let parent = ext.parent;
-                            if parent.is_some() {
-                                self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
-                            } else {
-                                self.ctx
-                                    .binder
-                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
-                            }
-                        });
-                        let in_same_scope = match (import_scope, decl_scope) {
-                            (Some(a), Some(b)) if a == b => true,
-                            (Some(a), Some(b)) => {
-                                let sym_a =
-                                    self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
-                                        self.ctx.binder.node_symbols.get(&s.container_node.0)
-                                    });
-                                let sym_b =
-                                    self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
-                                        self.ctx.binder.node_symbols.get(&s.container_node.0)
-                                    });
-                                sym_a.is_some() && sym_a == sym_b
-                            }
-                            _ => true,
-                        };
-                        if !in_same_scope {
-                            return false;
-                        }
-                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                            return false;
-                        };
-                        if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                            return false;
-                        }
-                        if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                            && self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx)
-                        {
-                            return false;
-                        }
-                        self.declaration_introduces_runtime_value(decl_idx)
                     });
+                    let in_same_scope = match (import_scope, decl_scope) {
+                        (Some(a), Some(b)) if a == b => true,
+                        (Some(a), Some(b)) => {
+                            let sym_a = self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            let sym_b = self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            sym_a.is_some() && sym_a == sym_b
+                        }
+                        _ => true,
+                    };
+                    if !in_same_scope {
+                        return false;
+                    }
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                        return false;
+                    }
+                    if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        && self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx)
+                    {
+                        return false;
+                    }
+                    self.declaration_introduces_runtime_value(decl_idx)
+                });
 
                 if has_merged_local_value_decl {
                     let message = format_message(
@@ -480,10 +478,9 @@ impl<'a> CheckerState<'a> {
                     // itself. In TypeScript, `namespace A.M { import M = Z.M; }` is allowed - the
                     // import alias `M` shadows the namespace container name `M`.
                     if is_namespace
-                        && sym
-                            .declarations
-                            .iter()
-                            .any(|&decl_idx| self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx))
+                        && sym.declarations.iter().any(|&decl_idx| {
+                            self.declaration_is_enclosing_namespace_of_node(decl_idx, stmt_idx)
+                        })
                     {
                         continue;
                     }
@@ -1264,7 +1261,9 @@ impl<'a> CheckerState<'a> {
             | syntax_kind_ext::ENUM_DECLARATION
             | syntax_kind_ext::VARIABLE_DECLARATION
             | syntax_kind_ext::VARIABLE_STATEMENT => true,
-            syntax_kind_ext::MODULE_DECLARATION => self.is_namespace_declaration_instantiated(decl_idx),
+            syntax_kind_ext::MODULE_DECLARATION => {
+                self.is_namespace_declaration_instantiated(decl_idx)
+            }
             _ => false,
         }
     }

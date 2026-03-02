@@ -355,9 +355,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type =
                         helper.get_tuple_element_type_with_count(index, elem_count);
                 } else {
-                    self.ctx.contextual_type = helper
-                        .get_array_element_type()
-                        .or_else(|| fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN));
+                    self.ctx.contextual_type = helper.get_array_element_type().or_else(|| {
+                        fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
+                    });
                 }
             }
 

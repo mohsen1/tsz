@@ -268,16 +268,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if !s_elems.is_empty()
                         && let Some(keyof_target) =
                             self.find_keyof_inference_target(mapped.constraint, var_map)
-                            && self.constrain_reverse_mapped_tuple(
-                                ctx,
-                                var_map,
-                                &s_elems,
-                                &mapped,
-                                keyof_target,
-                            )
-                        {
-                            return;
-                        }
+                        && self.constrain_reverse_mapped_tuple(
+                            ctx,
+                            var_map,
+                            &s_elems,
+                            &mapped,
+                            keyof_target,
+                        )
+                    {
+                        return;
+                    }
                 }
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
                 if evaluated != target {
