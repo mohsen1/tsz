@@ -239,6 +239,11 @@ impl<'a> CheckerState<'a> {
             // look up the property's expected type from the contextual type and use it
             // as contextual type for the initializer. This enables arrow/function
             // expression initializers to get parameter types from the context.
+            //
+            // Build-type-environment may have already cached this initializer before
+            // class-member `this` context is available, especially for arrow initializers
+            // that reference `this`. Re-check under member context to avoid stale `any`.
+            self.clear_type_cache_recursive(prop.initializer);
             let prev_context = self.ctx.contextual_type;
             if let Some(ctx_type) = self.ctx.contextual_type
                 && let Some(prop_name) = self.get_property_name(prop.name)

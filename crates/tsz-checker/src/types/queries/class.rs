@@ -1242,6 +1242,23 @@ impl<'a> CheckerState<'a> {
                 return Some(cached);
             }
 
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx)
+                && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id)
+            {
+                if instance_type != TypeId::ERROR {
+                    if let Some(info) = self.ctx.enclosing_class.as_mut()
+                        && info.class_idx == class_idx
+                    {
+                        info.cached_instance_this_type = Some(instance_type);
+                    }
+                    return Some(instance_type);
+                }
+                tracing::debug!(
+                    class_sym = sym_id.0,
+                    "class_member_this_type: symbol fallback produced ERROR"
+                );
+            }
+
             // Use the current class type parameters in scope for instance `this`.
             if let Some(node) = self.ctx.arena.get(class_idx)
                 && let Some(class) = self.ctx.arena.get_class(node)

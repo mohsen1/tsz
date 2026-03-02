@@ -88,3 +88,13 @@ fn arrow_in_class_static_property_no_ts7041() {
         7041
     ));
 }
+
+#[test]
+fn arrow_in_class_property_this_is_not_any_for_assignment() {
+    // `this` inside class field arrows should be class-typed, not implicit any.
+    // This should report TS2322 for assigning instance `A` to `number`.
+    assert!(has_error_with_code(
+        "class A { x = 1; f = () => { let n: number = this; }; }",
+        2322
+    ));
+}

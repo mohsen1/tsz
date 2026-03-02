@@ -3,6 +3,38 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9799/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02m — Restore checkJs `this` member typing in contextual owners
+
+### Fixed: over-broad JS dynamic-`this` escape hatch masked real member-type errors
+
+**Area**: checkJs/object-literal member typing (`jsPropertyAssignedAfterMethodDeclaration.ts`)
+
+**Root cause**:
+- In `property_access_type.rs`, when a property lookup failed, JS mode unconditionally returned `any` for `this.prop`.
+- That behavior is too broad: in contextual owners (class/object literal members), TypeScript still type-checks `this` against the owning shape.
+- Result: assignments like `this.a = 0` inside object-literal method `a()` incorrectly skipped TS2322.
+
+**Fix**:
+- Tightened the JS `this` fallback:
+  - keep dynamic `this` only when there is **no** contextual owner,
+  - do **not** bypass checking when `this` is in a class/object member context (`this_has_contextual_owner(...)`).
+- Added regression test coverage for class-field arrow `this` assignment typing in `ts7041_tests.rs`.
+
+**Targeted verification**:
+- `jsPropertyAssignedAfterMethodDeclaration.ts` — PASS (was missing TS2322)
+- Regression smokes still PASS:
+  - `contextualReturnTypeOfIIFE2.ts`
+  - `arrayFrom.ts`
+- Unit tests:
+  - `cargo test -p tsz-checker ts7041_tests`
+
+**Files changed**:
+- `crates/tsz-checker/src/types/property_access_type.rs`
+- `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs`
+- `crates/tsz-checker/src/types/computation/object_literal.rs`
+- `crates/tsz-checker/src/types/queries/class.rs`
+- `crates/tsz-checker/tests/ts7041_tests.rs`
+
 ## Session 2026-03-02l — Fix boolean discriminant narrowing intercepted by boolean comparison handler
 
 ### Fixed: `narrow_by_boolean_comparison()` intercepted discriminant property comparisons with boolean literals

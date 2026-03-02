@@ -678,8 +678,12 @@ impl<'a> CheckerState<'a> {
                         };
 
                     if self.is_js_file() && is_this_access {
-                        // Allow dynamic property on 'this' in JavaScript files
-                        return TypeId::ANY;
+                        // Allow dynamic property on `this` in loose JS contexts, but
+                        // keep checks when `this` is contextually owned by a class/object
+                        // member (checkJs should still enforce member-consistent typing).
+                        if self.this_has_contextual_owner(access.expression).is_none() {
+                            return TypeId::ANY;
+                        }
                     }
 
                     // TS2576: super.member where `member` exists on the base class static side.

@@ -7,7 +7,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     fn contextual_object_literal_property_type(
@@ -621,18 +621,61 @@ impl<'a> CheckerState<'a> {
                     // If no explicit ThisType marker exists, use the object literal's
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
+                    let mut pushed_synthetic_this = false;
                     if marker_this_type.is_none()
                         && self.current_this_type().is_none()
-                        && let Some(ctx_type) = prev_context
                     {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
-                        self.ctx.this_type_stack.push(ctx_type);
-                        pushed_contextual_this = true;
+                        if let Some(ctx_type) = prev_context {
+                            let ctx_type = self.evaluate_contextual_type(ctx_type);
+                            self.ctx.this_type_stack.push(ctx_type);
+                            pushed_contextual_this = true;
+                        } else {
+                            // For non-contextual object literals, model `this` as the
+                            // object-under-construction so assignments like `this.a = ...`
+                            // in method `a()` validate against the method property type.
+                            let mut this_props: Vec<PropertyInfo> =
+                                properties.values().cloned().collect();
+                            let name_atom = self.ctx.types.intern_string(&name);
+                            if !this_props.iter().any(|p| p.name == name_atom) {
+                                let placeholder_method_type =
+                                    self.ctx.types.factory().callable(CallableShape {
+                                        call_signatures: vec![CallSignature {
+                                            type_params: Vec::new(),
+                                            params: Vec::new(),
+                                            this_type: None,
+                                            return_type: TypeId::VOID,
+                                            type_predicate: None,
+                                            is_method: true,
+                                        }],
+                                        construct_signatures: Vec::new(),
+                                        properties: Vec::new(),
+                                        string_index: None,
+                                        number_index: None,
+                                        symbol: None,
+                                        is_abstract: false,
+                                    });
+                                this_props.push(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: placeholder_method_type,
+                                    write_type: placeholder_method_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: true,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                    declaration_order: 0,
+                                });
+                            }
+                            self.ctx
+                                .this_type_stack
+                                .push(self.ctx.types.factory().object(this_props));
+                            pushed_synthetic_this = true;
+                        }
                     }
 
                     let method_type = self.get_type_of_function(elem_idx);
 
-                    if pushed_contextual_this {
+                    if pushed_contextual_this || pushed_synthetic_this {
                         self.ctx.this_type_stack.pop();
                     }
 
