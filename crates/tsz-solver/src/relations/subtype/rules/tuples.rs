@@ -11,7 +11,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::iterators::get_iterator_info;
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
-use crate::visitor::{array_element_type, tuple_list_id};
+use crate::visitor::{array_element_type, is_type_parameter, tuple_list_id};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -72,6 +72,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         break;
                     }
+                    // If the tail element is a rest spread of a type parameter
+                    // (e.g., ...P from [...T, ...P]), a concrete source element
+                    // cannot satisfy it — we need a matching rest in the source.
+                    if tail_elem.rest && is_type_parameter(self.interner, tail_elem.type_id) {
+                        // Look for a matching rest element from the source end
+                        let s_elem = &source[source_end - 1];
+                        if s_elem.rest {
+                            // Source rest element must be subtype of the target
+                            // type parameter's array form
+                            let tp_array = self.interner.array(tail_elem.type_id);
+                            if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
+                                return SubtypeResult::False;
+                            }
+                            source_end -= 1;
+                            continue;
+                        }
+                        // No source rest element — source can't match this variadic
+                        return SubtypeResult::False;
+                    }
                     let s_elem = &source[source_end - 1];
                     if s_elem.rest {
                         if !tail_elem.optional {
@@ -115,12 +134,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 if let Some(variadic) = expansion.variadic {
+                    // When the variadic element is a type parameter (e.g., ...T where
+                    // T extends any[]), concrete source elements cannot match — only
+                    // a source rest element can satisfy the type parameter spread.
+                    // TSC: "Source provides no match for variadic element at position N
+                    //        in target."
+                    let variadic_is_type_param = is_type_parameter(self.interner, variadic);
                     let variadic_array = self.interner.array(variadic);
                     for (_, s_elem) in source_iter {
                         if s_elem.rest {
                             if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
                                 return SubtypeResult::False;
                             }
+                        } else if variadic_is_type_param {
+                            // Concrete element cannot match a type parameter variadic
+                            return SubtypeResult::False;
                         } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
                             return SubtypeResult::False;
                         }

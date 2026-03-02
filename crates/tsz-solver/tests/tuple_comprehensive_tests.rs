@@ -9,7 +9,7 @@
 use super::*;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{TupleElement, TypeData};
+use crate::types::{TupleElement, TypeData, TypeParamInfo};
 
 // =============================================================================
 // Basic Tuple Construction Tests
@@ -606,4 +606,152 @@ fn test_long_tuple() {
     } else {
         panic!("Expected long tuple");
     }
+}
+
+// =============================================================================
+// Variadic Tuple Type Parameter Spread Assignability Tests
+// =============================================================================
+
+/// Concrete tuple [any, any] should NOT be assignable to [...T, ...P]
+/// where T and P are type parameters constrained to any[].
+/// TSC: "Source provides no match for variadic element at position 0 in target."
+#[test]
+fn test_concrete_tuple_not_assignable_to_double_type_param_spread() {
+    let interner = TypeInterner::new();
+
+    // Create type parameters: T extends any[], P extends any[]
+    let any_array = interner.array(TypeId::ANY);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(any_array),
+        default: None,
+        is_const: false,
+    }));
+    let p_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(any_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: [any, any]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Target: [...T, ...P]
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: p_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "[any, any] should NOT be assignable to [...T, ...P] (type params)"
+    );
+}
+
+/// Concrete tuple [any, any] should NOT be assignable to [...T]
+/// where T is a type parameter constrained to any[].
+#[test]
+fn test_concrete_tuple_not_assignable_to_single_type_param_spread() {
+    let interner = TypeInterner::new();
+
+    let any_array = interner.array(TypeId::ANY);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(any_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: [any, any]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Target: [...T]
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "[any, any] should NOT be assignable to [...T] (type param)"
+    );
+}
+
+/// Concrete tuple [any, any] SHOULD be assignable to [...any[]]
+/// (concrete array spread, not a type parameter).
+#[test]
+fn test_concrete_tuple_assignable_to_concrete_array_spread() {
+    let interner = TypeInterner::new();
+
+    // Source: [any, any]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Target: [...any[]] — rest element with any[] (concrete array type)
+    let any_array = interner.array(TypeId::ANY);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: any_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "[any, any] SHOULD be assignable to [...any[]] (concrete spread)"
+    );
 }
