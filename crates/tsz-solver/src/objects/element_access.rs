@@ -144,7 +144,8 @@ impl<'a> ElementAccessEvaluator<'a> {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::Literal(LiteralValue::String(_))
-                | TypeData::Intersection(_),
+                | TypeData::Intersection(_)
+                | TypeData::Mapped(_),
             ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
@@ -198,5 +199,110 @@ impl<'a> ElementAccessEvaluator<'a> {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+    use crate::types::{MappedType, TypeParamInfo};
+    use tsz_common::interner::Atom;
+
+    #[test]
+    fn mapped_type_is_indexable() {
+        let interner = TypeInterner::new();
+
+        // Create a mapped type: { [P in K as `get${P}`]: { a: P } }
+        let type_param = interner.type_param(TypeParamInfo {
+            name: Atom::NONE,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        });
+        let mapped_with_as = interner.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: Atom::NONE,
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+            constraint: type_param,
+            name_type: Some(TypeId::STRING), // has as-clause
+            template: TypeId::STRING,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        assert!(
+            evaluator.is_indexable(mapped_with_as),
+            "Mapped type with as-clause should be indexable"
+        );
+    }
+
+    #[test]
+    fn mapped_type_without_as_clause_is_indexable() {
+        let interner = TypeInterner::new();
+
+        let type_param = interner.type_param(TypeParamInfo {
+            name: Atom::NONE,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        });
+        let mapped_no_as = interner.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: Atom::NONE,
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+            constraint: type_param,
+            name_type: None, // no as-clause
+            template: TypeId::STRING,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        assert!(
+            evaluator.is_indexable(mapped_no_as),
+            "Mapped type without as-clause should be indexable"
+        );
+    }
+
+    #[test]
+    fn union_of_mapped_types_is_indexable() {
+        let interner = TypeInterner::new();
+
+        let type_param = interner.type_param(TypeParamInfo {
+            name: Atom::NONE,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        });
+        let mapped = interner.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: Atom::NONE,
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+            constraint: type_param,
+            name_type: Some(TypeId::STRING),
+            template: TypeId::NUMBER,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+
+        let obj = interner.object(vec![]);
+        let union = interner.union(vec![mapped, obj]);
+
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        assert!(
+            evaluator.is_indexable(union),
+            "Union of mapped type and object should be indexable"
+        );
     }
 }
