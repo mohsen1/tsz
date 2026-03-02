@@ -82,8 +82,7 @@ Available sessions:
   conformance-2      Conformance: targets #2 worst-pass-rate area
   conformance-3      Conformance: targets #3 worst-pass-rate area
   conformance-4      Conformance: targets #4 worst-pass-rate area
-  emit               Conformance: targets #5 worst-pass-rate area
-  lsp                Conformance: targets #6 worst-pass-rate area
+  emit               Emit: JS output + declaration file generation
   architect          Conformance: targets #7 worst-pass-rate area
   perf               Performance benchmarking + optimization
 
