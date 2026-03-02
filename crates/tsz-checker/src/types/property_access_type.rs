@@ -1507,21 +1507,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check if the object expression is an identifier bound to a function/class declaration
-        let Some(expr_node) = self.ctx.arena.get(object_expr_idx) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
-            return false;
-        };
-
-        // Look up the symbol - try file_locals first, then full scope resolution
+        // Resolve object symbol for both simple identifiers and qualified chains.
         let sym_id = self
-            .ctx
-            .binder
-            .file_locals
-            .get(&ident.escaped_text)
-            .or_else(|| self.resolve_identifier_symbol(object_expr_idx));
+            .resolve_identifier_symbol(object_expr_idx)
+            .or_else(|| self.resolve_qualified_symbol(object_expr_idx));
 
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -1529,24 +1518,63 @@ impl<'a> CheckerState<'a> {
             return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
         }
 
+        // Namespace member fallback: allow expando assignment for function-typed
+        // members accessed through namespace/value-module chains (e.g., `app.foo.bar = ...`).
+        // Binder tracks these expandos by chain key, so reads can observe them later.
+        fn root_identifier(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                return root_identifier(arena, access.expression);
+            }
+            None
+        }
+
+        if let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
+            && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
+            && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
+            && (root_symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+                != 0
+        {
+            return true;
+        }
+
         false
     }
 
     /// Check if a property access reads an expando property assigned via `X.prop = value`.
     fn is_expando_property_read(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {
-        let Some(expr_node) = self.ctx.arena.get(object_expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
+        fn property_access_chain(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right_node = arena.get(access.name_or_argument)?;
+                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
         }
-        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+
+        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
             return false;
         };
         self.ctx
             .binder
             .expando_properties
-            .get(&ident.escaped_text)
+            .get(&obj_key)
             .is_some_and(|props| props.contains(property_name))
     }
 

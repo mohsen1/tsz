@@ -3,6 +3,33 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9764/12570 (77.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02k — Expando chain support for namespace member functions
+
+### Fixed: TS2339 on `app.foo.bar` expando assignment/read where `app.foo` is a function member
+
+**Area**: binder expando tracking + checker property access (TS2339 false positives)
+
+**Root cause**:
+- Expando tracking and lookup only handled identifier receivers (`X.prop = ...` / `X.prop`).
+- Dotted receivers like `app.foo.bar = ...` were ignored, so checker reported TS2339 on both write/read despite tsc allowing function-member expandos through namespace chains.
+
+**Fix**:
+1. **Binder** (`detect_expando_assignment`):
+   - Added dotted receiver-chain extraction (`A.B`) for assignment targets.
+   - Store expando properties under full receiver keys (e.g., `app.foo`), not just root identifiers.
+   - Accept namespace/value-module roots in addition to function/class roots.
+2. **Checker** (`property_access_type.rs`):
+   - `is_expando_property_read` now resolves receiver chains and checks binder expando map by chain key.
+   - `is_expando_function_assignment` now resolves qualified receiver symbols and includes namespace-member fallback for function-typed chains.
+
+**Targeted verification**:
+- `contextualReturnTypeOfIIFE2.ts` — PASS (was extra TS2339).
+- `arrayFrom.ts` — still PASS (regression smoke).
+
+**Files changed**:
+- `crates/tsz-binder/src/binding/declaration.rs`
+- `crates/tsz-checker/src/types/property_access_type.rs`
+
 ## Session 2026-03-02j — Fix loop fixed-point widening via ERROR back-edge types + ASSIGNMENT deferral in CONDITION
 
 ### Fixed: Loop fixed-point leaks declared type via ERROR-typed back-edge assignment — Checker (core.rs)
