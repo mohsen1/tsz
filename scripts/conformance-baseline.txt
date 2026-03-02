@@ -472,7 +472,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1728,9 +1727,7 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of32.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of33.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of34.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of35.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
@@ -2076,6 +2073,7 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTagOnObjectProperty2
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkObjectDefineProperty.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkOtherObjectAssignProperty.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/constructorTagOnObjectLiteralMethod.ts
+FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClasses.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassesErr.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassMethod.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionsCjs.ts
@@ -2105,7 +2103,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/importTag4.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAccessibilityTags.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_nameMismatch.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_noExtends.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_notAClass.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugmentsMissingType.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocCatchClauseWithTypeAnnotation.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocDisallowedInTypescript.ts
@@ -2129,7 +2126,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPostfixEqualsAddsOptionality.
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrefixPostfixParsing.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrivateName2.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocReadonly.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTemplateClass.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTemplateConstructorFunction.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTemplateConstructorFunction2.ts
@@ -2527,6 +2523,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -5197,6 +5194,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -9050,6 +9048,7 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of28.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of31.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of36.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of4.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
@@ -9058,7 +9057,6 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of44.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of5.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
@@ -10339,7 +10337,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/constructorTagOnClassConstructor.t
 PASS TypeScript/tests/cases/conformance/jsdoc/constructorTagOnNestedBinaryExpression.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/constructorTagWithThisTag.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassAccessor.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClasses.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassExtendsVisibility.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassImplementsGenericsSerialization.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassLeadingOptional.ts
@@ -10451,6 +10448,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/inferThis.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/instantiateTemplateTagTypeParameterOnVariableStatement.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAccessibilityTagsDeclarations.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_errorInExtendsExpression.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_notAClass.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_qualifiedName.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_withTypeParameter.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocBindingInUnreachableCode.ts
@@ -10480,6 +10478,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseMatchingBackticks.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseParenthesizedJSDocParameter.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseStarEquals.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocPrivateName1.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocReadonly.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocReadonlyDeclarations.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocReturnTag1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocSignatureOnReturnedFunction.ts
@@ -11879,7 +11878,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
