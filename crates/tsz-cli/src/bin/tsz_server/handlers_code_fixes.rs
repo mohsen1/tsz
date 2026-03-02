@@ -116,6 +116,7 @@ impl Server {
             let add_parameter_names_content =
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
+            let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -509,15 +510,14 @@ impl Server {
                 CodeFixRegistry::fixes_for_error_code(*code)
                     .iter()
                     .any(|(_, fix_id, _, _)| *fix_id == "addMissingAwait")
-            }) && let Some((description, updated_content)) =
-                Self::apply_add_missing_await_fallback(&content, false)
+            }) && let Some((description, updated_content)) = add_missing_await_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
-                    Self::compute_minimal_edit(&content, &updated_content)
+                    Self::compute_minimal_edit(&content, updated_content)
             {
                 let start_pos = line_map.offset_to_position(start_off, &content);
                 let end_pos = line_map.offset_to_position(end_off, &content);
                 response_actions.clear();
-                response_actions.push(serde_json::json!({
+                let mut action = serde_json::json!({
                     "fixName": "addMissingAwait",
                     "description": description,
                     "changes": [{
@@ -528,9 +528,13 @@ impl Server {
                             "newText": replacement
                         }]
                     }],
-                    "fixId": "addMissingAwait",
-                    "fixAllDescription": "Fix all expressions possibly missing 'await'",
-                }));
+                });
+                if description != "Add 'await' to initializers" {
+                    action["fixId"] = serde_json::json!("addMissingAwait");
+                    action["fixAllDescription"] =
+                        serde_json::json!("Fix all expressions possibly missing 'await'");
+                }
+                response_actions.push(action);
             }
 
             if error_codes.iter().any(|code| {
@@ -715,6 +719,9 @@ impl Server {
                                     && import_candidates_is_empty
                                 {
                                     return *fix_id == "addMissingConst";
+                                }
+                                if *fix_id == "addMissingAwait" {
+                                    return add_missing_await_preview.is_some();
                                 }
                                 true
                             })
