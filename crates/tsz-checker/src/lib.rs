@@ -270,6 +270,9 @@ mod js_constructor_property_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_satisfies_tests.rs"]
+mod jsdoc_satisfies_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]

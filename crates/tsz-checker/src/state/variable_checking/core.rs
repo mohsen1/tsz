@@ -642,6 +642,31 @@ impl<'a> CheckerState<'a> {
 
             // No type annotation - infer from initializer
             if var_decl.initializer.is_some() {
+                // JSDoc @satisfies on variable declarations: provide contextual type
+                // for the initializer so that object literal methods and arrow function
+                // parameters get contextually typed from the satisfies type.
+                // This mirrors the `satisfies Expr` TypeScript syntax behavior.
+                let satisfies_type = checker.jsdoc_satisfies_annotation_for_node(decl_idx);
+                if let Some(sat_type) = satisfies_type {
+                    let prev_context = checker.ctx.contextual_type;
+                    checker.ctx.contextual_type = Some(sat_type);
+                    checker.clear_type_cache_recursive(var_decl.initializer);
+                    let init_type = checker.get_type_of_node(var_decl.initializer);
+                    checker.ctx.contextual_type = prev_context;
+                    // Check satisfies assignability
+                    checker.ensure_relation_input_ready(init_type);
+                    checker.ensure_relation_input_ready(sat_type);
+                    if !checker.type_contains_error(sat_type) {
+                        let _ = checker.check_satisfies_assignable_or_report(
+                            init_type,
+                            sat_type,
+                            var_decl.initializer,
+                            None,
+                        );
+                    }
+                    return init_type;
+                }
+
                 // Clear cache for closure initializers so TS7006 is properly emitted.
                 // During build_type_environment, closures are typed without contextual info
                 // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate

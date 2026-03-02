@@ -869,6 +869,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Parse an inline object literal type expression: `{ propName: Type, ... }`.
+    ///
+    /// Handles both property syntax (`name: Type`) and method signature syntax
+    /// (`name(params): ReturnType`).
     fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
@@ -885,7 +888,21 @@ impl<'a> CheckerState<'a> {
             if prop_str.is_empty() {
                 continue;
             }
-            // Find the first ':' at top level (property separator)
+
+            // Check for method signature syntax: `name(params): returnType`
+            // Detect by finding `(` at top level BEFORE the first top-level `:`
+            if let Some(paren_idx) = Self::find_top_level_char(prop_str, '(') {
+                let colon_idx = Self::find_top_level_char(prop_str, ':');
+                if (colon_idx.is_none() || paren_idx < colon_idx.unwrap())
+                    && let Some(prop) =
+                        self.parse_jsdoc_method_signature(prop_str, paren_idx, &properties)
+                    {
+                        properties.push(prop);
+                        continue;
+                    }
+            }
+
+            // Regular property syntax: `name: Type`
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
                 let name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
@@ -911,6 +928,139 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(self.ctx.types.factory().object(properties))
+    }
+
+    /// Parse a method signature from a JSDoc inline object type property string.
+    ///
+    /// Handles patterns like:
+    /// - `move(distance: number): void`
+    /// - `f(x: string, y: number): boolean`
+    /// - `name?(): string` (optional method)
+    fn parse_jsdoc_method_signature(
+        &mut self,
+        prop_str: &str,
+        paren_idx: usize,
+        existing_props: &[PropertyInfo],
+    ) -> Option<PropertyInfo> {
+        use tsz_solver::{FunctionShape, ParamInfo};
+
+        let method_name = prop_str[..paren_idx].trim();
+        if method_name.is_empty() {
+            return None;
+        }
+
+        // Handle optional method: `name?(...)`
+        let (method_name, optional) = if let Some(stripped) = method_name.strip_suffix('?') {
+            (stripped.trim(), true)
+        } else {
+            (method_name, false)
+        };
+
+        // Find the matching close paren
+        let after_open = &prop_str[paren_idx + 1..];
+        let mut depth = 1u32;
+        let mut close_idx = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_idx = close_idx?;
+        let params_inner = after_open[..close_idx].trim();
+        let after_close = after_open[close_idx + 1..].trim();
+
+        // Return type follows ':'
+        let return_type = if let Some(rest) = after_close.strip_prefix(':') {
+            let return_type_str = rest.trim();
+            self.jsdoc_type_from_expression(return_type_str)
+                .unwrap_or(TypeId::VOID)
+        } else {
+            TypeId::VOID
+        };
+
+        // Parse parameters
+        let mut params = Vec::new();
+        if !params_inner.is_empty() {
+            for p in Self::split_top_level_params(params_inner) {
+                let p = p.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                let (name, t_str) = if let Some(colon) = p.find(':') {
+                    (Some(p[..colon].trim()), p[colon + 1..].trim())
+                } else {
+                    (None, p)
+                };
+                let p_type = self
+                    .jsdoc_type_from_expression(t_str)
+                    .unwrap_or(TypeId::ANY);
+                let atom = name.map(|n| self.ctx.types.intern_string(n));
+                params.push(ParamInfo {
+                    name: atom,
+                    type_id: p_type,
+                    optional: false,
+                    rest: false,
+                });
+            }
+        }
+
+        let shape = FunctionShape {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        };
+        let method_type = self.ctx.types.factory().function(shape);
+        let name_atom = self.ctx.types.intern_string(method_name);
+
+        Some(PropertyInfo {
+            name: name_atom,
+            type_id: method_type,
+            write_type: method_type,
+            optional,
+            readonly: false,
+            is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: existing_props.len() as u32,
+        })
+    }
+
+    /// Split parameter list by commas at the top level, respecting angle brackets
+    /// and parentheses (for nested generic types like `Map<string, number>`).
+    fn split_top_level_params(s: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                ',' if angle_depth == 0 && paren_depth == 0 => {
+                    parts.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if start < s.len() {
+            parts.push(&s[start..]);
+        }
+        parts
     }
 
     /// Split object literal properties by ',' or ';' at the top level.
@@ -1029,8 +1179,11 @@ impl<'a> CheckerState<'a> {
             let expr = base_type_expr.trim();
             // If base type is explicitly provided and is NOT generic "Object"/"object",
             // TypeScript ignores all @property tags and uses the base type directly.
+            // Use resolve_jsdoc_type_str (not jsdoc_type_from_expression) so that
+            // inline object types like `{ move(distance: number): void }` with method
+            // signatures are handled.
             if expr != "Object" && expr != "object" {
-                return self.jsdoc_type_from_expression(expr);
+                return self.resolve_jsdoc_type_str(expr);
             }
             None
         } else {
