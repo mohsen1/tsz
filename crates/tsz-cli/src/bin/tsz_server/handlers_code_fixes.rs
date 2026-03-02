@@ -160,6 +160,9 @@ impl Server {
             let mut seen_diags = rustc_hash::FxHashSet::default();
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
+            let has_cannot_find_name_diag = diagnostics.iter().any(|d| {
+                d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+            });
 
             let to_lsp_diag =
                 |d: &tsz::checker::diagnostics::Diagnostic| tsz::lsp::diagnostics::LspDiagnostic {
@@ -305,6 +308,14 @@ impl Server {
                     json_obj
                 })
                 .collect();
+            if add_missing_await_preview.is_some() {
+                response_actions.retain(|action| {
+                    action
+                        .get("fixId")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("addMissingConst")
+                });
+            }
 
             if let Some(updated_content) = Self::apply_simple_jsdoc_annotation_fallback(&content)
                 && let Some((start_off, end_off, replacement)) =
@@ -506,17 +517,17 @@ impl Server {
                 }));
             }
 
-            if error_codes.iter().any(|code| {
+            if (error_codes.iter().any(|code| {
                 CodeFixRegistry::fixes_for_error_code(*code)
                     .iter()
                     .any(|(_, fix_id, _, _)| *fix_id == "addMissingAwait")
-            }) && let Some((description, updated_content)) = add_missing_await_preview.as_ref()
+            }) || (error_codes.is_empty() && add_missing_await_preview.is_some()))
+                && let Some((description, updated_content)) = add_missing_await_preview.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
             {
                 let start_pos = line_map.offset_to_position(start_off, &content);
                 let end_pos = line_map.offset_to_position(end_off, &content);
-                response_actions.clear();
                 let mut action = serde_json::json!({
                     "fixName": "addMissingAwait",
                     "description": description,
@@ -534,14 +545,21 @@ impl Server {
                     action["fixAllDescription"] =
                         serde_json::json!("Fix all expressions possibly missing 'await'");
                 }
-                response_actions.push(action);
+                response_actions.retain(|existing| {
+                    existing
+                        .get("fixId")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("addMissingAwait")
+                });
+                response_actions.insert(0, action);
             }
 
             if error_codes.iter().any(|code| {
                     CodeFixRegistry::fixes_for_error_code(*code)
                         .iter()
                         .any(|(_, fix_id, _, _)| *fix_id == "addMissingConst")
-                })
+                } || (error_codes.is_empty() && has_cannot_find_name_diag))
+                && add_missing_await_preview.is_none()
                 && let Some(updated_content) = Self::apply_add_missing_const_fallback(&content)
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, &updated_content)
@@ -927,6 +945,73 @@ impl Server {
             let indent = lines[idx][..indent_len].to_string();
             lines[idx] = format!("{indent}{replacement}");
             return Some(("Add 'await'".to_string(), lines.join("\n")));
+        }
+
+        for idx in 0..lines.len() {
+            let trimmed = lines[idx].trim_start();
+            if !(trimmed.ends_with("();")
+                || (trimmed.starts_with("new ") && trimmed.ends_with(");"))
+                || trimmed.contains("await "))
+            {
+                continue;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("new ") {
+                let ctor = rest.trim_end_matches("();").trim();
+                if ctor
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                    && !ctor.is_empty()
+                {
+                    let indent_len = lines[idx].len().saturating_sub(trimmed.len());
+                    let indent = lines[idx][..indent_len].to_string();
+                    lines[idx] = format!("{indent}new (await {ctor})();");
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+            } else {
+                let callee = trimmed.trim_end_matches("();").trim();
+                if callee
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                    && !callee.is_empty()
+                {
+                    let indent_len = lines[idx].len().saturating_sub(trimmed.len());
+                    let indent = lines[idx][..indent_len].to_string();
+                    lines[idx] = format!("{indent}(await {callee})();");
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+            }
+        }
+
+        for idx in 0..lines.len() {
+            let trimmed = lines[idx].trim_start();
+            if !trimmed.ends_with(");") || trimmed.contains("await ") {
+                continue;
+            }
+            if let Some(open_idx) = trimmed.find('(') {
+                let args = &trimmed[open_idx + 1..trimmed.len() - 2];
+                if let Some(comma_idx) = args.rfind(',') {
+                    let last_arg = args[comma_idx + 1..].trim();
+                    if !last_arg.is_empty()
+                        && last_arg
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                    {
+                        let mut rebuilt = String::new();
+                        rebuilt.push_str(&trimmed[..open_idx + 1]);
+                        rebuilt.push_str(&args[..comma_idx + 1]);
+                        rebuilt.push(' ');
+                        rebuilt.push_str("await ");
+                        rebuilt.push_str(last_arg);
+                        rebuilt.push_str(");");
+
+                        let indent_len = lines[idx].len().saturating_sub(trimmed.len());
+                        let indent = lines[idx][..indent_len].to_string();
+                        lines[idx] = format!("{indent}{rebuilt}");
+                        return Some(("Add 'await'".to_string(), lines.join("\n")));
+                    }
+                }
+            }
         }
 
         None
