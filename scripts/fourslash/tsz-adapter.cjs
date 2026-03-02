@@ -432,7 +432,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
-            this._seenCodeFixesByFile = new Map();
             for (const prop of ["getCombinedCodeFix", "applyCodeActionCommand", "mapCode"]) {
                 if (Object.prototype.hasOwnProperty.call(this._client, prop)) {
                     delete this._client[prop];
@@ -471,11 +470,7 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                         this._client.configure(preferences);
                     }
                     const actions = originalGetCodeFixesAtPosition(file, start, end, errorCodes) || [];
-                    let seenForFile = this._seenCodeFixesByFile.get(file);
-                    if (!seenForFile) {
-                        seenForFile = new Set();
-                        this._seenCodeFixesByFile.set(file, seenForFile);
-                    }
+                    const seenForCall = new Set();
                     const deduped = [];
                     for (const action of actions) {
                         const key = JSON.stringify({
@@ -484,17 +479,9 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                             description: action.description || "",
                             changes: action.changes || [],
                         });
-                        if (seenForFile.has(key)) continue;
-                        seenForFile.add(key);
+                        if (seenForCall.has(key)) continue;
+                        seenForCall.add(key);
                         deduped.push(action);
-                    }
-                    const enumMemberFixes = deduped.filter(
-                        action =>
-                            typeof action.description === "string" &&
-                            action.description.startsWith("Add missing enum member '")
-                    );
-                    if (enumMemberFixes.length > 0) {
-                        return [enumMemberFixes[0]];
                     }
                     return deduped;
                 };

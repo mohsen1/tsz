@@ -117,11 +117,18 @@ impl Server {
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
             let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
-            let add_missing_const_preview = request_span
+            let mut add_missing_const_preview = request_span
                 .and_then(|(start, _)| {
                     Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
                 })
                 .or_else(|| Self::apply_add_missing_const_fallback(&content));
+            if let Some((start, _)) = request_span
+                && Self::add_missing_const_should_skip_for_declared_bindings(
+                    &content, &line_map, start, &binder,
+                )
+            {
+                add_missing_const_preview = None;
+            }
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -898,6 +905,149 @@ impl Server {
         None
     }
 
+    fn find_first_binding_identifier(text: &str) -> Option<(usize, usize, String)> {
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                let next = bytes[i] as char;
+                if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev.is_some_and(|b| {
+                let c = b as char;
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.' | '\'' | '"' | '`')
+            }) {
+                continue;
+            }
+            let ident = text[start..i].to_string();
+            return Some((start, i, ident));
+        }
+        None
+    }
+
+    fn find_all_binding_identifiers(text: &str) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        let mut out = Vec::new();
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                let next = bytes[i] as char;
+                if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev.is_some_and(|b| {
+                let c = b as char;
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.' | '\'' | '"' | '`')
+            }) {
+                continue;
+            }
+            out.push(text[start..i].to_string());
+        }
+        out
+    }
+
+    fn add_missing_const_should_skip_for_declared_bindings(
+        content: &str,
+        line_map: &LineMap,
+        start: tsz::lsp::position::Position,
+        binder: &tsz::binder::BinderState,
+    ) -> bool {
+        let Some(start_off) = line_map.position_to_offset(start, content).map(|o| o as usize) else {
+            return false;
+        };
+        if start_off > content.len() {
+            return false;
+        }
+
+        let line_start = content[..start_off].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = content[start_off..]
+            .find('\n')
+            .map_or(content.len(), |idx| start_off + idx);
+        let Some(line) = content.get(line_start..line_end) else {
+            return false;
+        };
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("for (") || !trimmed.contains('=') {
+            return false;
+        }
+
+        let mut statement = line.trim().to_string();
+        if statement.ends_with(',') {
+            let mut next_start = line_end;
+            while next_start < content.len() {
+                let next_end = content[next_start..]
+                    .find('\n')
+                    .map_or(content.len(), |idx| next_start + idx);
+                let next_line = content[next_start..next_end].trim();
+                if next_line.is_empty() {
+                    next_start = next_end.saturating_add(1);
+                    continue;
+                }
+                if !statement.ends_with(',') {
+                    break;
+                }
+                statement.push(' ');
+                statement.push_str(next_line);
+                next_start = next_end.saturating_add(1);
+            }
+        }
+
+        for part in statement.split(',') {
+            let lhs = part
+                .split_once('=')
+                .map(|(left, _)| left.trim())
+                .unwrap_or_default();
+            if lhs.is_empty() {
+                continue;
+            }
+            for name in Self::find_all_binding_identifiers(lhs) {
+                if binder.file_locals.get(name.as_str()).is_some() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_comma_continuation_line(lines: &[String], idx: usize) -> bool {
+        if idx == 0 {
+            return false;
+        }
+        let mut prev = idx;
+        while prev > 0 {
+            prev -= 1;
+            let trimmed = lines[prev].trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            return trimmed.ends_with(',');
+        }
+        false
+    }
+
     fn add_missing_const_line(line: &str) -> Option<String> {
         let trimmed = line.trim_start();
         if trimmed.is_empty()
@@ -923,6 +1073,13 @@ impl Server {
             ch.is_ascii_alphabetic() || ch == '_' || ch == '$' || ch == '[' || ch == '{'
         });
         if starts_with_target && trimmed.contains('=') {
+            let lhs = trimmed
+                .split_once('=')
+                .map(|(left, _)| left)
+                .unwrap_or(trimmed);
+            if lhs.contains('(') {
+                return None;
+            }
             let indent_len = line.len().saturating_sub(trimmed.len());
             let indent = &line[..indent_len];
             return Some(format!("{indent}const {trimmed}"));
@@ -934,6 +1091,9 @@ impl Server {
     fn apply_add_missing_const_fallback(content: &str) -> Option<String> {
         let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
         for idx in 0..lines.len() {
+            if Self::is_comma_continuation_line(&lines, idx) {
+                continue;
+            }
             if let Some(updated_line) = Self::add_missing_const_line(&lines[idx]) {
                 lines[idx] = updated_line;
                 return Some(lines.join("\n"));
@@ -945,11 +1105,29 @@ impl Server {
     fn apply_add_missing_const_fix_all_fallback(content: &str) -> Option<String> {
         let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
         let mut changed = false;
-        for line in &mut lines {
-            if let Some(updated_line) = Self::add_missing_const_line(line) {
-                *line = updated_line;
-                changed = true;
+        let mut skip_comma_continuation = false;
+        let mut idx = 0usize;
+        while idx < lines.len() {
+            let trimmed = lines[idx].trim();
+            if trimmed.is_empty() {
+                idx += 1;
+                continue;
             }
+            if skip_comma_continuation {
+                if !trimmed.ends_with(',') {
+                    skip_comma_continuation = false;
+                }
+                idx += 1;
+                continue;
+            }
+            if let Some(updated_line) = Self::add_missing_const_line(&lines[idx]) {
+                skip_comma_continuation = lines[idx].trim_end().ends_with(',');
+                lines[idx] = updated_line;
+                changed = true;
+                idx += 1;
+                continue;
+            }
+            idx += 1;
         }
         changed.then(|| lines.join("\n"))
     }
@@ -991,6 +1169,23 @@ impl Server {
             });
             if !starts_with_target || !trimmed.contains('=') {
                 return None;
+            }
+            let lhs = trimmed
+                .split_once('=')
+                .map(|(left, _)| left.trim_end())
+                .unwrap_or(trimmed);
+            if lhs.contains('(') {
+                return None;
+            }
+            let prefix_ws = line.len().saturating_sub(trimmed.len());
+            if let Some((first_rel_start, first_rel_end, _)) =
+                Self::find_first_binding_identifier(lhs)
+            {
+                let abs_first_start = line_start + prefix_ws + first_rel_start;
+                let abs_first_end = line_start + prefix_ws + first_rel_end;
+                if start_off < abs_first_start || start_off > abs_first_end {
+                    return None;
+                }
             }
             line_start + line.len().saturating_sub(trimmed.len())
         };
@@ -1957,6 +2152,50 @@ impl Server {
                 continue;
             }
 
+            if trimmed.starts_with('[') && trimmed.contains('=') {
+                let lhs = trimmed
+                    .split_once('=')
+                    .map(|(left, _)| left)
+                    .unwrap_or(trimmed);
+                let lhs_bytes = lhs.as_bytes();
+                let mut i = 0usize;
+                while i < lhs_bytes.len() {
+                    let ch = lhs_bytes[i] as char;
+                    if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    i += 1;
+                    while i < lhs_bytes.len() {
+                        let next = lhs_bytes[i] as char;
+                        if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let Some(name) = lhs.get(start..i) else {
+                        continue;
+                    };
+                    if binder.file_locals.get(name).is_some() {
+                        continue;
+                    }
+                    if !seen_spans.insert((offset + start, name.len())) {
+                        continue;
+                    }
+                    diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: (offset + start) as u32,
+                        length: name.len() as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
             if let Some((column, name)) = parse_bare_identifier_expression(line)
                 .or_else(|| parse_identifier_call_expression(line))
                 && binder.file_locals.get(name).is_none()
@@ -2198,7 +2437,8 @@ impl Server {
         content: &str,
     ) -> Option<tsz::checker::diagnostics::Diagnostic> {
         let mut line_start = 0u32;
-        for line in content.lines() {
+        let lines: Vec<String> = content.lines().map(str::to_string).collect();
+        for (line_idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
             if trimmed.is_empty()
                 || trimmed.starts_with("const ")
@@ -2213,26 +2453,32 @@ impl Server {
                 continue;
             }
 
+            if Self::is_comma_continuation_line(&lines, line_idx) {
+                line_start = line_start.saturating_add(line.len() as u32 + 1);
+                continue;
+            }
+
             if trimmed.starts_with("for (")
                 && (trimmed.contains(" in ") || trimmed.contains(" of "))
                 && let Some(open_idx) = line.find('(')
             {
                 let after = line[open_idx + 1..].trim_start();
-                let name_len = after
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                    .count();
-                if name_len > 0 {
+                let head_end_rel = after
+                    .find(" in ")
+                    .or_else(|| after.find(" of "))
+                    .unwrap_or(after.len());
+                let head = &after[..head_end_rel];
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(head)
+                {
                     let prefix_ws = line.len().saturating_sub(trimmed.len());
                     let after_ws = line[open_idx + 1..].len().saturating_sub(after.len());
-                    let name_start = prefix_ws + open_idx + 1 + after_ws;
-                    let name = &after[..name_len];
+                    let name_start = prefix_ws + open_idx + 1 + after_ws + name_rel;
                     return Some(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Error,
                         code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
                         file: file_path.to_string(),
                         start: line_start + name_start as u32,
-                        length: name_len as u32,
+                        length: (name_end - name_rel) as u32,
                         message_text: format!("Cannot find name '{name}'."),
                         related_information: Vec::new(),
                     });
@@ -2244,19 +2490,22 @@ impl Server {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$');
             if starts_with_target && trimmed.contains('=') {
-                let name_len = trimmed
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                    .count();
-                if name_len > 0 {
+                let lhs = trimmed
+                    .split_once('=')
+                    .map(|(l, _)| l.trim_end())
+                    .unwrap_or(trimmed);
+                if lhs.contains('(') {
+                    line_start = line_start.saturating_add(line.len() as u32 + 1);
+                    continue;
+                }
+                if let Some((name_rel, name_end, name)) = Self::find_first_binding_identifier(lhs) {
                     let prefix_ws = line.len().saturating_sub(trimmed.len());
-                    let name = &trimmed[..name_len];
                     return Some(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Error,
                         code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
                         file: file_path.to_string(),
-                        start: line_start + prefix_ws as u32,
-                        length: name_len as u32,
+                        start: line_start + (prefix_ws + name_rel) as u32,
+                        length: (name_end - name_rel) as u32,
                         message_text: format!("Cannot find name '{name}'."),
                         related_information: Vec::new(),
                     });
