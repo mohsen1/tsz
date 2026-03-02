@@ -1,7 +1,33 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9774/12569 (77.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9754/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02d — Deep widening of inferred object literal types in inference resolution
+
+### Fixed: Object literals with literal properties not widened during type parameter inference — Solver (inference/infer_resolve.rs)
+
+**Area**: types/mapped (isomorphicMappedTypeInference.ts) + 7 other tests across areas
+
+**Root cause**: TSC calls `getWidenedType()` on resolved inference results in `getInferredType()`, recursively widening literal properties inside object types. For example, when inferring T from `Boxified<T>` given `{ c: false }`, TSC widens the result to `{ c: boolean }`. Similarly, `applySpec({ sum: (a: any) => 3 })` infers `{ sum: number }`, not `{ sum: 3 }`. Our inference resolution only did shallow widening (individual literal candidates), missing the recursive deep widening for object types.
+
+**Fix**: After `best_common_type`, apply `widen_type()` to Object/ObjectWithIndex results when:
+1. `preserve_literals` is false (no const type param, no literal constraint), AND
+2. The inference priority is **not** ReturnType or LowPriority (these indicate contextual typing, where tsc's `RequiresWidening` flag would prevent widening)
+
+The priority guard approximates tsc's `RequiresWidening` flag — `NakedTypeVariable` and `HomomorphicMappedType` candidates come from direct type analysis and need widening, while `ReturnType` candidates come from contextual inference where literals should be preserved.
+
+**Tests**: 4 unit tests in `infer_tests.rs`:
+- `test_deep_widen_object_candidate_homomorphic_mapped` — `{ c: false }` → `{ c: boolean }`
+- `test_deep_widen_object_candidate_naked_type_variable` — `{ sum: 3 }` → `{ sum: number }`
+- `test_no_deep_widen_return_type_priority` — `{ key: "value" }` preserved with ReturnType
+- `test_no_deep_widen_when_constraint_implies_literals` — constraint `"a" | "b"` preserves literal
+
+**Impact**: +8 conformance tests (isomorphicMappedTypeInference, contextualPropertyOfGenericFilteringMappedType, genericCallInferenceConditionalType1, privateNamesConstructorChain-1/2, intersectionTypeInference3, typeParameterAsTypeParameterConstraint, wrappedAndRecursiveConstraints3), 0 real regressions.
+
+**Files changed**:
+- `crates/tsz-solver/src/inference/infer_resolve.rs` — deep widening with priority guard
+- `crates/tsz-solver/tests/infer_tests.rs` — 4 unit tests
 
 ## Session 2026-03-02c — Fix variadic type-parameter tuple assignability in solver
 

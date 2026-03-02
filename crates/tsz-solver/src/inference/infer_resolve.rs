@@ -319,12 +319,32 @@ impl<'a> InferenceContext<'a> {
             self.widen_candidate_types(&filtered_no_never)
         };
         let resolved = self.best_common_type(&widened);
-        // NOTE: Deep-widening of object literal inference results (e.g., { c: false } → { c: boolean })
-        // is not yet implemented. TSC calls getWidenedType() in getInferredType() for this purpose.
-        // Calling widen_type() here or in generic_call.rs creates side-effect types in the interner
-        // that can disrupt inference for other type parameters due to interner ordering sensitivity.
-        // A proper fix requires either: (1) fixing the interner sensitivity, or (2) implementing
-        // RequiresWidening flag propagation like TSC.
+        // Deep-widen the resolved type when it is an object literal containing
+        // fresh literals. TSC calls getWidenedType() in getInferredType() for this.
+        // E.g., { c: false } → { c: boolean }.
+        // Only apply to Object types — simple literals and unions are already handled
+        // by widen_candidate_types above; tuples/arrays are excluded to avoid
+        // over-widening in contexts like `new Map([["", true]])`.
+        // Deep-widen: only for non-contextual inference (NakedTypeVariable,
+        // HomomorphicMappedType, etc). Skip for ReturnType/LowPriority since
+        // those come from contextual typing where literal types should be
+        // preserved (tsc uses RequiresWidening flag for this; we approximate
+        // by checking the inference priority).
+        let highest_priority = filtered_no_never.first().map(|c| c.priority);
+        let is_contextual_inference = matches!(
+            highest_priority,
+            Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
+        );
+        let resolved = if !preserve_literals && !is_contextual_inference {
+            match self.interner.lookup(resolved) {
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
+                    widening::widen_type(self.interner, resolved)
+                }
+                _ => resolved,
+            }
+        } else {
+            resolved
+        };
         if all_from_object_properties
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
         {
