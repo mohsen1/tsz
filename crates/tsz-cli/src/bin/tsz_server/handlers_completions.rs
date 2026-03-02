@@ -23,6 +23,24 @@ impl Server {
             return probes;
         };
         let len = source_text.len() as u32;
+        let bytes = source_text.as_bytes();
+
+        if base_offset < len
+            && bytes[base_offset as usize] == b'.'
+            && base_offset + 2 < len
+            && bytes[(base_offset + 1) as usize] == b'/'
+            && bytes[(base_offset + 2) as usize] == b'*'
+        {
+            for candidate in [base_offset + 1, base_offset + 2, base_offset + 3] {
+                if candidate < len {
+                    let probe = line_map.offset_to_position(candidate, source_text);
+                    if !probes.contains(&probe) {
+                        probes.push(probe);
+                    }
+                }
+            }
+        }
+
         let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, base_offset)
         else {
             return probes;
@@ -106,9 +124,6 @@ impl Server {
                 selected_position = probe_position;
                 selected_result = candidate;
                 selected_score = score;
-            }
-            if selected_score.0 {
-                break;
             }
         }
         (selected_position, selected_result)
@@ -1039,6 +1054,9 @@ impl Server {
                 "end": Self::lsp_to_tsserver_position(end_pos),
             });
         }
+        if item.label.starts_with('"') && item.label.ends_with('"') {
+            entry["defaultCommitCharacters"] = serde_json::json!([",", "."]);
+        }
 
         entry
     }
@@ -1165,13 +1183,20 @@ impl Server {
                 .unwrap_or(false)
                 || (include_class_member_snippets
                     && (!is_member_completion || has_class_member_snippet));
+            let default_commit_characters =
+                (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
 
-            Some(serde_json::json!({
+            let mut response = serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
                 "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
                 "isNewIdentifierLocation": is_new_identifier_location,
                 "entries": entries,
-            }))
+            });
+            if let Some(default_commit_characters) = default_commit_characters {
+                response["defaultCommitCharacters"] = default_commit_characters;
+            }
+
+            Some(response)
         })();
         self.stub_response(
             seq,

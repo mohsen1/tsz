@@ -99,6 +99,13 @@ pub struct CompletionResult {
     /// When true, the editor should not auto-commit completions (the user might
     /// be typing a new name rather than selecting an existing one).
     pub is_new_identifier_location: bool,
+    /// tsserver-style default commit characters for this completion session.
+    /// Omitted in new-identifier locations.
+    #[serde(
+        rename = "defaultCommitCharacters",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_commit_characters: Option<Vec<String>>,
     /// The completion entries.
     pub entries: Vec<CompletionItem>,
 }

@@ -198,6 +198,20 @@ impl Server {
                     parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     parts.push(serde_json::json!({"text": detail, "kind": "keyword"}));
+                } else if !has_annotation
+                    && item.kind != CompletionItemKind::Parameter
+                    && let Some(detail) = item.detail.as_deref()
+                    && !detail.is_empty()
+                    && detail != "var"
+                    && detail != "let"
+                    && detail != "const"
+                {
+                    parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({
+                        "text": detail,
+                        "kind": Self::type_display_kind(detail)
+                    }));
                 }
             }
             CompletionItemKind::Keyword => {
@@ -446,8 +460,100 @@ impl Server {
                     }
                 }
             }
+
+            if Self::is_const_variable_symbol(name, binder, arena)
+                && let Some(name_pos) = text.find(name)
+            {
+                let after_name = &text[name_pos + name.len()..];
+                if let Some(eq_pos) = after_name.find('=') {
+                    let init_text = after_name[eq_pos + 1..]
+                        .split([';', '\n'])
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if let Some(literal_type) = Self::const_literal_type_text(init_text) {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({
+                            "text": literal_type,
+                            "kind": Self::type_display_kind(literal_type)
+                        }));
+                        return true;
+                    }
+                }
+            }
         }
         false
+    }
+
+    fn is_const_variable_symbol(
+        name: &str,
+        binder: &tsz::binder::BinderState,
+        arena: &tsz::parser::node::NodeArena,
+    ) -> bool {
+        use tsz_parser::parser::flags::node_flags;
+        use tsz_parser::syntax_kind_ext;
+
+        let Some(symbol_id) = binder.file_locals.get(name) else {
+            return false;
+        };
+        let Some(sym) = binder.symbols.get(symbol_id) else {
+            return false;
+        };
+        let decl = if sym.value_declaration.is_some() {
+            sym.value_declaration
+        } else if let Some(&first) = sym.declarations.first() {
+            first
+        } else {
+            return false;
+        };
+
+        let mut current = decl;
+        for _ in 0..3 {
+            let Some(ext) = arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            let Some(node) = arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                return (node.flags as u32) & node_flags::CONST != 0;
+            }
+        }
+        false
+    }
+
+    fn const_literal_type_text(init_text: &str) -> Option<&str> {
+        let trimmed = init_text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let bytes = trimmed.as_bytes();
+        if bytes.len() >= 2
+            && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+                || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+        {
+            return Some(trimmed);
+        }
+        if trimmed == "true" || trimmed == "false" {
+            return Some(trimmed);
+        }
+        let mut chars = trimmed.chars();
+        let first = chars.next()?;
+        if first == '-' || first == '+' {
+            if chars.clone().next().is_none() {
+                return None;
+            }
+        }
+        if trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '_' || ch == '.' || ch == '-' || ch == '+')
+            && trimmed.chars().any(|ch| ch.is_ascii_digit())
+        {
+            return Some(trimmed);
+        }
+        None
     }
 
     pub(crate) fn handle_signature_help(
