@@ -10,7 +10,7 @@ use crate::contextual::extractors::{
 };
 #[cfg(test)]
 use crate::types::*;
-use crate::types::{TypeData, TypeId};
+use crate::types::{IntrinsicKind, TypeData, TypeId};
 
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
@@ -75,6 +75,13 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_parameter_type(&self, index: usize) -> Option<TypeId> {
         let expected = self.expected?;
+
+        // `Function` (intrinsic or boxed) is callable with `any` parameters.
+        // Returning `None` here causes false TS7006 for callbacks constrained by
+        // `T extends Function` (e.g. deprecate wrappers).
+        if self.is_function_boxed_or_intrinsic(expected) {
+            return Some(TypeId::ANY);
+        }
 
         // Handle Union explicitly - collect parameter types from callable members.
         // Per TypeScript spec: "If S is not empty and the sets of call signatures of the
@@ -230,6 +237,11 @@ impl<'a> ContextualTypeContext<'a> {
     /// Get the contextual type for a call argument at the given index and arity.
     pub fn get_parameter_type_for_call(&self, index: usize, arg_count: usize) -> Option<TypeId> {
         let expected = self.expected?;
+
+        // `Function` (intrinsic or boxed) accepts arbitrary arguments of type `any`.
+        if self.is_function_boxed_or_intrinsic(expected) {
+            return Some(TypeId::ANY);
+        }
 
         // Handle Union explicitly - collect parameter types from all members
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
@@ -742,13 +754,19 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
                 }
-                // Fallback for unevaluated Application types (e.g. Readonly<T>, Partial<T>).
-                // When evaluation fails (e.g. due to RefCell borrow conflicts during contextual
-                // typing), try to extract the property from the type argument directly.
-                // This is correct for homomorphic mapped types where property types are preserved.
+                // Fallback for unevaluated Application types (e.g. when evaluation is
+                // deferred due unresolved refs or temporary borrow constraints).
+                // Prefer the application base shape first so generic object members
+                // like `AsyncLoaderProps<T>['children']` remain discoverable.
                 let app = self.interner.type_application(app_id);
-                if !app.args.is_empty() {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, app.args[0]);
+                let base_ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+                if let Some(prop) = base_ctx.get_property_type(name) {
+                    return Some(prop);
+                }
+                // Last resort: try the first type argument for homomorphic mapped
+                // wrappers where the source shape is in arg0 (e.g. Readonly<T>).
+                if let Some(&arg0) = app.args.first() {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, arg0);
                     if let Some(prop) = ctx.get_property_type(name) {
                         return Some(prop);
                     }
@@ -922,6 +940,30 @@ impl<'a> ContextualTypeContext<'a> {
             }
             _ => false,
         }
+    }
+
+    fn is_function_boxed_or_intrinsic(&self, type_id: TypeId) -> bool {
+        if matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Intrinsic(IntrinsicKind::Function))
+        ) {
+            return true;
+        }
+        if self
+            .interner
+            .get_boxed_type(IntrinsicKind::Function)
+            .is_some_and(|boxed| boxed == type_id)
+        {
+            return true;
+        }
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(type_id)
+            && self
+                .interner
+                .is_boxed_def_id(def_id, IntrinsicKind::Function)
+        {
+            return true;
+        }
+        false
     }
 
     fn apply_conditional_true_branch_param_substitution(
