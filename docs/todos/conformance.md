@@ -3,6 +3,41 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **9754/12570 (77.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-02e — Fix nested conditional type constraint computation
+
+### Fixed: Nested Extract-like conditional types missing combined constraint — Solver (relations/subtype/rules/conditionals.rs)
+
+**Area**: types/conditional (conditionalTypes2.ts)
+
+**Root cause**: In `get_conditional_constraint()`, for nested conditional types like `Extract2<T, U, V> = T extends U ? (T extends V ? T : never) : never`, the constraint computation failed to combine extends types from outer and inner conditionals. The check at line 154 (`cond.true_type == cond.check_type`) returned false because the true_type was itself a Conditional type, not the bare check_type T. The code fell through to a fallback that used the inner conditional unchanged, losing the outer extends_type constraint.
+
+For example, `Extract2<T, Foo, Bar>` should have constraint `T & Foo & Bar` but was producing a constraint of just `T & Bar` (missing the outer Foo). This caused `fooBar(z)` to be incorrectly rejected at line 73 of conditionalTypes2.ts (false positive TS2345).
+
+**Fix**: Added `get_nested_conditional_constraint()` helper that detects when the true_type is itself a conditional with the same check_type. It recursively computes the inner conditional's constraint, then intersects with the outer extends_type. This correctly combines all extends_type constraints across the nesting chain.
+
+For `T extends U ? (T extends V ? T : never) : never`:
+- Inner constraint: `T & V` (Extract pattern: true_type == check_type)
+- Outer constraint: `(T & V) & U` = `T & U & V`
+
+Supports arbitrary nesting depth (3+ levels).
+
+**Tests**: 3 unit tests in `conditional_comprehensive_tests.rs`:
+- `test_nested_extract_conditional_assignable_to_extends_types` — Extract2<T, U, V> <: U and V
+- `test_nested_extract_conditional_not_assignable_to_unrelated` — Extract2<T, U, V> NOT <: W
+- `test_triple_nested_extract_conditional_constraint` — 3-level nesting T & A & B & C
+
+**Impact**: +11 net conformance tests (9740 → 9751). The fix compounds into areas beyond types/conditional since nested conditional patterns appear in generic call inference and other scenarios.
+
+**Remaining fingerprint issues in types/conditional (4 tests still fail at fingerprint level)**:
+- conditionalTypes1.ts: Assignment narrowing (T from x=y), type alias preservation in messages, NonFunctionProperties missing errors
+- conditionalTypes2.ts: fooBat(x) with Extract<Extract<T, Foo>, Bar> — intersection of conditional with object not properly computing apparent type
+- conditionalTypesExcessProperties.ts: Property ordering in diagnostic messages
+- inferTypes1.ts: "new" vs "abstract new" in constraint display
+
+**Files changed**:
+- `crates/tsz-solver/src/relations/subtype/rules/conditionals.rs` — nested conditional constraint computation
+- `crates/tsz-solver/tests/conditional_comprehensive_tests.rs` — 3 new unit tests
+
 ## Session 2026-03-02d — Deep widening of inferred object literal types in inference resolution
 
 ### Fixed: Object literals with literal properties not widened during type parameter inference — Solver (inference/infer_resolve.rs)
