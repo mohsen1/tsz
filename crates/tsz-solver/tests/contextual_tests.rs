@@ -1163,6 +1163,15 @@ fn test_contextual_generic_function_parameter() {
 }
 
 #[test]
+fn test_contextual_intrinsic_function_parameter_is_any() {
+    let interner = TypeInterner::new();
+    let ctx = ContextualTypeContext::with_expected(&interner, TypeId::FUNCTION);
+
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::ANY));
+    assert_eq!(ctx.get_parameter_type_for_call(2, 3), Some(TypeId::ANY));
+}
+
+#[test]
 fn test_contextual_callable_overload_no_implicit_any_false() {
     // When noImplicitAny is false and signatures have different parameter types,
     // contextual typing returns None (which becomes `any` in the checker)

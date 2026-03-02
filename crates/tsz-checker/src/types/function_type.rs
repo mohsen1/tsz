@@ -204,6 +204,14 @@ impl<'a> CheckerState<'a> {
                 // so contextual parameter typing can extract callable signatures.
                 self.evaluate_contextual_type(ctx_type)
             };
+            // Preserve the original contextual type when evaluation degrades to
+            // UNKNOWN. This keeps unresolved conditional/generic parameter types
+            // (e.g. Exclude<T, E>) available for TS7006 suppression.
+            let evaluated_type = if evaluated_type == TypeId::UNKNOWN {
+                ctx_type
+            } else {
+                evaluated_type
+            };
 
             if suppress_for_incompatible_union {
                 None
