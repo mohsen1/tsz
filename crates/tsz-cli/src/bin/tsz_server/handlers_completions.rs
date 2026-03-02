@@ -120,7 +120,23 @@ impl Server {
                     )
                 })
                 .unwrap_or((false, 0usize));
-            if selected_result.is_none() || score > selected_score {
+            if selected_result.is_none() {
+                selected_position = probe_position;
+                selected_result = candidate;
+                selected_score = score;
+                continue;
+            }
+
+            let selected_is_member = selected_score.0;
+            let candidate_is_member = score.0;
+            let should_replace = if candidate_is_member && !selected_is_member {
+                true
+            } else if candidate_is_member && selected_is_member {
+                score.1 > selected_score.1
+            } else {
+                false
+            };
+            if should_replace {
                 selected_position = probe_position;
                 selected_result = candidate;
                 selected_score = score;
