@@ -1280,7 +1280,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// names from `target` to `prop_access` (e.g. `["type"]`).
     ///
     /// Returns `None` if `target` is not found in the access chain.
-    fn relative_discriminant_path(
+    pub(super) fn relative_discriminant_path(
         &self,
         prop_access: NodeIndex,
         target: NodeIndex,

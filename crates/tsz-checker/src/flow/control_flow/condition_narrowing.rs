@@ -746,6 +746,18 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         };
 
+        // Don't intercept discriminant property comparisons like `x.kind === false`.
+        // These should go through discriminant narrowing (which checks `false <: prop_type`),
+        // not boolean truthiness narrowing (which checks whether prop_type can be falsy).
+        // Only apply boolean comparison for complex guard expressions like
+        // `x instanceof Error === false` or `isString(x) === true`.
+        if self
+            .relative_discriminant_path(guard_expr, target)
+            .is_some()
+        {
+            return None;
+        }
+
         // Determine effective sense:
         // `expr === true` in true branch → narrow as if expr is true
         // `expr === false` in true branch → narrow as if expr is false
