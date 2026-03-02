@@ -298,7 +298,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             use tsz_solver::operations::property::PropertyAccessResult;
-            if let PropertyAccessResult::Success { type_id, .. } = self.resolve_property_access_with_env(props_type, &attr.name) {
+            if let PropertyAccessResult::Success { type_id, .. } =
+                self.resolve_property_access_with_env(props_type, &attr.name)
+            {
                 let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
                 if !self.is_assignable_to(attr.type_id, expected) {
                     return false;
