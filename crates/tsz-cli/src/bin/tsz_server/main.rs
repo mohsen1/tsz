@@ -927,6 +927,20 @@ impl Server {
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
+            "reload" | "reloadProjects" => self.handle_reload(seq, &request),
+            "status" => self.stub_response(
+                seq,
+                &request,
+                Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
+            ),
+            "compileOnSaveAffectedFileList" => {
+                self.stub_response(seq, &request, Some(serde_json::json!([])))
+            }
+            "compileOnSaveEmitFile" => {
+                self.stub_response(seq, &request, Some(serde_json::json!(false)))
+            }
+            "saveto" => self.stub_response(seq, &request, None),
+            "watchChange" => self.stub_response(seq, &request, None),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),

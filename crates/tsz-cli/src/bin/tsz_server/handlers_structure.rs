@@ -441,6 +441,26 @@ impl Server {
         None
     }
 
+    pub(crate) fn handle_reload(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        // Clear caches so next request re-parses everything
+        self.lib_cache.clear();
+        self.unified_lib_cache = None;
+
+        // Re-read open files from disk
+        let paths: Vec<String> = self.open_files.keys().cloned().collect();
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                self.open_files.insert(path.clone(), content);
+            }
+        }
+
+        self.stub_response(seq, request, Some(serde_json::json!(true)))
+    }
+
     pub(crate) fn handle_compiler_options_for_inferred(
         &mut self,
         seq: u64,
