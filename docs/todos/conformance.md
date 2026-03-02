@@ -1,7 +1,51 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9807/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **9809/12570 (78.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-02r — Fix tuple spread argument checking in function calls
+
+### Fixed: Three issues with spread arguments from tuple types in function calls
+
+**Area**: expressions/functionCalls (62.5% → 75.0% pass rate, 9 → 6 failing tests)
+
+**Root cause 1 (optional tuple elements)**: In `call_checker.rs`, when expanding a tuple spread (e.g., `[number, number, number?]`), optional elements were pushed with their raw `type_id` (`number`) without adding `| undefined`. This meant `fn(...nnnu, x)` where `nnnu: [number, number, number?]` didn't flag the optional `number | undefined` against the required `number` parameter.
+
+**Fix 1**: Check `elem.optional` when pushing tuple elements during spread expansion. When true, create a union with `TypeId::UNDEFINED` before pushing. Applied to both direct and nested tuple elements.
+
+**Root cause 2 (TS2554 suppression)**: In `call.rs` and `complex.rs`, the `has_non_tuple_spread` guard checked `n.kind == syntax_kind_ext::SPREAD_ELEMENT` without resolving the spread type. ALL spreads (including fixed-length tuple spreads) were treated as "non-tuple" and TS2554 was suppressed. Tuple spreads have known length, so TS2554 should fire.
+
+**Fix 2**: Resolve spread type and check `tuple_elements(db, spread_type).is_none()` — only suppress TS2554 for actual non-tuple (array) spreads. Also built `build_expanded_args_for_error()` helper that maps each expanded position to its original arg node, so the diagnostic points at the correct excess argument.
+
+**Root cause 3 (TS2556 dedup)**: tsc only emits TS2556 on the first non-tuple spread in a call, but we emitted it on every non-tuple spread (e.g., `fs2_(...s_, ...s_)` got two TS2556 instead of one).
+
+**Fix 3**: Added `emitted_ts2556` flag in the argument collection loop. After the first TS2556 is emitted, subsequent non-tuple spreads skip the error emission.
+
+**Tests**: 4 unit tests in `spread_rest_tests.rs`:
+- `test_optional_tuple_spread_emits_ts2345` — optional element spread vs required param
+- `test_tuple_spread_too_many_args_emits_ts2554` — fixed-length tuple exceeds param count
+- `test_tuple_spread_exact_args_no_error` — exact match produces no error
+- `test_non_tuple_spread_emits_ts2556_only_once` — single TS2556 per call
+
+**Impact**: +2 conformance tests (9807 → 9809), 0 regressions:
+- `callWithSpread3.ts` — all TS2554 now emitted with correct locations, TS2556 deduplicated
+- `callWithSpread5.ts` — optional tuple element TS2345 now detected
+
+**Remaining expressions/functionCalls gaps (6 tests still failing)**:
+- `callWithSpread2.ts` — fingerprint-only (diff=0)
+- `callWithSpread4.ts` — extra TS2345 (false positive from expanded array type matching)
+- `callWithMissingVoid.ts` — fingerprint-only
+- `functionCalls.ts` — fingerprint-only
+- `typeArgumentInference.ts` — extra TS2353 (excess property in generic inference)
+- `typeArgumentInferenceWithConstraints.ts` — missing TS2349, extra TS2353
+
+**Files changed**:
+- `crates/tsz-checker/src/checkers/call_checker.rs` — optional element union, TS2556 dedup
+- `crates/tsz-checker/src/types/computation/call.rs` — tuple-aware has_non_tuple_spread, expanded args, build_expanded_args_for_error
+- `crates/tsz-checker/src/types/computation/complex.rs` — same has_non_tuple_spread + expanded args fix
+- `crates/tsz-checker/tests/spread_rest_tests.rs` — 4 new unit tests
+
+---
 
 ## Session 2026-03-02q — JSDoc method signature parsing and @satisfies contextual typing
 
