@@ -2149,7 +2149,13 @@ pub fn create_binder_from_bound_file(
             merged_module_augmentations
                 .entry(spec.clone())
                 .or_default()
-                .extend(augs.clone());
+                .extend(augs.iter().map(|aug| {
+                    crate::binder::ModuleAugmentation::with_arena(
+                        aug.name.clone(),
+                        aug.node,
+                        Arc::clone(&other_file.arena),
+                    )
+                }));
         }
     }
 
