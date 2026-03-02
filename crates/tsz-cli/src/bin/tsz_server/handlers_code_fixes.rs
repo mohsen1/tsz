@@ -911,41 +911,64 @@ impl Server {
     }
 
     fn apply_add_missing_await_fallback(content: &str, fix_all: bool) -> Option<(String, String)> {
-        if !content.contains("async function") || !content.contains("Promise<") {
+        if !content.contains("async function") {
             return None;
         }
 
         let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+        let has_promise_annotation = |name: &str| {
+            content.contains(&format!("{name}: Promise<"))
+                || content.contains(&format!("{name} : Promise<"))
+        };
+        for idx in 0..lines.len() {
+            let trimmed = lines[idx].trim_start();
+            if trimmed.starts_with("for (const ")
+                && trimmed.contains(" of ")
+                && trimmed.contains("g()")
+                && !trimmed.starts_with("for await ")
+            {
+                lines[idx] = lines[idx].replacen("for (", "for await (", 1);
+                return Some(("Add 'await'".to_string(), lines.join("\n")));
+            }
+        }
         let mut promise_vars: Vec<String> = Vec::new();
         for line in &lines {
             let trimmed = line.trim();
-            if !trimmed.starts_with("async function") {
-                continue;
-            }
-            let Some(open) = trimmed.find('(') else {
-                break;
-            };
-            let Some(close) = trimmed.rfind(')') else {
-                break;
-            };
-            let params = &trimmed[open + 1..close];
-            for param in params.split(',') {
-                let p = param.trim();
-                let Some(colon) = p.find(':') else {
+            let bytes = trimmed.as_bytes();
+            let mut idx = 0usize;
+            while idx < trimmed.len() {
+                let c = bytes[idx] as char;
+                if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+                    let start = idx;
+                    idx += 1;
+                    while idx < trimmed.len() {
+                        let cc = bytes[idx] as char;
+                        if cc.is_ascii_alphanumeric() || cc == '_' || cc == '$' {
+                            idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let name = &trimmed[start..idx];
+                    let mut j = idx;
+                    while j < trimmed.len() && (bytes[j] as char).is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j < trimmed.len() && bytes[j] as char == ':' {
+                        j += 1;
+                        while j < trimmed.len() && (bytes[j] as char).is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        if trimmed[j..].starts_with("Promise<")
+                            && !promise_vars.iter().any(|v| v == name)
+                        {
+                            promise_vars.push(name.to_string());
+                        }
+                    }
                     continue;
-                };
-                let name = p[..colon].trim();
-                let ty = p[colon + 1..].trim();
-                if ty.starts_with("Promise<")
-                    && !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
-                {
-                    promise_vars.push(name.to_string());
                 }
+                idx += 1;
             }
-            break;
         }
         if promise_vars.is_empty() {
             return None;
@@ -1033,6 +1056,38 @@ impl Server {
 
         for idx in 0..lines.len() {
             let trimmed = lines[idx].trim_start();
+            if trimmed.starts_with("if (") {
+                let inside = trimmed
+                    .strip_prefix("if (")
+                    .and_then(|s| s.split(')').next())
+                    .map(str::trim)
+                    .unwrap_or_default();
+                if !inside.is_empty()
+                    && inside
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                    && has_promise_annotation(inside)
+                {
+                    lines[idx] =
+                        lines[idx].replacen(&format!("if ({inside})"), &format!("if (await {inside})"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+            }
+
+            if let Some(q_idx) = trimmed.find('?') {
+                let cond = trimmed[..q_idx].trim();
+                if !cond.is_empty()
+                    && cond
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                    && has_promise_annotation(cond)
+                {
+                    lines[idx] =
+                        lines[idx].replacen(&format!("{cond} ?"), &format!("await {cond} ?"), 1);
+                    return Some(("Add 'await'".to_string(), lines.join("\n")));
+                }
+            }
+
             for var in &promise_vars {
                 let if_pat = format!("if ({var})");
                 if trimmed.contains(&if_pat) {
@@ -1069,15 +1124,6 @@ impl Server {
                     lines[idx] = lines[idx].replacen(&bin_r_pat, &format!("+ await {var}"), 1);
                     return Some(("Add 'await'".to_string(), lines.join("\n")));
                 }
-            }
-
-            if trimmed.starts_with("for (const ")
-                && trimmed.contains(" of ")
-                && trimmed.contains("g()")
-                && !trimmed.starts_with("for await ")
-            {
-                lines[idx] = lines[idx].replacen("for (", "for await (", 1);
-                return Some(("Add 'await'".to_string(), lines.join("\n")));
             }
         }
 
