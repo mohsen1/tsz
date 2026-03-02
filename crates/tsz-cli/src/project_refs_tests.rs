@@ -214,21 +214,186 @@ fn test_transitive_dependencies() {
 }
 
 #[test]
-fn test_validate_composite_requirements() {
-    let config = r#"
-        {
-            "compilerOptions": {
-                "composite": true,
-                "declaration": false
-            }
-        }
-        "#;
-
+fn test_validate_composite_from_compiler_options() {
     let temp = TempDir::new().expect("temp dir creation should succeed in test");
-    let config_path = create_test_project(temp.path(), config);
-    let _project = load_project(&config_path).unwrap();
+    let config_path = create_test_project(
+        temp.path(),
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true }
+        }"#,
+    );
+    let project = load_project(&config_path).unwrap();
+    assert!(
+        project.is_composite,
+        "Project should be detected as composite"
+    );
+}
 
-    // The project claims to be composite but doesn't emit declarations
-    // Our simple check won't catch this because we check the raw source
-    // In a real implementation, we'd parse the compiler options properly
+#[test]
+fn test_non_composite_project() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let config_path = create_test_project(
+        temp.path(),
+        r#"{
+            "compilerOptions": { "target": "ES2020" }
+        }"#,
+    );
+    let project = load_project(&config_path).unwrap();
+    assert!(
+        !project.is_composite,
+        "Project without composite should not be composite"
+    );
+}
+
+#[test]
+fn test_no_emit_project() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let config_path = create_test_project(
+        temp.path(),
+        r#"{
+            "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    let project = load_project(&config_path).unwrap();
+    assert!(
+        project.no_emit,
+        "Project with noEmit should have no_emit=true"
+    );
+}
+
+#[test]
+fn test_validate_ts6306_referenced_project_not_composite() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    // Create a non-composite project (no composite flag)
+    let proj_lib = root.join("lib");
+    std::fs::create_dir_all(&proj_lib).expect("directory creation should succeed in test");
+    create_test_project(
+        &proj_lib,
+        r#"{
+            "compilerOptions": { "target": "ES2020" }
+        }"#,
+    );
+
+    // Create root that references the non-composite project
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "./lib" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let diagnostics = graph.validate();
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 6306),
+        "Should emit TS6306 for non-composite referenced project, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validate_ts6310_referenced_project_no_emit() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    // Create a composite project that disables emit
+    let proj_lib = root.join("lib");
+    std::fs::create_dir_all(&proj_lib).expect("directory creation should succeed in test");
+    create_test_project(
+        &proj_lib,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true, "noEmit": true }
+        }"#,
+    );
+
+    // Create root that references it
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "./lib" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let diagnostics = graph.validate();
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 6310),
+        "Should emit TS6310 for referenced project with noEmit, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validate_no_errors_for_valid_references() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    // Create a valid composite project
+    let proj_lib = root.join("lib");
+    std::fs::create_dir_all(&proj_lib).expect("directory creation should succeed in test");
+    create_test_project(
+        &proj_lib,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true }
+        }"#,
+    );
+
+    // Create root that references it
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [{ "path": "./lib" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let diagnostics = graph.validate();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Should have no validation errors for valid references, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validate_circular_reference_ts6202() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let proj_a = root.join("project-a");
+    std::fs::create_dir_all(&proj_a).expect("directory creation should succeed in test");
+    create_test_project(
+        &proj_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-b" }]
+        }"#,
+    );
+
+    let proj_b = root.join("project-b");
+    std::fs::create_dir_all(&proj_b).expect("directory creation should succeed in test");
+    create_test_project(
+        &proj_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let config_a = proj_a.join("tsconfig.json");
+    let graph = ProjectReferenceGraph::load(&config_a).unwrap();
+    let diagnostics = graph.validate();
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 6202),
+        "Should emit TS6202 for circular reference, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
 }
