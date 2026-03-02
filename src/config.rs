@@ -454,7 +454,8 @@ pub fn resolve_compiler_options(
         resolved.checker.module = kind;
     } else {
         // Match our tsc parity defaults when --module is omitted:
-        // target omitted / ES3 / ES5 -> CommonJS
+        // target omitted -> ESNext
+        // ES3 / ES5 -> CommonJS
         // ES2015..ES2019 -> ES2015
         // ES2020..ES2021 -> ES2020
         // ES2022..ES2025 -> ES2022
@@ -475,7 +476,7 @@ pub fn resolve_compiler_options(
                 ScriptTarget::ESNext => ModuleKind::ESNext,
             }
         } else {
-            ModuleKind::CommonJS
+            ModuleKind::ESNext
         };
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;

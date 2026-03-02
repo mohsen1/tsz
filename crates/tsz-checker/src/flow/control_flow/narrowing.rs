@@ -1203,6 +1203,12 @@ impl<'a> FlowAnalyzer<'a> {
         // 1) enum members,
         // 2) const aliases with literal initializers.
         if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(node)
+                && ident.escaped_text == "undefined"
+            {
+                return Some(TypeId::UNDEFINED);
+            }
+
             if let Some(sym_id) = self.reference_symbol(idx)
                 && let Some(sym) = self.binder.get_symbol(sym_id)
                 && (sym.flags & symbol_flags::ENUM_MEMBER) != 0
