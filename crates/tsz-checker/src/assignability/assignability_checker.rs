@@ -969,6 +969,22 @@ impl<'a> CheckerState<'a> {
         if self.should_skip_weak_union_error(source, target, arg_idx) {
             return true;
         }
+        // Conditional/generic callback contexts can narrow argument callback parameter
+        // types to intersections involving type parameters (e.g. `number & T`).
+        // In these cases, strict contravariant checking reports TS2345 even when the
+        // concrete expected callback type is assignable to the narrowed callback.
+        // tsc defers this mismatch.
+        if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+            && !crate::query_boundaries::assignability::contains_type_parameters(
+                self.ctx.types,
+                target,
+            )
+            && tsz_solver::type_queries::is_callable_type(self.ctx.types, source)
+            && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
+            && self.ctx.types.is_assignable_to(target, source)
+        {
+            return true;
+        }
         self.error_argument_not_assignable_at(source, target, arg_idx);
         false
     }
