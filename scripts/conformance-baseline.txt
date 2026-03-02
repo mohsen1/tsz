@@ -473,6 +473,8 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1593,7 +1595,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIIFE.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrors.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrorsAsync.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts
-FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowParameter.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowWhileStatement.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/definiteAssignmentAssertions.ts
@@ -1950,7 +1951,6 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/chained.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/chained2.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular1.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular3.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/computedPropertyName.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/enums.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace10.ts
@@ -1961,10 +1961,7 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace9.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportSpecifiers.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/extendsClause.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/filterNamespace_import.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/generic.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_default.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_namedImports.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_namespaceImport.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals1.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importsNotUsedAsValues_error.ts
@@ -2250,7 +2247,6 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/conditionalExportsResol
 FAIL TypeScript/tests/cases/conformance/moduleResolution/conditionalExportsResolutionFallbackNull.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/importFromDot.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/nestedPackageJsonRedirect.ts
-FAIL TypeScript/tests/cases/conformance/moduleResolution/resolutionModeCache.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/resolutionModeTypeOnlyImport1.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/selfNameModuleAugmentation.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny_relativePath.ts
@@ -5191,8 +5187,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -10106,6 +10100,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/ambient.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/cjsImportInES2015.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/computedPropertyName.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_missingBraces.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_moduleSpecifier-isolatedModules.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_moduleSpecifier.ts
@@ -10119,8 +10114,11 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace6.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace7.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportSpecifiers_js.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/filterNamespace_import.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/grammarErrors.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/implementsClause.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_default.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_namedImports.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType2.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType3.ts
@@ -10684,6 +10682,7 @@ PASS TypeScript/tests/cases/conformance/moduleResolution/packageJsonExportsOptio
 PASS TypeScript/tests/cases/conformance/moduleResolution/packageJsonImportsExportsOptionCompat.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/packageJsonMain_isNonRecursive.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/packageJsonMain.ts
+PASS TypeScript/tests/cases/conformance/moduleResolution/resolutionModeCache.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/resolutionModeImportType1.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/resolutionModeTripleSlash1.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/resolutionModeTripleSlash2.ts
