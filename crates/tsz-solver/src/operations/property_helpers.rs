@@ -790,10 +790,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // For fixed-length tuples, .length returns a literal numeric type (e.g., 2 for [string, number])
         // instead of the generic `number` from the Array<T> interface.
         if prop_name == "length"
-            && let Some(len) = self.compute_tuple_fixed_length(array_type) {
-                let literal = self.interner().literal_number(len as f64);
-                return PropertyAccessResult::simple(literal);
-            }
+            && let Some(len) = self.compute_tuple_fixed_length(array_type)
+        {
+            let literal = self.interner().literal_number(len as f64);
+            return PropertyAccessResult::simple(literal);
+        }
 
         let element_type = self.array_element_type(array_type);
 
