@@ -18,6 +18,25 @@ use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Returns `true` if a property name needs to be quoted in type display
+/// (i.e. it is not a valid JS identifier or numeric literal).
+fn needs_property_name_quotes(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    // Numeric property names don't need quotes
+    if name.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
+            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        }
+        _ => true,
+    }
+}
+
 /// Context for generating type strings.
 pub struct TypeFormatter<'a> {
     interner: &'a dyn TypeDatabase,
@@ -430,7 +449,12 @@ impl<'a> TypeFormatter<'a> {
     fn format_property(&mut self, prop: &PropertyInfo) -> String {
         let optional = if prop.optional { "?" } else { "" };
         let readonly = if prop.readonly { "readonly " } else { "" };
-        let name = self.atom(prop.name);
+        let raw_name = self.atom(prop.name);
+        let name = if needs_property_name_quotes(&raw_name) {
+            format!("\"{raw_name}\"")
+        } else {
+            raw_name.to_string()
+        };
 
         // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`
         if prop.is_method
@@ -821,6 +845,18 @@ impl<'a> TypeFormatter<'a> {
         if let Some(sym_id) = shape.symbol
             && let Some(name) = self.format_symbol_name(sym_id)
         {
+            // Namespace/module value types are displayed as `typeof Name` by tsc.
+            if let Some(arena) = self.symbol_arena
+                && let Some(sym) = arena.get(sym_id)
+            {
+                use tsz_binder::symbol_flags;
+                let is_namespace =
+                    sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+                let is_class = sym.has_flags(symbol_flags::CLASS);
+                if is_namespace && !is_class {
+                    return Some(format!("typeof {name}"));
+                }
+            }
             return Some(name);
         }
         // Fall back to def-store structural lookup for type aliases and lib interfaces.
@@ -936,5 +972,47 @@ mod tests {
         let result = fmt.format(union_id);
         // Union members are sorted by tsc's type creation order (string=8, number=9)
         assert_eq!(result, "string | number");
+    }
+
+    #[test]
+    fn needs_property_name_quotes_basic() {
+        // Valid identifiers: no quotes needed
+        assert!(!super::needs_property_name_quotes("foo"));
+        assert!(!super::needs_property_name_quotes("_private"));
+        assert!(!super::needs_property_name_quotes("$jquery"));
+        assert!(!super::needs_property_name_quotes("camelCase"));
+        assert!(!super::needs_property_name_quotes("PascalCase"));
+        assert!(!super::needs_property_name_quotes("x"));
+
+        // Numeric: no quotes needed
+        assert!(!super::needs_property_name_quotes("0"));
+        assert!(!super::needs_property_name_quotes("42"));
+
+        // Names with hyphens/spaces/etc: quotes needed
+        assert!(super::needs_property_name_quotes("data-prop"));
+        assert!(super::needs_property_name_quotes("aria-label"));
+        assert!(super::needs_property_name_quotes("my name"));
+        assert!(super::needs_property_name_quotes(""));
+    }
+
+    #[test]
+    fn object_type_with_hyphenated_property_quoted() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("data-prop");
+        let prop = PropertyInfo {
+            name,
+            type_id: TypeId::BOOLEAN_TRUE,
+            write_type: TypeId::BOOLEAN_TRUE,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: crate::types::Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        };
+        let obj = db.object(vec![prop]);
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(obj);
+        assert_eq!(result, "{ \"data-prop\": true; }");
     }
 }

@@ -123,6 +123,33 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // For namespace/module value types (e.g., `namespace M { ... }`), tsc displays
+            // "typeof NamespaceName" for the type in the error message.
+            if let Some(name) = self.get_namespace_typeof_name(type_id) {
+                let type_str = format!("typeof {name}");
+                let (code, message) = if let Some(ref suggestion) = suggestion {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                        format!(
+                            "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                        ),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                    )
+                };
+                self.ctx.push_diagnostic(Diagnostic::error(
+                    &self.ctx.file_name,
+                    loc.start,
+                    loc.length(),
+                    message,
+                    code,
+                ));
+                return;
+            }
+
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
@@ -475,5 +502,32 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Get the display name for a namespace/module value type, if applicable.
+    /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
+    fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
+        use tsz_binder::{SymbolId, symbol_flags};
+        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+
+        let kind = classify_namespace_member(self.ctx.types, type_id);
+        let sym_id = match kind {
+            NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            NamespaceMemberKind::Callable(shape_id) => {
+                // Callable with namespace flags (class+namespace merges etc.)
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.symbol?
+            }
+            _ => return None,
+        };
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // Only namespace/module types (not enums, which are handled separately)
+        if (symbol.flags & symbol_flags::MODULE) != 0 && (symbol.flags & symbol_flags::ENUM) == 0 {
+            Some(symbol.escaped_name.clone())
+        } else {
+            None
+        }
     }
 }
