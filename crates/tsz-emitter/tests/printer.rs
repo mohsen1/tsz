@@ -238,7 +238,7 @@ fn test_commonjs_type_only_named_import_is_elided() {
 
 #[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
-    let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\n";
+    let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -253,8 +253,14 @@ fn test_commonjs_module_temp_vars_do_not_collide() {
     )
     .code;
 
-    assert!(output.contains("foo_1 = require(\"./foo\");"));
-    assert!(output.contains("foo_2 = require(\"../foo\");"));
+    assert!(
+        output.contains("foo_1 = require(\"./foo\");"),
+        "expected foo_1, got:\n{output}"
+    );
+    assert!(
+        output.contains("foo_2 = require(\"../foo\");"),
+        "expected foo_2, got:\n{output}"
+    );
 }
 
 #[test]

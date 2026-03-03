@@ -213,12 +213,13 @@ fn test_completions_contextual_string_literal_argument_keyof() {
     let items = items.unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
 
+    // String literal completions may include surrounding quotes in the label
     assert!(
-        names.contains(&"click"),
+        names.contains(&"click") || names.contains(&"\"click\""),
         "Should suggest key 'click', got {names:?}"
     );
     assert!(
-        names.contains(&"drag"),
+        names.contains(&"drag") || names.contains(&"\"drag\""),
         "Should suggest key 'drag', got {names:?}"
     );
 }

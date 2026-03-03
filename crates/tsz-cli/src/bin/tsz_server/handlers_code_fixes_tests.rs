@@ -35,6 +35,7 @@ fn make_server() -> Server {
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
+        plugin_configs: FxHashMap::default(),
     }
 }
 

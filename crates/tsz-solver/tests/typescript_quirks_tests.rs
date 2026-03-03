@@ -549,10 +549,11 @@ fn test_nothing_is_subtype_of_never_except_never() {
         "string should NOT be subtype of never"
     );
 
-    // `any` is compatible with everything including `never` (TypeScript quirk)
+    // tsc rule: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never)`
+    // Even `any` is NOT assignable to `never` in tsc's own check.
     assert!(
-        checker.is_subtype_of(TypeId::ANY, TypeId::NEVER),
-        "any SHOULD be subtype of never (any is universally compatible)"
+        !checker.is_subtype_of(TypeId::ANY, TypeId::NEVER),
+        "any should NOT be subtype of never (tsc rejects any -> never)"
     );
 }
 

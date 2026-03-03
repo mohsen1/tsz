@@ -1407,7 +1407,8 @@ impl<'a> CheckerState<'a> {
                             && class_member_type != TypeId::ANY
                             && interface_member_type != TypeId::ERROR
                             && class_member_type != TypeId::ERROR
-                            && self.should_report_assignability_mismatch(
+                            && should_report_member_type_mismatch(
+                                self,
                                 class_member_type,
                                 interface_member_type,
                                 class_idx,

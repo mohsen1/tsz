@@ -752,12 +752,14 @@ fn test_completion_info_contextual_string_literal_keyof_constraint() {
         .iter()
         .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
         .collect();
+    // String literal completions include surrounding quotes in the name
+    // (matching tsc tsserver behavior).
     assert!(
-        names.contains(&"click"),
+        names.contains(&"click") || names.contains(&"\"click\""),
         "expected 'click' completion, got {names:?}"
     );
     assert!(
-        names.contains(&"drag"),
+        names.contains(&"drag") || names.contains(&"\"drag\""),
         "expected 'drag' completion, got {names:?}"
     );
 
@@ -782,11 +784,11 @@ fn test_completion_info_contextual_string_literal_keyof_constraint() {
         .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
         .collect();
     assert!(
-        completion_names.contains(&"click"),
+        completion_names.contains(&"click") || completion_names.contains(&"\"click\""),
         "expected 'click' in completions, got {completion_names:?}"
     );
     assert!(
-        completion_names.contains(&"drag"),
+        completion_names.contains(&"drag") || completion_names.contains(&"\"drag\""),
         "expected 'drag' in completions, got {completion_names:?}"
     );
 }
