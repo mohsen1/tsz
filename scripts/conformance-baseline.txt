@@ -745,7 +745,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.tsx
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
@@ -2415,7 +2414,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -8342,7 +8340,6 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowInstanceOfGuardPr
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNullishCoalesce.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain2.ts
-PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowStringIndex.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowSuperPropertyAccess.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowTruthiness.ts
@@ -11827,6 +11824,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionsAndEmpty
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
