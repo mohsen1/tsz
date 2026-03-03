@@ -582,15 +582,15 @@ impl<'a> CheckerState<'a> {
         // This covers JS files where return types are specified via JSDoc instead of syntax.
         if type_predicate.is_none()
             && let Some(predicate) = self.extract_jsdoc_return_type_predicate(&func_jsdoc, &params)
-            {
-                let is_asserts = predicate.asserts;
-                return_type = if is_asserts {
-                    TypeId::VOID
-                } else {
-                    TypeId::BOOLEAN
-                };
-                type_predicate = Some(predicate);
-            }
+        {
+            let is_asserts = predicate.asserts;
+            return_type = if is_asserts {
+                TypeId::VOID
+            } else {
+                TypeId::BOOLEAN
+            };
+            type_predicate = Some(predicate);
+        }
 
         // Save the annotated return type before evaluation. evaluate_application_type()
         // expands Application types (like Promise<string>) into concrete object shapes,
