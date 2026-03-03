@@ -78,7 +78,10 @@ impl<'a> Printer<'a> {
 
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output — tsc keeps them in JS emit for most cases.
-        // Only AMD-specific directives (/// <amd ...) are stripped.
+        // `/// <amd-dependency .../>` directives are emitted before define() via
+        // extract_amd_dependencies() and must not appear in all_comments to avoid
+        // duplication. However, `/// <amd-module name="..."/>` directives MUST
+        // be kept so they appear inside the AMD wrapper body (matching tsc behavior).
         // When inside a module wrapper (AMD/UMD/System), `/// <reference` directives
         // are also stripped because they were already emitted before the wrapper.
         // Store on self so nested blocks can also distribute comments.
@@ -89,7 +92,10 @@ impl<'a> Printer<'a> {
                     .into_iter()
                     .filter(|c| {
                         let content = c.get_text(text);
-                        if content.starts_with("/// <amd") {
+                        // Only suppress amd-dependency directives (already emitted
+                        // before define()). Keep amd-module so it appears inside
+                        // the wrapper body matching tsc behavior.
+                        if content.contains("<amd-dependency") {
                             return false;
                         }
                         // When inside a module wrapper, reference directives were
@@ -122,10 +128,18 @@ impl<'a> Printer<'a> {
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_erased_end: Option<u32> = None;
-            for &stmt_idx in &source.statements.nodes {
+            let stmt_nodes = &source.statements.nodes;
+            for (stmt_i, &stmt_idx) in stmt_nodes.iter().enumerate() {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let stmt_token_end =
-                        self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    // Cap the end at the next statement's pos to prevent
+                    // find_token_end_before_trivia from scanning into the next
+                    // statement's territory (our parser can set node.end past
+                    // the current statement's actual last token for ASI cases).
+                    let scan_end = stmt_nodes
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map_or(stmt_node.end, |next_node| next_node.pos);
+                    let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
                     // Check if statement is erased in JS emit (type-only, ambient, etc.)
                     let mut is_erased = self.is_erased_statement(stmt_node);
                     // Also check if it's an export declaration wrapping an erased declaration
@@ -359,7 +373,8 @@ impl<'a> Printer<'a> {
                     let comment_text =
                         crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     let trimmed_comment = comment_text.trim_start();
-                    let is_triple_slash_reference = trimmed_comment.starts_with("///<reference");
+                    let is_triple_slash_reference = trimmed_comment.starts_with("///<reference")
+                        || trimmed_comment.starts_with("/// <reference");
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
 
                     // Auto-accessor class declarations emit comments themselves right
@@ -376,11 +391,13 @@ impl<'a> Printer<'a> {
                     // Skip comments that are directly attached to an erased first
                     // statement (no blank line between comment and declaration).
                     // Detached comments (separated by blank line) are preserved.
+                    // Exception: `/// <reference` directives are always preserved
+                    // (they are file-level directives, not attached to any declaration).
                     if let Some(erased_pos) = first_erased_stmt_pos {
                         let between = &text[c_end as usize..erased_pos as usize];
                         let has_blank_line =
                             between.contains("\n\n") || between.contains("\r\n\r\n");
-                        if !has_blank_line {
+                        if !has_blank_line && !is_triple_slash_reference {
                             self.comment_emit_idx += 1;
                             continue;
                         }
@@ -414,9 +431,13 @@ impl<'a> Printer<'a> {
                     let is_detached =
                         between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
-                    let is_triple_slash_reference = trimmed_comment.starts_with("///<reference");
+                    // Use the original narrow `///<reference` (no space) check
+                    // for the CJS deferral decision. Detached `/// <reference`
+                    // (with space) must follow the normal detached logic so they
+                    // appear BEFORE `__esModule`, matching tsc behavior.
+                    let is_triple_slash_no_space = trimmed_comment.starts_with("///<reference");
                     if is_commonjs
-                        && (is_triple_slash_reference || (!is_detached && !is_amd_dependency))
+                        && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency))
                     {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
@@ -512,11 +533,12 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             // Emit function exports: exports.compile = compile;
-            for name in &func_exports {
+            // For aliased exports (export { bar as baz }), emit: exports.baz = bar;
+            for (exported_name, local_name) in &func_exports {
                 self.write("exports.");
-                self.write(name);
+                self.write(exported_name);
                 self.write(" = ");
-                self.write(name);
+                self.write(local_name);
                 self.write(";");
                 self.write_line();
             }
@@ -706,8 +728,15 @@ impl<'a> Printer<'a> {
                 // We use the end-of-line of the last token as the boundary:
                 //   - Comments on the same line as the last token → consume (erase)
                 //   - Comments on subsequent lines → keep for the next statement
-                let stmt_token_end =
-                    self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                // Cap the scan end at the next statement's pos to avoid scanning
+                // into subsequent statements (same fix as initialization phase).
+                let scan_end = source
+                    .statements
+                    .nodes
+                    .get(stmt_i + 1)
+                    .and_then(|&next_idx| self.arena.get(next_idx))
+                    .map_or(stmt_node.end, |next_node| next_node.pos);
+                let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
                 let line_end = if let Some(text) = self.source_text {
                     let bytes = text.as_bytes();
                     let mut pos = stmt_token_end as usize;

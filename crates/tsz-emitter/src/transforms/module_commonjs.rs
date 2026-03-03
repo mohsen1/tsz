@@ -267,14 +267,17 @@ pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
-) -> (Vec<String>, Vec<String>, Option<String>) {
-    let mut func_exports = Vec::new();
+) -> (Vec<(String, String)>, Vec<String>, Option<String>) {
+    let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
     let mut default_func_export: Option<String> = None;
     let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
 
     // First pass: collect all function declaration names in the file (including
-    // non-exported ones) so we can resolve `export { f }` specifiers.
+    // non-exported ones and `declare function` names) so we can resolve
+    // `export { f }` specifiers. `declare function` names are included because
+    // tsc treats them as hoisted (no `void 0` initialization) — the runtime
+    // binding is expected to exist via ambient declaration.
     let mut func_decl_names: Vec<String> = Vec::new();
     for &stmt_idx in statements {
         let Some(node) = arena.get(stmt_idx) else {
@@ -282,7 +285,6 @@ pub fn collect_export_names_categorized(
         };
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(node)
-            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
             && let Some(name) = get_identifier_text(arena, func.name)
             && !func_decl_names.contains(&name)
         {
@@ -304,9 +306,9 @@ pub fn collect_export_names_categorized(
                 && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                 && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                 && let Some(name) = get_identifier_text(arena, func.name)
-                && !func_exports.contains(&name)
+                && !func_exports.iter().any(|(e, _)| e == &name)
             {
-                func_exports.push(name);
+                func_exports.push((name.clone(), name));
             }
         }
         // Wrapped: ExportDeclaration { clause: FunctionDeclaration }
@@ -320,9 +322,9 @@ pub fn collect_export_names_categorized(
             && let Some(func) = arena.get_function(clause_node)
             && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
             && let Some(name) = get_identifier_text(arena, func.name)
-            && !func_exports.contains(&name)
+            && !func_exports.iter().any(|(e, _)| e == &name)
         {
-            func_exports.push(name);
+            func_exports.push((name.clone(), name));
         }
         // Default function export: export default function func() {}
         // tsc hoists `exports.default = func;` to the preamble, just like
@@ -364,9 +366,9 @@ pub fn collect_export_names_categorized(
                     let exported_name = get_identifier_text(arena, spec.name);
                     if let (Some(local), Some(exported)) = (local_name, exported_name)
                         && func_decl_names.contains(&local)
-                        && !func_exports.contains(&exported)
+                        && !func_exports.iter().any(|(e, _)| e == &exported)
                     {
-                        func_exports.push(exported);
+                        func_exports.push((exported, local));
                     }
                 }
             }
@@ -374,7 +376,7 @@ pub fn collect_export_names_categorized(
     }
 
     for name in all {
-        if !func_exports.contains(&name) {
+        if !func_exports.iter().any(|(e, _)| e == &name) {
             other_exports.push(name);
         }
     }

@@ -225,6 +225,10 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("});");
+        // Add a trailing newline so that when multiple AMD modules are
+        // concatenated (outFile mode), each define() block is properly
+        // separated on its own line. This matches tsc behavior.
+        self.write_line();
         if restore_decorate_helper {
             self.transforms.helpers_mut().decorate = true;
         }

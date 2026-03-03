@@ -757,10 +757,31 @@ impl<'a> Printer<'a> {
                 self.emit_inline_object_props(props);
             }
             Some(Seg::Spread(spread_idx)) => {
-                // Starts with spread: seed is {}
-                self.write("Object.assign({}, ");
-                self.emit_spread_expression_node(*spread_idx);
-                self.write(")");
+                // When the spread expression is an object literal, tsc optimizes
+                // away the empty `{}` seed: `{ ...{x: 0} }` → `Object.assign({x: 0})`
+                // instead of `Object.assign({}, {x: 0})`.
+                let spread_is_literal = self.arena.get(*spread_idx).is_some_and(|n| {
+                    self.arena
+                        .get_spread(n)
+                        .and_then(|s| self.arena.get(s.expression))
+                        .is_some_and(|e| e.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                });
+                if spread_is_literal {
+                    if segs.len() == 1 {
+                        // Single spread of literal: Object.assign(expr)
+                        self.write("Object.assign(");
+                        self.emit_spread_expression_node(*spread_idx);
+                        self.write(")");
+                    } else {
+                        // Multiple segments, literal first: use expr as seed
+                        self.emit_spread_expression_node(*spread_idx);
+                    }
+                } else {
+                    // Non-literal spread: seed is {}
+                    self.write("Object.assign({}, ");
+                    self.emit_spread_expression_node(*spread_idx);
+                    self.write(")");
+                }
             }
             None => {
                 self.write("{}");

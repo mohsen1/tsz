@@ -21,6 +21,7 @@ impl<'a> Printer<'a> {
         if import.import_clause.is_none() {
             self.write("import ");
             self.emit(import.module_specifier);
+            self.emit_import_attributes(import.attributes);
             self.write_semicolon();
             return;
         }
@@ -94,6 +95,7 @@ impl<'a> Printer<'a> {
 
         self.write(" from ");
         self.emit(import.module_specifier);
+        self.emit_import_attributes(import.attributes);
         self.write_semicolon();
     }
 
@@ -637,6 +639,38 @@ impl<'a> Printer<'a> {
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &imports.elements.nodes);
         if has_trailing_comma {
             self.write(",");
+        }
+        self.write(" }");
+    }
+
+    /// Emit import attributes (e.g., `with { type: "json" }` or `assert { type: "json" }`)
+    /// if the given NodeIndex points to an IMPORT_ATTRIBUTES node.
+    pub(in crate::emitter) fn emit_import_attributes(&mut self, attributes: NodeIndex) {
+        let Some(attr_node) = self.arena.get(attributes) else {
+            return;
+        };
+        let Some(attrs) = self.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+        let keyword = if attrs.token == SyntaxKind::AssertKeyword as u16 {
+            "assert"
+        } else {
+            "with"
+        };
+        self.write(" ");
+        self.write(keyword);
+        self.write(" { ");
+        for (i, &elem_idx) in attrs.elements.nodes.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if let Some(elem_node) = self.arena.get(elem_idx)
+                && let Some(attr) = self.arena.get_import_attribute_data(elem_node)
+            {
+                self.emit(attr.name);
+                self.write(": ");
+                self.emit(attr.value);
+            }
         }
         self.write(" }");
     }

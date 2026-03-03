@@ -467,6 +467,11 @@ impl<'a> LoweringPass<'a> {
                         );
                         // Flag that __spreadArray helper is needed
                         self.transforms.helpers_mut().spread_array = true;
+                        // When downlevelIteration is enabled, spread on iterables
+                        // needs __read to convert iterator results to arrays.
+                        if self.ctx.options.downlevel_iteration {
+                            self.transforms.helpers_mut().read = true;
+                        }
                     }
 
                     for &elem in &lit.elements.nodes {

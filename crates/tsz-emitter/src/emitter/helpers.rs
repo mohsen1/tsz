@@ -803,18 +803,76 @@ impl<'a> Printer<'a> {
                     // `export <declaration>` - check if the inner declaration is erased
                     // (e.g., `export declare namespace Foo { ... }`, `export interface Bar { }`)
                     if let Some(inner_node) = self.arena.get(export_data.export_clause) {
+                        // `export { type A, type B }` — all specifiers individually type-only
+                        if inner_node.kind == syntax_kind_ext::NAMED_EXPORTS {
+                            if let Some(named_exports) = self.arena.get_named_imports(inner_node) {
+                                let all_type_only = !named_exports.elements.nodes.is_empty()
+                                    && named_exports.elements.nodes.iter().all(|&spec_idx| {
+                                        if let Some(spec_node) = self.arena.get(spec_idx)
+                                            && let Some(spec) = self.arena.get_specifier(spec_node)
+                                        {
+                                            spec.is_type_only
+                                                || self
+                                                    .ctx
+                                                    .options
+                                                    .type_only_nodes
+                                                    .contains(&spec_idx)
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                if all_type_only {
+                                    return true;
+                                }
+                            }
+                        }
+                        // `export default m` where `m` refers to a type-only entity
+                        // (e.g., a non-instantiated namespace or interface) — the whole
+                        // statement should be erased since there is nothing to export.
+                        if export_data.is_default_export
+                            && (inner_node.kind == SyntaxKind::Identifier as u16
+                                || inner_node.kind == syntax_kind_ext::QUALIFIED_NAME)
+                            && !self
+                                .export_default_target_has_runtime_value(export_data.export_clause)
+                        {
+                            return true;
+                        }
                         return self.is_erased_statement(inner_node);
                     }
                 }
                 false
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
-                // `import type { ... } from '...'` is erased
                 if let Some(import_data) = self.arena.get_import_decl(node)
                     && let Some(clause_node) = self.arena.get(import_data.import_clause)
                     && let Some(clause) = self.arena.get_import_clause(clause_node)
                 {
-                    return clause.is_type_only;
+                    // `import type { ... } from '...'` is always erased
+                    if clause.is_type_only {
+                        return true;
+                    }
+                    // `import { type A, type B } from '...'` — all specifiers
+                    // individually type-only → the whole import is erased.
+                    if let Some(named_node) = self.arena.get(clause.named_bindings)
+                        && named_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                        && let Some(named_imports) = self.arena.get_named_imports(named_node)
+                        && clause.name.is_none()
+                    {
+                        let all_type_only = !named_imports.elements.nodes.is_empty()
+                            && named_imports.elements.nodes.iter().all(|&spec_idx| {
+                                if let Some(spec_node) = self.arena.get(spec_idx)
+                                    && let Some(spec) = self.arena.get_specifier(spec_node)
+                                {
+                                    spec.is_type_only
+                                        || self.ctx.options.type_only_nodes.contains(&spec_idx)
+                                } else {
+                                    false
+                                }
+                            });
+                        if all_type_only {
+                            return true;
+                        }
+                    }
                 }
                 false
             }

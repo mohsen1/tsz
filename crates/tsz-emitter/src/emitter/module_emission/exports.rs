@@ -141,7 +141,7 @@ impl<'a> Printer<'a> {
             if export.is_default_export
                 && (clause_node.kind == SyntaxKind::Identifier as u16
                     || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
-                && !self.namespace_alias_target_has_runtime_value(export.export_clause, None)
+                && !self.export_default_target_has_runtime_value(export.export_clause)
             {
                 // `export default T` where `T` is type-only has no JS runtime emit.
                 return;
@@ -515,7 +515,7 @@ impl<'a> Printer<'a> {
                                     .module_state
                                     .hoisted_func_exports
                                     .iter()
-                                    .any(|n| n == &export_name)
+                                    .any(|(e, _)| e == &export_name)
                                 {
                                     continue;
                                 }
