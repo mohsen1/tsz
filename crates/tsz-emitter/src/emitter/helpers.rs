@@ -869,6 +869,39 @@ impl<'a> Printer<'a> {
                             return true;
                         }
                     }
+                    // When JSX mode requires a factory, check if any binding
+                    // matches the factory root name — JSX elements reference
+                    // it implicitly and the text heuristic won't find it.
+                    if matches!(
+                        self.ctx.options.jsx,
+                        JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+                    ) {
+                        let factory_root = self
+                            .ctx
+                            .options
+                            .jsx_factory
+                            .as_deref()
+                            .and_then(|f| f.split('.').next())
+                            .unwrap_or("React");
+                        // Check default import name
+                        if clause.name.is_some() {
+                            let name = self.get_identifier_text_idx(clause.name);
+                            if name == factory_root {
+                                return false;
+                            }
+                        }
+                        // Check namespace import name (`import * as React`)
+                        if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                            && let Some(named) = self.arena.get_named_imports(bindings_node)
+                            && named.name.is_some()
+                            && named.elements.nodes.is_empty()
+                        {
+                            let ns_name = self.get_identifier_text_idx(named.name);
+                            if ns_name == factory_root {
+                                return false;
+                            }
+                        }
+                    }
                     // In both CJS and ESM modes, erase imports whose bindings
                     // have no value-level usage in the rest of the file.
                     // In --noCheck mode this uses a text-based heuristic.
