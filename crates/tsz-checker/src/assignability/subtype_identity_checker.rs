@@ -93,6 +93,85 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve a namespace `Lazy(DefId)` type to its structural Object form.
+    ///
+    /// Namespace symbols are cached as `Lazy(DefId)` which self-references through
+    /// the `symbol_types` cache. The solver's evaluator cannot expand these because
+    /// `resolve_lazy` returns the same `Lazy(DefId)`. For TS2403 redeclaration
+    /// checking, we need the structural form so that bidirectional subtype checks
+    /// can compare namespace types against structurally equivalent object literals.
+    ///
+    /// Returns the original type unchanged if it is not a namespace Lazy type.
+    fn resolve_namespace_lazy_for_redeclaration(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_binder::symbol_flags;
+        use tsz_solver::type_queries;
+
+        // Check if this is a Lazy(DefId) type
+        let Some(def_id) = type_queries::get_lazy_def_id(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        // Map DefId -> SymbolId
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return type_id;
+        };
+
+        // Check if this is a pure namespace symbol (not function, variable, or enum)
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return type_id;
+        };
+        let flags = symbol.flags;
+        let is_namespace =
+            flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
+        let is_also_function_or_var_or_enum =
+            flags & (symbol_flags::FUNCTION | symbol_flags::VARIABLE | symbol_flags::ENUM) != 0;
+        if !is_namespace || is_also_function_or_var_or_enum {
+            return type_id;
+        }
+
+        // Build a structural object type from the namespace's exports.
+        // This mirrors the pattern in `merge_namespace_exports_into_object`.
+        let Some(exports) = symbol.exports.as_ref().cloned() else {
+            return type_id;
+        };
+
+        let mut properties = Vec::new();
+        for (name, member_id) in exports.iter() {
+            // Skip circular references
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue;
+            }
+
+            let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id) else {
+                continue;
+            };
+            // Skip type-only exports (interfaces, type aliases without value)
+            if member_symbol.flags & symbol_flags::VALUE == 0 {
+                continue;
+            }
+
+            let member_type = self.get_type_of_symbol(*member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            properties.push(tsz_solver::PropertyInfo {
+                name: name_atom,
+                type_id: member_type,
+                write_type: member_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                visibility: tsz_solver::Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            });
+        }
+
+        if properties.is_empty() {
+            return type_id;
+        }
+
+        self.ctx.types.factory().object(properties)
+    }
+
     /// Resolve a `TypeQuery` chain iteratively until a non-TypeQuery type is reached.
     ///
     /// Used for TS2403 checking where `typeof x` type annotations may chain
@@ -168,6 +247,15 @@ impl<'a> CheckerState<'a> {
         // against their evaluated equivalents, causing false TS2403 errors.
         let prev_type = self.evaluate_type_for_assignability(prev_type);
         let current_type = self.evaluate_type_for_assignability(current_type);
+
+        // Resolve namespace Lazy(DefId) types to their structural Object form.
+        // Namespace symbols are intentionally cached as Lazy(DefId) for TS2693/TS2708
+        // value-vs-type differentiation. But for TS2403 redeclaration checking, the
+        // solver's evaluator cannot expand these (resolve_lazy returns the same Lazy),
+        // causing false TS2403 when comparing `typeof NS` against a structurally
+        // equivalent object literal like `{ foo(): number }`.
+        let prev_type = self.resolve_namespace_lazy_for_redeclaration(prev_type);
+        let current_type = self.resolve_namespace_lazy_for_redeclaration(current_type);
 
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking

@@ -333,6 +333,55 @@ var a1 = M.a;
     }
 
     #[test]
+    fn typeof_namespace_vs_object_literal_no_false_ts2403() {
+        // From nonInstantiatedModule.ts:
+        // `var p2: { Origin() : { x: number; y: number; } };`
+        // `var p2: typeof M2.Point;`
+        // The namespace Lazy(DefId) type must be resolved to its structural Object
+        // form for the bidirectional subtype check to succeed.
+        let source = r#"
+namespace NS {
+    export function foo(): number { return 1; }
+}
+var x: { foo(): number };
+var x: typeof NS;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for typeof namespace vs structurally equivalent object: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn typeof_namespace_member_vs_object_literal_no_false_ts2403() {
+        // When `typeof NS.Sub` resolves to a namespace member that is structurally
+        // an object, it should be compatible with the equivalent object literal type.
+        let source = r#"
+namespace M2 {
+    export namespace Point {
+        export function Origin(): { x: number; y: number } { return { x: 0, y: 0 }; }
+    }
+}
+var p2: { Origin(): { x: number; y: number } };
+var p2: typeof M2.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for typeof namespace member vs object literal: {ts2403:?}"
+        );
+    }
+
+    #[test]
     fn enum_var_redecl_emits_ts2403() {
         // From duplicateLocalVariable4.ts: var x = E; var x = E.a;
         // First x is `typeof E`, second x is `E` — types differ, should emit TS2403.
