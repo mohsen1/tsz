@@ -573,12 +573,17 @@ impl<'a> CheckerState<'a> {
                     || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
             );
 
-            // For TS2367, get the narrow types (literals) not the widened types
+            // For TS2367, get the narrow types (literals) not the widened types.
+            // For typeof expressions, use the typeof result type (union of all
+            // valid typeof return strings) so that comparisons like
+            // `typeof x == "Object"` correctly detect no overlap.
             let left_narrow = self
-                .literal_type_from_initializer(left_idx)
+                .typeof_result_type_if_typeof(left_idx)
+                .or_else(|| self.literal_type_from_initializer(left_idx))
                 .unwrap_or(left_type);
             let right_narrow = self
-                .literal_type_from_initializer(right_idx)
+                .typeof_result_type_if_typeof(right_idx)
+                .or_else(|| self.literal_type_from_initializer(right_idx))
                 .unwrap_or(right_type);
 
             let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
@@ -1156,6 +1161,35 @@ impl<'a> CheckerState<'a> {
 
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
     }
+
+    /// If `idx` is a `typeof` expression (`PREFIX_UNARY_EXPRESSION` with `TypeOfKeyword`),
+    /// return the typeof result type:
+    /// `"string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function"`.
+    /// This is used for TS2367 overlap detection so that comparisons like
+    /// `typeof x == "Object"` (capital O) correctly detect no overlap.
+    fn typeof_result_type_if_typeof(&self, idx: NodeIndex) -> Option<TypeId> {
+        use tsz_scanner::SyntaxKind;
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let unary = self.ctx.arena.get_unary_expr(node)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+        let factory = self.ctx.types.factory();
+        let members = vec![
+            factory.literal_string("string"),
+            factory.literal_string("number"),
+            factory.literal_string("bigint"),
+            factory.literal_string("boolean"),
+            factory.literal_string("symbol"),
+            factory.literal_string("undefined"),
+            factory.literal_string("object"),
+            factory.literal_string("function"),
+        ];
+        Some(factory.union(members))
+    }
 }
 
 #[cfg(test)]
@@ -1229,6 +1263,37 @@ mod tests {
             !has_2367,
             "Should NOT emit TS2367 for number vs number comparison, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2367_typeof_vs_invalid_typeof_string() {
+        // typeof x returns "string"|"number"|"bigint"|"boolean"|"symbol"|"undefined"|"object"|"function"
+        // Comparing with "Object" (capital O) should trigger TS2367 — no overlap.
+        let diags = check_source_diagnostics(
+            r#"declare var x: string | number; if (typeof x == "Object") {}"#,
+        );
+        // Filter TS2318 (missing global types in test environment)
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        assert!(
+            relevant.iter().any(|d| d.code == 2367),
+            "Expected TS2367 for typeof vs 'Object' (non-typeof string), got: {:?}",
+            relevant.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2367_typeof_vs_valid_typeof_string_no_error() {
+        // typeof x compared with "string" (valid typeof result) — no TS2367
+        let diags = check_source_diagnostics(
+            r#"declare var x: string | number; if (typeof x == "string") {}"#,
+        );
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        let has_2367 = relevant.iter().any(|d| d.code == 2367);
+        assert!(
+            !has_2367,
+            "Should NOT emit TS2367 for typeof vs valid typeof string, got: {:?}",
+            relevant.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
 
