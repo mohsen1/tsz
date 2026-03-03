@@ -174,11 +174,27 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|c| c.is_declared);
             if has_declare || in_declared_class {
-                self.error_at_node(
-                    prop.initializer,
-                    diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                    diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                );
+                // tsc short-circuits: when a `declare` property has an ES decorator,
+                // checkGrammarModifiers fires TS1206 first and skips checkGrammarProperty
+                // (which would emit TS1039). Mirror this by suppressing TS1039 when
+                // ES decorators are present on a `declare` property.
+                let has_es_decorator_on_declare = has_declare
+                    && !self.ctx.compiler_options.experimental_decorators
+                    && prop.modifiers.as_ref().is_some_and(|m| {
+                        m.nodes.iter().any(|&n| {
+                            self.ctx
+                                .arena
+                                .get(n)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    });
+                if !has_es_decorator_on_declare {
+                    self.error_at_node(
+                        prop.initializer,
+                        diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                        diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                    );
+                }
             }
         }
 
