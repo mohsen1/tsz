@@ -1396,15 +1396,17 @@ impl<'a> CheckerState<'a> {
                     let rest = rest.trim();
                     // Parse @param {Type} name
                     if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}') {
-                            let type_expr = rest[1..1 + end].trim().to_string();
-                            let after = rest[2 + end..].trim();
-                            let name = after.split_whitespace().next().unwrap_or("").to_string();
-                            if !name.is_empty()
-                                && let Some(ref mut cb) = current_info.callback {
-                                    cb.params.push((name, type_expr));
-                                }
+                        && let Some(end) = rest[1..].find('}')
+                    {
+                        let type_expr = rest[1..1 + end].trim().to_string();
+                        let after = rest[2 + end..].trim();
+                        let name = after.split_whitespace().next().unwrap_or("").to_string();
+                        if !name.is_empty()
+                            && let Some(ref mut cb) = current_info.callback
+                        {
+                            cb.params.push((name, type_expr));
                         }
+                    }
                     continue;
                 }
 
@@ -1415,18 +1417,19 @@ impl<'a> CheckerState<'a> {
                 {
                     let rest = rest.trim();
                     if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}') {
-                            let type_expr = rest[1..1 + end].trim();
+                        && let Some(end) = rest[1..].find('}')
+                    {
+                        let type_expr = rest[1..1 + end].trim();
 
-                            // Check for type predicate pattern
-                            let predicate =
-                                Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
+                        // Check for type predicate pattern
+                        let predicate =
+                            Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
 
-                            if let Some(ref mut cb) = current_info.callback {
-                                cb.return_type = Some(type_expr.to_string());
-                                cb.predicate = predicate;
-                            }
+                        if let Some(ref mut cb) = current_info.callback {
+                            cb.return_type = Some(type_expr.to_string());
+                            cb.predicate = predicate;
                         }
+                    }
                     continue;
                 }
             }
