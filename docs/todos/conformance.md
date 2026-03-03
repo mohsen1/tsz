@@ -1,7 +1,44 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9886/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9885/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03o — Array literal tuple typing for homomorphic mapped types (+3 tests)
+
+### Fixed: Array literals not typed as tuples when contextual type is homomorphic mapped type
+
+**Area**: types/tuple (64.7% → 67.6%), also classes/members
+
+**Root cause**: When an array literal's contextual type evaluated to a homomorphic mapped type
+(e.g., `Definition<T> = { [K in keyof T]: (() => T[K]) | Definition<T[K]> }`), the array literal
+was typed as `Array(union_of_elements)` instead of `Tuple([elem0, elem1, ...])`. This lost
+per-element type information, preventing the solver's reverse mapped type inference from working.
+
+The `get_type_of_array_literal()` function decides Array vs Tuple based on contextual type.
+When the contextual type is a tuple, elements get individual types. But mapped types weren't
+recognized as providing tuple context, even though homomorphic mapped types preserve array/tuple
+structure.
+
+**Fix** (3 files):
+- `crates/tsz-solver/src/type_queries/data.rs`: Added `is_homomorphic_mapped_type_context()`
+  query that detects mapped types with `keyof T` constraint (including through Applications
+  and intersection constraints), and helper `is_keyof_type_parameter()`
+- `crates/tsz-checker/src/types/computation/helpers.rs`: In `get_type_of_array_literal()`,
+  when `tuple_context` is None but contextual type is a homomorphic mapped type, force tuple
+  typing by converting element_types to TupleElements
+
+**Tests added**: 4 unit tests in `type_queries_mapped_context_tests.rs`:
+- `test_homomorphic_mapped_type_with_keyof_type_param` — basic `{ [K in keyof T]: T[K] }`
+- `test_non_homomorphic_mapped_type` — `{ [K in string]: number }` should NOT match
+- `test_homomorphic_mapped_type_with_intersection_constraint` — `keyof T & keyof U` in intersection
+- `test_non_mapped_type_not_homomorphic` — primitives and arrays should NOT match
+
+**Tests fixed**: reverseMappedTupleContext, privateNamesConstructorChain-1, privateNamesConstructorChain-2
+
+**Note**: The bug only manifested with `--target es2015` because different lib files caused
+the type parameter `T` to resolve to slightly different `Schema` types during the final
+assignability check. Without `--target`, the check happened to pass by coincidence. The
+underlying issue (no reverse inference) was present in both cases.
 
 ## Session 2026-03-03n — Rest callback parameter contextual typing (+3 tests)
 
