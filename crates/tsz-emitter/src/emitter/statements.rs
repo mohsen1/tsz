@@ -192,21 +192,18 @@ impl<'a> Printer<'a> {
         // Compute the block's closing `}` position so the last statement's
         // trailing comment scan doesn't overshoot into comments belonging to
         // the closing brace line (same pattern as namespace IIFE emitter).
-        let block_close_pos = self
-            .source_text
-            .map(|text| {
-                let bytes = text.as_bytes();
-                let end = (node.end as usize).min(bytes.len());
-                let mut pos = end;
-                while pos > 0 {
-                    pos -= 1;
-                    if bytes[pos] == b'}' {
-                        return pos as u32;
-                    }
-                }
+        // Use find_token_end_before_trivia which correctly skips `}` inside
+        // comments (e.g., `//}` in commented-out code).
+        let block_close_pos = {
+            let token_end = self.find_token_end_before_trivia(node.pos, node.end);
+            // find_token_end_before_trivia returns position AFTER the `}`,
+            // we want the position OF `}` so comments ending at `}` are excluded.
+            if token_end > node.pos {
+                token_end - 1
+            } else {
                 node.end
-            })
-            .unwrap_or(node.end);
+            }
+        };
 
         // Pre-collect statement indices so we can look up the next statement's
         // position as an upper bound for trailing comment scanning. Our parser sets
@@ -306,11 +303,12 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Note: comments between the last statement and the closing `}` are
-        // intentionally NOT emitted here. tsc places such comments AFTER the
-        // block's closing brace in the output. Leaving them in the comment
-        // queue lets the caller (source-file or block statement loop) emit
-        // them at the correct outer indentation level.
+        // Emit comments between the last statement and the closing `}`.
+        // tsc places these comments INSIDE the block (at the block's
+        // indentation level), not after it.
+        if !self.ctx.options.remove_comments {
+            self.emit_comments_before_pos(block_close_pos);
+        }
 
         self.decrease_indent();
         // Map closing `}` to its source position for accurate debugger stepping

@@ -173,7 +173,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Emit any comments between the keyword and the operand expression
+        // Emit any comments between the keyword and the operand expression.
+        // Preserve original spacing: if source has no space (e.g. `await(x)`
+        // where await is used as an identifier call), don't add one.
         let expr_node = self.arena.get(unary.expression);
         if let Some(expr_node) = expr_node {
             let (has_comment, _, comment_had_newline) =
@@ -183,7 +185,14 @@ impl<'a> Printer<'a> {
                     self.write(" ");
                 }
             } else {
-                self.write(" ");
+                // Check if source had a space between keyword and expression
+                let source_had_space = self.source_text.is_none_or(|text| {
+                    let kw_end = after_keyword_pos as usize;
+                    kw_end >= text.len() || text.as_bytes()[kw_end] != b'('
+                });
+                if source_had_space {
+                    self.write(" ");
+                }
             }
         } else {
             self.write(" ");

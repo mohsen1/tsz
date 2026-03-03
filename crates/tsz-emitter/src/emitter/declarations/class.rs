@@ -726,7 +726,8 @@ impl<'a> Printer<'a> {
         let mut computed_property_side_effects: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering
-        let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
+        // (name, initializer_idx, member_node_end) — end position for trailing comment emission
+        let mut field_inits: Vec<(String, NodeIndex, u32)> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
@@ -763,7 +764,13 @@ impl<'a> Printer<'a> {
                             Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
-                        field_inits.push((name, prop.initializer));
+                        // Use initializer expression's end position for trailing comment
+                        // emission (not member_node.end which may extend past the newline)
+                        let init_end = self
+                            .arena
+                            .get(prop.initializer)
+                            .map_or(member_node.end, |n| n.end);
+                        field_inits.push((name, prop.initializer, init_end));
                     }
                 }
             }
@@ -809,7 +816,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
-            for (name, init_idx) in &field_inits {
+            for (name, init_idx, member_end) in &field_inits {
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
                     self.emit_string_literal_text(name);
@@ -833,6 +840,8 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit_expression(*init_idx);
                     self.write(";");
+                    // Emit trailing same-line comments from the original class field
+                    self.emit_trailing_comments(*member_end);
                 }
                 self.write_line();
             }
