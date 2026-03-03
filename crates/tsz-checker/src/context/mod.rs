@@ -648,6 +648,20 @@ pub struct CheckerContext<'a> {
     /// `"a" | "b"` instead of `string`.
     pub preserve_literal_types: bool,
 
+    /// Per-argument mask indicating which call arguments should skip excess
+    /// property checking because the original (pre-instantiation) parameter type
+    /// is or contains a type parameter.
+    ///
+    /// For generic function calls like `parrot<T extends Named>({name, age})`,
+    /// the instantiated parameter type is the constraint `Named = {name: string}`,
+    /// which would cause a false TS2353 for `age`. But tsc skips excess property
+    /// checks when the parameter type is a type parameter because `T` captures
+    /// the full object type.
+    ///
+    /// Set before `collect_call_argument_types_with_context` for generic calls
+    /// and cleared afterwards.
+    pub generic_excess_skip: Option<Vec<bool>>,
+
     // --- Control Flow Validation ---
     /// Depth of nested iteration statements (for/while/do-while).
     /// Used to validate break/continue statements.

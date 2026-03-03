@@ -563,6 +563,14 @@ impl<'a> CheckerState<'a> {
                 // Skip excess property checking for type parameters - the type parameter
                 // captures the full object type, so extra properties are allowed.
                 && !is_type_parameter_type(self.ctx.types, expected)
+                // Skip excess property checking when the original (pre-instantiation)
+                // parameter type contains a type parameter. For generic calls like
+                // `parrot<T extends Named>({name, sayHello() {}})`, the instantiated
+                // contextual type is the constraint `Named`, but tsc does not fire
+                // excess property checks because `T` captures the full object type.
+                && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
+                    effective_index < skip.len() && skip[effective_index]
+                })
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }
@@ -594,6 +602,11 @@ impl<'a> CheckerState<'a> {
                 // Skip excess property checking for type parameters - the type parameter
                 // captures the full object type, so extra properties are allowed.
                 && !is_type_parameter_type(self.ctx.types, expected)
+                // Also skip when the original parameter type contains a type parameter
+                // (set via generic_excess_skip for generic call paths).
+                && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
+                    i < skip.len() && skip[i]
+                })
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
