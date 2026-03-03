@@ -301,9 +301,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        // Calling `never` returns `never` (bottom type propagation).
-        // TSC does not emit TS18050 for calling `never` — the result is simply `never`.
+        // Calling `never` emits TS2349 "This expression is not callable" and
+        // returns `never` (bottom type propagation).
+        // tsc treats `never` as having no call signatures.
         if callee_type == TypeId::NEVER {
+            self.error_not_callable_at(callee_type, call.expression);
             return TypeId::NEVER;
         }
 

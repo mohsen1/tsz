@@ -10,8 +10,8 @@
 
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
-    FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, ParamInfo,
-    PropertyInfo, TypeData, TypeId,
+    CallableShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId,
+    ParamInfo, PropertyInfo, TypeData, TypeId,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -291,7 +291,11 @@ impl TypeInterner {
             return false;
         }
 
-        let mut objects: Vec<Arc<ObjectShape>> = Vec::new();
+        // Collect property-bearing shapes from both Object AND Callable types.
+        // Callable types (e.g., { (x: string): number, a: "" }) have named properties
+        // that can conflict with Object type properties, reducing the intersection to never.
+        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::new();
+        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::new();
 
         for &member in members {
             let Some(key) = self.lookup(member) else {
@@ -299,22 +303,35 @@ impl TypeInterner {
             };
             match key {
                 TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                    objects.push(self.object_shape(shape_id));
+                    object_shapes.push(self.object_shape(shape_id));
+                }
+                TypeData::Callable(callable_id) => {
+                    let callable = self.callable_shape(callable_id);
+                    if !callable.properties.is_empty() {
+                        callable_shapes.push(callable);
+                    }
                 }
                 _ => {}
             }
         }
 
-        if objects.len() < 2 {
+        let total = object_shapes.len() + callable_shapes.len();
+        if total < 2 {
             return false;
         }
 
-        for i in 0..objects.len() {
-            for j in (i + 1)..objects.len() {
-                if self.object_literals_disjoint(
-                    objects[i].properties.as_slice(),
-                    objects[j].properties.as_slice(),
-                ) {
+        // Build property slice references for pairwise comparison
+        let mut prop_slices: SmallVec<[&[PropertyInfo]; 8]> = SmallVec::new();
+        for obj in &object_shapes {
+            prop_slices.push(&obj.properties);
+        }
+        for callable in &callable_shapes {
+            prop_slices.push(&callable.properties);
+        }
+
+        for i in 0..prop_slices.len() {
+            for j in (i + 1)..prop_slices.len() {
+                if self.object_literals_disjoint(prop_slices[i], prop_slices[j]) {
                     return true;
                 }
             }
@@ -341,13 +358,27 @@ impl TypeInterner {
                 continue;
             }
 
-            // Check literal kinds for disjointness
+            // Check literal kinds for disjointness (e.g., "a" & "b", "a" & ("b" | "c"))
             if let Some(left_kind) = self.literal_kind_from_type(prop.type_id)
                 && let Some(right_kind) = self.literal_kind_from_type(other.type_id)
                 && left_kind.is_disjoint(&right_kind)
             {
                 return true;
             }
+
+            // Check cross-domain disjointness: literal vs incompatible primitive.
+            // e.g., a: "" (string literal) & a: number → disjoint (string ≠ number domain).
+            // Only fires when at least one side is a literal/unit type, matching tsc's
+            // discriminant-based intersection reduction.
+            if prop.type_id != other.type_id
+                && (self.is_literal(prop.type_id) || self.is_literal(other.type_id))
+                && let (Some(a_class), Some(b_class)) = (
+                    self.primitive_class_for(prop.type_id),
+                    self.primitive_class_for(other.type_id),
+                )
+                    && a_class != b_class {
+                        return true;
+                    }
         }
 
         false

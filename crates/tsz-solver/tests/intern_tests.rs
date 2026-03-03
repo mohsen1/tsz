@@ -218,6 +218,79 @@ fn test_interner_intersection_disjoint_object_literal_union() {
 }
 
 #[test]
+fn test_interner_intersection_callable_vs_object_disjoint_property() {
+    // { (x: string): number, a: "" } & { a: number } should reduce to never
+    // because property `a` has type "" & number which is never (cross-domain literal).
+    // This matches tsc's discriminant-based intersection reduction.
+    let interner = TypeInterner::new();
+
+    let a_name = interner.intern_string("a");
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![PropertyInfo::new(a_name, interner.literal_string(""))],
+        ..Default::default()
+    });
+
+    let obj = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+
+    let result = interner.intersection(vec![callable, obj]);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "Callable with literal property intersected with object of incompatible primitive class should be never"
+    );
+}
+
+#[test]
+fn test_interner_intersection_callable_vs_object_compatible_property() {
+    // { (x: string): number, a: string } & { a: string } should NOT reduce to never
+    // because property `a: string & string = string` is compatible.
+    let interner = TypeInterner::new();
+
+    let a_name = interner.intern_string("a");
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![PropertyInfo::new(a_name, TypeId::STRING)],
+        ..Default::default()
+    });
+
+    let obj = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
+
+    let result = interner.intersection(vec![callable, obj]);
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "Callable with compatible property should not reduce to never"
+    );
+}
+
+#[test]
 fn test_interner_intersection_optional_object_literals_not_reduced() {
     let interner = TypeInterner::new();
 
