@@ -143,11 +143,37 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn call_signature_from_constructor(
         &mut self,
         ctor: &tsz_parser::parser::node::ConstructorData,
+        ctor_idx: NodeIndex,
         instance_type: TypeId,
         class_type_params: &[tsz_solver::TypeParamInfo],
     ) -> tsz_solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&ctor.type_parameters);
-        let (params, this_type) = self.extract_params_from_parameter_list(&ctor.parameters);
+        let (mut params, this_type) = self.extract_params_from_parameter_list(&ctor.parameters);
+
+        // In JS files, resolve JSDoc @param types for constructor parameters.
+        // extract_params_from_parameter_list defaults untyped params to ANY,
+        // but JSDoc @param {T} annotations should provide the real type.
+        if self.is_js_file()
+            && let Some(jsdoc) = self.find_jsdoc_for_function(ctor_idx)
+        {
+            for (i, param_idx) in ctor.parameters.nodes.iter().enumerate() {
+                if i >= params.len() {
+                    break;
+                }
+                if params[i].type_id != TypeId::ANY {
+                    continue;
+                }
+                if let Some(param_node) = self.ctx.arena.get(*param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    && param.type_annotation.is_none()
+                {
+                    let pname = self.parameter_name_for_error(param.name);
+                    if let Some(jsdoc_type) = self.resolve_jsdoc_param_type(&jsdoc, &pname) {
+                        params[i].type_id = jsdoc_type;
+                    }
+                }
+            }
+        }
 
         self.pop_type_parameters(type_param_updates);
 

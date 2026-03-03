@@ -94,8 +94,20 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
-        let (class_type_params, type_param_updates) =
+        let (mut class_type_params, mut type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
+
+        // In JS files, classes don't have syntax-level type parameters.
+        // JSDoc `@template T` tags serve the same purpose.
+        if class_type_params.is_empty() {
+            let (jsdoc_params, jsdoc_updates) =
+                self.push_jsdoc_class_template_type_params(class_idx);
+            if !jsdoc_params.is_empty() {
+                class_type_params = jsdoc_params;
+                type_param_updates.extend(jsdoc_updates);
+            }
+        }
+
         let instance_type = self.get_class_instance_type(class_idx, class);
 
         // Get the class symbol for nominal identity
@@ -797,6 +809,7 @@ impl<'a> CheckerState<'a> {
                 if ctor.body.is_none() {
                     construct_signatures.push(self.call_signature_from_constructor(
                         ctor,
+                        member_idx,
                         instance_type,
                         &class_type_params,
                     ));
@@ -804,6 +817,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 construct_signatures.push(self.call_signature_from_constructor(
                     ctor,
+                    member_idx,
                     instance_type,
                     &class_type_params,
                 ));
