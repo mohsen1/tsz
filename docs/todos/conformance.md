@@ -1,7 +1,64 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9885/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9884/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03m — Object property display ordering for tuple-like types
+
+### Fixed: Numeric property keys displayed in wrong order in diagnostic messages
+
+**Area**: types/tuple (64.7%, 12 failures) — fingerprint-level improvement
+
+**Root cause**: `format_object()` in `crates/tsz-solver/src/diagnostics/format.rs` sorted
+properties by `declaration_order` only, with no tiebreaker. When multiple properties shared
+the same `declaration_order` (common for numeric-keyed properties from type evaluation),
+they remained in Atom ID order, which is arbitrary. This caused diagnostic messages like
+`Type '{ 1: number; 0: string; length: 2; }' is not assignable to...` instead of the
+correct `Type '{ 0: string; 1: number; length: 2; }' is not assignable to...`.
+
+**Fix** (format.rs, ~30 lines):
+- Replace simple `sort_by_key(declaration_order)` with a two-level sort
+- Primary: `declaration_order` (when both > 0 and different)
+- Tiebreak: numeric keys sorted numerically (0 < 1 < 2), string keys preserved via stable sort
+- This matches tsc's behavior: numeric properties first in numeric order, then string properties
+
+**Tests added**: 2 unit tests in `diagnostics_tests.rs`:
+- `test_format_object_type_numeric_keys_sorted_first` — basic numeric key ordering
+- `test_format_object_type_same_decl_order_uses_numeric_tiebreak` — explicit same-decl-order case
+
+**Impact**: Fixes fingerprint mismatches in `arityAndOrderCompatibility01` and other tests
+with numeric-keyed object types in diagnostic messages. No code-level test flips (the
+remaining failures in types/tuple are due to other issues).
+
+### Investigated but not fixed: types/tuple area deep issues
+
+Several deeper issues were identified but not fixed in this session:
+
+1. **False TS2416 for overloaded methods vs union-of-tuples rest params** (6 tests):
+   - `classImplementsMethodWIthTupleArgs.ts`: Class overloads `set(option)` and `set(name, value)`
+     vs interface `set(...args: [option] | [name, value] | [name])`. Our solver can't verify
+     that multi-overload callables are compatible with union-of-tuples rest params.
+   - `performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts`: Class `A<T>`
+     implements `InterfaceB<T>`, methods return `B<T>` (extends `A<T>`). Circular: checking
+     `A implements InterfaceB` requires `B <: InterfaceA`, which requires `A <: InterfaceB`.
+     tsc short-circuits via class heritage chain. **Solver-level fix needed.**
+   - Fix location: `crates/tsz-solver/src/relations/` — function assignability for overloads
+
+2. **Variadic tuple inference** (variadicTuples1, variadicTuples2, contextualTypeTupleEnd):
+   - `pipe("foo", 123, true, (...x) => { ... })` — infers `T` as literal type instead of tuple
+   - `f1()` with variadic tuple rest — emits TS2555 instead of TS2345
+   - Fix location: `crates/tsz-solver/src/inference/` — variadic tuple type parameter inference
+
+3. **Type alias preservation in diagnostics** (optionalTupleElements1, unionsOfTupleTypes1):
+   - We print `[number, string?, boolean?]` instead of type alias name `T3`
+   - tsc preserves type alias names in many diagnostic messages
+   - Fix location: `crates/tsz-solver/src/diagnostics/format.rs` — alias tracking
+
+4. **Declaration order not set correctly for all object types**:
+   - Some code paths create PropertyInfo with `declaration_order=0` or duplicate values
+   - The interner's `object_with_flags()` auto-numbers correctly, but types created through
+     evaluation (mapped types, intersections) may not preserve source ordering
+   - This causes the formatter's tiebreaker to sometimes produce wrong order for string keys
 
 ## Session 2026-03-03l — JSDoc @type on object properties and braceless @type syntax (+4 tests)
 
