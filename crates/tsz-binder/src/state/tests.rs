@@ -198,3 +198,158 @@ declare module "react" {
         "expected JSX in global_augmentations"
     );
 }
+
+#[test]
+fn iife_no_flow_start_node() {
+    // For a non-async, non-generator IIFE, the binder should NOT create a
+    // FlowStart node for the function body. This means the IIFE body runs
+    // in the outer flow context.
+    use crate::flow::flow_flags;
+
+    let source = r"
+let x: number | undefined;
+(function() {
+    x = 1;
+})();
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Count START nodes. There should be exactly 1 (the file-level start),
+    // NOT 2 (file + IIFE body).
+    let start_count = (0..binder.flow_nodes.len())
+        .filter(|&i| {
+            binder
+                .flow_nodes
+                .get(crate::flow::FlowNodeId(i as u32))
+                .is_some_and(|n| n.has_any_flags(flow_flags::START))
+        })
+        .count();
+    assert_eq!(
+        start_count, 1,
+        "IIFE body should not create a FlowStart node"
+    );
+}
+
+#[test]
+fn non_iife_function_gets_flow_start_node() {
+    // A regular (non-IIFE) function expression SHOULD get a FlowStart node.
+    use crate::flow::flow_flags;
+
+    let source = r"
+let x: number | undefined;
+let f = function() {
+    x = 1;
+};
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Count START nodes. Should be 2: one for the file, one for the function body.
+    let start_count = (0..binder.flow_nodes.len())
+        .filter(|&i| {
+            binder
+                .flow_nodes
+                .get(crate::flow::FlowNodeId(i as u32))
+                .is_some_and(|n| n.has_any_flags(flow_flags::START))
+        })
+        .count();
+    assert_eq!(
+        start_count, 2,
+        "non-IIFE function should create a FlowStart node"
+    );
+}
+
+#[test]
+fn async_iife_gets_flow_start_node() {
+    // An async IIFE should still get a FlowStart node (not treated as inline).
+    use crate::flow::flow_flags;
+
+    let source = r"
+let x: number | undefined;
+(async function() {
+    x = 1;
+})();
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let start_count = (0..binder.flow_nodes.len())
+        .filter(|&i| {
+            binder
+                .flow_nodes
+                .get(crate::flow::FlowNodeId(i as u32))
+                .is_some_and(|n| n.has_any_flags(flow_flags::START))
+        })
+        .count();
+    assert_eq!(
+        start_count, 2,
+        "async IIFE should still create a FlowStart node"
+    );
+}
+
+#[test]
+fn generator_iife_gets_flow_start_node() {
+    // A generator IIFE should still get a FlowStart node (not treated as inline).
+    use crate::flow::flow_flags;
+
+    let source = r"
+let x: number | undefined;
+(function*() {
+    x = 1;
+})();
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let start_count = (0..binder.flow_nodes.len())
+        .filter(|&i| {
+            binder
+                .flow_nodes
+                .get(crate::flow::FlowNodeId(i as u32))
+                .is_some_and(|n| n.has_any_flags(flow_flags::START))
+        })
+        .count();
+    assert_eq!(
+        start_count, 2,
+        "generator IIFE should still create a FlowStart node"
+    );
+}
+
+#[test]
+fn arrow_iife_no_flow_start_node() {
+    // Arrow function IIFE should also be treated as inline (no FlowStart).
+    use crate::flow::flow_flags;
+
+    let source = r"
+let x: number | undefined;
+(() => {
+    x = 1;
+})();
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let start_count = (0..binder.flow_nodes.len())
+        .filter(|&i| {
+            binder
+                .flow_nodes
+                .get(crate::flow::FlowNodeId(i as u32))
+                .is_some_and(|n| n.has_any_flags(flow_flags::START))
+        })
+        .count();
+    assert_eq!(
+        start_count, 1,
+        "arrow IIFE should not create a FlowStart node"
+    );
+}

@@ -327,6 +327,12 @@ pub struct BinderState {
     /// When we enter a loop or switch, we push a merge label that break statements jump to.
     pub(crate) break_targets: Vec<FlowNodeId>,
 
+    /// Return targets for IIFE control flow analysis.
+    /// When inside an IIFE body, return statements redirect flow to this label
+    /// instead of making the outer flow unreachable. This implements tsc's behavior
+    /// where non-async, non-generator IIFEs are part of the containing control flow.
+    pub(crate) return_targets: Vec<FlowNodeId>,
+
     /// Language features detected during binding (generators, decorators, using, etc.).
     /// Populated during `bind_source_file` with zero overhead since the binder already walks every node.
     pub file_features: FileFeatures,

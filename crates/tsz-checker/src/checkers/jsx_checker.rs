@@ -339,9 +339,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // JSX Namespace Type
-
-    /// Get the global JSX namespace type.
+    /// Get the global JSX namespace type (JSX Namespace Type).
     ///
     /// Rule #36: Resolves the global `JSX` namespace which contains type definitions
     /// for intrinsic elements and the Element type.
@@ -1172,8 +1170,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    // JSX Attribute Type Checking
-
     /// Check JSX attributes against an already-evaluated props type.
     ///
     /// For each attribute, checks that the assigned value is assignable to the
@@ -1755,8 +1751,6 @@ impl<'a> CheckerState<'a> {
         self.check_missing_required_jsx_props(intrinsic_attrs_type, &provided_attrs, tag_name_idx);
     }
 
-    // Generic SFC IntrinsicAttributes Spread Check
-
     /// TS2322: Check spread attributes against `IntrinsicAttributes` for generic SFCs.
     ///
     /// For generic SFCs like `Component<T>(props: T)`, we can't infer type arguments
@@ -1844,10 +1838,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // JSX Factory Check
-
-    /// Check that the JSX factory is in scope.
-    /// Emits TS2874 if the factory root identifier cannot be found.
+    /// Check that the JSX factory is in scope (TS2874).
     ///
     /// tsc 6.0 behavior:
     /// - Only classic "react" mode requires the factory in scope.
@@ -1923,9 +1914,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    // JSX Import Source Check (TS2875)
-
-    /// Check that the JSX import source module can be resolved.
+    /// Check that the JSX import source module can be resolved (TS2875).
     /// Emits TS2875 if `<jsxImportSource>/jsx-runtime` (or `/jsx-dev-runtime`) is not found.
     ///
     /// tsc 6.0 behavior:
@@ -1979,10 +1968,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    // JSX Fragment Factory Check
-
-    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set.
-    /// Emits TS17016 if jsxFactory is explicitly set but jsxFragmentFactory is not.
+    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set (TS17016).
     ///
     /// tsc 6.0 emits this at each fragment opening location (`<>` or `<React.Fragment>`).
     fn check_jsx_fragment_factory(&mut self, node_idx: NodeIndex) {
