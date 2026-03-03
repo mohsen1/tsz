@@ -258,14 +258,7 @@ function inferDefaultModule(target: number): number {
 
 function extractVariantFromFilename(
   filename: string,
-): {
-  base: string;
-  target?: string;
-  module?: string;
-  alwaysstrict?: string;
-  jsx?: string;
-  moduledetection?: string;
-} {
+): { base: string } & Record<string, string | undefined> {
   const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
   if (!match) {
     return { base: filename.replace('.js', '') };
@@ -273,22 +266,11 @@ function extractVariantFromFilename(
 
   const base = match[1];
   const variants = match[2].split(',').map(v => v.trim());
-  const result: {
-    base: string;
-    target?: string;
-    module?: string;
-    alwaysstrict?: string;
-    jsx?: string;
-    moduledetection?: string;
-  } = { base };
+  const result: { base: string } & Record<string, string | undefined> = { base };
 
   for (const variant of variants) {
     const [key, value] = variant.split('=');
-    if (key === 'target') result.target = value;
-    if (key === 'module') result.module = value;
-    if (key === 'alwaysstrict') result.alwaysstrict = value;
-    if (key === 'jsx') result.jsx = value;
-    if (key === 'moduledetection') result.moduledetection = value;
+    result[key] = value;
   }
 
   return result;
@@ -419,15 +401,25 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.alwaysstrict !== false;
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
     const inlineSourceMap = directives.inlinesourcemap === true;
-    const downlevelIteration = directives.downleveliteration === true;
+    const downlevelIteration = variant.downleveliteration !== undefined
+      ? variant.downleveliteration === 'true'
+      : directives.downleveliteration === true;
     const noEmitHelpers = directives.noemithelpers === true;
     const noEmitOnError = directives.noemitonerror === true;
-    const importHelpers = directives.importhelpers === true;
-    const esModuleInterop = directives.esmoduleinterop !== false;
-    const useDefineForClassFields = typeof directives.usedefineforclassfields === 'boolean'
-      ? directives.usedefineforclassfields
-      : undefined;
-    const experimentalDecorators = directives.experimentaldecorators === true;
+    const importHelpers = variant.importhelpers !== undefined
+      ? variant.importhelpers === 'true'
+      : directives.importhelpers === true;
+    const esModuleInterop = variant.esmoduleinterop !== undefined
+      ? variant.esmoduleinterop === 'true'
+      : directives.esmoduleinterop !== false;
+    const useDefineForClassFields = variant.usedefineforclassfields !== undefined
+      ? variant.usedefineforclassfields === 'true'
+      : typeof directives.usedefineforclassfields === 'boolean'
+        ? directives.usedefineforclassfields
+        : undefined;
+    const experimentalDecorators = variant.experimentaldecorators !== undefined
+      ? variant.experimentaldecorators === 'true'
+      : directives.experimentaldecorators === true;
     const emitDecoratorMetadata = directives.emitdecoratormetadata === true;
     const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
     const moduleDetection =
@@ -436,7 +428,9 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const jsxFragmentFactory =
       typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
-    const preserveConstEnums = directives.preserveconstenums === true;
+    const preserveConstEnums = variant.preserveconstenums !== undefined
+      ? variant.preserveconstenums === 'true'
+      : directives.preserveconstenums === true;
     const removeComments = directives.removecomments === true;
     const stripInternal = directives.stripinternal === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
