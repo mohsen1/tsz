@@ -92,15 +92,19 @@ impl<'a> Printer<'a> {
                     .into_iter()
                     .filter(|c| {
                         let content = c.get_text(text);
-                        // Only suppress amd-dependency directives (already emitted
-                        // before define()). Keep amd-module so it appears inside
-                        // the wrapper body matching tsc behavior.
-                        if content.contains("<amd-dependency") {
-                            return false;
-                        }
-                        // When inside a module wrapper, reference directives were
-                        // already emitted before define()/wrapper — skip them here.
+                        // When inside a module wrapper (AMD/UMD/System):
+                        // - Suppress amd-dependency directives (already emitted before
+                        //   define()). Keep amd-module so it appears inside the wrapper
+                        //   body matching tsc behavior.
+                        // - Strip reference directives (already emitted before wrapper).
+                        // In CommonJS/ESM mode, both amd-dependency and reference
+                        // directives pass through as-is and appear inline in the output.
+                        // (tsc keeps them inline in CJS/ESM — see ambientShorthand.js and
+                        // ambientRequireFunction.js baselines).
                         if inside_module_wrapper {
+                            if content.contains("<amd-dependency") {
+                                return false;
+                            }
                             let trimmed = content.trim_start_matches('/');
                             let trimmed = trimmed.trim_start();
                             if trimmed.starts_with("<reference") {
