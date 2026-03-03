@@ -370,6 +370,14 @@ impl<'a> Printer<'a> {
                             {
                                 ns_emitter.set_should_declare_var(should_declare_var);
                             }
+                            // Record the name so `export { N }` re-export handler
+                            // skips the now-redundant `exports.N = N;`.
+                            if let Some(module_decl) = self.arena.get_module(node) {
+                                let ns_name = self.get_identifier_text_idx(module_decl.name);
+                                if !ns_name.is_empty() {
+                                    self.ctx.module_state.iife_exported_names.insert(ns_name);
+                                }
+                            }
                             let output = ns_emitter.emit_exported_namespace(idx);
                             self.write(output.trim_end_matches('\n'));
                             self.skip_comments_for_erased_node(node);
@@ -378,19 +386,26 @@ impl<'a> Printer<'a> {
                         // ES2015+: use the regular IIFE path which preserves let/const.
                         // Set flag so the IIFE tail folds exports.N into the closing.
                         self.pending_cjs_namespace_export_fold = true;
-                        // Track whether the namespace var was already declared
-                        // (merged with class/enum/function).
-                        if let Some(should_declare_var) =
-                            Self::namespace_var_flag_from_directive(inner.as_ref())
-                            && !should_declare_var
-                        {
-                            // Mark as already declared so emit_namespace_iife skips
-                            // the `var N;` / `let N;` preamble.
-                            if let Some(module_decl) = self.arena.get_module(node) {
-                                let ns_name = self.get_identifier_text_idx(module_decl.name);
-                                if !ns_name.is_empty() {
-                                    self.declared_namespace_names.insert(ns_name);
-                                }
+                        // Record the name so `export { N }` re-export handler
+                        // skips the now-redundant `exports.N = N;`.
+                        if let Some(module_decl) = self.arena.get_module(node) {
+                            let ns_name = self.get_identifier_text_idx(module_decl.name);
+                            if !ns_name.is_empty() {
+                                self.ctx
+                                    .module_state
+                                    .iife_exported_names
+                                    .insert(ns_name.clone());
+                            }
+                            // Track whether the namespace var was already declared
+                            // (merged with class/enum/function).
+                            if let Some(should_declare_var) =
+                                Self::namespace_var_flag_from_directive(inner.as_ref())
+                                && !should_declare_var
+                                && !ns_name.is_empty()
+                            {
+                                // Mark as already declared so emit_namespace_iife skips
+                                // the `var N;` / `let N;` preamble.
+                                self.declared_namespace_names.insert(ns_name);
                             }
                         }
                         self.emit_node_default(node, idx);
@@ -428,7 +443,10 @@ impl<'a> Printer<'a> {
                                     output = output[var_prefix.len()..].to_string();
                                 }
                             }
-                            self.declared_namespace_names.insert(enum_name);
+                            self.declared_namespace_names.insert(enum_name.clone());
+                            // Record the name so `export { E }` re-export handler
+                            // skips the now-redundant `exports.E = E;`.
+                            self.ctx.module_state.iife_exported_names.insert(enum_name);
                             self.write(output.trim_end_matches('\n'));
                             return;
                         }

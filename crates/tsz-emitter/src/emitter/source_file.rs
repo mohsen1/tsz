@@ -709,10 +709,22 @@ impl<'a> Printer<'a> {
                 if k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 {
                     has_runtime_module_syntax = true;
                     has_non_empty_runtime_export = true;
+                } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    // Only external module imports (`import x = require("mod")`)
+                    // count as runtime module syntax. Namespace aliases
+                    // (`import x = M.A`) are erased and should not suppress
+                    // deferred `export {};` emission.
+                    if let Some(import_data) = self.arena.get_import_decl(stmt_node)
+                        && let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                        && (spec_node.kind == SyntaxKind::StringLiteral as u16
+                            || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE)
+                    {
+                        has_runtime_module_syntax = true;
+                        has_non_empty_runtime_export = true;
+                    }
                 }
             }
 

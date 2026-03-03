@@ -11,7 +11,7 @@
 use crate::emitter::PrinterOptions;
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 
 /// Flags that control emission behavior for the current scope/branch
@@ -120,6 +120,11 @@ pub struct ModuleTransformState {
     /// Per-base counters for generated CommonJS module bindings.
     /// Keeps numbering stable by module base name (e.g., `foo_1`, `bar_1`, `foo_2`).
     pub module_temp_counters: FxHashMap<String, u32>,
+
+    /// Names whose exports were already folded into a namespace/enum IIFE closing
+    /// (e.g., `(A || (exports.A = A = {}))`). Used to suppress duplicate
+    /// `exports.A = A;` emission in `export { A }` re-export handling.
+    pub iife_exported_names: FxHashSet<String>,
 }
 
 impl ModuleTransformState {
