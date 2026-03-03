@@ -323,13 +323,40 @@ impl<'a> EnumES5Transformer<'a> {
 
             // Extract leading comment (JSDoc/block comment before the member name)
             let leading_comment = self.extract_leading_comment_at(member_node.pos);
-            // Extract trailing inline comment after the member name (e.g., `/* blue */`)
-            // The comment sits right after the name identifier (before any initializer or comma).
-            let name_end = self
-                .arena
-                .get(member_data.name)
-                .map_or(member_node.pos, |n| n.end);
-            let trailing_comment = self.extract_trailing_comment_at(name_end);
+            // Extract trailing inline comment after the enum member (e.g., `/* blue */`)
+            // Search from the name end or initializer end, then also from the comma position.
+            // We check multiple positions because the comment can appear at different spots:
+            // `Cornflower, /* blue */` — comment is after the comma
+            // `Cornflower = 0, /* comment */` — comment is after the comma
+            // `Cornflower /* comment */,` — comment is after the name
+            let name_or_init_end = if let Some(init_node) = self.arena.get(member_data.initializer)
+            {
+                init_node.end
+            } else {
+                self.arena
+                    .get(member_data.name)
+                    .map_or(member_node.end, |n| n.end)
+            };
+            // Try from name/init end first, then from after the comma (scan for comma in source)
+            let trailing_comment =
+                self.extract_trailing_comment_at(name_or_init_end)
+                    .or_else(|| {
+                        // Scan forward from name_or_init_end to find the comma, then check after it
+                        if let Some(source_text) = self.source_text {
+                            let bytes = source_text.as_bytes();
+                            let mut pos = name_or_init_end as usize;
+                            while pos < bytes.len() && bytes[pos] != b',' && bytes[pos] != b'}' {
+                                if bytes[pos] == b'\n' {
+                                    return None; // Stop at newline
+                                }
+                                pos += 1;
+                            }
+                            if pos < bytes.len() && bytes[pos] == b',' {
+                                return self.extract_trailing_comment_at((pos + 1) as u32);
+                            }
+                        }
+                        None
+                    });
 
             // Insert leading comment before the member statement
             if let Some(text) = leading_comment {
