@@ -223,6 +223,46 @@ pub fn get_tuple_elements(
     }
 }
 
+/// Check if a type is or evaluates to a homomorphic mapped type.
+///
+/// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
+/// e.g., `{ [K in keyof T]: F<T[K]> }`. This includes type aliases that expand
+/// to homomorphic mapped types, like `Definition<T> = { [K in keyof T]: ... }`.
+///
+/// This is used by the checker to determine when array literals should be typed
+/// as tuples: homomorphic mapped types preserve array/tuple structure, so the
+/// array literal input should maintain per-element type information.
+pub fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            is_keyof_type_parameter(db, mapped.constraint)
+        }
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            if evaluated != type_id {
+                return is_homomorphic_mapped_type_context(db, evaluated);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is `keyof T` where T is a type parameter (possibly intersected).
+fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::KeyOf(target)) => {
+            matches!(db.lookup(target), Some(TypeData::TypeParameter(_)))
+        }
+        Some(TypeData::Intersection(members)) => {
+            let member_list = db.type_list(members);
+            member_list.iter().any(|&m| is_keyof_type_parameter(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Get the union of all element types in a tuple.
 ///
 /// For each element: rest elements are unwrapped to their array element type,

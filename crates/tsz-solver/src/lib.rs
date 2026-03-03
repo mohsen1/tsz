@@ -238,6 +238,9 @@ mod type_queries_contextual_structure_tests;
 #[path = "tests/type_queries_function_rewrite_tests.rs"]
 mod type_queries_function_rewrite_tests;
 #[cfg(test)]
+#[path = "tests/type_queries_mapped_context_tests.rs"]
+mod type_queries_mapped_context_tests;
+#[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
