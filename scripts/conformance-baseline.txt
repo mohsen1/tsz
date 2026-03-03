@@ -373,7 +373,6 @@ FAIL TypeScript/tests/cases/compiler/esModuleInteropDefaultImports.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropImportCall.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropPrettyErrorRelatedInformation.ts
 FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts
-FAIL TypeScript/tests/cases/compiler/evalOrArgumentsInDeclarationFunctions.ts
 FAIL TypeScript/tests/cases/compiler/evolvingArrayResolvedAssert.ts
 FAIL TypeScript/tests/cases/compiler/exactOptionalPropertyTypesIdentical.ts
 FAIL TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
@@ -4730,6 +4729,7 @@ PASS TypeScript/tests/cases/compiler/esModuleInteropUsesExportStarWhenDefaultPlu
 PASS TypeScript/tests/cases/compiler/esModuleInteropWithExportStar.ts
 PASS TypeScript/tests/cases/compiler/esModuleIntersectionCrash.ts
 PASS TypeScript/tests/cases/compiler/evalAfter0.ts
+PASS TypeScript/tests/cases/compiler/evalOrArgumentsInDeclarationFunctions.ts
 PASS TypeScript/tests/cases/compiler/eventEmitterPatternWithRecordOfFunction.ts
 PASS TypeScript/tests/cases/compiler/evolvingArrayTypeInAssert.ts
 PASS TypeScript/tests/cases/compiler/exactSpellingSuggestion.ts
