@@ -839,6 +839,13 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                     );
                 }
+                // TS2542: Cannot delete a readonly index signature element.
+                // For `delete v[expr]` where v has a readonly index signature
+                // (e.g., readonly tuples, readonly arrays, objects with readonly index sigs).
+                if is_property_reference {
+                    self.check_readonly_assignment(unary.operand, idx);
+                }
+
                 // TS2790: In strictNullChecks, delete is only allowed for optional properties.
                 // With exactOptionalPropertyTypes disabled, properties whose declared type
                 // includes `undefined` are also treated as deletable.

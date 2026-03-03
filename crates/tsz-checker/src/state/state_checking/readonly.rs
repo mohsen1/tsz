@@ -76,7 +76,10 @@ impl<'a> CheckerState<'a> {
                             // tsc anchors TS2542 at the full element access expression
                             self.error_readonly_index_signature_at(object_type, target_idx);
                         } else {
-                            self.error_readonly_property_at(&name, target_idx);
+                            // tsc anchors TS2540 at the argument expression inside
+                            // the brackets (e.g., the `0` in `v[0]`), not the full
+                            // element access expression.
+                            self.error_readonly_property_at(&name, access.name_or_argument);
                         }
                         return true;
                     }

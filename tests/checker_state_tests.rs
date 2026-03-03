@@ -5506,6 +5506,85 @@ p.nonexistent = "error";
 }
 
 #[test]
+fn test_readonly_tuple_computed_index_assignment_2542() {
+    // TS2542 for computed index on readonly tuple: v[0 + 1] = 1
+    // The ReadonlyChecker must recognize ReadonlyType(Tuple) has a readonly number index.
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare var v: readonly [number, number, ...number[]];
+v[0 + 1] = 1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
+    assert!(
+        count_2542 >= 1,
+        "Expected TS2542 for computed index on readonly tuple, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn test_delete_readonly_element_access_2542() {
+    // TS2542 for delete on readonly element access: delete v[2]
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare var v: readonly [number, number, ...number[]];
+delete v[2];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
+    assert!(
+        count_2542 >= 1,
+        "Expected TS2542 for delete on readonly tuple element, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn test_abstract_property_negative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
     use crate::parser::ParserState;
