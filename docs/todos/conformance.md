@@ -1,7 +1,80 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9844/12570 (78.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9854/12570 (78.4%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03h — Union type property accessibility (TS2339 vs TS2445/TS2341)
+
+### Fixed: Union types with mixed public/private/protected members emitted wrong error code
+
+**Area**: types/union (64.0% → 68.0%, 9 → 8 failures)
+
+**Target test**: `unionTypePropertyAccessibility.ts`
+
+**Root cause**: `union_restricted_property_is_missing()` in `property_checker.rs` was **order-dependent**.
+It tracked `restricted_count` and only returned `true` when `restricted_count > 1`. The early-return
+`if restricted_count > 0 { return true; }` inside the `None` branch of `find_member_access_info`
+only fired when a restricted member was iterated *before* a public member. When the public member
+came first, `restricted_count` was still 0 → `continue` → final check `restricted_count > 1` → false.
+
+**tsc behavior**: In `createUnionOrIntersectionProperty`, when a property has a private/protected
+declaration in one constituent but is missing, public, or has a different declaration in another
+constituent, the property doesn't exist on the union type → TS2339.
+
+**Fix** (checker `property_checker.rs`, ~40 lines changed):
+Replaced the order-dependent `restricted_count` logic with two order-independent flags:
+- `has_restricted`: any union member has the property as private/protected
+- `has_other`: any union member has the property publicly, doesn't have it, or is from a different declaring class
+Return `has_restricted && has_other` at the end.
+
+**Unit tests**: 4 new tests:
+- `union_public_and_protected_emits_ts2339_not_ts2445` — Default | Protected → TS2339
+- `union_public_and_private_emits_ts2339_not_ts2341` — Public | Private → TS2339
+- `union_three_member_mixed_access_emits_ts2339` — Default | Public | Protected → TS2339
+- `union_both_public_no_error` — A | B (both public) → no error
+
+**Conformance delta**: +4 tests (9852 → 9854, incl. snapshot update correction):
+- `unionTypePropertyAccessibility.ts` — PASS (6 TS2445/TS2341 → TS2339)
+- `privateNamesConstructorChain-1.ts` — PASS (union + private names)
+- `privateNamesConstructorChain-2.ts` — PASS (same)
+- `genericCallInferenceConditionalType1.ts` — PASS (secondary effect)
+
+**Remaining types/union failures (8 tests)**:
+
+1. **contextualTypeWithUnionTypeObjectLiteral.ts** — fingerprint only: union member ordering differs
+   in error messages (e.g., `{ prop: number; } | { prop: string; anotherP: string; }` vs reversed).
+   Low priority (message text).
+
+2. **discriminatedUnionTypes1.ts** — fingerprint only: union literal ordering in TS2367 message
+   (`"A" | "B" | "C" | "D"` vs `"C" | "B" | "A" | "D"`). Low priority (message text).
+
+3. **discriminatedUnionTypes2.ts** — wrong narrowing: extra TS2339 on `never` at line 133
+   (narrowing too aggressively) + wrong TS2353 scope (showing full union instead of narrowed member).
+   Medium priority (narrowing/solver).
+
+4. **unionTypeCallSignatures.ts** — column offsets wrong for TS2345 + TS2554 vs TS2345 mismatch.
+   The TS2554 issue: `unionWithOptionalParameter3('hello', "hello")` where union is
+   `{ (a: string, b?: number) } | { (a: string) }` — we emit "Expected 1 arguments" instead of
+   "Argument of type 'string' not assignable to parameter of type 'number'". This is a solver-level
+   gap in union call signature combining (should merge to `(a: string, b?: number)` not min arity).
+
+5. **unionTypeCallSignatures6.ts** — column offset for TS2349, message format for TS2684.
+   Low priority (fingerprint only).
+
+6. **unionTypeConstructSignatures.ts** — similar to #4: column offsets + TS2554 vs TS2345.
+   Same solver-level gap.
+
+7. **unionTypeFromArrayLiteral.ts** — false positive TS2322: array literal not contextually typed
+   as tuple when target has numeric property `0`. Solver-level gap in contextual array typing.
+
+8. **unionTypeWithIndexSignature.ts** — missing TS2322 for assignment through index signature +
+   wrong type names in TS2339/TS7053 messages. Solver-level gap.
+
+**Key insight for future work**: The highest-value remaining fix in types/union is the union call
+signature combining (#4/#6). When union members have different arities (optional params, rest params),
+the solver's `resolve_union_call` should compute a combined signature with the maximum arity
+(optional beyond the minimum). Currently it may use minimum arity, causing TS2554 instead of TS2345.
+This would fix 2 tests at the fingerprint level.
 
 ## Session 2026-03-03g — JSDoc @return type predicate parsing & call.rs node_types fix
 
