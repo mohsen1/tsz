@@ -759,47 +759,46 @@ impl<'a> Printer<'a> {
         }
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
-        if self.ctx.options.legacy_decorators {
-            if let Some(class_node_ref) = self.arena.get(class_node)
-                && let Some(class_data) = self.arena.get_class(class_node_ref)
-            {
-                let class_decorators = self.collect_class_decorators(&class_data.modifiers);
-                let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
-                    let Some(m_node) = self.arena.get(m_idx) else {
-                        return false;
-                    };
-                    let mods = match m_node.kind {
-                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                            .arena
-                            .get_method_decl(m_node)
-                            .and_then(|m| m.modifiers.as_ref()),
-                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                            .arena
-                            .get_property_decl(m_node)
-                            .and_then(|p| p.modifiers.as_ref()),
-                        k if k == syntax_kind_ext::GET_ACCESSOR
-                            || k == syntax_kind_ext::SET_ACCESSOR =>
-                        {
-                            self.arena
-                                .get_accessor(m_node)
-                                .and_then(|a| a.modifiers.as_ref())
-                        }
-                        _ => None,
-                    };
-                    mods.is_some_and(|m| {
-                        m.nodes.iter().any(|&mod_idx| {
-                            self.arena
-                                .get(mod_idx)
-                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                        })
+        if self.ctx.options.legacy_decorators
+            && let Some(class_node_ref) = self.arena.get(class_node)
+            && let Some(class_data) = self.arena.get_class(class_node_ref)
+        {
+            let class_decorators = self.collect_class_decorators(&class_data.modifiers);
+            let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
+                let Some(m_node) = self.arena.get(m_idx) else {
+                    return false;
+                };
+                let mods = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(m_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(m_node)
+                        .and_then(|p| p.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(m_node)
+                            .and_then(|a| a.modifiers.as_ref())
+                    }
+                    _ => None,
+                };
+                mods.is_some_and(|m| {
+                    m.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
                     })
+                })
+            });
+            if !class_decorators.is_empty() || has_member_decorators {
+                es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                    class_decorators,
+                    has_member_decorators,
                 });
-                if !class_decorators.is_empty() || has_member_decorators {
-                    es5_emitter.set_decorator_info(ClassDecoratorInfo {
-                        class_decorators,
-                        has_member_decorators,
-                    });
-                }
             }
         }
 
