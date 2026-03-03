@@ -368,14 +368,37 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
-        // Sort by declaration_order to preserve source ordering for display.
-        // Properties are stored sorted by Atom ID for identity/hashing,
-        // but declaration_order captures the original source order.
         let mut display_props: Vec<&PropertyInfo> = props.iter().collect();
-        let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
-        if has_decl_order {
-            display_props.sort_by_key(|p| p.declaration_order);
-        }
+        // Sort properties for display. Use declaration_order as primary key when
+        // available, with tsc-compatible tiebreaking: numeric keys in numeric order,
+        // then string keys in existing order (stable sort preserves Atom ID order).
+        // Properties are stored sorted by Atom ID for identity/hashing, so display
+        // order must be restored here.
+        display_props.sort_by(|a, b| {
+            // Primary: declaration_order (0 means unset, treated as equal)
+            let ord = a.declaration_order.cmp(&b.declaration_order);
+            if ord != std::cmp::Ordering::Equal
+                && a.declaration_order > 0
+                && b.declaration_order > 0
+            {
+                return ord;
+            }
+            // Tiebreak for properties with same declaration_order:
+            // numeric keys get sorted numerically (tsc puts them first),
+            // but string keys preserve their existing order via stable sort.
+            let a_name = self.interner.resolve_atom_ref(a.name);
+            let b_name = self.interner.resolve_atom_ref(b.name);
+            let a_num = a_name.parse::<u64>();
+            let b_num = b_name.parse::<u64>();
+            match (a_num, b_num) {
+                (Ok(an), Ok(bn)) => an.cmp(&bn),
+                (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                // For non-numeric keys with same decl_order, preserve existing
+                // order (stable sort) — Atom ID order often matches source order
+                (Err(_), Err(_)) => std::cmp::Ordering::Equal,
+            }
+        });
         if display_props.len() > 3 {
             let first_three: Vec<String> = display_props
                 .iter()
