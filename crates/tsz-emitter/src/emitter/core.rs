@@ -232,8 +232,9 @@ pub struct Printer<'a> {
     pub(crate) suppress_commonjs_named_import_substitution: bool,
 
     /// Pending class field initializers to inject into constructor body.
-    /// Each entry is (`field_name`, `initializer_node_index`).
-    pub(crate) pending_class_field_inits: Vec<(String, NodeIndex)>,
+    /// Each entry is (`field_name`, `initializer_node_index`, `member_node_end`).
+    /// The `member_node_end` is used for trailing comment emission.
+    pub(crate) pending_class_field_inits: Vec<(String, NodeIndex, u32)>,
 
     /// Pending auto-accessor field initializers to emit in constructor body.
     /// Each tuple is (`weakmap_storage_name`, `initializer_expression`).
@@ -675,22 +676,20 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a node in an expression context.
-    /// If the node is an error/unknown node, emits `void 0` for parse error tolerance.
+    /// If the node is missing or an error/unknown node, emits nothing (matching tsc behavior
+    /// for parse error recovery — e.g. `const x = ;` rather than `const x = void 0;`).
     pub fn emit_expression(&mut self, idx: NodeIndex) {
         if idx.is_none() {
-            self.write("void 0");
             return;
         }
 
         let Some(node) = self.arena.get(idx) else {
-            self.write("void 0");
             return;
         };
 
         // Check if this is an error/unknown node
         use tsz_scanner::SyntaxKind;
         if node.kind == SyntaxKind::Unknown as u16 {
-            self.write("void 0");
             return;
         }
 
