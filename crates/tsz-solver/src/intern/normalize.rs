@@ -179,8 +179,11 @@ impl TypeInterner {
             // Check for null or undefined
             if member.is_nullable() {
                 has_null_or_undefined = true;
+            } else if member == TypeId::OBJECT {
+                // The `object` intrinsic is itself an object type
+                has_object_type = true;
             } else {
-                // Check if this is an object type
+                // Check if this is a structural object type
                 // Task #48: Empty objects ARE object types and are disjoint from null/undefined
                 // null & {} = never (null is not a non-nullish value)
                 if let Some(
@@ -198,6 +201,41 @@ impl TypeInterner {
 
             // Early exit: if we have both, the intersection is never
             if has_null_or_undefined && has_object_type {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if the `object` intrinsic type (non-primitive) is intersected with any primitive type.
+    ///
+    /// In TypeScript, `object` represents ALL non-primitive types. It is disjoint from every
+    /// primitive type: string, number, boolean, bigint, symbol, null, undefined.
+    /// So `object & string = never`, `object & number = never`, etc.
+    ///
+    /// This is different from structural object types like `{ __brand: T }` which CAN
+    /// intersect with primitives (branded types). The distinction is:
+    /// - `object & string → never` (the `object` keyword excludes primitives)
+    /// - `{} & string → string` (empty structural object is compatible)
+    /// - `{ __brand: T } & string → string & { __brand: T }` (branded type)
+    pub(crate) fn intersection_has_object_intrinsic_with_primitive(
+        &self,
+        members: &[TypeId],
+    ) -> bool {
+        let mut has_object_intrinsic = false;
+        let mut has_primitive = false;
+
+        for &member in members {
+            if member == TypeId::OBJECT {
+                has_object_intrinsic = true;
+            } else if let Some(TypeData::Intrinsic(IntrinsicKind::Object)) = self.lookup(member) {
+                has_object_intrinsic = true;
+            } else if self.primitive_class_for(member).is_some() {
+                has_primitive = true;
+            }
+
+            if has_object_intrinsic && has_primitive {
                 return true;
             }
         }
