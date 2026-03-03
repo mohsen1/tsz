@@ -56,8 +56,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Check if single NodeIndex has multiple arenas (cross-file duplicate with
+            // same NodeIndex due to identical file structure). In this case, declarations
+            // list has only 1 entry but represents 2+ actual declarations.
             if symbol.declarations.len() <= 1 {
-                continue;
+                let has_cross_file = symbol.declarations.iter().any(|&decl_idx| {
+                    self.ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| arenas.len() > 1)
+                });
+                if !has_cross_file {
+                    continue;
+                }
             }
 
             let mut has_local = false;
@@ -136,8 +148,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Same cross-file NodeIndex collision check as above.
             if symbol.declarations.len() <= 1 {
-                continue;
+                let has_cross_file = symbol.declarations.iter().any(|&decl_idx| {
+                    self.ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| arenas.len() > 1)
+                });
+                if !has_cross_file {
+                    continue;
+                }
             }
 
             if symbol.escaped_name == "constructor" {
@@ -963,19 +985,33 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Match TypeScript's binder behavior: if the first declaration (by source
-                // position) is block-scoped, emit TS2451 for all duplicates. Otherwise
-                // emit TS2300 for all. We use source position rather than declaration
-                // vector order because var hoisting can reorder declarations.
-                let first_decl_flags = declarations
-                    .iter()
-                    .filter(|(decl_idx, _, is_local, _)| *is_local && conflicts.contains(decl_idx))
-                    .min_by_key(|(decl_idx, _, _, _)| {
-                        self.ctx.arena.get(*decl_idx).map_or(u32::MAX, |n| n.pos)
-                    })
-                    .map(|d| d.1)
-                    .unwrap_or(0);
-                if (first_decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
+                // Determine TS2451 vs TS2300:
+                // - Single-file: check if the first declaration (by source position)
+                //   is block-scoped, matching tsc's binder processing order.
+                // - Cross-file: if ANY declaration is block-scoped → TS2451, because
+                //   each file's binder processes independently.
+                let has_remote = declarations.iter().any(|(_, _, is_local, _)| !*is_local);
+                let use_ts2451 = if has_remote {
+                    // Cross-file: any block-scoped declaration triggers TS2451
+                    declarations
+                        .iter()
+                        .filter(|(decl_idx, _, _, _)| conflicts.contains(decl_idx))
+                        .any(|(_, flags, _, _)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0)
+                } else {
+                    // Single-file: check first declaration by source position
+                    let first_decl_flags = declarations
+                        .iter()
+                        .filter(|(decl_idx, _, is_local, _)| {
+                            *is_local && conflicts.contains(decl_idx)
+                        })
+                        .min_by_key(|(decl_idx, _, _, _)| {
+                            self.ctx.arena.get(*decl_idx).map_or(u32::MAX, |n| n.pos)
+                        })
+                        .map(|d| d.1)
+                        .unwrap_or(0);
+                    (first_decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                };
+                if use_ts2451 {
                     (
                         format_message(
                             diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,

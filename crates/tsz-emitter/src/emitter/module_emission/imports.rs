@@ -644,7 +644,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit import attributes (e.g., `with { type: "json" }` or `assert { type: "json" }`)
-    /// if the given NodeIndex points to an IMPORT_ATTRIBUTES node.
+    /// if the given `NodeIndex` points to an `IMPORT_ATTRIBUTES` node.
     pub(in crate::emitter) fn emit_import_attributes(&mut self, attributes: NodeIndex) {
         let Some(attr_node) = self.arena.get(attributes) else {
             return;

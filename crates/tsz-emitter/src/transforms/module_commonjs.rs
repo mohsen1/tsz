@@ -263,6 +263,7 @@ pub fn collect_export_names_with_options(
 /// where `default_func_export` is `Some(local_name)` when the file has
 /// `export default function name() {}` — the local function name for the
 /// hoisted `exports.default = name;` preamble assignment.
+#[allow(clippy::type_complexity)]
 pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],

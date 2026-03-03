@@ -232,7 +232,7 @@ pub struct Printer<'a> {
     pub(crate) suppress_commonjs_named_import_substitution: bool,
 
     /// Pending class field initializers to inject into constructor body.
-    /// Each entry is (`field_name`, `initializer_node_index`, `init_end`, trailing_comments).
+    /// Each entry is (`field_name`, `initializer_node_index`, `init_end`, `trailing_comments`).
     /// `init_end` is used for trailing comment emission in synthesized constructors.
     /// `trailing_comments` are pre-collected during class body iteration for existing constructors.
     pub(crate) pending_class_field_inits: Vec<(String, NodeIndex, u32, Vec<String>)>,
