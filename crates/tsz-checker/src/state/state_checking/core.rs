@@ -313,8 +313,10 @@ impl<'a> CheckerState<'a> {
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();
 
-            // Check triple-slash reference directives (TS6053)
-            if !self.ctx.compiler_options.no_resolve {
+            // Check triple-slash reference directives (TS6053).
+            // tsc suppresses TS6053 when the file has syntax errors (TS1011),
+            // so only check when there are no parse errors.
+            if !self.ctx.compiler_options.no_resolve && !self.ctx.has_parse_errors {
                 self.check_triple_slash_references(&sf.file_name, &sf.text);
             }
 
