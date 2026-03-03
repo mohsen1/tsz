@@ -811,6 +811,10 @@ impl<'a> Printer<'a> {
                 || (lower_auto_accessors_to_weakmap && !auto_accessor_instance_inits.is_empty()));
 
         if synthesize_constructor {
+            // Increment function_scope_depth so async arrow functions inside
+            // the synthesized constructor use `this` instead of `void 0` as
+            // the __awaiter first argument.
+            self.function_scope_depth += 1;
             if has_extends {
                 self.write("constructor() {");
                 self.write_line();
@@ -867,6 +871,7 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
             self.write_line();
+            self.function_scope_depth -= 1;
         }
 
         // When useDefineForClassFields is true, emit parameter property field
