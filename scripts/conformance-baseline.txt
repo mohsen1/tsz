@@ -462,6 +462,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1541,7 +1542,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingElement.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingPatternOrder.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowComputedPropertyNames.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowGenericTypes.ts
-FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIfStatement.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrors.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrorsAsync.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowNoIntermediateErrors.ts
@@ -2328,8 +2328,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/globalMergeWithCommonJSAssignmentD
 FAIL TypeScript/tests/cases/conformance/salsa/importAliasModuleExports.ts
 FAIL TypeScript/tests/cases/conformance/salsa/importingExportingTypes.ts
 FAIL TypeScript/tests/cases/conformance/salsa/inferingFromAny.ts
-FAIL TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments4.ts
-FAIL TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments7.ts
 FAIL TypeScript/tests/cases/conformance/salsa/inferringClassStaticMembersFromAssignments.ts
 FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeJsContainer.ts
 FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts
@@ -5064,7 +5062,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -8345,6 +8342,7 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowForInStatement.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowForInStatement2.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowForOfStatement.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowForStatement.ts
+PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIfStatement.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIIFE.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowInOperator.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowInstanceofExtendsFunction.ts
@@ -11464,7 +11462,9 @@ PASS TypeScript/tests/cases/conformance/salsa/exportPropertyAssignmentNameResolu
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments.ts
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments2.ts
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments3.ts
+PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments4.ts
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments6.ts
+PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments7.ts
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments8.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsdocConstructorFunctionTypeReference.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsObjectsMarkedAsOpenEnded.ts

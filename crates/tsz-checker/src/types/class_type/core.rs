@@ -1232,13 +1232,15 @@ impl<'a> CheckerState<'a> {
                     };
                     // Check initializer is `this`
                     if let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
-                        && init_node.kind == SyntaxKind::ThisKeyword as u16 {
-                            // Get the name identifier
-                            if let Some(name_node) = self.ctx.arena.get(var_decl.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                    aliases.push(ident.escaped_text.clone());
-                                }
+                        && init_node.kind == SyntaxKind::ThisKeyword as u16
+                    {
+                        // Get the name identifier
+                        if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            aliases.push(ident.escaped_text.clone());
                         }
+                    }
                 }
             }
         }

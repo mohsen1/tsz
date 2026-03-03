@@ -353,6 +353,16 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((access.expression, name));
         }
 
+        // QualifiedName (e.g., `x.p` inside `typeof x.p` in type position).
+        // Treat as equivalent to PropertyAccessExpression for reference matching,
+        // so flow narrowing conditions on `x.p` (PropertyAccess) match `x.p` (QualifiedName).
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.arena.get_qualified_name(node)?;
+            let ident = self.arena.get_identifier_at(qn.right)?;
+            let name = self.interner.intern_string(&ident.escaped_text);
+            return Some((qn.left, name));
+        }
+
         None
     }
 

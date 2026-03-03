@@ -1,7 +1,56 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9895/12570 (78.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9896/12570 (78.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03q — JS class method body property inference (+2 tests)
+
+### Fixed: `this.prop = value` in method bodies and self-alias pattern
+
+**Area**: salsa (64.7% → 65.8%)
+
+**Root cause 1 — Method body not scanned**: `collect_js_constructor_this_properties()` only scanned the
+constructor body for `this.prop = value` patterns. TSC also infers class properties from ALL method bodies
+in JS/checkJs mode. Properties assigned via `this.p = 1` in any method should become class instance properties.
+
+**Fix**: In Phase 1 of class type building (before method signature processing), when deferring method
+declarations, also scan method bodies for `this.prop = value` assignments using the existing
+`collect_js_constructor_this_properties()` function. Guarded by `self.ctx.is_js_file()`.
+
+**Root cause 2 — Self-alias not recognized**: The `var self = this; self.prop = value` pattern was not
+recognized. `extract_this_property_assignment()` only checked for `ThisKeyword` as the property access
+object, not identifier aliases.
+
+**Fix**: Added `collect_this_aliases()` helper that scans body statements for `var/let/const X = this`
+patterns. Modified `extract_this_property_assignment()` to accept both `this` and known aliases as
+the property access object.
+
+**Tests added**: 3 integration tests:
+- `test_js_method_body_this_prop_no_false_ts2339` — method body `this.prop` inference
+- `test_js_self_alias_this_prop_constructor` — `var self = this; self.x = 1` in constructor
+- `test_js_self_alias_this_prop_method` — `var self = this; self.y = 2` in methods
+
+**Tests fixed**: inferringClassMembersFromAssignments4, inferringClassMembersFromAssignments7
+
+### Remaining in salsa (65 failures)
+
+1. **Constructor function `this.prop` inference** (thisTypeOfConstructorFunctions, propertiesOfGenericConstructorFunctions):
+   ES6 classes work, but plain constructor functions (`function Foo() { this.x = 1; }`) don't infer instance
+   properties. Need equivalent of `collect_js_constructor_this_properties` for function declarations with
+   `@constructor` JSDoc or used with `new`.
+
+2. **False TS2339 from expando/prototype patterns** (jsContainerMergeJsContainer, jsContainerMergeTsDeclaration2,
+   moduleExportAssignment, propertiesOfGenericConstructorFunctions, thisTypeOfConstructorFunctions):
+   Property accesses on expando objects, prototype chains, and module.exports fail because the merged
+   type doesn't include all assigned properties.
+
+3. **Missing TS7053 for late-bound computed property keys** (lateBoundAssignmentDeclarationSupport1-6,
+   thisPropertyAssignmentComputed, typeFromPropertyAssignment39, lateBoundClassMemberAssignmentJS2):
+   Symbol-keyed and string-literal-keyed computed property accesses don't emit implicit-any errors.
+
+4. **Missing TS2339 for type narrowing** (assignmentToVoidZero2, checkSpecialPropertyAssignments,
+   chainedPrototypeAssignment, importAliasModuleExports, etc.): Various patterns where TSC expects
+   TS2339 but we don't emit it — likely different root causes per test.
 
 ## Session 2026-03-03p — Readonly tuple/array element access diagnostics (+4 tests)
 

@@ -664,7 +664,14 @@ impl<'a> CheckerState<'a> {
                                 PropertyAccessResult::Success { type_id, .. }
                                     if type_id != TypeId::ANY && type_id != TypeId::ERROR =>
                                 {
-                                    return type_id;
+                                    // Apply flow narrowing to the property access result.
+                                    // This handles cases like:
+                                    //   if (x.p === "A") { typeof x.p }
+                                    // where the QualifiedName x.p should be narrowed by
+                                    // the condition on the PropertyAccessExpression x.p.
+                                    let narrowed =
+                                        self.apply_flow_narrowing(type_query.expr_name, type_id);
+                                    return narrowed;
                                 }
                                 _ => {
                                     // Property access returned any/error or failed entirely.
