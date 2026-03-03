@@ -1,6 +1,6 @@
 use super::super::{Printer, ScriptTarget};
-use crate::transforms::ClassES5Emitter;
 use crate::transforms::private_fields_es5::get_private_field_name;
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -258,6 +258,12 @@ impl<'a> Printer<'a> {
                         es5_emitter.set_source_text(text);
                     }
                 }
+                // Pass decorator info to the ES5 emitter so __decorate calls
+                // are emitted INSIDE the IIFE (before `return ClassName;`)
+                es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                    class_decorators: legacy_class_decorators,
+                    has_member_decorators: has_legacy_member_decorators,
+                });
                 let output = es5_emitter.emit_class(idx);
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
@@ -270,23 +276,6 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&output);
                 }
-                self.write_line();
-                let commonjs_exported = self.ctx.is_commonjs()
-                    && self
-                        .arena
-                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                    && !self.ctx.module_state.has_export_assignment;
-                let commonjs_default = commonjs_exported
-                    && self
-                        .arena
-                        .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                );
                 while self.comment_emit_idx < self.all_comments.len()
                     && self.all_comments[self.comment_emit_idx].end <= node.end
                 {

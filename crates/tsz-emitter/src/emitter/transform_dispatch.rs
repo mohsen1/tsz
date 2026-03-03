@@ -241,20 +241,9 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
-                // Delegate to existing ClassES5Emitter
-                let mut es5_emitter = ClassES5Emitter::new(self.arena);
-                es5_emitter.set_indent_level(self.writer.indent_level());
-                es5_emitter.set_transforms(self.transforms.clone());
+                let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);
-                }
-                if let Some(text) = self.source_text_for_map() {
-                    if self.writer.has_source_map() {
-                        es5_emitter
-                            .set_source_map_context(text, self.writer.current_source_index());
-                    } else {
-                        es5_emitter.set_source_text(text);
-                    }
                 }
                 let es5_output = es5_emitter.emit_class(class_node);
                 debug!(
@@ -753,6 +742,70 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Create an ES5 class emitter pre-configured with decorator info for the given class.
+    fn create_es5_class_emitter_with_decorators(
+        &self,
+        class_node: NodeIndex,
+    ) -> ClassES5Emitter<'a> {
+        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_indent_level(self.writer.indent_level());
+        es5_emitter.set_transforms(self.transforms.clone());
+        if let Some(text) = self.source_text_for_map() {
+            if self.writer.has_source_map() {
+                es5_emitter.set_source_map_context(text, self.writer.current_source_index());
+            } else {
+                es5_emitter.set_source_text(text);
+            }
+        }
+
+        // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
+        if self.ctx.options.legacy_decorators {
+            if let Some(class_node_ref) = self.arena.get(class_node)
+                && let Some(class_data) = self.arena.get_class(class_node_ref)
+            {
+                let class_decorators = self.collect_class_decorators(&class_data.modifiers);
+                let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
+                    let Some(m_node) = self.arena.get(m_idx) else {
+                        return false;
+                    };
+                    let mods = match m_node.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .arena
+                            .get_method_decl(m_node)
+                            .and_then(|m| m.modifiers.as_ref()),
+                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                            .arena
+                            .get_property_decl(m_node)
+                            .and_then(|p| p.modifiers.as_ref()),
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena
+                                .get_accessor(m_node)
+                                .and_then(|a| a.modifiers.as_ref())
+                        }
+                        _ => None,
+                    };
+                    mods.is_some_and(|m| {
+                        m.nodes.iter().any(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    })
+                });
+                if !class_decorators.is_empty() || has_member_decorators {
+                    es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                        class_decorators,
+                        has_member_decorators,
+                    });
+                }
+            }
+        }
+
+        es5_emitter
+    }
+
     fn emit_commonjs_inner(
         &mut self,
         node: &Node,
@@ -762,17 +815,7 @@ impl<'a> Printer<'a> {
     ) {
         match inner {
             EmitDirective::ES5Class { class_node } => {
-                let mut es5_emitter = ClassES5Emitter::new(self.arena);
-                es5_emitter.set_indent_level(self.writer.indent_level());
-                es5_emitter.set_transforms(self.transforms.clone());
-                if let Some(text) = self.source_text_for_map() {
-                    if self.writer.has_source_map() {
-                        es5_emitter
-                            .set_source_map_context(text, self.writer.current_source_index());
-                    } else {
-                        es5_emitter.set_source_text(text);
-                    }
-                }
+                let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -937,17 +980,7 @@ impl<'a> Printer<'a> {
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5Class { class_node } => {
-                let mut es5_emitter = ClassES5Emitter::new(self.arena);
-                es5_emitter.set_indent_level(self.writer.indent_level());
-                es5_emitter.set_transforms(self.transforms.clone());
-                if let Some(text) = self.source_text_for_map() {
-                    if self.writer.has_source_map() {
-                        es5_emitter
-                            .set_source_map_context(text, self.writer.current_source_index());
-                    } else {
-                        es5_emitter.set_source_text(text);
-                    }
-                }
+                let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {

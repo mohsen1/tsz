@@ -39,6 +39,14 @@ use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
+/// Decorator information to pass to the ES5 class emitter
+pub struct ClassDecoratorInfo {
+    /// Class-level decorator NodeIndex list
+    pub class_decorators: Vec<NodeIndex>,
+    /// Whether to emit member decorator __decorate calls inside the IIFE
+    pub has_member_decorators: bool,
+}
+
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 ///
 /// This is a thin wrapper around `ES5ClassTransformer` and `IRPrinter`
@@ -118,6 +126,13 @@ impl<'a> ClassES5Emitter<'a> {
     /// Returns an empty vector for API compatibility.
     pub fn take_mappings(&mut self) -> Vec<Mapping> {
         std::mem::take(&mut self.mappings)
+    }
+
+    /// Set decorator information for legacy decorator lowering inside the IIFE
+    pub fn set_decorator_info(&mut self, info: ClassDecoratorInfo) {
+        self.transformer.set_class_decorators(info.class_decorators);
+        self.transformer
+            .set_legacy_decorators(info.has_member_decorators);
     }
 
     /// Emit a class declaration to ES5

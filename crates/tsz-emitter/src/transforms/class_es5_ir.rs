@@ -112,6 +112,10 @@ pub struct ES5ClassTransformer<'a> {
     transforms: Option<TransformContext>,
     /// Source text for extracting comments
     source_text: Option<&'a str>,
+    /// Class-level decorator NodeIndex list (for legacy decorator lowering)
+    class_decorators: Vec<NodeIndex>,
+    /// Whether to emit member decorator __decorate calls inside the IIFE
+    legacy_decorators: bool,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -125,7 +129,19 @@ impl<'a> ES5ClassTransformer<'a> {
             auto_accessors: Vec::new(),
             transforms: None,
             source_text: None,
+            class_decorators: Vec::new(),
+            legacy_decorators: false,
         }
+    }
+
+    /// Set class-level decorators to emit inside the IIFE
+    pub fn set_class_decorators(&mut self, decorators: Vec<NodeIndex>) {
+        self.class_decorators = decorators;
+    }
+
+    /// Enable legacy decorator lowering (emits __decorate calls for members inside the IIFE)
+    pub fn set_legacy_decorators(&mut self, enabled: bool) {
+        self.legacy_decorators = enabled;
     }
 
     /// Set transform directives from `LoweringPass`
@@ -347,6 +363,159 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_expression(idx)
     }
 
+    /// Collect decorator NodeIndex list from a modifier list
+    fn collect_decorators_from_modifiers(&self, modifiers: &Option<NodeList>) -> Vec<NodeIndex> {
+        let Some(mods) = modifiers else {
+            return Vec::new();
+        };
+        mods.nodes
+            .iter()
+            .copied()
+            .filter(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+            })
+            .collect()
+    }
+
+    /// Render decorator expressions as strings using the IR printer.
+    fn render_decorator_expressions(&self, decorators: &[NodeIndex]) -> Vec<String> {
+        use crate::transforms::ir_printer::IRPrinter;
+        let mut result = Vec::new();
+        for &dec_idx in decorators {
+            if let Some(dec_node) = self.arena.get(dec_idx)
+                && let Some(dec) = self.arena.get_decorator(dec_node)
+            {
+                let ir_expr = self.convert_expression(dec.expression);
+                let mut printer = IRPrinter::with_arena(self.arena);
+                if let Some(source_text) = self.source_text {
+                    printer.set_source_text(source_text);
+                }
+                if let Some(ref transforms) = self.transforms {
+                    printer.set_transforms(transforms.clone());
+                }
+                let rendered = printer.emit(&ir_expr).to_string();
+                result.push(rendered);
+            }
+        }
+        result
+    }
+
+    /// Emit `__decorate` calls for decorated members inside the IIFE body.
+    fn emit_member_decorator_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return;
+        };
+        let Some(class_data) = self.arena.get_class(class_node) else {
+            return;
+        };
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let (modifiers, name_idx, is_property) = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    (&method.modifiers, method.name, false)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    let is_auto_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    (&prop.modifiers, prop.name, !is_auto_accessor)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (&accessor.modifiers, accessor.name, false)
+                }
+                _ => continue,
+            };
+
+            let decorators = self.collect_decorators_from_modifiers(modifiers);
+            if decorators.is_empty() {
+                continue;
+            }
+
+            let is_static = self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::StaticKeyword);
+
+            let member_name = get_identifier_text(self.arena, name_idx);
+            let Some(member_name) = member_name else {
+                continue;
+            };
+            if member_name.is_empty() {
+                continue;
+            }
+
+            let dec_strs = self.render_decorator_expressions(&decorators);
+            let target_str = if is_static {
+                self.class_name.clone()
+            } else {
+                format!("{}.prototype", self.class_name)
+            };
+            let desc_str = if is_property { "void 0" } else { "null" };
+
+            // Format matching tsc:
+            // __decorate([\n        dec1,\n        dec2\n    ], target, "name", desc)
+            // Note: first line indent is handled by the body emitter's write_indent().
+            // Continuation lines after \n need absolute indentation from column 0.
+            let mut raw = String::from("__decorate([");
+            for (i, dec_str) in dec_strs.iter().enumerate() {
+                raw.push_str("\n        ");
+                raw.push_str(dec_str);
+                if i + 1 < dec_strs.len() {
+                    raw.push(',');
+                }
+            }
+            raw.push_str("\n    ], ");
+            raw.push_str(&target_str);
+            raw.push_str(", \"");
+            raw.push_str(&member_name);
+            raw.push_str("\", ");
+            raw.push_str(desc_str);
+            raw.push(')');
+
+            body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(raw))));
+        }
+    }
+
+    /// Emit `ClassName = __decorate([dec1, ...], ClassName)` for class-level decorators.
+    fn emit_class_decorator_ir(&self, body: &mut Vec<IRNode>) {
+        let dec_strs = self.render_decorator_expressions(&self.class_decorators);
+        if dec_strs.is_empty() {
+            return;
+        }
+
+        // Format matching tsc:
+        // ClassName = __decorate([\n        dec1,\n        dec2\n    ], ClassName)
+        let mut raw = String::new();
+        raw.push_str(&self.class_name);
+        raw.push_str(" = __decorate([");
+        for (i, dec_str) in dec_strs.iter().enumerate() {
+            raw.push_str("\n        ");
+            raw.push_str(dec_str);
+            if i + 1 < dec_strs.len() {
+                raw.push(',');
+            }
+        }
+        raw.push_str("\n    ], ");
+        raw.push_str(&self.class_name);
+        raw.push(')');
+
+        body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(raw))));
+    }
+
     /// Convert a block body to IR statements
     fn convert_block_body(&self, block_idx: NodeIndex) -> Vec<IRNode> {
         self.convert_block_body_with_alias(block_idx, None)
@@ -449,6 +618,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Static members
         let deferred_static_blocks = self.emit_static_members_ir(&mut body, class_idx);
+
+        // Legacy decorator __decorate calls (inside IIFE, before return)
+        if self.legacy_decorators {
+            self.emit_member_decorator_ir(&mut body, class_idx);
+        }
+        if !self.class_decorators.is_empty() {
+            self.emit_class_decorator_ir(&mut body);
+        }
 
         // return ClassName;
         body.push(IRNode::ret(Some(IRNode::id(&self.class_name))));

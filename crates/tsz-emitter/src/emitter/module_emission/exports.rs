@@ -1,5 +1,5 @@
 use super::super::{ModuleKind, Printer};
-use crate::transforms::ClassES5Emitter;
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -297,6 +297,39 @@ impl<'a> Printer<'a> {
                             // pre-assignment itself via emit_commonjs_pre_assignment=true.
                             self.pending_commonjs_class_export_name = None;
                             if self.ctx.target_es5 {
+                                // Check for member decorators too
+                                let has_member_decorators =
+                                    class.members.nodes.iter().any(|&m_idx| {
+                                        let Some(m_node) = self.arena.get(m_idx) else {
+                                            return false;
+                                        };
+                                        let mods = match m_node.kind {
+                                            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                                                .arena
+                                                .get_method_decl(m_node)
+                                                .and_then(|m| m.modifiers.as_ref()),
+                                            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                                                .arena
+                                                .get_property_decl(m_node)
+                                                .and_then(|p| p.modifiers.as_ref()),
+                                            k if k == syntax_kind_ext::GET_ACCESSOR
+                                                || k == syntax_kind_ext::SET_ACCESSOR =>
+                                            {
+                                                self.arena
+                                                    .get_accessor(m_node)
+                                                    .and_then(|a| a.modifiers.as_ref())
+                                            }
+                                            _ => None,
+                                        };
+                                        mods.is_some_and(|m| {
+                                            m.nodes.iter().any(|&mod_idx| {
+                                                self.arena.get(mod_idx).is_some_and(|n| {
+                                                    n.kind == syntax_kind_ext::DECORATOR
+                                                })
+                                            })
+                                        })
+                                    });
+
                                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
@@ -310,6 +343,11 @@ impl<'a> Printer<'a> {
                                         es5_emitter.set_source_text(text);
                                     }
                                 }
+                                // Pass decorator info so __decorate calls are inside the IIFE
+                                es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                                    class_decorators: legacy_decorators.clone(),
+                                    has_member_decorators,
+                                });
                                 let output = es5_emitter.emit_class(export.export_clause);
                                 let mappings = es5_emitter.take_mappings();
                                 if !mappings.is_empty() && self.writer.has_source_map() {
@@ -331,6 +369,15 @@ impl<'a> Printer<'a> {
                                 {
                                     self.comment_emit_idx += 1;
                                 }
+                                self.write_line();
+                                // For ES5, decorator calls are inside the IIFE,
+                                // but we still need the CommonJS export assignment
+                                self.write("exports.");
+                                self.write(&name);
+                                self.write(" = ");
+                                self.write(&name);
+                                self.write(";");
+                                self.write_line();
                             } else {
                                 self.emit_class_es6_with_options(
                                     clause_node,
@@ -338,16 +385,23 @@ impl<'a> Printer<'a> {
                                     true,
                                     Some(("let", name.clone())),
                                 );
+                                self.write_line();
+                                // CommonJS export assignment
+                                self.write("exports.");
+                                self.write(&name);
+                                self.write(" = ");
+                                self.write(&name);
+                                self.write(";");
+                                self.write_line();
+                                // Emit __decorate call for ES2015+
+                                self.emit_legacy_class_decorator_assignment(
+                                    &name,
+                                    &legacy_decorators,
+                                    true,  // commonjs_exported
+                                    false, // commonjs_default
+                                    false, // emit_commonjs_pre_assignment (already emitted above)
+                                );
                             }
-                            self.write_line();
-                            self.emit_legacy_class_decorator_assignment(
-                                &name,
-                                &legacy_decorators,
-                                true,
-                                false,
-                                true,
-                            );
-                            self.write_line();
                             return;
                         }
                     }

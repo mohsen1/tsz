@@ -69,6 +69,7 @@ pub mod spread_es5;
 
 // Re-export concrete emitter types for use by the emitter module
 // This breaks the dependency on internal submodules (transforms::class_es5)
+pub use class_es5::ClassDecoratorInfo;
 pub use class_es5::ClassES5Emitter;
 pub use enum_es5::EnumES5Emitter;
 pub use namespace_es5::NamespaceES5Emitter;
