@@ -454,15 +454,10 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        // Check if write-only (assigned but never read)
-                        // Destructured variables should NOT get TS6198 - they get TS6133
-                        let is_destructured = self.find_parent_binding_pattern(decl_idx).is_some();
-                        let is_write_only =
-                            !is_destructured && self.ctx.written_symbols.borrow().contains(&sym_id);
-
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                        // TS6198 for write-only variables ("assigned but never used")
                         // TS6133 for variables, functions, imports, class properties ("value never read")
+                        // Note: tsc uses TS6198 only for "all destructured elements unused" (a
+                        // different path), never for individual write-only variables.
                         // Note: TS6138 ("Property 'x' is declared but its value is never read")
                         // is only for constructor parameter properties, handled in the parameter section below.
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
@@ -472,11 +467,6 @@ impl<'a> CheckerState<'a> {
                             || (flags & symbol_flags::CONST_ENUM) != 0;
                         let (msg, code) = if is_type_only {
                             (format!("'{name}' is declared but never used."), 6196)
-                        } else if is_write_only {
-                            (
-                                format!("'{name}' is assigned a value but never used."),
-                                6198,
-                            )
                         } else {
                             (
                                 format!("'{name}' is declared but its value is never read."),
