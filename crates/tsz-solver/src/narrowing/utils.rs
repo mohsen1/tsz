@@ -435,7 +435,62 @@ pub fn split_nullish_type(
 }
 
 /// Remove nullish parts of a type (non-null assertion).
+///
+/// For type parameters whose constraint includes nullable types (e.g., `T extends string | undefined`),
+/// returns `T & {}` (NonNullable<T>) instead of `T`. This matches tsc's behavior where
+/// `x!` on a type parameter produces `T & {}`, ensuring proper assignability to the
+/// non-nullable part of the constraint.
 pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    // Handle type parameters: if the constraint includes nullable types,
+    // produce T & {} (NonNullable<T>) to properly narrow the type.
+    if let Some(TypeData::TypeParameter(param)) = types.lookup(type_id) {
+        if let Some(constraint) = param.constraint {
+            let constraint_has_nullable = constraint.is_nullable()
+                || top_level_union_members(types, constraint)
+                    .map_or(false, |members| members.iter().any(|m| m.is_nullable()));
+            if constraint_has_nullable {
+                let empty_obj = types.object(vec![]);
+                return types.intersection2(type_id, empty_obj);
+            }
+        }
+        return type_id;
+    }
+
+    // For unions containing type parameters with nullable constraints,
+    // apply NonNullable to each member individually:
+    // NonNullable<T | U> = NonNullable<T> | NonNullable<U>
+    if let Some(members) = top_level_union_members(types, type_id) {
+        let has_nullable_type_param = members.iter().any(|&m| {
+            if let Some(TypeData::TypeParameter(p)) = types.lookup(m) {
+                p.constraint.map_or(false, |c| {
+                    c.is_nullable()
+                        || top_level_union_members(types, c)
+                            .map_or(false, |cms| cms.iter().any(|cm| cm.is_nullable()))
+                })
+            } else {
+                false
+            }
+        });
+        if has_nullable_type_param {
+            let processed: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let narrowed = remove_nullish(types, m);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+            return match processed.len() {
+                0 => TypeId::NEVER,
+                1 => processed[0],
+                _ => types.union(processed),
+            };
+        }
+    }
+
     let (non_nullish, _) = split_nullish_type(types, type_id);
     non_nullish.unwrap_or(TypeId::NEVER)
 }
