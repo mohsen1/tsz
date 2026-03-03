@@ -646,6 +646,13 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
+        // `any` cannot be narrowed by exclusion — it remains `any` in all branches.
+        // Without this guard, the `is_assignable_to(any, X)` check below would always
+        // succeed (any is assignable to everything), incorrectly producing `never`.
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
