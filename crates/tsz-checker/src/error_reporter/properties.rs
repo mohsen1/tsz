@@ -46,13 +46,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
-            let suppress_did_you_mean =
-                self.has_syntax_parse_errors() || self.class_extends_any_base(type_id);
+        // When a class extends `any`, tsc treats unknown member accesses as `any`
+        // and does not emit TS2339. Check this before computing source location
+        // to avoid unnecessary work.
+        if self.class_extends_any_base(type_id) {
+            return;
+        }
 
+        if let Some(loc) = self.get_source_location(idx) {
             // On files with syntax parse errors, TypeScript generally avoids TS2551
             // suggestion diagnostics and sticks with TS2339 to reduce cascades.
-            let suggestion = if suppress_did_you_mean {
+            let suggestion = if self.has_syntax_parse_errors() {
                 None
             } else {
                 self.find_similar_property(prop_name, type_id)
