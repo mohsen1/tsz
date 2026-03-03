@@ -1047,8 +1047,29 @@ impl<'a> CheckerState<'a> {
                 // They should not trigger TS2403 against exported variables of the same
                 // name from other (merged) namespace bodies, even if the binder merged
                 // their symbols.
-                let is_non_exported_ns_var =
-                    self.var_decl_namespace_export_status(decl_idx) == Some(false);
+                let current_ns_export_status = self.var_decl_namespace_export_status(decl_idx);
+                let is_non_exported_ns_var = current_ns_export_status == Some(false);
+
+                // Skip TS2403 when declarations in the same namespace have
+                // different export visibility (one exported, one not). In tsc,
+                // these are separate symbols (locals vs exports table) and
+                // never compared for type identity.  TS2395 already covers
+                // the visibility conflict.
+                let has_ns_export_visibility_mismatch =
+                    if let Some(current_exported) = current_ns_export_status {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            symbol.declarations.iter().any(|&other_decl| {
+                                other_decl != decl_idx
+                                    && other_decl.is_some()
+                                    && self.var_decl_namespace_export_status(other_decl)
+                                        == Some(!current_exported)
+                            })
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
 
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
                     // Check if this is a mergeable declaration by looking at the node kind.
@@ -1071,6 +1092,7 @@ impl<'a> CheckerState<'a> {
                     if !is_mergeable_declaration
                         && !is_bare_declaration
                         && !is_non_exported_ns_var
+                        && !has_ns_export_visibility_mismatch
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
@@ -1205,6 +1227,7 @@ impl<'a> CheckerState<'a> {
                                     && !is_bare_declaration
                                     && !is_non_exported_ns_var
                                     && !is_other_non_exported_ns_var
+                                    && !has_ns_export_visibility_mismatch
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {
@@ -1557,10 +1580,30 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Walk up: VariableStatement -> ModuleBlock -> ModuleDeclaration
+        // Walk up: VariableStatement -> container
+        // The container is normally ModuleBlock, but for exported declarations
+        // the parser may wrap them in ExportDeclaration:
+        //   ModuleBlock -> ExportDeclaration -> VariableStatement -> ...
+        // In that case, walk one more level up to reach the ModuleBlock.
         let var_stmt_ext = self.ctx.arena.get_extended(var_stmt_idx)?;
-        let container = self.ctx.arena.get(var_stmt_ext.parent)?;
-        if container.kind != syntax_kind_ext::MODULE_BLOCK {
+        let parent_idx = var_stmt_ext.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+
+        let is_export_wrapper = parent.kind == syntax_kind_ext::EXPORT_DECLARATION;
+        let in_module_block = if parent.kind == syntax_kind_ext::MODULE_BLOCK {
+            true
+        } else if is_export_wrapper {
+            // Walk one more level: ExportDeclaration -> ModuleBlock
+            self.ctx
+                .arena
+                .get_extended(parent_idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .is_some_and(|gp| gp.kind == syntax_kind_ext::MODULE_BLOCK)
+        } else {
+            false
+        };
+
+        if !in_module_block {
             return None;
         }
 
@@ -1573,7 +1616,10 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        Some(has_export)
+        // If the VariableStatement is wrapped in an ExportDeclaration,
+        // the variable is exported even without an explicit modifier on
+        // the statement itself.
+        Some(has_export || is_export_wrapper)
     }
 
     /// Check if a `TypeQuery` type transitively leads back to the target symbol
