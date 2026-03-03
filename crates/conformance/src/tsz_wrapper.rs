@@ -679,11 +679,11 @@ fn convert_options_to_tsconfig(
     // tsz can only read options from the tsconfig. We must expand strict here to
     // ensure tsz gets the correct sub-options.
     //
-    // Expand for both `strict: true` and `strict: false` to match the cache generator.
-    // When `strict: false`, the sub-options default to false, and tsc 6.0 emits TS5107
-    // for deprecated values like `alwaysStrict: false`.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
+    // Only expand when `strict: true`. When `strict: false`, sub-options default
+    // to false implicitly and should NOT appear as explicit keys in the tsconfig.
+    // Explicit `alwaysStrict: false` triggers TS5107, but implicit false from
+    // `strict: false` does not. tsz's config parser handles implicit defaulting.
+    if opts.get("strict") == Some(&serde_json::Value::Bool(true)) {
         for key in [
             "noImplicitAny",
             "noImplicitThis",
@@ -695,7 +695,7 @@ fn convert_options_to_tsconfig(
             "alwaysStrict",
         ] {
             opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
+                .or_insert(serde_json::Value::Bool(true));
         }
     }
 
