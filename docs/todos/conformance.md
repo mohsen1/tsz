@@ -3,6 +3,34 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **~9884/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-03k — Iterable element contextual typing for array literals (+3 tests)
+
+### Fixed: False positive TS2769 on Map constructor with inferred key/value types
+
+**Area**: es6/for-ofStatements (62.7% → 67.8%, 22 → 19 failures)
+
+**Root cause**: When contextual type is an Application like `Iterable<readonly [K, V]>` (e.g., Map
+constructor parameter), the evaluation chain in `get_type_of_array_literal` converts it to a structural
+Object type `{ [Symbol.iterator](): IterableIterator<readonly [K, V]> }`. This Object form has no
+numeric index signature, so `get_array_element_type` returns `None`. Array elements like `["", true]`
+lose their tuple contextual type and are typed as `(string | boolean)[]` instead of `[string, boolean]`,
+causing false TS2769 overload resolution failures on `new Map([["", true]])`.
+
+**Fix** (helpers.rs, ~25 lines):
+- Save the original (unevaluated) contextual type before the evaluation chain
+- When `applicable_contextual_type` is None (fully-evaluated Object has no array/tuple context),
+  create a fallback `ContextualTypeContext` from the original Application type
+- Use this fallback in the element loop: the solver's `get_array_element_type` has a built-in
+  heuristic that returns `app.args[0]` for Application types (extracting `readonly [K, V]`
+  from `Iterable<readonly [K, V]>`)
+
+**Tests fixed**: for-of37, for-of40, for-of50 (all `new Map([["key", value]])` patterns)
+
+**Remaining in for-of area** (19 failures):
+- for-of45, for-of49: Destructuring assignment in for-of (`[k = "", v = false] of map`)
+- Multiple missing codes: TS7022/TS7023 (implicit any), TS2490, TS2488, TS2487
+- Fingerprint-only failures: for-of29, for-of46, for-of47, for-of48
+
 ## Session 2026-03-03j — Reverse mapped type identity-like Application fix (+1 test)
 
 ### Fixed: False positive TS2345 on identity-like Application templates in reverse mapped type inference
