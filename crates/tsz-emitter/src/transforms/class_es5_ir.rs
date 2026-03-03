@@ -505,6 +505,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     return None;
                 }
+                // Skip `declare` properties — ambient/type-only declarations have no runtime representation
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    return None;
+                }
                 // Skip private fields (they use WeakMap pattern)
                 if is_private_identifier(self.arena, prop_data.name) {
                     return None;

@@ -382,6 +382,9 @@ impl<'a> ES5ClassTransformer<'a> {
                         && !self
                             .arena
                             .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
                         && !is_private_identifier(self.arena, prop_data.name)
                         && !self
                             .arena
@@ -501,6 +504,14 @@ impl<'a> ES5ClassTransformer<'a> {
                 if self
                     .arena
                     .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                {
+                    continue;
+                }
+
+                // Skip `declare` properties — ambient/type-only declarations have no runtime representation
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
                 {
                     continue;
                 }
