@@ -124,15 +124,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///    - Apply readonly/optional modifiers
     /// 3. Construct a new object type with the resulting properties
     pub fn evaluate_mapped(&mut self, mapped: &MappedType) -> TypeId {
-        // TODO: Array/Tuple Preservation for Homomorphic Mapped Types
-        // If source_object is an Array or Tuple, we should construct a Mapped Array/Tuple
-        // instead of degrading to a plain Object. This is required to preserve
-        // Array.prototype methods (push, pop, map) and tuple-specific behavior.
-        // Example: type Boxed<T> = { [K in keyof T]: Box<T[K]> }
-        //   Boxed<[number, string]> should be [Box<number>, Box<string>] (Tuple)
-        //   Boxed<number[]> should be Box<number>[] (Array)
-        // Current implementation degrades both to plain Objects.
-
         // Check if depth was already exceeded
         if self.is_depth_exceeded() {
             return TypeId::ERROR;
@@ -620,6 +611,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 Some(self.evaluate_mapped_tuple(mapped, tuple_id))
             }
+            // ReadonlyType wrapping Array or Tuple: `readonly T[]` or `readonly [a, b]`
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 let has_readonly_index = shape

@@ -33,6 +33,43 @@ members, matching tsc's unqualified `IntrinsicAttributes` display.
 
 **Test results**: +1 genuine improvement (tsxAttributeResolution11.tsx), 0 regressions
 
+## Session 2026-03-03b — Homomorphic mapped type preservation for arrays and tuples
+
+### Fixed: Mapped types over arrays/tuples produce flat objects instead of arrays/tuples
+
+**Area**: types/tuple (61.76% → 64.9%), cross-cutting mapped type instantiation
+
+**Root cause**: When a homomorphic mapped type `{ [K in keyof T]: Template }` was instantiated
+with T substituted to an array or tuple, the `keyof T` constraint was eagerly evaluated to a flat
+union of string literal keys (e.g., `"0" | "1" | "length" | "push" | ...`) during instantiation
+(in the KeyOf branch of `instantiate_inner`). By the time `evaluate_mapped` ran, the homomorphic
+structure was destroyed — `is_mapped_type_over_type_parameter` returned false, and the code fell
+through to flat object construction with all Array.prototype methods as properties.
+
+**Fix** (2 files, solver-first approach — instantiation level):
+1. **solver `instantiate.rs` — Mapped case**: Added homomorphic array/tuple detection BEFORE
+   `keyof T` is flattened. When constraint is `KeyOf(TypeParameter)` and the TypeParameter's
+   substitution resolves to array-like or tuple, produces the result directly:
+   - **Tuple path** (tsc: `instantiateMappedTupleType`): Iterates each tuple element, substitutes
+     K → string literal index ("0", "1", ...) in the template, produces new Tuple.
+   - **Array path** (tsc: `instantiateMappedArrayType`): Substitutes K → `number` in template,
+     wraps result in Array.
+   - Both paths apply the mapped type's own `readonly`/`optional` modifiers without propagating
+     readonly from the source type.
+2. **solver `instantiate.rs` — `extract_array_element`**: Helper to detect Array, ReadonlyType(Array),
+   and ReadonlyArray-as-ObjectWithIndex patterns.
+3. **solver `mapped.rs`**: Removed old TODO comment (now implemented). Added clarifying comment.
+
+**Key insight**: The fix must run at instantiation time, not evaluation time, because keyof is
+eagerly evaluated during instantiation. tsc has the same architecture — `instantiateMappedArrayType`
+and `instantiateMappedTupleType` are called from `instantiateType` before keyof flattening.
+
+**Tests**: 2 unit tests in `instantiate_tests.rs`:
+- Identity template: `{ [K in keyof T]: T[K] }` with T = `[string, number]` → `[string, number]`
+- Wrapper template: `{ [K in keyof T]: { value: T[K] } }` → `[{ value: string }, { value: number }]`
+
+**Conformance delta**: +2 tests (9822 → 9824), 0 regressions.
+
 ## Session 2026-03-02w — IteratorResult yield type extraction for for-of loops
 
 ### Fixed: False positive TS2322 in for-of loops over custom iterables

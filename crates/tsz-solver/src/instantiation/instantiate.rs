@@ -145,6 +145,31 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
+    /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
+    /// or ReadonlyArray as `ObjectWithIndex`). Returns None if not array-like.
+    fn extract_array_element(interner: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+        match interner.lookup(type_id) {
+            Some(TypeData::Array(element_type)) => Some(element_type),
+            Some(TypeData::ReadonlyType(inner)) => {
+                let inner_resolved = crate::evaluation::evaluate::evaluate_type(interner, inner);
+                if let Some(TypeData::Array(element_type)) = interner.lookup(inner_resolved) {
+                    Some(element_type)
+                } else {
+                    None
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = interner.object_shape(shape_id);
+                shape
+                    .number_index
+                    .as_ref()
+                    .filter(|idx| idx.readonly)
+                    .map(|idx| idx.value_type)
+            }
+            _ => None,
+        }
+    }
+
     /// Instantiate a slice of properties by substituting type IDs.
     fn instantiate_properties(&mut self, properties: &[PropertyInfo]) -> Vec<PropertyInfo> {
         properties
@@ -587,6 +612,120 @@ impl<'a> TypeInstantiator<'a> {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let tp_slice = std::slice::from_ref(&mapped.type_param);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
+
+                // HOMOMORPHIC ARRAY/TUPLE: Check if this is `{ [K in keyof T]: Template }`
+                // where T is being substituted with an array-like type. If so, produce
+                // an array result directly, matching tsc's instantiateMappedArrayType.
+                // This must be done BEFORE standard instantiation because instantiating
+                // `keyof T` eagerly evaluates it to a flat union, losing the homomorphic
+                // structure needed for array/tuple preservation.
+                if mapped.name_type.is_none()
+                    && let Some(TypeData::KeyOf(keyof_source)) =
+                        self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                {
+                    let resolved =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+                    // Check for Tuple first (tsc: instantiateMappedTupleType)
+                    // Must also handle ReadonlyType wrapping Tuple
+                    let tuple_source = match self.interner.lookup(resolved) {
+                        Some(TypeData::Tuple(tid)) => Some(tid),
+                        Some(TypeData::ReadonlyType(inner)) => {
+                            let ir =
+                                crate::evaluation::evaluate::evaluate_type(self.interner, inner);
+                            match self.interner.lookup(ir) {
+                                Some(TypeData::Tuple(tid)) => Some(tid),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(tuple_id) = tuple_source {
+                        let elements = self.interner.tuple_list(tuple_id);
+                        // Instantiate template first (substitutes T, keeps K shadowed)
+                        let new_template = self.instantiate(mapped.template);
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                        let mut new_elements = Vec::with_capacity(elements.len());
+                        for (i, elem) in elements.iter().enumerate() {
+                            let key_type = self.interner.literal_string(&i.to_string());
+                            let mut subst = TypeSubstitution::new();
+                            subst.insert(mapped.type_param.name, key_type);
+                            let mapped_type = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiate_type(self.interner, new_template, &subst),
+                            );
+
+                            let final_type = if matches!(
+                                mapped.optional_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.union2(mapped_type, TypeId::UNDEFINED)
+                            } else {
+                                mapped_type
+                            };
+
+                            new_elements.push(crate::types::TupleElement {
+                                type_id: final_type,
+                                name: elem.name,
+                                optional: elem.optional,
+                                rest: elem.rest,
+                            });
+                        }
+
+                        let tuple_type = self.interner.tuple(new_elements);
+                        return if matches!(
+                            mapped.readonly_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.readonly_type(tuple_type)
+                        } else {
+                            tuple_type
+                        };
+                    }
+
+                    // Then check for Array (tsc: instantiateMappedArrayType)
+                    let array_element = Self::extract_array_element(self.interner, resolved);
+                    if let Some(_element_type) = array_element {
+                        // Produce array result: substitute K → number in the template
+                        let new_template = self.instantiate(mapped.template);
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                        let mut subst = TypeSubstitution::new();
+                        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+                        let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                            self.interner,
+                            crate::instantiation::instantiate::instantiate_type(
+                                self.interner,
+                                new_template,
+                                &subst,
+                            ),
+                        );
+
+                        // Apply mapped type modifiers
+                        let final_element = if matches!(
+                            mapped.optional_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                        } else {
+                            mapped_element
+                        };
+
+                        let array_type = self.interner.array(final_element);
+                        return if matches!(
+                            mapped.readonly_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.readonly_type(array_type)
+                        } else {
+                            array_type
+                        };
+                    }
+                }
 
                 let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
