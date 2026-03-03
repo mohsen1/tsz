@@ -1852,15 +1852,23 @@ impl ParserState {
         if self.is_token(SyntaxKind::ClassKeyword) || self.is_token(SyntaxKind::AbstractKeyword) {
             self.parse_class_expression_with_decorators(decorators, start_pos)
         } else {
-            // Decorators not followed by class - emit error and create error token
-            self.error_expression_expected();
+            // Decorators not followed by class - emit error and create error token.
+            // Emit TS1109 at full_start position (before trivia) to match tsc's
+            // createMissingNode(getNodePos()), then TS1005 at token start (after trivia)
+            // to match tsc's parseErrorAtPosition(scanner.getTokenStart()). When there's
+            // leading whitespace, the positions differ and both errors are emitted.
+            {
+                let full_start = self.u32_from_usize(self.scanner.get_token_full_start());
+                let end = self.u32_from_usize(self.scanner.get_token_end());
+                self.parse_error_at(
+                    full_start,
+                    end.saturating_sub(full_start),
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
 
-            self.parse_error_at(
-                self.token_pos(),
-                1,
-                "';' expected.",
-                diagnostic_codes::EXPECTED,
-            );
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             let end_pos = self.token_end();
             self.arena
                 .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)

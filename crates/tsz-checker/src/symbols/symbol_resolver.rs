@@ -875,8 +875,16 @@ impl<'a> CheckerState<'a> {
                     && let Some(exports) = ns_symbol.exports.as_ref()
                     && let Some(member_id) = exports.get(member_name)
                 {
-                    self.record_cross_file_member(member_id, member_name, file_idx);
-                    return Some(member_id);
+                    // Filter out enum members - they should only be accessible via qualified form
+                    let is_enum_member = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member {
+                        self.record_cross_file_member(member_id, member_name, file_idx);
+                        return Some(member_id);
+                    }
                 }
             }
 
@@ -970,7 +978,15 @@ impl<'a> CheckerState<'a> {
                         && let Some(exports) = ns_sym.exports.as_ref()
                         && let Some(member_id) = exports.get(name)
                     {
-                        return Some(member_id);
+                        // Filter out enum members - they should only be accessible via qualified form
+                        let is_enum_member = self
+                            .ctx
+                            .binder
+                            .get_symbol(member_id)
+                            .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        if !is_enum_member {
+                            return Some(member_id);
+                        }
                     }
                     // Also try cross-file resolution via all binders
                     if let Some(member_id) =

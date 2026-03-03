@@ -756,11 +756,17 @@ impl BinderState {
             // and enables enum + namespace merging
             self.enter_scope(ContainerKind::Block, idx);
 
-            // Seed the new scope with existing exports from prior declarations.
+            // Seed the new scope with existing ENUM MEMBER exports from prior declarations.
             // This allows merged enum declarations to reference members from
             // earlier declarations (e.g., `enum E { a } enum E { c = a }`).
+            // We filter to ENUM_MEMBER only so namespace exports don't leak in
+            // (e.g., `namespace x { export let y } enum x { z = y }` should error).
             for (name, sym_id) in exports.iter() {
-                self.current_scope.set(name.to_string(), *sym_id);
+                if let Some(sym) = self.symbols.get(*sym_id) {
+                    if sym.flags & symbol_flags::ENUM_MEMBER != 0 {
+                        self.current_scope.set(name.to_string(), *sym_id);
+                    }
+                }
             }
 
             for &member_idx in &enum_decl.members.nodes {

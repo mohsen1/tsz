@@ -939,11 +939,37 @@ impl ParserState {
     fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
         let expression = self.parse_expression();
         if expression.is_none() {
-            self.error_expression_expected();
+            // Emit TS1109 at the full_start position (before leading trivia/whitespace),
+            // matching tsc's createMissingNode which uses getNodePos() =
+            // scanner.getTokenFullStart(). This is critical when the template expression
+            // is empty with trailing whitespace before EOF, since TS1005 below emits at
+            // getTokenStart() (after whitespace). The position difference prevents
+            // same-position dedup, allowing both errors to be reported (as tsc does).
+            // When there's no whitespace (e.g., `${\n` or `${<EOF>`), both positions
+            // are the same, so parse_error_at's same-position dedup correctly suppresses
+            // the duplicate (matching tsc's behavior).
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let start = self.u32_from_usize(self.scanner.get_token_full_start());
+                let end = self.u32_from_usize(self.scanner.get_token_end());
+                self.parse_error_at(
+                    start,
+                    end.saturating_sub(start),
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
         }
 
         if !self.is_token(SyntaxKind::CloseBraceToken) {
-            self.error_token_expected("}");
+            // Emit TS1005 "'}' expected." at the token start position (after whitespace),
+            // matching tsc's parseExpected which uses parseErrorAtPosition(scanner.getTokenStart()).
+            // parse_error_at's same-position dedup handles the case where there's no
+            // whitespace between the expression error and this error.
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'}' expected.", diagnostic_codes::EXPECTED);
+            }
             let literal_start = self.token_pos();
             let literal_end = self.token_end();
             let literal = self.arena.add_literal(
