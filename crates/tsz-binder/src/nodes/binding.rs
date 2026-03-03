@@ -966,6 +966,53 @@ impl BinderState {
                 }
             }
 
+            // JSX elements - recurse into children for flow graph
+            k if k == syntax_kind_ext::JSX_ELEMENT => {
+                if let Some(jsx) = arena.get_jsx_element(node) {
+                    self.bind_node(arena, jsx.opening_element);
+                    for &child in &jsx.children.nodes {
+                        self.bind_node(arena, child);
+                    }
+                    self.bind_node(arena, jsx.closing_element);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || k == syntax_kind_ext::JSX_OPENING_ELEMENT =>
+            {
+                if let Some(opening) = arena.get_jsx_opening(node) {
+                    self.bind_node(arena, opening.attributes);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                if let Some(fragment) = arena.get_jsx_fragment(node) {
+                    for &child in &fragment.children.nodes {
+                        self.bind_node(arena, child);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTES => {
+                if let Some(attrs) = arena.get_jsx_attributes(node) {
+                    for &prop in &attrs.properties.nodes {
+                        self.bind_node(arena, prop);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTE => {
+                if let Some(attr) = arena.get_jsx_attribute(node) {
+                    self.bind_node(arena, attr.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE => {
+                if let Some(spread) = arena.get_jsx_spread_attribute(node) {
+                    self.bind_node(arena, spread.expression);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_EXPRESSION => {
+                if let Some(expr) = arena.get_jsx_expression(node) {
+                    self.bind_node(arena, expr.expression);
+                }
+            }
+
             _ => {
                 // For other node types, no symbols to create
             }
