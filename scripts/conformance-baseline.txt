@@ -1287,6 +1287,7 @@ FAIL TypeScript/tests/cases/compiler/typeParametersShouldNotBeEqual.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateFreshLiteralWidening.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateInherit.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateInLoop.ts
+FAIL TypeScript/tests/cases/compiler/typePredicatesInUnion3.ts
 FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining1.ts
 FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining2.ts
 FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining3.ts
@@ -7513,7 +7514,6 @@ PASS TypeScript/tests/cases/compiler/typePredicatesCanNarrowByDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion_noMatch.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion2.ts
-PASS TypeScript/tests/cases/compiler/typePredicatesInUnion3.ts
 PASS TypeScript/tests/cases/compiler/typePredicateTopLevelTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/typePredicateWithThisParameter.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives1.ts

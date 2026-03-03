@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-03T19:41:10Z",
-  "git_sha": "cbe86e4840064b2aeae5dcbc29910cfaa8c36c5c",
+  "timestamp": "2026-03-03T20:27:39Z",
+  "git_sha": "07f895b6af9dc841586af4cfd7c2ab59a3574eb7",
   "summary": {
     "total_tests": 12570,
-    "passed": 9898,
-    "failed": 2672,
+    "passed": 9897,
+    "failed": 2673,
     "pass_rate": 78.7
   },
   "areas_by_pass_rate": [
@@ -361,9 +361,9 @@
     {
       "area": "compiler",
       "total": 6512,
-      "passed": 5129,
-      "failed": 1383,
-      "pass_rate": 78.76
+      "passed": 5128,
+      "failed": 1384,
+      "pass_rate": 78.75
     },
     {
       "area": "expressions/binaryOperators",
@@ -1298,6 +1298,10 @@
       "count": 4
     },
     {
+      "code": "TS18046",
+      "count": 4
+    },
+    {
       "code": "TS2403",
       "count": 4
     },
@@ -1319,10 +1323,6 @@
     },
     {
       "code": "TS18048",
-      "count": 3
-    },
-    {
-      "code": "TS18046",
       "count": 3
     },
     {
@@ -1457,7 +1457,7 @@
     },
     {
       "code": "TS2339",
-      "count": 54
+      "count": 53
     },
     {
       "code": "TS7006",
@@ -1737,7 +1737,7 @@
     },
     {
       "code": "TS2339",
-      "count": 143
+      "count": 142
     },
     {
       "code": "TS2345",
@@ -1895,7 +1895,7 @@
   "categories": {
     "false_positive": 298,
     "all_missing": 467,
-    "wrong_code": 1903,
-    "close_to_passing": 1607
+    "wrong_code": 1904,
+    "close_to_passing": 1608
   }
 }

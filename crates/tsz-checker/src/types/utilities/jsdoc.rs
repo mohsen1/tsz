@@ -4,12 +4,26 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{
+    FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    TypePredicate, TypePredicateTarget, Visibility,
+};
 
 #[derive(Clone)]
 struct JsdocTypedefInfo {
     base_type: Option<String>,
     properties: Vec<(String, String)>,
+    /// If this is a `@callback` definition, holds the parsed parameter and return info.
+    callback: Option<JsdocCallbackInfo>,
+}
+
+/// Parsed `@callback` information: parameter names/types and return type/predicate.
+#[derive(Clone)]
+struct JsdocCallbackInfo {
+    params: Vec<(String, String)>, // (name, type_expr)
+    return_type: Option<String>,   // raw return type expression
+    /// Parsed type predicate from `@return {x is Type}`.
+    predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
 
 impl<'a> CheckerState<'a> {
@@ -1173,6 +1187,69 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
+        // Handle @callback definitions — build a function type.
+        if let Some(cb) = info.callback {
+            let mut params = Vec::with_capacity(cb.params.len());
+            for (name, type_expr) in &cb.params {
+                let type_id = self
+                    .jsdoc_type_from_expression(type_expr)
+                    .unwrap_or(TypeId::ANY);
+                let name_atom = self.ctx.types.intern_string(name);
+                params.push(ParamInfo {
+                    name: Some(name_atom),
+                    type_id,
+                    optional: false,
+                    rest: false,
+                });
+            }
+
+            let mut type_predicate = None;
+            let return_type = if let Some((is_asserts, param_name, type_str)) = cb.predicate {
+                let pred_type = type_str
+                    .as_deref()
+                    .and_then(|s| self.jsdoc_type_from_expression(s));
+                let target = if param_name == "this" {
+                    TypePredicateTarget::This
+                } else {
+                    let atom = self.ctx.types.intern_string(&param_name);
+                    TypePredicateTarget::Identifier(atom)
+                };
+                let parameter_index = if param_name != "this" {
+                    cb.params.iter().position(|(n, _)| n == &param_name)
+                } else {
+                    None
+                };
+                type_predicate = Some(TypePredicate {
+                    asserts: is_asserts,
+                    target,
+                    type_id: pred_type,
+                    parameter_index,
+                });
+                if is_asserts {
+                    TypeId::VOID
+                } else {
+                    TypeId::BOOLEAN
+                }
+            } else if let Some(ref ret_expr) = cb.return_type {
+                self.jsdoc_type_from_expression(ret_expr)
+                    .unwrap_or(TypeId::ANY)
+            } else {
+                TypeId::VOID
+            };
+
+            let shape = FunctionShape {
+                type_params: Vec::new(),
+                params,
+                this_type: None,
+                return_type,
+                type_predicate,
+                is_constructor: false,
+                is_method: false,
+            };
+            let factory = self.ctx.types.factory();
+            return Some(factory.function(shape));
+        }
+
         let factory = self.ctx.types.factory();
 
         let base_type = if let Some(base_type_expr) = &info.base_type {
@@ -1232,6 +1309,7 @@ impl<'a> CheckerState<'a> {
         let mut current_info = JsdocTypedefInfo {
             base_type: None,
             properties: Vec::new(),
+            callback: None,
         };
 
         for raw_line in jsdoc.lines() {
@@ -1253,6 +1331,7 @@ impl<'a> CheckerState<'a> {
                         current_info = JsdocTypedefInfo {
                             base_type: None,
                             properties: Vec::new(),
+                            callback: None,
                         };
                     }
                     typedefs.push((
@@ -1260,6 +1339,7 @@ impl<'a> CheckerState<'a> {
                         JsdocTypedefInfo {
                             base_type: Some(import_type),
                             properties: Vec::new(),
+                            callback: None,
                         },
                     ));
                 }
@@ -1273,13 +1353,82 @@ impl<'a> CheckerState<'a> {
                         current_info = JsdocTypedefInfo {
                             base_type: None,
                             properties: Vec::new(),
+                            callback: None,
                         };
                     }
                     current_name = Some(name);
                     current_info.base_type = base_type;
                     current_info.properties.clear();
+                    current_info.callback = None;
                 }
                 continue;
+            }
+
+            // Handle @callback — creates a function type definition.
+            // Format: @callback Name, followed by @param and @return tags.
+            if let Some(rest) = line.strip_prefix("@callback") {
+                let name = rest.trim().to_string();
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                {
+                    if let Some(previous_name) = current_name.take() {
+                        typedefs.push((previous_name, current_info));
+                    }
+                    current_name = Some(name);
+                    current_info = JsdocTypedefInfo {
+                        base_type: None,
+                        properties: Vec::new(),
+                        callback: Some(JsdocCallbackInfo {
+                            params: Vec::new(),
+                            return_type: None,
+                            predicate: None,
+                        }),
+                    };
+                }
+                continue;
+            }
+
+            // Collect @param tags for callbacks
+            if current_info.callback.is_some() {
+                if let Some(rest) = line.strip_prefix("@param") {
+                    let rest = rest.trim();
+                    // Parse @param {Type} name
+                    if rest.starts_with('{')
+                        && let Some(end) = rest[1..].find('}') {
+                            let type_expr = rest[1..1 + end].trim().to_string();
+                            let after = rest[2 + end..].trim();
+                            let name = after.split_whitespace().next().unwrap_or("").to_string();
+                            if !name.is_empty()
+                                && let Some(ref mut cb) = current_info.callback {
+                                    cb.params.push((name, type_expr));
+                                }
+                        }
+                    continue;
+                }
+
+                // Collect @return/@returns for callbacks
+                if let Some(rest) = line
+                    .strip_prefix("@returns")
+                    .or_else(|| line.strip_prefix("@return"))
+                {
+                    let rest = rest.trim();
+                    if rest.starts_with('{')
+                        && let Some(end) = rest[1..].find('}') {
+                            let type_expr = rest[1..1 + end].trim();
+
+                            // Check for type predicate pattern
+                            let predicate =
+                                Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
+
+                            if let Some(ref mut cb) = current_info.callback {
+                                cb.return_type = Some(type_expr.to_string());
+                                cb.predicate = predicate;
+                            }
+                        }
+                    continue;
+                }
             }
 
             if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line)
@@ -1293,6 +1442,48 @@ impl<'a> CheckerState<'a> {
             typedefs.push((previous_name, current_info));
         }
         typedefs
+    }
+
+    /// Parse a type predicate from a JSDoc type expression string (the contents
+    /// inside `{…}`). Returns `(is_asserts, param_name, type_str)` on success.
+    /// Handles patterns like `x is number` and `asserts x is T`.
+    fn jsdoc_returns_type_predicate_from_type_expr(
+        type_expr: &str,
+    ) -> Option<(bool, String, Option<String>)> {
+        let (is_asserts, remainder) = if let Some(after) = type_expr.strip_prefix("asserts ") {
+            (true, after.trim())
+        } else {
+            (false, type_expr)
+        };
+
+        if let Some(is_pos) = remainder.find(" is ") {
+            let param_name = remainder[..is_pos].trim();
+            let type_str = remainder[is_pos + 4..].trim();
+            if !param_name.is_empty()
+                && (param_name == "this"
+                    || param_name
+                        .chars()
+                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                && !type_str.is_empty()
+            {
+                return Some((
+                    is_asserts,
+                    param_name.to_string(),
+                    Some(type_str.to_string()),
+                ));
+            }
+        } else if is_asserts {
+            let param_name = remainder;
+            if !param_name.is_empty()
+                && (param_name == "this"
+                    || param_name
+                        .chars()
+                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            {
+                return Some((true, param_name.to_string(), None));
+            }
+        }
+        None
     }
 
     fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
