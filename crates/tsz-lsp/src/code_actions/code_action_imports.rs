@@ -1259,7 +1259,7 @@ impl<'a> CodeActionProvider<'a> {
     // -------------------------------------------------------------------------
 
     /// Organize imports: sort contiguous import blocks by module specifier.
-    pub(super) fn organize_imports(&self, root: NodeIndex) -> Option<CodeAction> {
+    pub fn organize_imports(&self, root: NodeIndex) -> Option<CodeAction> {
         let root_node = self.arena.get(root)?;
         let source_file = self.arena.get_source_file(root_node)?;
 
