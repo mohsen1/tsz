@@ -124,6 +124,19 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && tagged.type_arguments.is_none();
 
+        // Apply explicit type arguments to the tag type (e.g., tag<Stuff>`...`).
+        // This instantiates type parameters in the function signature so that
+        // contextual typing of substitution expressions and the return type
+        // reflect the concrete type arguments instead of the raw type parameters.
+        let resolved_tag_type = if tagged.type_arguments.is_some() {
+            self.apply_type_arguments_to_callable_type(
+                resolved_tag_type,
+                tagged.type_arguments.as_ref(),
+            )
+        } else {
+            resolved_tag_type
+        };
+
         // For tagged templates, the tag function parameters are:
         //   param[0] = TemplateStringsArray (always)
         //   param[1..] = substitution expressions
@@ -253,11 +266,12 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = prev_context;
         }
 
-        // Get the return type from the tag function's call signature
-        if let Some(sig) = function_shape_for_type(self.ctx.types, tag_type) {
+        // Get the return type from the tag function's call signature.
+        // Use resolved_tag_type which has explicit type arguments applied.
+        if let Some(sig) = function_shape_for_type(self.ctx.types, resolved_tag_type) {
             return sig.return_type;
         }
-        if let Some(call_sigs) = call_signatures_for_type(self.ctx.types, tag_type)
+        if let Some(call_sigs) = call_signatures_for_type(self.ctx.types, resolved_tag_type)
             && let Some(first_sig) = call_sigs.first()
         {
             return first_sig.return_type;
