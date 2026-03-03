@@ -609,9 +609,6 @@ impl<'a> TypeFormatter<'a> {
     /// Compute a display sort key for an intersection member.
     /// Lazy(DefId) types sort by DefId (approximating declaration order).
     /// Other types sort by TypeId (preserving canonical order).
-    /// Compute a display sort key for an intersection member.
-    /// Lazy(DefId) types sort by DefId (approximating declaration order).
-    /// Other types sort by TypeId (preserving canonical order).
     fn intersection_display_key(&self, id: TypeId) -> (u32, u32) {
         // Use (category, sub_key) tuple:
         // - Category 0 = non-Lazy types (sort by TypeId)
@@ -818,7 +815,21 @@ impl<'a> TypeFormatter<'a> {
                 if !parent_sym.escaped_name.starts_with('"')
                     && !parent_sym.escaped_name.starts_with("__")
                 {
-                    qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                    // tsc doesn't qualify members of the JSX global namespace
+                    // with 'JSX.' in type assignability messages. The JSX namespace
+                    // is a well-known ambient global namespace in TypeScript whose
+                    // members (IntrinsicAttributes, IntrinsicClassAttributes, etc.)
+                    // are displayed unqualified. Only skip for namespace parents
+                    // whose own parent is global scope (starts with '__' or '"').
+                    let is_jsx_global_ns = parent_sym.escaped_name == "JSX"
+                        && (parent_sym.parent == SymbolId::NONE
+                            || arena.get(parent_sym.parent).is_none_or(|gp| {
+                                gp.escaped_name.starts_with('"')
+                                    || gp.escaped_name.starts_with("__")
+                            }));
+                    if !is_jsx_global_ns {
+                        qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                    }
                 }
                 current_parent = parent_sym.parent;
             } else {
