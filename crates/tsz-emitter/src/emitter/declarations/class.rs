@@ -366,6 +366,12 @@ impl<'a> Printer<'a> {
             } else {
                 self.write(&output);
             }
+            // Emit any trailing comment from the class's closing `}` line
+            // (e.g., `class Foo { ... } // comment` → `}()); // comment`).
+            // This must happen BEFORE `skip_comments_for_erased_node` consumes
+            // the trailing comment.
+            let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+            self.emit_trailing_comments(class_close_pos);
             // Skip comments within the class body range since the ES5 class emitter
             // handles them separately. Without this, they'd appear at end of file.
             // Skip comments that were part of this class declaration since the

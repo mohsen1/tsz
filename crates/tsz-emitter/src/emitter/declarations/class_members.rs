@@ -87,9 +87,28 @@ impl<'a> Printer<'a> {
         if method.name.is_some() && !has_recovery_missing_name {
             self.emit(method.name);
         }
+
+        // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
+        // since type parameters are stripped in JS output — mirrors emit_function_declaration.
+        if !self.ctx.flags.in_declaration_emit {
+            if let Some(ref type_params) = method.type_parameters {
+                for &tp_idx in &type_params.nodes {
+                    if let Some(tp_node) = self.arena.get(tp_idx) {
+                        self.skip_comments_in_range(tp_node.pos, tp_node.end);
+                    }
+                }
+            }
+        }
+
         // Map opening `(` to its source position
         let open_paren_pos = {
-            let search_start = if method.name.is_some() {
+            let search_start = if let Some(ref tp) = method.type_parameters {
+                // After type parameters, search for `(` past the closing `>`
+                tp.nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(node.pos, |n| n.end)
+            } else if method.name.is_some() {
                 self.arena.get(method.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos

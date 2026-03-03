@@ -274,6 +274,22 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&es5_output);
                 }
+                // Emit any trailing comment from the class's closing `}` line
+                // (e.g., `class Foo { ... } // comment` → `}()); // comment`).
+                // The ES5 class emitter (IR printer) already handles comments INSIDE the
+                // class body, so we need to:
+                // 1. Advance comment_emit_idx past all inner class comments (< class_close_pos)
+                // 2. Emit any trailing comment ON the closing `}` line
+                // 3. Then skip_comments_for_erased_node cleans up any remaining
+                let class_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                // Step 1: Skip all comments inside the class body (before class_close_pos)
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < class_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                // Step 2: Emit trailing comment on the class closing `}` line (if any)
+                self.emit_trailing_comments(class_close_pos);
                 // Skip comments within the class range - the ES5 class emitter
                 // doesn't use the main comment system, so we must advance past them
                 // to prevent them from being dumped at end of file.
@@ -339,6 +355,23 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(output.trim_end_matches('\n'));
+                // Emit any trailing comment on the enum's closing `}` line
+                // (e.g., `enum E { ... } // trailing comment`).
+                // The EnumES5Emitter handles comments INSIDE the enum body, so we need to:
+                // 1. Advance comment_emit_idx past all inner enum body comments
+                // 2. Emit any trailing comment ON the closing `}` line
+                // 3. Then skip remaining comments in the enum node range
+                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                // Step 1: Skip all comments inside the enum body (before enum_close_pos)
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                // Step 2: Emit trailing comment on the enum closing `}` line (if any)
+                self.emit_trailing_comments(enum_close_pos);
+                // Step 3: Skip any remaining comments in the enum node range
+                self.skip_comments_for_erased_node(node);
             }
 
             EmitDirective::CommonJSExport {

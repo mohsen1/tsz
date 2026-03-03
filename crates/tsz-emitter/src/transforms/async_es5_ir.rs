@@ -224,6 +224,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     parameters: Vec::new(),
                     body: vec![IRNode::Raw(generated)],
                     body_source_range: None,
+                    leading_comment: None,
                 };
             }
             return IRNode::FunctionExpr {
@@ -285,6 +286,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 parameters: ir_params,
                 body,
                 body_source_range: None,
+                leading_comment: None,
             }
         } else {
             let mut body = hoisted_decls;

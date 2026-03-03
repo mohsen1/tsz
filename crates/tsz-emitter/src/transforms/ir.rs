@@ -224,6 +224,8 @@ pub enum IRNode {
         body: Vec<Self>,
         /// Source range of the body block (for preserving single-line formatting)
         body_source_range: Option<(u32, u32)>,
+        /// Optional leading JSDoc/block comment from the original constructor declaration
+        leading_comment: Option<String>,
     },
 
     // =========================================================================
@@ -453,6 +455,10 @@ pub enum IRNode {
 pub struct EnumMember {
     pub name: String,
     pub value: EnumMemberValue,
+    /// Optional leading JSDoc/block comment from the original enum member
+    pub leading_comment: Option<String>,
+    /// Optional trailing comment on the same line as the member value
+    pub trailing_comment: Option<String>,
 }
 
 /// Enum member value representation
@@ -636,6 +642,7 @@ impl IRNode {
             parameters: params,
             body,
             body_source_range: None,
+            leading_comment: None,
         }
     }
 

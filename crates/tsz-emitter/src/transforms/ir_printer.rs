@@ -726,7 +726,14 @@ impl<'a> IRPrinter<'a> {
                 parameters,
                 body,
                 body_source_range,
+                leading_comment,
             } => {
+                // Emit leading JSDoc/block comment if present (e.g., constructor comment)
+                if let Some(comment) = leading_comment {
+                    self.emit_multiline_comment(comment);
+                    self.write_line();
+                    self.write_indent();
+                }
                 self.write("function ");
                 self.write(name);
                 self.write("(");
