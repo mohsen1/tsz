@@ -993,31 +993,40 @@ impl<'a> CheckerState<'a> {
                 && sym_cached_as_error
                 && self.type_contains_error(final_type)
             {
-                let is_deferred_initializer =
-                    self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
-                        matches!(
-                            n.kind,
-                            syntax_kind_ext::FUNCTION_EXPRESSION
-                                | syntax_kind_ext::ARROW_FUNCTION
-                                | syntax_kind_ext::CLASS_EXPRESSION
-                        )
-                    });
-                if let Some(ref name) = var_name {
-                    use crate::diagnostics::diagnostic_codes;
-                    if is_deferred_initializer {
-                        // TS7023: Function/arrow initializer with circular return type.
-                        self.error_at_node_msg(
-                            var_decl.name,
-                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                            &[name],
-                        );
-                    } else {
-                        // TS7022: Structural circularity in initializer.
-                        self.error_at_node_msg(
-                            var_decl.name,
-                            diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
-                            &[name],
-                        );
+                // Class expressions resolve through the constructor type system.
+                // Self-references like `let C = class { foo() { return new C(); } }`
+                // are valid — skip circularity diagnostics for them.
+                let is_class_expression = self
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_EXPRESSION);
+                if !is_class_expression {
+                    let is_deferred_initializer =
+                        self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
+                            matches!(
+                                n.kind,
+                                syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
+                    if let Some(ref name) = var_name {
+                        use crate::diagnostics::diagnostic_codes;
+                        if is_deferred_initializer {
+                            // TS7023: Function/arrow initializer with circular return type.
+                            self.error_at_node_msg(
+                                var_decl.name,
+                                diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                &[name],
+                            );
+                        } else {
+                            // TS7022: Structural circularity in initializer.
+                            self.error_at_node_msg(
+                                var_decl.name,
+                                diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                                &[name],
+                            );
+                        }
                     }
                 }
             }
