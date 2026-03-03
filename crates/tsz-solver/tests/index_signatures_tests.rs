@@ -1,6 +1,6 @@
 use super::*;
 use crate::intern::TypeInterner;
-use crate::types::{CallableShape, ObjectFlags, ObjectShape};
+use crate::types::{CallableShape, ObjectFlags, ObjectShape, TupleElement};
 
 #[test]
 fn test_resolve_string_index() {
@@ -324,4 +324,67 @@ fn test_callable_index_info_collection() {
     );
     assert!(info.string_index.as_ref().unwrap().readonly);
     assert!(!info.number_index.as_ref().unwrap().readonly);
+}
+
+/// ReadonlyType(Tuple) should have a readonly number index signature.
+/// This is the fix for `readonly [T, U, ...V[]]` types where computed
+/// index access (e.g., `v[0+1] = 1`) should emit TS2542.
+#[test]
+fn test_readonly_tuple_has_readonly_number_index() {
+    let db = TypeInterner::new();
+
+    // Create a mutable tuple [number, number]
+    let tuple = db.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Mutable tuple should NOT have a readonly number index
+    let resolver = IndexSignatureResolver::new(&db);
+    assert!(
+        !resolver.is_readonly(tuple, IndexKind::Number),
+        "mutable tuple should not have readonly number index"
+    );
+
+    // Wrap in ReadonlyType — should now have a readonly number index
+    let readonly_tuple = db.readonly_type(tuple);
+    assert!(
+        resolver.is_readonly(readonly_tuple, IndexKind::Number),
+        "readonly tuple should have readonly number index"
+    );
+
+    // String index should not be affected
+    assert!(
+        !resolver.is_readonly(readonly_tuple, IndexKind::String),
+        "readonly tuple should not have readonly string index"
+    );
+}
+
+/// ReadonlyType(Array) should have a readonly number index signature.
+#[test]
+fn test_readonly_array_has_readonly_number_index() {
+    let db = TypeInterner::new();
+
+    let array = db.array(TypeId::NUMBER);
+    let readonly_array = db.readonly_type(array);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert!(
+        !resolver.is_readonly(array, IndexKind::Number),
+        "mutable array should not have readonly number index"
+    );
+    assert!(
+        resolver.is_readonly(readonly_array, IndexKind::Number),
+        "readonly array should have readonly number index"
+    );
 }

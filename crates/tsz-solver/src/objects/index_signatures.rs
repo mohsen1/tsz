@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId};
+use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId, TypeData};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{TypeDatabase, TypeId};
@@ -208,6 +208,20 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        // ReadonlyType makes all index signatures of the inner type readonly.
+        // For arrays and tuples (which have implicit number index signatures),
+        // ReadonlyType(Array|Tuple) has a readonly number index signature.
+        let has_index_sig = match self.db.lookup(inner_type) {
+            Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                matches!(self.kind, IndexKind::Number)
+            }
+            _ => false,
+        };
+        if has_index_sig {
+            return true;
+        }
+        // For other types (objects, callables), delegate to check their
+        // explicit index signature readonly flags.
         self.visit_type(self.db, inner_type)
     }
 
