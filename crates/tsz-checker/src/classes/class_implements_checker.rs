@@ -1339,9 +1339,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                         && let Some(base_class_data) = self.ctx.arena.get_class(node)
-                            && self.class_has_private_or_protected_members(base_class_data) {
-                                has_private_members = true;
-                            }
+                        && self.class_has_private_or_protected_members(base_class_data)
+                    {
+                        has_private_members = true;
+                    }
                 }
             }
 
@@ -1366,11 +1367,12 @@ impl<'a> CheckerState<'a> {
                 for &decl_idx in &symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(target_class_data) = self.ctx.arena.get_class(node) {
-                            instance_type =
-                                Some(self.get_class_instance_type(decl_idx, target_class_data));
-                            break;
-                        }
+                        && let Some(target_class_data) = self.ctx.arena.get_class(node)
+                    {
+                        instance_type =
+                            Some(self.get_class_instance_type(decl_idx, target_class_data));
+                        break;
+                    }
                 }
                 instance_type.unwrap_or(TypeId::ERROR)
             } else {
