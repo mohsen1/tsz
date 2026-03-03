@@ -5121,3 +5121,80 @@ fn test_mutable_to_readonly_no_ts4104() {
         "number[] should be assignable to readonly number[]"
     );
 }
+
+#[test]
+fn test_explain_intersection_source_missing_properties() {
+    // Intersection source (like `number & { __brand: T }`) assigned to an object
+    // target should produce MissingProperties, not TypeMismatch.
+    // Matches tsc behavior for branded types: TS2739 instead of TS2322.
+    let interner = TypeInterner::new();
+
+    let view = interner.intern_string("view");
+    let style_media = interner.intern_string("styleMedia");
+    let brand = interner.intern_string("__brand");
+
+    // Target: { view: number; styleMedia: string }
+    let target = interner.object(vec![
+        PropertyInfo::new(view, TypeId::NUMBER),
+        PropertyInfo::new(style_media, TypeId::STRING),
+    ]);
+
+    // Source: number & { __brand: { view: number; styleMedia: string } }
+    // (branded type pattern — the intersection has no `view` or `styleMedia` at top level)
+    let brand_obj = interner.object(vec![PropertyInfo::new(brand, target)]);
+    let source = interner.intersection2(TypeId::NUMBER, brand_obj);
+
+    let mut checker = CompatChecker::new(&interner);
+    let reason = checker.explain_failure(source, target);
+
+    // Should get MissingProperties with view and styleMedia
+    match reason {
+        Some(SubtypeFailureReason::MissingProperties {
+            property_names,
+            source_type,
+            target_type,
+        }) => {
+            assert_eq!(source_type, source);
+            assert_eq!(target_type, target);
+            assert_eq!(property_names.len(), 2);
+            assert!(property_names.contains(&view));
+            assert!(property_names.contains(&style_media));
+        }
+        other => panic!("Expected MissingProperties with view and styleMedia, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_explain_intersection_source_single_missing_property() {
+    // Intersection with only one missing property should produce MissingProperty (TS2741).
+    let interner = TypeInterner::new();
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    // Target: { a: string; b: number }
+    let target = interner.object(vec![
+        PropertyInfo::new(a, TypeId::STRING),
+        PropertyInfo::new(b, TypeId::NUMBER),
+    ]);
+
+    // Source: string & { a: string }  (missing `b` but has `a`)
+    let partial_obj = interner.object(vec![PropertyInfo::new(a, TypeId::STRING)]);
+    let source = interner.intersection2(TypeId::STRING, partial_obj);
+
+    let mut checker = CompatChecker::new(&interner);
+    let reason = checker.explain_failure(source, target);
+
+    match reason {
+        Some(SubtypeFailureReason::MissingProperty {
+            property_name,
+            source_type,
+            target_type,
+        }) => {
+            assert_eq!(source_type, source);
+            assert_eq!(target_type, target);
+            assert_eq!(property_name, b);
+        }
+        other => panic!("Expected MissingProperty for 'b', got {other:?}"),
+    }
+}

@@ -272,6 +272,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
+        // Intersection source vs object target: collect merged properties from all
+        // object-like members of the intersection, then check for missing properties.
+        // This produces TS2739/TS2741 for branded/intersection types like
+        // `number & { __brand: T }` assigned to an object type.
+        if crate::visitor::intersection_list_id(self.interner, resolved_source).is_some() {
+            let t_shape_id = object_shape_id(self.interner, resolved_target)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
+            if let Some(t_sid) = t_shape_id {
+                let collected = crate::objects::collect_properties(
+                    resolved_source,
+                    self.interner,
+                    self.resolver,
+                );
+                if let crate::objects::PropertyCollectionResult::Properties { properties, .. } =
+                    collected
+                {
+                    let t_shape = self.interner.object_shape(t_sid);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &properties,
+                        None,
+                        &t_shape.properties,
+                    );
+                }
+            }
+        }
+
         // Object source vs array target: resolve Array<T> to its interface properties
         // and find missing members. TSC emits TS2740 here (missing properties from array).
         if let Some(t_elem) = array_element_type(self.interner, resolved_target) {
