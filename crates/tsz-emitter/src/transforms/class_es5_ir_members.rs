@@ -77,6 +77,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
+                        hoisted_vars: Vec::new(),
                     }]
                 } else {
                     let mut method_body = self.convert_block_body(method_data.body);
@@ -456,6 +457,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
+                        hoisted_vars: Vec::new(),
                     }]
                 } else {
                     // Check if this static method has arrow functions with class_alias

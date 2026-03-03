@@ -110,6 +110,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let i1 = indent_str(self.indent + 1);
         let i2 = indent_str(self.indent + 2);
         let i3 = indent_str(self.indent + 3);
+        let i4 = indent_str(self.indent + 4);
 
         // --- IIFE header ---
         out.push_str(&format!("let {class_name} = (() => {{\n"));
@@ -179,38 +180,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
             has_any_instance,
             has_any_static,
             &class_alias,
-            &i2,
             &i3,
+            &i4,
             &mut out,
         );
 
-        // Close class body
-        out.push_str(&format!("{i1}    }},\n"));
-
-        // --- Computed key assignments (before IIFE) ---
-        for (member_i, var_name) in &computed_key_vars {
-            if let Some(member) = decorated_members.get(*member_i) {
-                if let MemberName::Computed(expr_idx) = &member.name {
-                    out.push_str(&format!(
-                        "{i1}{var_name} = __propKey({}),\n",
-                        self.node_text(*expr_idx)
-                    ));
-                }
-            }
-        }
+        // Close class body at level 2
+        out.push_str(&format!("{i2}}},\n"));
 
         // --- Decorator application IIFE ---
-        out.push_str(&format!("{i1}(() => {{\n"));
+        out.push_str(&format!("{i2}(() => {{\n"));
 
         // Metadata
         if has_extends {
             if let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!("{i2}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({extends_text}[Symbol.metadata] ?? null) : void 0;\n"));
+                out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({extends_text}[Symbol.metadata] ?? null) : void 0;\n"));
             } else {
-                out.push_str(&format!("{i2}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+                out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
             }
         } else {
-            out.push_str(&format!("{i2}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+            out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
         }
 
         // __esDecorate calls for each member
@@ -222,36 +211,36 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &class_alias,
                 &computed_key_vars,
                 i,
-                &i2,
+                &i3,
                 &mut out,
             );
         }
 
         // Class-level __esDecorate if needed
         if !class_decorators.is_empty() {
-            out.push_str(&format!("{i2}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
+            out.push_str(&format!("{i3}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
             out.push_str(&format!(
-                "{i2}{class_name} = _classThis = _classDescriptor.value;\n"
+                "{i3}{class_name} = _classThis = _classDescriptor.value;\n"
             ));
         }
 
         // Metadata assignment
-        out.push_str(&format!("{i2}if (_metadata) Object.defineProperty({class_alias}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
+        out.push_str(&format!("{i3}if (_metadata) Object.defineProperty({class_alias}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
 
         // Static extra initializers
         if has_any_static {
             out.push_str(&format!(
-                "{i2}__runInitializers({class_alias}, _staticExtraInitializers);\n"
+                "{i3}__runInitializers({class_alias}, _staticExtraInitializers);\n"
             ));
         }
 
-        out.push_str(&format!("{i1}}})(),\n"));
+        out.push_str(&format!("{i2}}})(),\n"));
 
         // Return class alias
-        out.push_str(&format!("{i1}{class_alias};\n"));
+        out.push_str(&format!("{i2}{class_alias};\n"));
 
         // Close IIFE
-        out.push_str("})()");
+        out.push_str("})();\n");
 
         out
     }
@@ -272,7 +261,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         _has_any_static: bool,
         _class_alias: &str,
         indent: &str,
-        _inner_indent: &str,
+        inner_indent: &str,
         out: &mut String,
     ) {
         // Build the decorator assignment comma expression that goes in the sink member
@@ -307,14 +296,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .filter_map(|&idx| self.arena.get(idx).map(|n| (idx, n)))
             .collect();
 
-        // Members we actually want to emit (skip constructors, index sigs, semicolons)
+        // Members with computed keys needing __propKey are folded into the sink
+        let propkey_member_indices: Vec<NodeIndex> = decorated_members
+            .iter()
+            .filter(|m| matches!(m.name, MemberName::Computed(_)))
+            .map(|m| m.member_idx)
+            .collect();
+
         let emittable: Vec<usize> = all_members
             .iter()
             .enumerate()
-            .filter(|(_, (_, node))| {
+            .filter(|(_, (idx, node))| {
                 node.kind != syntax_kind_ext::CONSTRUCTOR
                     && node.kind != syntax_kind_ext::INDEX_SIGNATURE
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
+                    && !propkey_member_indices.contains(idx)
             })
             .map(|(i, _)| i)
             .collect();
@@ -343,11 +339,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&ctor.params);
             out.push_str(") {\n");
             for line in &ctor.body_lines {
-                out.push_str(&format!("{indent}    {}\n", line.trim()));
+                out.push_str(&format!("{inner_indent}{}\n", line.trim()));
             }
             if has_any_instance {
                 out.push_str(&format!(
-                    "{indent}    __runInitializers(this, _instanceExtraInitializers);\n"
+                    "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
                 ));
             }
             out.push_str(&format!("{indent}}}\n"));
@@ -355,7 +351,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(") {\n");
             if has_any_instance {
                 out.push_str(&format!(
-                    "{indent}    __runInitializers(this, _instanceExtraInitializers);\n"
+                    "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
                 ));
             }
             out.push_str(&format!("{indent}}}\n"));
@@ -396,7 +392,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let raw_end = std::cmp::min(member_node.end as usize, next_boundary);
 
         if clean_start < source.len() && raw_end <= source.len() && clean_start < raw_end {
-            source[clean_start..raw_end].trim().to_string()
+            let text = source[clean_start..raw_end].trim();
+            if text.ends_with("{}") {
+                format!("{}{{ }}", &text[..text.len() - 2])
+            } else {
+                text.to_string()
+            }
         } else {
             String::new()
         }

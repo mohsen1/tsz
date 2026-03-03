@@ -897,6 +897,14 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Check if the for-of initializer has object rest that needs ES2018 lowering.
+        if self.ctx.needs_es2018_lowering && !self.ctx.target_es5 {
+            if let Some(rest_info) = self.for_of_has_object_rest(for_in_of.initializer) {
+                self.emit_for_of_with_rest_lowering(node, for_in_of, rest_info);
+                return;
+            }
+        }
+
         self.write("for ");
         if for_in_of.await_modifier {
             self.write("await ");
@@ -911,6 +919,86 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
         self.emit_loop_body(for_in_of.statement);
+    }
+
+    /// Check if a for-of initializer has an object rest pattern.
+    fn for_of_has_object_rest(&self, initializer: NodeIndex) -> Option<(String, NodeIndex)> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let decl_list = self.arena.get_variable(init_node)?;
+        if decl_list.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = decl_list.declarations.nodes[0];
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        if !self.pattern_has_object_rest(decl.name) {
+            return None;
+        }
+        let flags = init_node.flags as u32;
+        let keyword = if flags & node_flags::LET != 0 {
+            "let"
+        } else if flags & node_flags::CONST != 0 {
+            "const"
+        } else {
+            "var"
+        };
+        Some((keyword.to_string(), decl.name))
+    }
+
+    /// Emit a for-of with object rest lowering.
+    fn emit_for_of_with_rest_lowering(
+        &mut self,
+        node: &Node,
+        for_in_of: &tsz_parser::parser::node::ForInOfData,
+        rest_info: (String, NodeIndex),
+    ) {
+        let (keyword, pattern_idx) = rest_info;
+        let temp = self.get_temp_var_name();
+
+        self.write("for ");
+        if for_in_of.await_modifier {
+            self.write("await ");
+        }
+        self.write("(");
+        self.write(&keyword);
+        self.write(" ");
+        self.write(&temp);
+        self.write(" of ");
+        self.emit(for_in_of.expression);
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit the destructuring preamble
+        self.write(&keyword);
+        self.write(" ");
+        self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
+        self.write(";");
+        self.write_line();
+
+        // Emit the original body statements
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        self.write_line();
+                    }
+                }
+            } else {
+                self.emit(for_in_of.statement);
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
     }
 
     /// Emit a loop body statement. If the body is a block, emit it inline.
@@ -1019,6 +1107,47 @@ impl<'a> Printer<'a> {
         self.write("catch");
 
         if catch.variable_declaration.is_some() {
+            // Check if catch variable has object rest that needs ES2018 lowering.
+            let needs_rest_lowering = self.ctx.needs_es2018_lowering
+                && !self.ctx.target_es5
+                && self.catch_var_has_object_rest(catch.variable_declaration);
+
+            if needs_rest_lowering {
+                if let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration) {
+                    let temp = self.get_temp_var_name();
+                    self.write(" ");
+                    self.map_token_after(node.pos, node.end, b'(');
+                    self.write("(");
+                    self.write(&temp);
+                    self.write(")");
+
+                    // Emit the block with preamble injected
+                    self.write(" {");
+                    self.write_line();
+                    self.increase_indent();
+
+                    // Emit rest preamble
+                    self.write("var ");
+                    self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
+                    self.write(";");
+                    self.write_line();
+
+                    // Emit the original block body
+                    if let Some(block_node) = self.arena.get(catch.block) {
+                        if let Some(block) = self.arena.get_block(block_node) {
+                            for &stmt in &block.statements.nodes {
+                                self.emit(stmt);
+                                self.write_line();
+                            }
+                        }
+                    }
+
+                    self.decrease_indent();
+                    self.write("}");
+                    return;
+                }
+            }
+
             self.write(" ");
             // Map the `(` to its source position
             self.map_token_after(node.pos, node.end, b'(');
@@ -1036,6 +1165,24 @@ impl<'a> Printer<'a> {
 
         self.write(" ");
         self.emit(catch.block);
+    }
+
+    /// Check if a catch clause variable declaration has an object rest pattern.
+    fn catch_var_has_object_rest(&self, var_decl_idx: NodeIndex) -> bool {
+        let Some(var_node) = self.arena.get(var_decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.arena.get_variable_declaration(var_node) else {
+            return false;
+        };
+        self.pattern_has_object_rest(var_decl.name)
+    }
+
+    /// Get the binding pattern index from a catch clause variable declaration.
+    fn catch_var_pattern_idx(&self, var_decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let var_node = self.arena.get(var_decl_idx)?;
+        let var_decl = self.arena.get_variable_declaration(var_node)?;
+        Some(var_decl.name)
     }
 
     pub(super) fn emit_switch_statement(&mut self, node: &Node) {

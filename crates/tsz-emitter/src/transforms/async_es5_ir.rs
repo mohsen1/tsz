@@ -267,12 +267,19 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         // Build the generator body
-        let generator_body = self.build_generator_body(body_idx, has_await, &skipped_statements);
+        let mut generator_body =
+            self.build_generator_body(body_idx, has_await, &skipped_statements);
+
+        // Hoist var declarations from generator cases to the awaiter wrapper scope.
+        // In tsc output, var declarations inside async function bodies are placed
+        // before `return __generator(...)`, not inside the switch/case statements.
+        let hoisted_vars = Self::extract_and_remove_var_decls(&mut generator_body);
 
         // Build the awaiter call
         let awaiter_call = IRNode::AwaiterCall {
             this_arg: Box::new(IRNode::This { captured: false }),
             generator_body: Box::new(generator_body),
+            hoisted_vars,
         };
 
         // Build the function declaration/expression wrapper
@@ -1100,6 +1107,45 @@ impl<'a> AsyncES5Transformer<'a> {
             return Some(trimmed.to_string());
         }
         None
+    }
+    /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them
+    /// from the case statements. Returns the list of variable names to hoist.
+    ///
+    /// tsc hoists `var` declarations to before the `return __generator(...)` call,
+    /// so they appear at the top of the `__awaiter` wrapper function body.
+    fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
+        let IRNode::GeneratorBody { cases, .. } = generator_body else {
+            return Vec::new();
+        };
+
+        let mut hoisted = Vec::new();
+        for case in cases.iter_mut() {
+            let mut i = 0;
+            while i < case.statements.len() {
+                if let IRNode::VarDecl { name, initializer } = &case.statements[i] {
+                    if initializer.is_none() {
+                        // Pure declaration with no initializer -- hoist and remove
+                        hoisted.push(name.clone());
+                        case.statements.remove(i);
+                        continue;
+                    } else {
+                        // Has initializer -- hoist the name but keep as assignment
+                        let var_name = name.clone();
+                        hoisted.push(var_name.clone());
+                        let init = initializer.clone().unwrap();
+                        case.statements[i] =
+                            IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
+                                left: Box::new(IRNode::Identifier(var_name)),
+                                operator: "=".to_string(),
+                                right: init,
+                            }));
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        hoisted
     }
 }
 
