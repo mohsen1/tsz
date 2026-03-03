@@ -668,9 +668,7 @@ impl Server {
         let mut chars = trimmed.chars();
         let first = chars.next()?;
         if first == '-' || first == '+' {
-            if chars.clone().next().is_none() {
-                return None;
-            }
+            chars.clone().next()?;
         }
         if trimmed
             .chars()

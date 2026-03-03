@@ -214,13 +214,12 @@ fn type_package_candidates(name: &str) -> Vec<String> {
     // the original scoped path and the @types-mangled equivalent.
     if let Some(stripped) = normalized.strip_prefix('@')
         && !normalized.starts_with("@types/")
+        && let Some((scope, pkg)) = stripped.split_once('/')
+        && !scope.is_empty()
+        && !pkg.is_empty()
     {
-        if let Some((scope, pkg)) = stripped.split_once('/') {
-            if !scope.is_empty() && !pkg.is_empty() {
-                let mangled = format!("@types/{scope}__{pkg}");
-                candidates.push(mangled);
-            }
-        }
+        let mangled = format!("@types/{scope}__{pkg}");
+        candidates.push(mangled);
     }
 
     // For bare (non-scoped) package names, also check @types/<name>.
@@ -1306,46 +1305,44 @@ fn resolve_node_module_specifier(
         let mut dir = from_file.parent().unwrap_or(base_dir);
         loop {
             let pj_path = dir.join("package.json");
-            if pj_path.is_file() {
-                if let Some(pj) = read_package_json(&pj_path) {
-                    if pj.name.as_deref() == Some(&package_name) {
-                        let resolved = resolve_package_specifier(
-                            dir,
-                            subpath.as_deref(),
-                            Some(&pj),
-                            &conditions,
-                            options,
-                        );
-                        if resolved.is_some() {
-                            return resolved;
-                        }
+            if pj_path.is_file()
+                && let Some(pj) = read_package_json(&pj_path)
+            {
+                if pj.name.as_deref() == Some(&package_name) {
+                    let resolved = resolve_package_specifier(
+                        dir,
+                        subpath.as_deref(),
+                        Some(&pj),
+                        &conditions,
+                        options,
+                    );
+                    if resolved.is_some() {
+                        return resolved;
+                    }
 
-                        // Output-to-source remapping for self-reference imports.
-                        // When outDir/declarationDir is set, export map targets point
-                        // to the output directory (e.g., "./dist/index.js"). tsc
-                        // remaps these back to source files by stripping the output
-                        // prefix and substituting output extensions with source
-                        // extensions (tryLoadInputFileForPath).
-                        if let Some(ref exports) = pj.exports {
-                            let subpath_key = match &subpath {
-                                Some(value) => format!("./{value}"),
-                                None => ".".to_string(),
-                            };
-                            if let Some(target) =
-                                resolve_exports_subpath(exports, &subpath_key, &conditions)
-                            {
-                                if let Some(resolved) =
-                                    try_remap_output_to_source(dir, &target, from_file, options)
-                                {
-                                    return Some(resolved);
-                                }
-                            }
+                    // Output-to-source remapping for self-reference imports.
+                    // When outDir/declarationDir is set, export map targets point
+                    // to the output directory (e.g., "./dist/index.js"). tsc
+                    // remaps these back to source files by stripping the output
+                    // prefix and substituting output extensions with source
+                    // extensions (tryLoadInputFileForPath).
+                    if let Some(ref exports) = pj.exports {
+                        let subpath_key = match &subpath {
+                            Some(value) => format!("./{value}"),
+                            None => ".".to_string(),
+                        };
+                        if let Some(target) =
+                            resolve_exports_subpath(exports, &subpath_key, &conditions)
+                            && let Some(resolved) =
+                                try_remap_output_to_source(dir, &target, from_file, options)
+                        {
+                            return Some(resolved);
                         }
                     }
-                    // Stop at the first package.json with a name (that's the package boundary)
-                    if pj.name.is_some() {
-                        break;
-                    }
+                }
+                // Stop at the first package.json with a name (that's the package boundary)
+                if pj.name.is_some() {
+                    break;
                 }
             }
             if dir == base_dir {
@@ -1650,7 +1647,7 @@ fn resolve_export_entry(
 fn try_remap_output_to_source(
     package_root: &Path,
     target: &str,
-    from_file: &Path,
+    _from_file: &Path,
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
     let target = target.trim_start_matches("./");
@@ -1714,8 +1711,7 @@ fn try_remap_output_to_source(
 
             let source_str = source_base.to_string_lossy();
             for (out_ext, src_exts) in source_exts {
-                if source_str.ends_with(out_ext) {
-                    let base = &source_str[..source_str.len() - out_ext.len()];
+                if let Some(base) = source_str.strip_suffix(out_ext) {
                     for src_ext in *src_exts {
                         let candidate = PathBuf::from(format!("{base}{src_ext}"));
                         if candidate.is_file() {
@@ -2176,8 +2172,8 @@ fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
     // Handle trailing-slash directory patterns (e.g., "./" matches "./index.js").
     // These are deprecated in Node.js but TypeScript still supports them.
     if !pattern_inner.is_empty() && pattern_inner.ends_with('/') && !pattern.contains('*') {
-        if subpath.starts_with(pattern_inner) {
-            return Some(subpath[pattern_inner.len()..].to_string());
+        if let Some(rest) = subpath.strip_prefix(pattern_inner) {
+            return Some(rest.to_string());
         }
         return None;
     }

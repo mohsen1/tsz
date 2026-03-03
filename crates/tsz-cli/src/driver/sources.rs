@@ -226,10 +226,10 @@ pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
 pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
-    /// Tuples of (file_path, type_name, byte_offset_of_types_attr, span_length).
+    /// Tuples of (`file_path`, `type_name`, `byte_offset_of_types_attr`, `span_length`).
     pub(super) type_reference_errors: Vec<(PathBuf, String, usize, usize)>,
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
-    /// Tuples of (file_path, byte_offset, span_length).
+    /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
 }
 

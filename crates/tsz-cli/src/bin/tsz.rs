@@ -894,11 +894,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .pretty
             .unwrap_or_else(|| std::io::stderr().is_terminal());
         for diag in &ref_diagnostics {
-            if pretty {
-                println!("error TS{}: {}", diag.code, diag.message);
-            } else {
-                println!("error TS{}: {}", diag.code, diag.message);
-            }
+            println!("error TS{}: {}", diag.code, diag.message);
         }
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }

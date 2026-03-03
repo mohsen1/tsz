@@ -24,7 +24,7 @@ pub(super) struct ParsedFileContext<'a> {
     pub(super) file: &'a str,
 }
 
-/// Map a `DocumentSymbol`'s kind + kind_modifiers to the tsserver ScriptElementKind string.
+/// Map a `DocumentSymbol`'s kind + `kind_modifiers` to the tsserver `ScriptElementKind` string.
 fn symbol_kind_to_tsserver(
     kind: tsz::lsp::symbols::document_symbols::SymbolKind,
     kind_modifiers: &str,
@@ -1633,7 +1633,7 @@ impl Server {
 
             /// Check if a symbol should appear as its own entry in the primary
             /// navigation bar menu (matching TypeScript's shouldAppearInPrimaryNavBarMenu).
-            fn should_appear_in_primary_navbar(
+            const fn should_appear_in_primary_navbar(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
             ) -> bool {
                 use tsz::lsp::symbols::document_symbols::SymbolKind;
