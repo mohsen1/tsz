@@ -950,10 +950,10 @@ impl<'a> Printer<'a> {
         async_emitter.set_lexical_this(this_expr != "this");
 
         let body_has_await = async_emitter.body_contains_await(func.body);
-        let generator_body = if body_has_await {
-            async_emitter.emit_generator_body_with_await(func.body)
+        let (generator_body, hoisted_vars) = if body_has_await {
+            async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body)
         } else {
-            async_emitter.emit_simple_generator_body(func.body)
+            async_emitter.emit_simple_generator_body_with_hoisted_vars(func.body)
         };
         let generator_mappings = async_emitter.take_mappings();
 
@@ -964,6 +964,17 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function () {");
             self.write_line();
             self.increase_indent();
+            if !hoisted_vars.is_empty() {
+                self.write("var ");
+                for (i, var_name) in hoisted_vars.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                }
+                self.write(";");
+                self.write_line();
+            }
             self.write(&generator_body);
             self.decrease_indent();
             self.write_line();
@@ -978,6 +989,17 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function () {");
             self.write_line();
             self.increase_indent();
+            if !hoisted_vars.is_empty() {
+                self.write("var ");
+                for (i, var_name) in hoisted_vars.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                }
+                self.write(";");
+                self.write_line();
+            }
             if !generator_mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
                 let base_line = self.writer.current_line();

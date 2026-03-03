@@ -1113,7 +1113,7 @@ impl<'a> AsyncES5Transformer<'a> {
     ///
     /// tsc hoists `var` declarations to before the `return __generator(...)` call,
     /// so they appear at the top of the `__awaiter` wrapper function body.
-    fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
+    pub fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
         let IRNode::GeneratorBody { cases, .. } = generator_body else {
             return Vec::new();
         };
