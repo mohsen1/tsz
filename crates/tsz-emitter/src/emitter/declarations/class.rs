@@ -1434,7 +1434,7 @@ impl<'a> Printer<'a> {
                 // `static intance = new C3(); // ok`)
                 for comment_text in trailing_comments {
                     self.write_space();
-                    self.write(comment_text);
+                    self.write_comment(comment_text);
                 }
                 self.write_line();
             }

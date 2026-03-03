@@ -667,7 +667,7 @@ impl<'a> Printer<'a> {
                 let comment_text =
                     safe_slice::slice(text, comment.pos as usize, comment.end as usize);
                 if !comment_text.is_empty() {
-                    self.write(comment_text);
+                    self.write_comment_with_reindent(comment_text, Some(comment.pos));
                 }
                 // Advance the global comment index past this comment so it
                 // won't be emitted again by the end-of-file comment sweep.

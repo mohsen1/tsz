@@ -665,7 +665,7 @@ impl<'a> Printer<'a> {
                 if !trailing_comments.is_empty() {
                     for comment in trailing_comments {
                         self.write_space();
-                        self.write(comment);
+                        self.write_comment(comment);
                     }
                 } else {
                     self.emit_trailing_comments(*init_end);

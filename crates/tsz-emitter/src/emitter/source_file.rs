@@ -815,7 +815,7 @@ impl<'a> Printer<'a> {
                     if c_end <= actual_start {
                         let comment_text =
                             crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                        self.write(comment_text);
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
                         if c_trailing {
                             self.write_line();
                         } else if comment_text.starts_with("/*") {
@@ -892,7 +892,7 @@ impl<'a> Printer<'a> {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                 let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                self.write(comment_text);
+                self.write_comment_with_reindent(comment_text, Some(c_pos));
                 if c_trailing {
                     self.write_line();
                 }
