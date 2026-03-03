@@ -397,6 +397,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return self.check_conditional_subtype(source_cond.as_ref(), target_cond.as_ref());
             }
 
+            // Before decomposing the conditional into branches, check if the target
+            // is a union containing the source by identity. This prevents false negatives
+            // where `Cond<T> <: Cond<T> | undefined` fails because branch decomposition
+            // cannot prove assignability even though the source IS a member of the target union.
+            if let Some(members) = union_list_id(self.interner, target) {
+                let member_list = self.interner.type_list(members);
+                for &member in member_list.iter() {
+                    if source == member {
+                        return SubtypeResult::True;
+                    }
+                    // Check via check_subtype for structural equivalence
+                    // (handles cases where same conditional has different TypeIds)
+                    if self.check_subtype(source, member).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             let source_cond = self.interner.conditional_type(source_cond_id);
             return self.conditional_branches_subtype(source_cond.as_ref(), target);
         }
