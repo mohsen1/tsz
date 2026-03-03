@@ -1778,7 +1778,6 @@ FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-arguments.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-emitDecoratorMetadata.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
-FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiteralInference.ts
 FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentLHSIsValue.ts
 FAIL TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts
@@ -9642,6 +9641,7 @@ PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetada
 PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetadata5.ts
 PASS TypeScript/tests/cases/conformance/esnext/esnextSharedMemory.ts
 PASS TypeScript/tests/cases/conformance/esnext/logicalAssignment/logicalAssignment11.ts
+PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiteralInference.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals2ES5.ts
 PASS TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals2ES6.ts

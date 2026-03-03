@@ -14,7 +14,8 @@ use crate::types::{
 use crate::visitor::enum_components;
 use crate::visitor::{
     application_id, index_access_parts, is_identity_comparable_type, is_literal_type,
-    keyof_inner_type, lazy_def_id, mapped_type_id, type_param_info, union_list_id,
+    keyof_inner_type, lazy_def_id, mapped_type_id, readonly_inner_type, tuple_list_id,
+    type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -111,6 +112,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
         {
             return SubtypeResult::True;
+        }
+
+        // Variadic tuple identity: T is assignable to [...T] (and readonly [...T])
+        // when T is a type parameter. tsc treats [...T] as structurally equivalent to T.
+        // This handles: T <: [...T], T <: readonly [...T]
+        {
+            // Unwrap readonly wrapper if present
+            let inner_target = readonly_inner_type(self.interner, target).unwrap_or(target);
+            if let Some(t_list) = tuple_list_id(self.interner, inner_target) {
+                let t_elems = self.interner.tuple_list(t_list);
+                if t_elems.len() == 1
+                    && t_elems[0].rest
+                    && type_param_info(self.interner, t_elems[0].type_id)
+                        .is_some_and(|inner_info| inner_info.name == s_info.name)
+                {
+                    return SubtypeResult::True;
+                }
+            }
         }
 
         SubtypeResult::False

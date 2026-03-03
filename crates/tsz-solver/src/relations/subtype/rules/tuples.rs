@@ -41,6 +41,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &[TupleElement],
         target: &[TupleElement],
     ) -> SubtypeResult {
+        // Fast path: [...S] <: [...T] when both are single-rest-element tuples.
+        // tsc treats these as equivalent to S <: T for assignability.
+        // This handles variadic tuple identity: [...U] <: [...T] when U extends T.
+        if source.len() == 1
+            && target.len() == 1
+            && source[0].rest
+            && target[0].rest
+            && is_type_parameter(self.interner, source[0].type_id)
+            && is_type_parameter(self.interner, target[0].type_id)
+        {
+            return self.check_subtype(source[0].type_id, target[0].type_id);
+        }
+
         // Count required elements
         let source_required = crate::utils::required_element_count(source);
         let target_required = crate::utils::required_element_count(target);
@@ -143,7 +156,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let variadic_array = self.interner.array(variadic);
                     for (_, s_elem) in source_iter {
                         if s_elem.rest {
-                            if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
+                            // When both source and target rest elements are type parameters,
+                            // compare them directly (U <: T) rather than via Array(T).
+                            // This handles [...U] <: [...T] when U extends T.
+                            if variadic_is_type_param
+                                && is_type_parameter(self.interner, s_elem.type_id)
+                            {
+                                if !self.check_subtype(s_elem.type_id, variadic).is_true() {
+                                    return SubtypeResult::False;
+                                }
+                            } else if !self.check_subtype(s_elem.type_id, variadic_array).is_true()
+                            {
                                 return SubtypeResult::False;
                             }
                         } else if variadic_is_type_param {

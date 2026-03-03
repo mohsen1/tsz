@@ -755,3 +755,172 @@ fn test_concrete_tuple_assignable_to_concrete_array_spread() {
         "[any, any] SHOULD be assignable to [...any[]] (concrete spread)"
     );
 }
+
+// =============================================================================
+// Variadic Tuple Identity Tests: [...T] ↔ T
+// =============================================================================
+
+/// [...T] should be assignable to T (spread-unwrap identity).
+/// In TSC, `[...T]` is structurally equivalent to `T` when T extends unknown[].
+#[test]
+fn test_spread_tuple_assignable_to_type_param() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: [...T]
+    let source = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, t_param),
+        "[...T] should be assignable to T"
+    );
+}
+
+/// T should be assignable to [...T] (wrap identity).
+#[test]
+fn test_type_param_assignable_to_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // Target: [...T]
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(t_param, target),
+        "T should be assignable to [...T]"
+    );
+}
+
+/// T should be assignable to readonly [...T].
+#[test]
+fn test_type_param_assignable_to_readonly_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // Target: readonly [...T]
+    let spread_tuple = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let readonly_target = interner.intern(TypeData::ReadonlyType(spread_tuple));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(t_param, readonly_target),
+        "T should be assignable to readonly [...T]"
+    );
+}
+
+/// [...S] should be assignable to [...T] when S <: T (both single-rest type params).
+#[test]
+fn test_spread_tuple_subtype_preserves_type_param_relation() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+    // S extends T (constraint is T itself)
+    let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: Some(t_param),
+        default: None,
+        is_const: false,
+    }));
+
+    let source = interner.tuple(vec![TupleElement {
+        type_id: s_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "[...S] should be assignable to [...T] when S extends T"
+    );
+}
+
+/// [...T] should NOT be assignable to [...U] when T and U are unrelated type params.
+#[test]
+fn test_spread_tuple_not_assignable_to_unrelated_spread() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let source = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: u_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "[...T] should NOT be assignable to [...U] when T and U are unrelated"
+    );
+}

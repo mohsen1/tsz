@@ -877,3 +877,64 @@ fs2_(...s_, ...s_);
         "Non-tuple spread should emit exactly 1 TS2556 per call, got {ts2556_count}"
     );
 }
+
+// =============================================================================
+// TS1265 / TS1266: Tuple Element Ordering Tests
+// =============================================================================
+
+/// TS1265: A rest element cannot follow another rest element (concrete arrays).
+#[test]
+fn test_ts1265_rest_after_rest_concrete_arrays() {
+    let source = r#"
+type T1 = [...string[], ...number[]];
+type T2 = [...Array<string>, ...number[]];
+"#;
+    let diagnostics = check_source(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 2,
+        "Expected 2 TS1265 errors for rest after rest with concrete arrays, got {ts1265_count}"
+    );
+}
+
+/// TS1265 should NOT fire for variadic type parameter spreads like [...T, ...U, ...V].
+#[test]
+fn test_ts1265_not_emitted_for_variadic_type_param_spreads() {
+    let source = r#"
+type Tup3<T extends unknown[], U extends unknown[], V extends unknown[]> = [...T, ...U, ...V];
+"#;
+    let diagnostics = check_source(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 0,
+        "TS1265 should NOT fire for variadic type param spreads [...T, ...U, ...V], got {ts1265_count}"
+    );
+}
+
+/// TS1266: An optional element cannot follow a rest element.
+#[test]
+fn test_ts1266_optional_after_rest() {
+    let source = r#"
+type T1 = [number, ...string[], boolean?];
+"#;
+    let diagnostics = check_source(source);
+    let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
+    assert_eq!(
+        ts1266_count, 1,
+        "Expected 1 TS1266 error for optional after rest, got {ts1266_count}"
+    );
+}
+
+/// Mixed rest and optional violations.
+#[test]
+fn test_ts1265_and_ts1266_together() {
+    let source = r#"
+type T1 = [number, ...string[], ...boolean[]];
+type T2 = [number, ...string[], boolean?];
+"#;
+    let diagnostics = check_source(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
+    assert_eq!(ts1265_count, 1, "Expected 1 TS1265, got {ts1265_count}");
+    assert_eq!(ts1266_count, 1, "Expected 1 TS1266, got {ts1266_count}");
+}
