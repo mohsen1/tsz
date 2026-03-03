@@ -763,7 +763,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
 FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
-FAIL TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.tsx
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
@@ -1522,8 +1521,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
@@ -1714,6 +1711,7 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of32.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of33.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of34.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of35.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts
@@ -1721,6 +1719,7 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of55.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration3_es6.ts
@@ -2136,7 +2135,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty13.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty14.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty15.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty2.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty7.tsx
@@ -2163,7 +2161,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution12.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution15.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution3.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution6.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution7.tsx
@@ -2493,6 +2490,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAndUnionT
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -5853,6 +5851,7 @@ PASS TypeScript/tests/cases/compiler/jsxNamespaceReexports.tsx
 PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
+PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
 PASS TypeScript/tests/cases/compiler/keepImportsInDts1.ts
@@ -8241,6 +8240,8 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
@@ -8985,7 +8986,6 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of27.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of28.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of31.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of36.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of4.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
@@ -8993,7 +8993,6 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of42.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of44.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of5.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of52.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of53.ts
@@ -10497,6 +10496,7 @@ PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty10.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty12.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty16.tsx
+PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty9.tsx
@@ -10529,6 +10529,7 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution13.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution14.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution16.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution9.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxCorrectlyParseLessThanComparison1.tsx
@@ -11833,7 +11834,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
