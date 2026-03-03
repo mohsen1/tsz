@@ -646,8 +646,8 @@ impl<'a> CheckerState<'a> {
                 // for the initializer so that object literal methods and arrow function
                 // parameters get contextually typed from the satisfies type.
                 // This mirrors the `satisfies Expr` TypeScript syntax behavior.
-                let satisfies_type = checker.jsdoc_satisfies_annotation_for_node(decl_idx);
-                if let Some(sat_type) = satisfies_type {
+                let satisfies_info = checker.jsdoc_satisfies_annotation_with_pos(decl_idx);
+                if let Some((sat_type, keyword_pos)) = satisfies_info {
                     let prev_context = checker.ctx.contextual_type;
                     checker.ctx.contextual_type = Some(sat_type);
                     checker.clear_type_cache_recursive(var_decl.initializer);
@@ -661,7 +661,7 @@ impl<'a> CheckerState<'a> {
                             init_type,
                             sat_type,
                             var_decl.initializer,
-                            None,
+                            Some(keyword_pos),
                         );
                     }
                     return init_type;

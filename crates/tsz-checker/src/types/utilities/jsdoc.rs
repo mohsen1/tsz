@@ -227,8 +227,14 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Extract and parse `JSDoc` `@satisfies` annotations for a given node.
-    pub(crate) fn jsdoc_satisfies_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+    /// Extract `@satisfies` annotation and the source position of the `satisfies` keyword.
+    ///
+    /// Returns `(type_id, keyword_pos)` where `keyword_pos` is the absolute offset
+    /// of `@satisfies` in the source file, used to anchor TS1360 diagnostics.
+    pub(crate) fn jsdoc_satisfies_annotation_with_pos(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<(TypeId, u32)> {
         if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
         }
@@ -236,16 +242,26 @@ impl<'a> CheckerState<'a> {
         let sf = self.ctx.arena.source_files.first()?;
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
-        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
+        let (jsdoc, jsdoc_start) =
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)?;
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+
+        // Find `@satisfies` position directly in the raw source text starting
+        // from the comment start.  The processed `jsdoc` string has `/**` and
+        // leading `*` stripped, so character offsets inside it do not map 1:1
+        // to raw source positions.
+        let raw_comment = source_text.get(jsdoc_start as usize..)?;
+        let tag_offset = raw_comment.find("@satisfies")? as u32;
+        // tsc points at `satisfies` (after the `@`), not at `@satisfies`.
+        let keyword_pos = jsdoc_start + tag_offset + 1;
 
         // Use the comprehensive type expression resolver that handles generics,
         // inline object types, and all fallback strategies.
         let resolved = self.resolve_jsdoc_type_str(type_expr)?;
         // Evaluate to expand mapped types, conditionals, etc. so that excess
         // property checks and assignability see the final structural type.
-        Some(self.judge_evaluate(resolved))
+        Some((self.judge_evaluate(resolved), keyword_pos))
     }
 
     fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
@@ -744,11 +760,40 @@ impl<'a> CheckerState<'a> {
                 &comments,
                 &source_text,
             ) {
+                // Register a DefId for this JSDoc typedef so the type formatter
+                // can display the alias name in diagnostics (e.g., "Color" instead
+                // of "{ r: number; g: number; b: number }"). JSDoc typedefs don't
+                // go through the binder, so they have no binder symbol or DefId.
+                self.register_jsdoc_typedef_def(name, ty);
                 return Some(ty);
             }
         }
 
         None
+    }
+
+    /// Register a DefId for a JSDoc `@typedef` so the type formatter can display
+    /// the alias name in diagnostic messages.
+    ///
+    /// JSDoc typedefs bypass the binder (no SymbolId) and the normal DefId creation
+    /// path. This helper creates a type alias DefId with the resolved body so that
+    /// `find_type_alias_by_body(type_id)` can find the alias name.
+    fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
+        use tsz_solver::def::DefinitionInfo;
+
+        // Avoid duplicate registration if called multiple times for the same typedef
+        if self
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(body_type)
+            .is_some()
+        {
+            return;
+        }
+
+        let atom_name = self.ctx.types.intern_string(name);
+        let info = DefinitionInfo::type_alias(atom_name, Vec::new(), body_type);
+        self.ctx.definition_store.register(info);
     }
 
     /// Resolve a generic type reference from JSDoc: `Name<Arg1, Arg2, ...>`.
@@ -785,7 +830,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Directly instantiate the type body with the provided type arguments.
-        // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_for_node)
+        // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_with_pos)
         // calls judge_evaluate, which will expand mapped types while preserving
         // Lazy(DefId) references in value positions for correct type name display.
         use tsz_solver::instantiate_generic;

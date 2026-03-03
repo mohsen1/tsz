@@ -505,6 +505,27 @@ impl DefinitionStore {
             })
             .map(|entry| *entry.key())
     }
+
+    /// Find a type alias `DefId` whose body matches the given `TypeId`.
+    ///
+    /// This preserves type alias names in diagnostic messages: when the formatter
+    /// encounters an Object/Union/etc. TypeId that is the body of a type alias,
+    /// it can display the alias name (e.g., "Color") instead of the expansion
+    /// (e.g., "{ r: number; g: number; b: number }").
+    ///
+    /// Only matches non-generic type aliases (no type parameters) to avoid
+    /// ambiguity with instantiated generics.
+    pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
+        self.definitions
+            .iter()
+            .find(|entry| {
+                let def = entry.value();
+                def.kind == DefKind::TypeAlias
+                    && def.type_params.is_empty()
+                    && def.body == Some(type_id)
+            })
+            .map(|entry| *entry.key())
+    }
 }
 
 // =============================================================================
