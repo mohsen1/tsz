@@ -1296,34 +1296,36 @@ impl<'a> CheckerState<'a> {
                         tsz_solver::remove_undefined(self.ctx.types, type_id)
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
-                        // Excess property check (skip for index sig, data-*/aria-*, type params).
-                        if !has_string_index
+                        // Compute actual value type (replacing ANY placeholder) for error messages.
+                        let attr_value_type = if attr_data.initializer.is_none() {
+                            TypeId::BOOLEAN_TRUE // shorthand boolean literal
+                        } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                            let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                                self.ctx
+                                    .arena
+                                    .get_jsx_expression(init_node)
+                                    .map(|e| e.expression)
+                                    .unwrap_or(attr_data.initializer)
+                            } else {
+                                attr_data.initializer
+                            };
+                            self.compute_type_of_node(value_idx)
+                        } else {
+                            TypeId::ANY
+                        };
+                        if let Some(entry) = provided_attrs.last_mut() {
+                            entry.1 = attr_value_type;
+                        }
+
+                        if !has_string_index // excess property check
                             && !props_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
-                            // Compute the attribute value type for the error message.
-                            // For shorthand boolean attributes, tsc uses the literal
-                            // `true` in the object display (e.g., `{ prop: true; }`).
                             let attr_type_name = if attr_data.initializer.is_none() {
                                 "true".to_string()
-                            } else if let Some(init_node) =
-                                self.ctx.arena.get(attr_data.initializer)
-                            {
-                                let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION
-                                {
-                                    self.ctx
-                                        .arena
-                                        .get_jsx_expression(init_node)
-                                        .map(|e| e.expression)
-                                        .unwrap_or(attr_data.initializer)
-                                } else {
-                                    attr_data.initializer
-                                };
-                                let value_type = self.compute_type_of_node(value_idx);
-                                self.format_type(value_type)
                             } else {
-                                "any".to_string()
+                                self.format_type(attr_value_type)
                             };
                             let message = format!(
                                 "Type '{{ {attr_name}: {attr_type_name}; }}' is not assignable to type '{display_target}'.\n  \
@@ -1345,7 +1347,8 @@ impl<'a> CheckerState<'a> {
 
                 // Check attribute value assignability
                 if attr_data.initializer.is_none() {
-                    // Shorthand boolean attribute (e.g., <input disabled />).
+                    // Shorthand boolean: tsc uses literal `true` for both assignability
+                    // and error messages in the per-attribute path.
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }

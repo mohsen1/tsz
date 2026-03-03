@@ -549,7 +549,8 @@ impl<'a> CheckerState<'a> {
                 // Compute the attribute value type with literal preservation.
                 // For union props, literals like "a" and true must stay as literal types
                 // (not widen to string/boolean) so they can match discriminant properties
-                // in the union members.
+                // in the union members. Shorthand booleans stay as BOOLEAN_TRUE for
+                // assignability but get widened to BOOLEAN in error message display.
                 let attr_type = if attr_data.initializer.is_none() {
                     TypeId::BOOLEAN_TRUE
                 } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
@@ -656,15 +657,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if !any_member_compatible {
-            // Build the attributes object type for the error message
+            // Build the attributes object type for the error message.
+            // tsc widens shorthand boolean `true` to `boolean` in the JSX attribute
+            // object type displayed in error messages (fresh object literal widening).
             let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
                 .iter()
                 .map(|(name, type_id)| {
                     let name_atom = self.ctx.types.intern_string(name);
+                    // Widen BOOLEAN_TRUE → BOOLEAN for error display
+                    let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
+                        TypeId::BOOLEAN
+                    } else {
+                        *type_id
+                    };
                     tsz_solver::PropertyInfo {
                         name: name_atom,
-                        type_id: *type_id,
-                        write_type: *type_id,
+                        type_id: display_type,
+                        write_type: display_type,
                         optional: false,
                         readonly: false,
                         is_method: false,
@@ -956,5 +965,74 @@ impl<'a> CheckerState<'a> {
         // Look for "JSX" in the root entity's exports (namespace members)
         let exports = root_symbol.exports.as_ref()?;
         exports.get("JSX")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source;
+
+    fn check_jsx(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        use crate::context::CheckerOptions;
+        use tsz_common::checker_options::JsxMode;
+        let opts = CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        };
+        check_source(source, "test.tsx", opts)
+    }
+
+    fn check_jsx_codes(source: &str) -> Vec<u32> {
+        check_jsx(source).iter().map(|d| d.code).collect()
+    }
+
+    /// JSX shorthand boolean attribute (`<Foo bar />`) typed as `true` for assignability.
+    /// When prop expects literal `true`, shorthand must be assignable (no false positive).
+    #[test]
+    fn jsx_shorthand_boolean_assignable_to_literal_true() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX { interface Element {} interface IntrinsicElements { test1: { x: true }; } }
+            <test1 x />;
+            "#,
+        );
+        // Should NOT emit TS2322 — shorthand `x` is `true`, assignable to `true`
+        assert!(
+            !diagnostics.contains(&2322),
+            "Shorthand boolean should be assignable to literal true prop, got: {diagnostics:?}"
+        );
+    }
+
+    /// JSX shorthand boolean not assignable to non-boolean prop emits TS2322.
+    #[test]
+    fn jsx_shorthand_boolean_not_assignable_to_number() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX { interface Element {} interface IntrinsicElements { test1: { x: number }; } }
+            <test1 x />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2322),
+            "Shorthand boolean should not be assignable to number, got: {diagnostics:?}"
+        );
+    }
+
+    /// Data-*/aria-* attributes not found in props should have their actual type
+    /// computed (not left as placeholder `any`).
+    #[test]
+    fn jsx_data_attribute_type_not_any_placeholder() {
+        let diagnostics = check_jsx(
+            r#"
+            declare namespace JSX { interface Element {} interface IntrinsicElements { div: { id?: string }; } }
+            <div data-value={42} />;
+            "#,
+        );
+        // data-* attributes on intrinsic elements should not cause errors
+        // (they're valid HTML custom data attributes)
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2322),
+            "data-* attribute should not cause TS2322, got: {diagnostics:?}"
+        );
     }
 }

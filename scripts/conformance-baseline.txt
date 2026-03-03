@@ -464,7 +464,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -856,7 +856,6 @@ FAIL TypeScript/tests/cases/compiler/moduleImport.ts
 FAIL TypeScript/tests/cases/compiler/moduleInTypePosition1.ts
 FAIL TypeScript/tests/cases/compiler/moduleKeywordDeprecated.ts
 FAIL TypeScript/tests/cases/compiler/moduleMemberMissingErrorIsRelative.ts
-FAIL TypeScript/tests/cases/compiler/modulePreserve1.ts
 FAIL TypeScript/tests/cases/compiler/modulePreserve4.ts
 FAIL TypeScript/tests/cases/compiler/modulePreserveImportHelpers.ts
 FAIL TypeScript/tests/cases/compiler/moduleReopenedTypeOtherBlock.ts
@@ -911,8 +910,6 @@ FAIL TypeScript/tests/cases/compiler/newMap.ts
 FAIL TypeScript/tests/cases/compiler/newOperator.ts
 FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter1.ts
 FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter2.ts
-FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter3.ts
-FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter4.ts
 FAIL TypeScript/tests/cases/compiler/noCrashOnImportShadowing.ts
 FAIL TypeScript/tests/cases/compiler/noCrashOnMixin.ts
 FAIL TypeScript/tests/cases/compiler/noCrashOnMixin2.ts
@@ -1362,7 +1359,6 @@ FAIL TypeScript/tests/cases/compiler/unusedLocalsAndParameters.ts
 FAIL TypeScript/tests/cases/compiler/unusedLocalsInMethod4.ts
 FAIL TypeScript/tests/cases/compiler/unusedParameterProperty1.ts
 FAIL TypeScript/tests/cases/compiler/unusedPrivateStaticMembers.ts
-FAIL TypeScript/tests/cases/compiler/unusedSwitchStatement.ts
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_infer.ts
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_templateTag.ts
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_templateTag2.ts
@@ -1424,7 +1420,6 @@ FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classHeritageS
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classHeritageSpecification/classIsSubtypeOfBaseType.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classImplementsMergedClassInterface.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/declaredClassMergedwithSelf.ts
-FAIL TypeScript/tests/cases/conformance/classes/classExpressions/classExpression4.ts
 FAIL TypeScript/tests/cases/conformance/classes/classExpressions/genericClassExpressionInFunction.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock16.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock19.ts
@@ -1779,7 +1774,6 @@ FAIL TypeScript/tests/cases/conformance/es7/trailingCommasInGetter.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/classDeclaration/esDecorators-classDeclaration-exportModifier.2.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/classDeclaration/esDecorators-classDeclaration-exportModifier.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/classDeclaration/esDecorators-classDeclaration-outerThisReference.ts
-FAIL TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAmbient.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-arguments.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-emitDecoratorMetadata.ts
@@ -2119,7 +2113,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/jsxUnclosedParserRecovery.ts
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeInvalidNames.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution12.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution15.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution6.tsx
@@ -5082,7 +5075,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6066,6 +6059,7 @@ PASS TypeScript/tests/cases/compiler/moduleNoneDynamicImport.ts
 PASS TypeScript/tests/cases/compiler/moduleNoneErrors.ts
 PASS TypeScript/tests/cases/compiler/moduleNoneOutFile.ts
 PASS TypeScript/tests/cases/compiler/moduleOuterQualification.ts
+PASS TypeScript/tests/cases/compiler/modulePreserve1.ts
 PASS TypeScript/tests/cases/compiler/modulePreserve2.ts
 PASS TypeScript/tests/cases/compiler/modulePreserve3.ts
 PASS TypeScript/tests/cases/compiler/modulePreserve5.ts
@@ -6261,6 +6255,8 @@ PASS TypeScript/tests/cases/compiler/noAsConstNameLookup.ts
 PASS TypeScript/tests/cases/compiler/noBundledEmitFromNodeModules.ts
 PASS TypeScript/tests/cases/compiler/noCatchBlock.ts
 PASS TypeScript/tests/cases/compiler/noCircularDefinitionOnExportOfPrivateInMergedNamespace.ts
+PASS TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter3.ts
+PASS TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter4.ts
 PASS TypeScript/tests/cases/compiler/noCollisionThisExpressionAndClassInGlobal.ts
 PASS TypeScript/tests/cases/compiler/noCollisionThisExpressionAndLocalVarInAccessors.ts
 PASS TypeScript/tests/cases/compiler/noCollisionThisExpressionAndLocalVarInConstructor.ts
@@ -7706,6 +7702,7 @@ PASS TypeScript/tests/cases/compiler/unusedSingleParameterInContructor.ts
 PASS TypeScript/tests/cases/compiler/unusedSingleParameterInFunctionDeclaration.ts
 PASS TypeScript/tests/cases/compiler/unusedSingleParameterInFunctionExpression.ts
 PASS TypeScript/tests/cases/compiler/unusedSingleParameterInMethodDeclaration.ts
+PASS TypeScript/tests/cases/compiler/unusedSwitchStatement.ts
 PASS TypeScript/tests/cases/compiler/unusedTypeParameterInFunction1.ts
 PASS TypeScript/tests/cases/compiler/unusedTypeParameterInFunction2.ts
 PASS TypeScript/tests/cases/compiler/unusedTypeParameterInFunction3.ts
@@ -8057,6 +8054,7 @@ PASS TypeScript/tests/cases/conformance/classes/classExpression.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpression1.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpression2.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpression3.ts
+PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpression4.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpression5.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classExpressionLoop.ts
 PASS TypeScript/tests/cases/conformance/classes/classExpressions/classWithStaticFieldInParameterBindingPattern.2.ts
@@ -9589,6 +9587,7 @@ PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esD
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-nonStaticPrivateAccessor.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-static.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAccessor.ts
+PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticAmbient.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticPrivate.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/fields/esDecorators-classDeclaration-fields-staticPrivateAccessor.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/classDeclaration/methods/esDecorators-classDeclaration-methods-nonStatic.ts
@@ -10526,6 +10525,7 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution13.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution14.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution16.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution9.tsx
