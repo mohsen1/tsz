@@ -447,6 +447,10 @@ impl<'a> CheckerState<'a> {
     /// - `@param {number} [p=0]` → `number | undefined`
     /// - `@param {number=} p` → `number | undefined` (= suffix in type)
     ///
+    /// Handles JSDoc destructured parameter type literals:
+    /// - `@param {Object} opts` + `@param {string} opts.x` → `{ x: string }`
+    /// - `@param {object[]} arr` + `@param {string} arr[].x` → `{ x: string }[]`
+    ///
     /// Returns `None` if no matching `@param` tag exists or the type can't be resolved.
     pub(crate) fn resolve_jsdoc_param_type(
         &mut self,
@@ -460,7 +464,70 @@ impl<'a> CheckerState<'a> {
         } else {
             (type_expr, false)
         };
-        let base_type = self.jsdoc_type_from_expression(&effective_type_expr)?;
+        let mut base_type = self.jsdoc_type_from_expression(&effective_type_expr)?;
+
+        // Handle JSDoc destructured parameter type literals.
+        // When the base type is Object/object (possibly with []), nested @param tags
+        // like `@param {string} opts.x` define the actual object shape.
+        let trimmed_expr = effective_type_expr.trim();
+        let is_object_base = trimmed_expr == "Object" || trimmed_expr == "object";
+        let is_array_object_base = trimmed_expr == "Object[]"
+            || trimmed_expr == "object[]"
+            || trimmed_expr == "Array.<Object>"
+            || trimmed_expr == "Array.<object>"
+            || trimmed_expr == "Array<Object>"
+            || trimmed_expr == "Array<object>";
+
+        if is_object_base || is_array_object_base {
+            let nested = Self::extract_jsdoc_nested_param_properties(jsdoc, param_name);
+            if !nested.is_empty() {
+                let mut properties = Vec::new();
+                for (prop_name, prop_type_expr, is_prop_optional) in &nested {
+                    // Handle {Type=} suffix in nested property types
+                    let (eff_type, opt_from_type) = if prop_type_expr.ends_with('=') {
+                        (&prop_type_expr[..prop_type_expr.len() - 1], true)
+                    } else {
+                        (prop_type_expr.as_str(), false)
+                    };
+                    let prop_type = self.jsdoc_type_from_expression(eff_type);
+                    if let Some(mut prop_type_id) = prop_type {
+                        let is_optional = *is_prop_optional || opt_from_type;
+                        if is_optional
+                            && self.ctx.strict_null_checks()
+                            && prop_type_id != tsz_solver::TypeId::ANY
+                            && prop_type_id != tsz_solver::TypeId::UNDEFINED
+                        {
+                            prop_type_id = self
+                                .ctx
+                                .types
+                                .factory()
+                                .union(vec![prop_type_id, tsz_solver::TypeId::UNDEFINED]);
+                        }
+                        let name_atom = self.ctx.types.intern_string(prop_name);
+                        properties.push(tsz_solver::PropertyInfo {
+                            name: name_atom,
+                            type_id: prop_type_id,
+                            write_type: prop_type_id,
+                            optional: is_optional,
+                            readonly: false,
+                            is_method: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: None,
+                            declaration_order: properties.len() as u32,
+                        });
+                    }
+                }
+                if !properties.is_empty() {
+                    let obj_type = self.ctx.types.factory().object(properties);
+                    if is_array_object_base {
+                        base_type = self.ctx.types.factory().array(obj_type);
+                    } else {
+                        base_type = obj_type;
+                    }
+                }
+            }
+        }
+
         // Check if parameter is optional via bracket syntax [name] or [name=default]
         let is_optional_name = Self::is_jsdoc_param_optional_by_brackets(jsdoc, param_name);
         if (is_optional_type || is_optional_name)
@@ -477,6 +544,82 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(base_type)
         }
+    }
+
+    /// Extract nested `@param` properties for a destructured parameter.
+    ///
+    /// Given a parent parameter name like `opts`, extracts entries like:
+    /// - `@param {string} opts.x` → ("x", "string", false)
+    /// - `@param {string=} opts.y` → ("y", "string", true)  (= suffix)
+    /// - `@param {string} [opts.z]` → ("z", "string", true)  (bracket syntax)
+    /// - `@param {string} [opts.w="hi"]` → ("w", "string", true) (bracket + default)
+    /// - `@param {string} opts[].x` → ("x", "string", false) (array element property)
+    ///
+    /// Only extracts immediate child properties (one level of nesting).
+    fn extract_jsdoc_nested_param_properties(
+        jsdoc: &str,
+        parent_name: &str,
+    ) -> Vec<(String, String, bool)> {
+        let mut result = Vec::new();
+        let dot_prefix = format!("{parent_name}.");
+        let array_dot_prefix = format!("{parent_name}[].");
+
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            let Some(rest) = effective.strip_prefix("@param") else {
+                continue;
+            };
+            let rest = rest.trim();
+
+            // Parse {type} name pattern
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let Some((type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest) else {
+                continue;
+            };
+            let name_part = after_type.split_whitespace().next().unwrap_or("");
+
+            // Check for bracket syntax [opts.x] or [opts.x=default]
+            let (bare_name, is_bracket_optional) = if name_part.starts_with('[') {
+                let inner = name_part.trim_start_matches('[');
+                let bare = inner.split('=').next().unwrap_or(inner);
+                let bare = bare.trim_end_matches(']');
+                (bare, true)
+            } else {
+                (name_part, false)
+            };
+
+            // Check if this is a direct child property of the parent
+            // e.g., "opts.x" for parent "opts", or "opts[].x" for array parent
+            let prop_name = if let Some(prop) = bare_name.strip_prefix(&dot_prefix) {
+                // Skip deeper nesting like opts.what.bad (contains another dot)
+                if prop.contains('.') || prop.contains("[]") {
+                    continue;
+                }
+                prop
+            } else if let Some(prop) = bare_name.strip_prefix(&array_dot_prefix) {
+                if prop.contains('.') || prop.contains("[]") {
+                    continue;
+                }
+                prop
+            } else {
+                continue;
+            };
+
+            if prop_name.is_empty() {
+                continue;
+            }
+
+            result.push((
+                prop_name.to_string(),
+                type_expr.trim().to_string(),
+                is_bracket_optional,
+            ));
+        }
+        result
     }
 
     /// Check if a JSDoc `@param` uses bracket syntax indicating optionality.
@@ -903,5 +1046,105 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_nested_params_basic_object() {
+        let jsdoc = r#"
+ * @param {Object} opts doc
+ * @param {string} opts.x doc2
+ * @param {number} opts.y doc3
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("x".to_string(), "string".to_string(), false));
+        assert_eq!(result[1], ("y".to_string(), "number".to_string(), false));
+    }
+
+    #[test]
+    fn extract_nested_params_optional_bracket() {
+        let jsdoc = r#"
+ * @param {Object} opts
+ * @param {string} opts.x
+ * @param {string=} opts.y
+ * @param {string} [opts.z]
+ * @param {string} [opts.w="hi"]
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts");
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0].0, "x");
+        assert!(!result[0].2); // not optional
+        assert_eq!(result[1].0, "y");
+        assert_eq!(result[1].1, "string="); // = suffix preserved for caller to handle
+        assert!(!result[1].2);
+        assert_eq!(result[2].0, "z");
+        assert!(result[2].2); // bracket optional
+        assert_eq!(result[3].0, "w");
+        assert!(result[3].2); // bracket + default optional
+    }
+
+    #[test]
+    fn extract_nested_params_array_element() {
+        let jsdoc = r#"
+ * @param {Object[]} opts2
+ * @param {string} opts2[].anotherX
+ * @param {string=} opts2[].anotherY
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts2");
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[0],
+            ("anotherX".to_string(), "string".to_string(), false)
+        );
+        assert_eq!(
+            result[1],
+            ("anotherY".to_string(), "string=".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn extract_nested_params_skips_deep_nesting() {
+        let jsdoc = r#"
+ * @param {object[]} opts5
+ * @param {string} opts5[].help
+ * @param {object} opts5[].what
+ * @param {string} opts5[].what.a
+ * @param {Object[]} opts5[].what.bad
+ * @param {string} opts5[].what.bad[].idea
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts5");
+        // Only immediate children: help, what
+        // Deeper nesting (what.a, what.bad, what.bad[].idea) should be skipped
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, "help");
+        assert_eq!(result[1].0, "what");
+    }
+
+    #[test]
+    fn extract_nested_params_no_children() {
+        let jsdoc = r#"
+ * @param {string} name
+ * @param {number} age
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "name");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn extract_nested_params_wrong_parent() {
+        let jsdoc = r#"
+ * @param {Object} opts1
+ * @param {string} opts1.x
+ * @param {Object} opts2
+ * @param {number} opts2.y
+        "#;
+        let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts1");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "x");
     }
 }
