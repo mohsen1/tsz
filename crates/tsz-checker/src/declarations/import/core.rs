@@ -1154,8 +1154,15 @@ impl<'a> CheckerState<'a> {
             tsz_common::common::ModuleKind::System
         );
         let is_es_module = self.ctx.compiler_options.module.is_es_module();
+        // `module: preserve` allows both CJS (`export =`) and ESM (`export default`)
+        // syntax — it preserves the module format as-written. TS1203 should not fire.
+        let is_preserve = matches!(
+            self.ctx.compiler_options.module,
+            tsz_common::common::ModuleKind::Preserve
+        );
 
         if (is_es_module || is_system_module)
+            && !is_preserve
             && !is_declaration_file
             && !self.is_js_file()
             && !is_cjs_extension

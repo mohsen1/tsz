@@ -706,9 +706,16 @@ impl<'a> CheckerState<'a> {
         let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
         self.ctx.spelling_suggestions_emitted += 1;
 
+        // Suppress spelling suggestions in files with parse errors.
+        // When the AST is malformed, symbols may not be properly bound and
+        // name resolution cascades are unhelpful.  tsc keeps only primary
+        // diagnostics in these files.
+        let suppress_for_parse_errors = self.has_syntax_parse_errors();
+
         // Try to find similar identifiers in scope for better error messages
         if !suppress_spelling_suggestion
             && !reached_max_suggestions
+            && !suppress_for_parse_errors
             && let Some(suggestions) = self.find_similar_identifiers(name, idx, suggestion_meaning)
             && !suggestions.is_empty()
         {
