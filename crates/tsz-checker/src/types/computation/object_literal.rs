@@ -208,9 +208,20 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
-                    // Set contextual type for property value
+                    // JSDoc @type on object literal properties acts as the declared
+                    // type for the property. When present:
+                    // - The property type in the resulting object is the @type type
+                    // - The initializer is checked for assignability against it
+                    // - The @type type is used as contextual type so literals are preserved
+                    // This matches tsc behavior for JS files with checkJs/ts-check.
+                    let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
+
+                    // Set contextual type for property value.
+                    // When a JSDoc @type is present, use it as the contextual type
+                    // so that literal values like `"a"` preserve their literal type
+                    // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = property_context_type;
+                    self.ctx.contextual_type = jsdoc_declared_type.or(property_context_type);
 
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
@@ -243,24 +254,39 @@ impl<'a> CheckerState<'a> {
                     // Restore context
                     self.ctx.contextual_type = prev_context;
 
-                    // Apply bidirectional type inference - use contextual type to narrow the value type
-                    let value_type = tsz_solver::apply_contextual_type(
-                        self.ctx.types,
-                        value_type,
-                        property_context_type,
-                    );
+                    // When a JSDoc @type annotation is present, check assignability
+                    // of the initializer against the declared type, and use the
+                    // declared type as the property type (not the initializer type).
+                    let value_type = if let Some(declared_type) = jsdoc_declared_type {
+                        // Check initializer assignability against @type (TS2322)
+                        if prop.initializer != prop.name {
+                            self.check_assignable_or_report_at(
+                                value_type,
+                                declared_type,
+                                prop.initializer,
+                                prop.name,
+                            );
+                        }
+                        declared_type
+                    } else {
+                        // Apply bidirectional type inference - use contextual type to narrow the value type
+                        let value_type = tsz_solver::apply_contextual_type(
+                            self.ctx.types,
+                            value_type,
+                            property_context_type,
+                        );
 
-                    // Widen literal types for object literal properties (tsc behavior).
-                    // Object literal properties are mutable by default, so `{ x: "a" }`
-                    // produces `{ x: string }`.  Only preserve literals when:
-                    // - A const assertion is active (`as const`)
-                    // - A contextual type narrows the property to a literal
-                    let value_type =
+                        // Widen literal types for object literal properties (tsc behavior).
+                        // Object literal properties are mutable by default, so `{ x: "a" }`
+                        // produces `{ x: string }`.  Only preserve literals when:
+                        // - A const assertion is active (`as const`)
+                        // - A contextual type narrows the property to a literal
                         if !self.ctx.in_const_assertion && property_context_type.is_none() {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
-                        };
+                        }
+                    };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
                     // tsc only emits TS7008 for class properties, property signatures,

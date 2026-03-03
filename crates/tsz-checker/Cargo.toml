@@ -74,5 +74,9 @@ path = "tests/jsdoc_implements_tests.rs"
 name = "js_constructor_property_tests"
 path = "tests/js_constructor_property_tests.rs"
 
+[[test]]
+name = "jsdoc_type_tag_tests"
+path = "tests/jsdoc_type_tag_tests.rs"
+
 [lints]
 workspace = true
