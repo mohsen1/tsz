@@ -4,6 +4,7 @@ use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLook
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -58,6 +59,7 @@ impl<'a> CheckerState<'a> {
                             Some(MemberAccessLevel::Private)
                         } else {
                             self.member_access_level_from_modifiers(&prop.modifiers)
+                                .or_else(|| self.jsdoc_access_level(member_idx))
                         };
                         return match access_level {
                             Some(level) => MemberLookup::Restricted(level),
@@ -80,6 +82,7 @@ impl<'a> CheckerState<'a> {
                             Some(MemberAccessLevel::Private)
                         } else {
                             self.member_access_level_from_modifiers(&method.modifiers)
+                                .or_else(|| self.jsdoc_access_level(member_idx))
                         };
                         return match access_level {
                             Some(level) => MemberLookup::Restricted(level),
@@ -102,6 +105,7 @@ impl<'a> CheckerState<'a> {
                             Some(MemberAccessLevel::Private)
                         } else {
                             self.member_access_level_from_modifiers(&accessor.modifiers)
+                                .or_else(|| self.jsdoc_access_level(member_idx))
                         };
                         // Don't return immediately - a getter/setter pair may have
                         // different visibility. Use the most permissive level (tsc
@@ -149,6 +153,11 @@ impl<'a> CheckerState<'a> {
                             };
                         }
                     }
+                    // In JS files, constructor body `this.x = value` assignments
+                    // with JSDoc @private/@protected tags create accessible members.
+                    if let Some(access) = self.lookup_ctor_this_assignment_jsdoc(ctor.body, name) {
+                        return access;
+                    }
                 }
                 _ => {}
             }
@@ -161,6 +170,62 @@ impl<'a> CheckerState<'a> {
         }
 
         MemberLookup::NotFound
+    }
+
+    /// Scan constructor body for `this.name = ...` assignment statements
+    /// with JSDoc `@private` / `@protected` tags (common in JS class patterns).
+    ///
+    /// Returns `Some(MemberLookup)` if a matching `this.name` assignment is
+    /// found, using the JSDoc tag to determine access level.
+    fn lookup_ctor_this_assignment_jsdoc(
+        &self,
+        body: NodeIndex,
+        name: &str,
+    ) -> Option<MemberLookup> {
+        let body_node = self.ctx.arena.get(body)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+            let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let bin = self.ctx.arena.get_binary_expr(expr_node)?;
+            // Must be assignment operator
+            if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            // LHS must be `this.name`
+            let lhs_node = self.ctx.arena.get(bin.left)?;
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let access = self.ctx.arena.get_access_expr(lhs_node)?;
+            // Check that the object is `this`
+            let obj_node = self.ctx.arena.get(access.expression)?;
+            if obj_node.kind != SyntaxKind::ThisKeyword as u16 {
+                continue;
+            }
+            // Check property name matches
+            let prop_name_node = self.ctx.arena.get(access.name_or_argument)?;
+            let prop_name = self.ctx.arena.get_identifier(prop_name_node)?;
+            if prop_name.escaped_text != name {
+                continue;
+            }
+            // Found `this.name = ...` — check JSDoc on the enclosing statement
+            if let Some(level) = self.jsdoc_access_level(stmt_idx) {
+                return Some(MemberLookup::Restricted(level));
+            }
+            // Has the assignment but no JSDoc accessibility tag → public
+            return Some(MemberLookup::Public);
+        }
+
+        None
     }
 
     pub(crate) fn find_member_access_info(
@@ -1215,22 +1280,23 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get(mod_idx)
-                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16)
+                    .is_some_and(|n| n.kind == SyntaxKind::AbstractKeyword as u16)
             })
         });
 
-        let is_ambient =
-            self.ctx
-                .enclosing_class
-                .as_ref()
-                .is_some_and(|c| c.is_declared)
-                || modifiers.is_some_and(|m| {
-                    m.nodes.iter().any(|&n| {
-                        self.ctx.arena.get(n).is_some_and(|n| {
-                            n.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
-                        })
-                    })
-                });
+        let is_ambient = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| c.is_declared)
+            || modifiers.is_some_and(|m| {
+                m.nodes.iter().any(|&n| {
+                    self.ctx
+                        .arena
+                        .get(n)
+                        .is_some_and(|n| n.kind == SyntaxKind::DeclareKeyword as u16)
+                })
+            });
 
         let is_ambient_field = is_ambient && node.kind == syntax_kind_ext::PROPERTY_DECLARATION;
 

@@ -73,14 +73,18 @@ impl<'a> CheckerState<'a> {
         self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
 
         // Check for reserved class names (error 2414)
+        // TSC forbids using predefined type names as class names.
         if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && ident.escaped_text == "any"
+            && matches!(
+                ident.escaped_text.as_str(),
+                "any" | "number" | "boolean" | "string" | "undefined"
+            )
         {
             self.error_at_node(
                 class.name,
-                "Class name cannot be 'any'.",
+                &format!("Class name cannot be '{}'.", ident.escaped_text),
                 diagnostic_codes::CLASS_NAME_CANNOT_BE,
             );
         }

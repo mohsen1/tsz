@@ -1491,6 +1491,33 @@ impl<'a> CheckerState<'a> {
         Self::jsdoc_contains_tag(&jsdoc, "readonly")
     }
 
+    /// Get the access level from JSDoc `@private` / `@protected` / `@public` tags.
+    ///
+    /// Returns `Some(MemberAccessLevel::Private)` if `@private` is present,
+    /// `Some(MemberAccessLevel::Protected)` if `@protected` is present,
+    /// or `None` if no accessibility tag is found (including `@public`, which
+    /// is the default and doesn't restrict access).
+    pub(crate) fn jsdoc_access_level(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<crate::state::MemberAccessLevel> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let jsdoc = self.try_leading_jsdoc(
+            comments,
+            self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+            source_text,
+        )?;
+        if Self::jsdoc_contains_tag(&jsdoc, "private") {
+            Some(crate::state::MemberAccessLevel::Private)
+        } else if Self::jsdoc_contains_tag(&jsdoc, "protected") {
+            Some(crate::state::MemberAccessLevel::Protected)
+        } else {
+            None
+        }
+    }
+
     /// Check if a JSDoc comment string contains a specific `@tag`.
     fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
         let needle = format!("@{tag_name}");

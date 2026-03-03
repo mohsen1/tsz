@@ -90,12 +90,12 @@ impl<'a> Printer<'a> {
 
         // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
         // since type parameters are stripped in JS output — mirrors emit_function_declaration.
-        if !self.ctx.flags.in_declaration_emit {
-            if let Some(ref type_params) = method.type_parameters {
-                for &tp_idx in &type_params.nodes {
-                    if let Some(tp_node) = self.arena.get(tp_idx) {
-                        self.skip_comments_in_range(tp_node.pos, tp_node.end);
-                    }
+        if !self.ctx.flags.in_declaration_emit
+            && let Some(ref type_params) = method.type_parameters
+        {
+            for &tp_idx in &type_params.nodes {
+                if let Some(tp_node) = self.arena.get(tp_idx) {
+                    self.skip_comments_in_range(tp_node.pos, tp_node.end);
                 }
             }
         }
