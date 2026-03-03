@@ -240,6 +240,21 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        // Check for line comment (`// ...`).
+        // At this point `i` is just past the last non-whitespace char before the node.
+        // Scan backward to find the start of that line, then check for `//`.
+        if i > 0 {
+            let line_end = i;
+            let mut line_start = i;
+            while line_start > 0 && bytes[line_start - 1] != b'\n' {
+                line_start -= 1;
+            }
+            let line = source_text[line_start..line_end].trim_start();
+            if line.starts_with("//") {
+                return Some(line.to_string());
+            }
+        }
+
         None
     }
 

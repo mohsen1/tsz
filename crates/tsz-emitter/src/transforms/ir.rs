@@ -281,6 +281,8 @@ pub enum IRNode {
         target: Box<Self>,
         property_name: IRMethodName,
         descriptor: IRPropertyDescriptor,
+        /// Leading comment from the original accessor declaration
+        leading_comment: Option<String>,
     },
 
     // =========================================================================
