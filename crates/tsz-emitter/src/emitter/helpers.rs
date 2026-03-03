@@ -869,21 +869,32 @@ impl<'a> Printer<'a> {
                             return true;
                         }
                     }
-                    if self.ctx.is_commonjs() {
-                        return !self.import_has_value_usage_after_node(node, clause);
-                    }
+                    // In both CJS and ESM modes, erase imports whose bindings
+                    // have no value-level usage in the rest of the file.
+                    // In --noCheck mode this uses a text-based heuristic.
+                    return !self.import_has_value_usage_after_node(node, clause);
                 }
                 false
             }
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                // In ES module emit, external import-equals (`import x = require("...")`)
-                // is erased and module-ness is preserved via trailing `export {};`.
-                if is_es_module_output
-                    && let Some(import_data) = self.arena.get_import_decl(node)
-                    && let Some(module_node) = self.arena.get(import_data.module_specifier)
-                {
-                    return module_node.kind == SyntaxKind::StringLiteral as u16
-                        || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+                if let Some(import_data) = self.arena.get_import_decl(node) {
+                    if import_data.is_type_only {
+                        return true;
+                    }
+                    let is_external =
+                        self.arena
+                            .get(import_data.module_specifier)
+                            .is_some_and(|module_node| {
+                                module_node.kind == SyntaxKind::StringLiteral as u16
+                                    || module_node.kind
+                                        == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                            });
+                    if is_es_module_output && is_external {
+                        return true;
+                    }
+                    if self.ctx.is_commonjs() && is_external {
+                        return !self.import_equals_has_value_usage_after_node(node, import_data);
+                    }
                 }
                 false
             }

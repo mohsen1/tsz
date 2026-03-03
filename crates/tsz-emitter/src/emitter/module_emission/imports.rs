@@ -110,6 +110,40 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Check if an import-equals declaration's identifier is used after the import.
+    pub(in crate::emitter) fn import_equals_has_value_usage_after_node(
+        &self,
+        node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let name = self.get_identifier_text_idx(import_data.import_clause);
+        if name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let mut start = if let Some(module_node) = self.arena.get(import_data.module_specifier) {
+            module_node.end as usize
+        } else {
+            node.end as usize
+        };
+        start = start.min(source_text.len());
+        let bytes = source_text.as_bytes();
+        while start < bytes.len() {
+            match bytes[start] {
+                b';' => {
+                    start += 1;
+                    break;
+                }
+                b'\n' | b'\r' => break,
+                _ => start += 1,
+            }
+        }
+        let haystack = &source_text[start..];
+        Self::contains_identifier_occurrence(haystack, &name)
+    }
+
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_import_declaration_commonjs(node);
