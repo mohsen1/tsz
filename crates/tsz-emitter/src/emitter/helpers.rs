@@ -1024,6 +1024,21 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Find the position of a specific byte in source text between `from` and `to`.
+    pub(super) fn find_char_after(&self, from: u32, to: u32, ch: u8) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let end = (to as usize).min(bytes.len());
+        let mut i = from as usize;
+        while i < end {
+            if bytes[i] == ch {
+                return Some(i as u32);
+            }
+            i += 1;
+        }
+        None
+    }
+
     /// Find the position of the first top-level ',' in source text after `from` and before `to`.
     /// Skips over nested brackets, strings, and comments so we don't match commas inside
     /// nested expressions (e.g. `[a, [b, c], d]` — the inner comma is skipped).
