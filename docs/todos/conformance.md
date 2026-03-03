@@ -1,7 +1,60 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9836/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9838/12570 (78.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03f — Template literal expression contextual typing
+
+### Fixed: Template literal expressions always evaluated to `string` regardless of context
+
+**Area**: types/literal (63.6% → 65.9%, 16 → 15 failures)
+
+**Root cause**: `compute_template_expression_type()` in `expression_ops.rs` always returned
+`TypeId::STRING` for template literal expressions. In tsc, template expressions produce
+template literal types (not just `string`) when:
+1. The contextual type is/contains a template literal type (e.g., parameter expects `` `${T}:${U}` ``)
+2. Inside a `as const` assertion context
+
+Additionally, `argument_needs_contextual_type()` in `call_checker.rs` did NOT include
+`TEMPLATE_EXPRESSION` in the eligible list, so template expressions never received the
+parameter's type as context. Only `NoSubstitutionTemplateLiteral` was listed.
+
+**Fix** (solver `expression_ops.rs` + checker `call_checker.rs` + `helpers.rs`, ~100 lines):
+1. `compute_template_expression_type_contextual()` — new solver function that builds
+   TemplateLiteral types from text parts and expression types using `db.template_literal()`
+2. `is_template_literal_contextual_type()` — new solver function that checks whether a
+   type is or contains a template literal type or string literal type (walks unions/intersections)
+3. `argument_needs_contextual_type()` — added `TEMPLATE_EXPRESSION` to the eligible list
+4. `get_type_of_template_expression()` — now extracts text parts from AST and checks
+   both contextual type and `in_const_assertion` flag to decide whether to construct
+   a template literal type
+
+**Key design insight**: The solver already had full TemplateLiteral type infrastructure
+(`template_literal()`, `TemplateSpan`, normalization, expansion). The expression evaluator
+just wasn't using it. By leveraging the existing `template_literal()` factory method,
+the fix was minimal — just plumbing contextual type detection + text extraction.
+
+**Tests**: 10 unit tests:
+- Solver: 8 tests in `expression_ops_tests.rs` covering default behavior, error/never
+  propagation, contextual type detection (basic, union), contextual template type construction
+- Checker: 2 integration tests in `helpers.rs` verifying no false positive TS2345 for
+  template literals in contextual positions, and no regressions for string-typed templates
+
+**Conformance delta**: +2 tests (9836 → 9838):
+- `templateLiteralTypes6.ts` — PASS (false TS2345 removed)
+- `for-of37.ts` — PASS (improved contextual typing for template expressions in for-of)
+
+**Not fixed (remaining types/literal failures)**:
+- 7 template literal type fingerprint mismatches (correct error codes, wrong locations/messages)
+- 3 enum literal type fingerprint mismatches (union names vs type alias names in messages)
+- `numericStringLiteralTypes.ts`: false TS2345 from mapped tuple type expansion (different issue)
+- `templateLiteralTypes1.ts`: missing TS2590 (union too complex) — not yet implemented
+- Other tests need deeper solver changes (string mapping, numeric literal patterns)
+
+**Files changed**: `crates/tsz-solver/src/operations/expression_ops.rs`,
+`crates/tsz-solver/tests/expression_ops_tests.rs`,
+`crates/tsz-checker/src/checkers/call_checker.rs`,
+`crates/tsz-checker/src/types/computation/helpers.rs`
 
 ## Session 2026-03-03e — IIFE control flow analysis
 
