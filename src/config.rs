@@ -402,22 +402,22 @@ impl ResolvedCompilerOptions {
             return resolution;
         }
 
-        // Match tsc's computed moduleResolution defaults exactly:
-        // None/AMD/UMD/System/ES*/Preserve → Classic
-        // CommonJS → Node (node10)
+        // Match tsc 6.0's computed moduleResolution defaults:
+        // None/AMD/UMD/System → Classic (deprecated module kinds)
+        // CommonJS → Bundler (changed in tsc 6.0, was Node/node10)
+        // ES2015/ES2020/ES2022/ESNext/Preserve → Bundler (changed in tsc 6.0, was Classic)
         // NodeNext → NodeNext
-        // Node16 → Node16
-        // Everything else (currently, preserve-compatible module kinds) → Classic
+        // Node16/Node18/Node20 → Node16
         match self.printer.module {
             ModuleKind::None | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
                 ModuleResolutionKind::Classic
             }
-            ModuleKind::CommonJS => ModuleResolutionKind::Node,
             ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
             ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 => {
                 ModuleResolutionKind::Node16
             }
-            _ => ModuleResolutionKind::Classic,
+            // tsc 6.0: ES module kinds and CommonJS default to Bundler resolution
+            _ => ModuleResolutionKind::Bundler,
         }
     }
 }
@@ -3166,13 +3166,14 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_module_resolution_defaults_to_classic_for_es_modules() {
+    fn test_effective_module_resolution_defaults_to_bundler_for_es_modules() {
+        // tsc 6.0: ES module kinds default to Bundler resolution (was Classic)
         let json = r#"{"compilerOptions":{"module":"es2015","target":"es2015"}}"#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
         assert_eq!(
             resolved.effective_module_resolution(),
-            ModuleResolutionKind::Classic
+            ModuleResolutionKind::Bundler
         );
     }
 
