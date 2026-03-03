@@ -267,6 +267,9 @@ mod generic_tests;
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_accessibility_tests.rs"]
+mod jsdoc_accessibility_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]

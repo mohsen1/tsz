@@ -378,17 +378,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::NEVER;
         }
 
-        // Enforce private/protected access modifiers when possible
+        // Enforce private/protected access modifiers when possible.
+        // Note: we do NOT return ERROR on failure — the diagnostic is already emitted,
+        // and tsc continues resolving the property type so that subsequent expressions
+        // on the same line are still checked (e.g., `new A().priv + new A().prot`).
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
-            if !self.check_property_accessibility(
+            self.check_property_accessibility(
                 access.expression,
                 property_name,
                 access.name_or_argument,
                 object_type,
-            ) {
-                return TypeId::ERROR;
-            }
+            );
         }
 
         // Check for merged class/enum/function + namespace symbols
