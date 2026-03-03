@@ -290,6 +290,8 @@ pub enum IRNode {
     AwaiterCall {
         this_arg: Box<Self>,
         generator_body: Box<Self>,
+        /// Var declarations hoisted out of the generator body to the awaiter wrapper scope
+        hoisted_vars: Vec<String>,
     },
 
     /// __generator helper body

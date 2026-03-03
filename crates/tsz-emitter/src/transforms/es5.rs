@@ -922,6 +922,7 @@ impl<'a> ES5AsyncTransformer<'a> {
         IRNode::AwaiterCall {
             this_arg: Box::new(this_arg),
             generator_body: Box::new(generator_body),
+            hoisted_vars: Vec::new(),
         }
     }
 
