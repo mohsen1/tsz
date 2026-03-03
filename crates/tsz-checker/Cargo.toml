@@ -70,5 +70,9 @@ path = "tests/ts1210_class_arguments_tests.rs"
 name = "jsdoc_implements_tests"
 path = "tests/jsdoc_implements_tests.rs"
 
+[[test]]
+name = "js_constructor_property_tests"
+path = "tests/js_constructor_property_tests.rs"
+
 [lints]
 workspace = true

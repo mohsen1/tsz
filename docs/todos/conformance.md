@@ -1,7 +1,61 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9838/12570 (78.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9844/12570 (78.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03g — JSDoc @return type predicate parsing & call.rs node_types fix
+
+### Implemented: JSDoc `@return {x is Type}` type predicate parsing for standalone functions
+
+**Area**: jsdoc (63.9% pass rate, 90 failures — no change in pass count)
+
+**Target test**: `returnTagTypeGuard.ts` (expected: [], actual: [TS2339, TS18046])
+
+**Root cause analysis**: JSDoc `@return {value is string}` type predicates were never parsed.
+The existing `jsdoc_returns_type_name()` only extracted simple type identifiers (e.g., `@returns {string}`).
+No code path existed to parse the `{x is Type}` pattern into a `TypePredicate` struct.
+
+Additionally, `call.rs` has a fast path for identifier callees that uses `get_type_of_symbol()`
+directly, bypassing `get_type_of_node()`. Since `get_type_of_node` populates `node_types`,
+and the narrowing system reads `node_types` to find callee type predicates, type predicates
+on locally-declared functions were silently ignored.
+
+**Fix** (checker `jsdoc_params.rs` + `function_type.rs` + `jsdoc.rs` + `call.rs`, ~130 lines):
+1. `jsdoc_returns_type_predicate()` — new parser in `jsdoc_params.rs` that detects
+   `@return {x is Type}`, `@return {this is Entry}`, `@return {asserts x is Type}` patterns
+2. `extract_jsdoc_return_type_predicate()` — new helper in `function_type.rs` that builds
+   `TypePredicate` from parsed JSDoc, resolves types, finds parameter indices
+3. Wired into `get_type_of_function` after syntax annotation check (line 583)
+4. `resolve_jsdoc_type_str` changed from private to `pub(crate)` for cross-module access
+5. `call.rs` fast path: added `node_types.insert(call.expression.0, callee_ty)` so
+   the narrowing system can find callee type predicates for identifier callees
+
+**Unit tests**: `test_jsdoc_return_type_predicate_narrowing` — standalone function with
+`@return {value is string}` + `isString(x)` guard correctly narrows `string | number` to `string`
+
+**Why `returnTagTypeGuard.ts` still fails (3 remaining sub-scenarios)**:
+
+1. **Method `this is Entry` predicate on union type** — `chunk.isInit(chunk)` where
+   `chunk: Entry | Group`. Entry.isInit has `@return {this is Entry}` predicate but
+   Group.isInit has `@return {false}` (no predicate). The `predicate_signature_for_type`
+   union handler (narrowing.rs:271-289) requires ALL union members to have identical
+   predicates. When Group.isInit returns None, the entire union check fails → no narrowing.
+   **Fix needed**: Union predicate extraction should allow partial predicates, or the
+   overload resolution should track which specific signature was selected.
+
+2. **`@callback Cb` typedef with type predicate** — `@callback Cb @param {unknown} x
+   @return {x is number}` defines a function type via JSDoc typedef. The `@type {Cb}`
+   annotation on `isNumber` should propagate the callback's type predicate.
+   **Fix needed**: JSDoc `@callback` processing must parse `@return {x is Type}` and
+   build TypePredicate on the callback's function shape, then propagate via `@type {Cb}`.
+
+3. **Constructor `this.d = 'no'` property inference** — Group's `this.d` in the
+   constructor works for direct `group.d` access but the narrowing path for
+   `chunk.c`/`chunk.d` depends on issue #1 (union predicate resolution) first.
+
+**Impact**: Standalone JSDoc function type predicates now work end-to-end (parsing →
+TypePredicate → FunctionShape → node_types → narrowing). The call.rs node_types fix
+also benefits non-JSDoc type predicates on locally-declared functions.
 
 ## Session 2026-03-03f — Template literal expression contextual typing
 

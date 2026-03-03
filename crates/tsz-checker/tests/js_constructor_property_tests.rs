@@ -4,7 +4,41 @@
 //! assignments are recognized as class instance property declarations,
 //! preventing false TS2339 errors.
 
-use crate::test_utils::check_js_source_diagnostics;
+use tsz_checker::context::CheckerOptions;
+
+fn check_js(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        check_js: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
 
 /// Basic constructor this.prop assignment → no TS2339 on instance access
 #[test]
@@ -20,13 +54,15 @@ var k = new K();
 k.p1;
 k.p2;
 "#;
-    let diagnostics = check_js_source_diagnostics(source);
-    let ts2339 = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
     assert_eq!(
-        ts2339,
+        ts2339.len(),
         0,
-        "Expected no TS2339 for constructor this.prop access, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        "Expected no TS2339 for constructor this.prop access, got: {ts2339:?}"
     );
 }
 
@@ -43,13 +79,15 @@ class Foo {
 var f = new Foo();
 f.name;
 "#;
-    let diagnostics = check_js_source_diagnostics(source);
-    let ts2339 = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
     assert_eq!(
-        ts2339,
+        ts2339.len(),
         0,
-        "Expected no TS2339 for JSDoc-annotated constructor property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        "Expected no TS2339 for JSDoc-annotated constructor property, got: {ts2339:?}"
     );
 }
 
@@ -67,13 +105,15 @@ class Foo {
 var f = new Foo();
 f.x;
 "#;
-    let diagnostics = check_js_source_diagnostics(source);
-    let ts2339 = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
     assert_eq!(
-        ts2339,
+        ts2339.len(),
         0,
-        "Expected no TS2339 when explicit declaration exists, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        "Expected no TS2339 when explicit declaration exists, got: {ts2339:?}"
     );
 }
 
@@ -96,13 +136,46 @@ var d = new Derived();
 d.a;
 d.b;
 "#;
-    let diagnostics = check_js_source_diagnostics(source);
-    let ts2339 = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
     assert_eq!(
-        ts2339,
+        ts2339.len(),
         0,
-        "Expected no TS2339 for subclass constructor properties, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        "Expected no TS2339 for subclass constructor properties, got: {ts2339:?}"
+    );
+}
+
+/// JSDoc @return {x is Type} type predicate → narrowing works
+#[test]
+fn test_jsdoc_return_type_predicate_narrowing() {
+    let source = r#"
+/**
+ * @param {any} value
+ * @return {value is string}
+ */
+function isString(value) {
+    return typeof value === "string";
+}
+
+/** @param {string | number} x */
+function test(x) {
+    if (isString(x)) {
+        x.toUpperCase();
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 after type guard narrowing, got: {ts2339:?}"
     );
 }
 
@@ -118,27 +191,15 @@ class Foo {
 var f = new Foo();
 f.nonexistent;
 "#;
-    let diagnostics = check_js_source_diagnostics(source);
-    // We may or may not get TS2339 for nonexistent depending on JS mode behavior.
-    // The important thing is that x does NOT cause TS2339.
-    let ts2339_for_nonexistent = diagnostics
+    let diagnostics = check_js(source);
+    // x should NOT cause TS2339
+    let ts2339_for_x: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d.code == 2339 && d.message_text.contains("nonexistent"))
-        .count();
-    // In JS checkJs mode, unknown properties on class instances may or may not error.
-    // Just verify no crash and that x doesn't error.
-    let ts2339_for_x = diagnostics
-        .iter()
-        .filter(|d| d.code == 2339 && d.message_text.contains("'x'"))
-        .count();
+        .filter(|(code, msg)| *code == 2339 && msg.contains("'x'"))
+        .collect();
     assert_eq!(
-        ts2339_for_x,
+        ts2339_for_x.len(),
         0,
-        "Expected no TS2339 for constructor-declared 'x', got: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        "Expected no TS2339 for constructor-declared 'x', got: {diagnostics:?}"
     );
-    let _ = ts2339_for_nonexistent; // just to suppress unused warning
 }

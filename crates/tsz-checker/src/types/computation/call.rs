@@ -179,7 +179,11 @@ impl<'a> CheckerState<'a> {
                     // - implementation declarations without explicit return annotations
                     // - current-file direct ambient/overload signatures (no body)
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                    self.get_type_of_symbol(sym_id)
+                    let callee_ty = self.get_type_of_symbol(sym_id);
+                    // Cache in node_types so flow narrowing can retrieve callee
+                    // type predicates during type guard analysis.
+                    self.ctx.node_types.insert(call.expression.0, callee_ty);
+                    callee_ty
                 } else {
                     self.get_type_of_node(call.expression)
                 }

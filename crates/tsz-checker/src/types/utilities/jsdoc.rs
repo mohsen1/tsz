@@ -678,7 +678,7 @@ impl<'a> CheckerState<'a> {
     /// 1. `jsdoc_type_from_expression` — handles primitives, type params, generics, special patterns
     /// 2. File-local symbols — type aliases, classes, interfaces, enums (includes merged lib types)
     /// 3. `@typedef` resolution — searches JSDoc comments for `@typedef` declarations
-    fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
+    pub(crate) fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
 
         // 1. Try the expression parser (handles primitives, type params, generics, etc.)
