@@ -214,6 +214,14 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a union type has a property that should be treated as "not existing"
+    /// because one or more members have it as private/protected while other members
+    /// have it publicly or from a different declaring class.
+    ///
+    /// Matches tsc's `createUnionOrIntersectionProperty` logic: when a property has a
+    /// private/protected declaration in one constituent but is missing, public, or has
+    /// a different declaration in another constituent, the property doesn't exist on
+    /// the union type (TS2339) rather than getting a specific accessibility error.
     fn union_restricted_property_is_missing(
         &mut self,
         _object_expr: NodeIndex,
@@ -236,36 +244,43 @@ impl<'a> CheckerState<'a> {
 
         let is_static = self.is_constructor_type(object_type);
 
+        let mut has_restricted = false;
+        let mut has_other = false;
         let mut first_declaring_class: Option<NodeIndex> = None;
-        let mut restricted_count = 0usize;
 
         for member in members {
             let member = self.resolve_type_for_property_access(member);
             let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                // Non-class member in the union (e.g., object literal type).
+                // Treated as a different declaration from any class member.
+                has_other = true;
                 continue;
             };
 
-            let Some(access_info) =
-                self.find_member_access_info(class_idx, property_name, is_static)
-            else {
-                if restricted_count > 0 {
-                    return true;
+            match self.find_member_access_info(class_idx, property_name, is_static) {
+                Some(access_info) => {
+                    // Property is restricted (private/protected) in this member
+                    has_restricted = true;
+                    if let Some(first_decl) = first_declaring_class {
+                        if first_decl != access_info.declaring_class_idx {
+                            // Different declaring class — counts as "other"
+                            has_other = true;
+                        }
+                    } else {
+                        first_declaring_class = Some(access_info.declaring_class_idx);
+                    }
                 }
-                continue;
-            };
-
-            restricted_count += 1;
-
-            if let Some(first_decl) = first_declaring_class {
-                if first_decl != access_info.declaring_class_idx {
-                    return true;
+                None => {
+                    // Property is public or not found in this class member
+                    has_other = true;
                 }
-            } else {
-                first_declaring_class = Some(access_info.declaring_class_idx);
             }
         }
 
-        restricted_count > 1
+        // If any member has a restricted property and there's at least one member
+        // with a different declaration (public, missing, or different class),
+        // the property doesn't exist on the union type.
+        has_restricted && has_other
     }
     // =========================================================================
     // Computed Property Name Validation
@@ -604,5 +619,95 @@ mod tests {
         );
 
         assert!(has_code(&diagnostics, 2339));
+    }
+
+    /// When a union has one public member and one protected member,
+    /// TSC treats the property as "not existing" on the union (TS2339).
+    /// Previously this was order-dependent and emitted TS2445 instead.
+    #[test]
+    fn union_public_and_protected_emits_ts2339_not_ts2445() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Default {
+                member: string = "";
+            }
+            class Protected {
+                protected member: string = "";
+            }
+            declare var v: Default | Protected;
+            v.member;
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2339),
+            "expected TS2339 for union with public + protected"
+        );
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "should NOT emit TS2445 for union type"
+        );
+    }
+
+    /// When a union has one public member and one private member,
+    /// TSC emits TS2339, not TS2341.
+    #[test]
+    fn union_public_and_private_emits_ts2339_not_ts2341() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Public {
+                public member: string = "";
+            }
+            class Private {
+                private member: number = 0;
+            }
+            declare var v: Public | Private;
+            v.member;
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2339),
+            "expected TS2339 for union with public + private"
+        );
+        assert!(
+            !has_code(&diagnostics, 2341),
+            "should NOT emit TS2341 for union type"
+        );
+    }
+
+    /// Three-member union with mix of public, protected, private.
+    /// All should get TS2339.
+    #[test]
+    fn union_three_member_mixed_access_emits_ts2339() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Default { member: string = ""; }
+            class Public { public member: string = ""; }
+            class Protected { protected member: string = ""; }
+            declare var v: Default | Public | Protected;
+            v.member;
+        "#,
+        );
+
+        assert!(has_code(&diagnostics, 2339));
+        assert!(!has_code(&diagnostics, 2445));
+    }
+
+    /// Union of two public members — no error expected.
+    #[test]
+    fn union_both_public_no_error() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class A { member: string = ""; }
+            class B { public member: string = ""; }
+            declare var v: A | B;
+            v.member;
+        "#,
+        );
+
+        assert!(!has_code(&diagnostics, 2339));
+        assert!(!has_code(&diagnostics, 2445));
+        assert!(!has_code(&diagnostics, 2341));
     }
 }
