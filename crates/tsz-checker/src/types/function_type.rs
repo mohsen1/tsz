@@ -566,7 +566,7 @@ impl<'a> CheckerState<'a> {
 
         // Get return type from annotation or infer
         let has_type_annotation = type_annotation.is_some();
-        let (mut return_type, type_predicate) = if has_type_annotation {
+        let (mut return_type, mut type_predicate) = if has_type_annotation {
             // Check return type for parameter properties in function types
             self.check_type_for_parameter_properties(type_annotation);
             // Check for undefined type names in return type
@@ -577,6 +577,20 @@ impl<'a> CheckerState<'a> {
             // This ensures return statements are checked even without annotation
             (TypeId::UNKNOWN, None)
         };
+
+        // Check JSDoc @returns for type predicates (e.g., @returns {x is string})
+        // This covers JS files where return types are specified via JSDoc instead of syntax.
+        if type_predicate.is_none()
+            && let Some(predicate) = self.extract_jsdoc_return_type_predicate(&func_jsdoc, &params)
+            {
+                let is_asserts = predicate.asserts;
+                return_type = if is_asserts {
+                    TypeId::VOID
+                } else {
+                    TypeId::BOOLEAN
+                };
+                type_predicate = Some(predicate);
+            }
 
         // Save the annotated return type before evaluation. evaluate_application_type()
         // expands Application types (like Promise<string>) into concrete object shapes,
@@ -1345,6 +1359,45 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
+    }
+
+    /// Extract a type predicate from JSDoc `@returns {x is Type}` / `@return {this is Entry}`.
+    ///
+    /// Parses the JSDoc comment for type predicate patterns in the return tag and
+    /// builds a `TypePredicate` with proper parameter index resolution.
+    fn extract_jsdoc_return_type_predicate(
+        &mut self,
+        func_jsdoc: &Option<String>,
+        params: &[tsz_solver::ParamInfo],
+    ) -> Option<tsz_solver::TypePredicate> {
+        use tsz_solver::{TypePredicate, TypePredicateTarget};
+
+        let jsdoc = func_jsdoc.as_ref()?;
+        let (is_asserts, param_name, type_str) = Self::jsdoc_returns_type_predicate(jsdoc)?;
+
+        // Build the target
+        let target = if param_name == "this" {
+            TypePredicateTarget::This
+        } else {
+            let atom = self.ctx.types.intern_string(&param_name);
+            TypePredicateTarget::Identifier(atom)
+        };
+
+        // Resolve the type (if present)
+        let type_id = type_str.and_then(|ts| self.resolve_jsdoc_type_str(&ts));
+
+        // Find parameter index for identifier targets
+        let mut parameter_index = None;
+        if let TypePredicateTarget::Identifier(name) = &target {
+            parameter_index = params.iter().position(|p| p.name == Some(*name));
+        }
+
+        Some(TypePredicate {
+            asserts: is_asserts,
+            target,
+            type_id,
+            parameter_index,
+        })
     }
 
     fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {

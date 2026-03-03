@@ -838,4 +838,70 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    /// Extract a type predicate from `@returns {x is Type}` / `@return {this is Entry}`.
+    ///
+    /// Returns `Some((is_asserts, param_name, type_str))` if the `@returns` tag
+    /// contains a type predicate pattern like `{x is string}` or `{this is Entry}`.
+    /// Also handles `{asserts x is Type}` and `{asserts x}` patterns.
+    pub(crate) fn jsdoc_returns_type_predicate(
+        jsdoc: &str,
+    ) -> Option<(bool, String, Option<String>)> {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let after_open = &rest[1..];
+            let end = after_open.find('}')?;
+            let type_expr = after_open[..end].trim();
+
+            // Check for "asserts" prefix
+            let (is_asserts, remainder) =
+                if let Some(after_asserts) = type_expr.strip_prefix("asserts ") {
+                    (true, after_asserts.trim())
+                } else {
+                    (false, type_expr)
+                };
+
+            // Look for " is " separator (the type predicate pattern)
+            if let Some(is_pos) = remainder.find(" is ") {
+                let param_name = remainder[..is_pos].trim();
+                let type_str = remainder[is_pos + 4..].trim();
+                // Validate param_name is a simple identifier or "this"
+                if !param_name.is_empty()
+                    && (param_name == "this"
+                        || param_name
+                            .chars()
+                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                    && !type_str.is_empty()
+                {
+                    return Some((
+                        is_asserts,
+                        param_name.to_string(),
+                        Some(type_str.to_string()),
+                    ));
+                }
+            } else if is_asserts {
+                // "asserts x" without " is Type" — assertion without narrowing type
+                let param_name = remainder;
+                if !param_name.is_empty()
+                    && (param_name == "this"
+                        || param_name
+                            .chars()
+                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                {
+                    return Some((true, param_name.to_string(), None));
+                }
+            }
+        }
+        None
+    }
 }
