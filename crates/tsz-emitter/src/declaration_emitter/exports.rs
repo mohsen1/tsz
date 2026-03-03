@@ -464,6 +464,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
+        if !self.inside_declare_namespace {
+            self.write("declare ");
+        }
         if is_abstract {
             self.write("abstract ");
         }
@@ -544,6 +547,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
+        }
+        if !self.inside_declare_namespace {
+            self.write("declare ");
         }
         self.write("function ");
         self.emit_node(func.name);
@@ -644,6 +650,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
+        }
+        if !self.inside_declare_namespace {
+            self.write("declare ");
         }
         if is_const {
             self.write("const ");
@@ -784,6 +793,9 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_indent();
                     if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
                         self.write("export ");
+                    }
+                    if !self.inside_declare_namespace {
+                        self.write("declare ");
                     }
                     self.write(keyword);
                     self.write(" ");
