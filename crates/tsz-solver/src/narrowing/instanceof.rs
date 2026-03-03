@@ -10,11 +10,12 @@
 //!   excludes subtypes of the instance type.
 
 use super::NarrowingContext;
+use crate::def::DefId;
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
-use crate::visitor::union_list_id;
+use crate::visitor::{lazy_def_id, union_list_id};
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -341,6 +342,21 @@ impl<'a> NarrowingContext<'a> {
                         if let Some(narrowed) = self.narrow_type_param(member, instance_type) {
                             return Some(narrowed);
                         }
+                        // For class-to-class comparisons, use nominal identity instead of
+                        // structural subtyping. Two unrelated classes should never match in
+                        // instanceof narrowing even if structurally compatible.
+                        let member_def = self.get_class_def_id(member);
+                        let instance_def = self.get_class_def_id(instance_type);
+                        let member_is_class = member_def.is_some();
+                        let instance_is_class = instance_def.is_some();
+                        if member_is_class && instance_is_class {
+                            return match self.nominal_instanceof_relation(member, instance_type) {
+                                Some(true) => Some(member),         // member IS or EXTENDS instance
+                                Some(false) => Some(instance_type), // instance EXTENDS member
+                                None => None,                       // unrelated classes → exclude
+                            };
+                        }
+                        // Non-class types: fall back to structural checks
                         // Member assignable to instance type → keep member
                         if self.is_assignable_to(member, instance_type) {
                             return Some(member);
@@ -386,6 +402,16 @@ impl<'a> NarrowingContext<'a> {
         // - Array<T> is NOT a subtype of readonly number[] (unbound T)
         // - But at runtime, a readonly array IS an Array instance
         if !self.is_js_primitive(resolved_source) {
+            // For class-to-class comparisons, use nominal identity
+            let source_is_class = self.get_class_def_id(resolved_source).is_some();
+            let target_is_class = self.get_class_def_id(instance_type).is_some();
+            if source_is_class && target_is_class {
+                return match self.nominal_instanceof_relation(resolved_source, instance_type) {
+                    Some(true) => source_type,
+                    Some(false) => instance_type,
+                    None => TypeId::NEVER, // unrelated classes
+                };
+            }
             if self.is_assignable_to(resolved_source, instance_type) {
                 return source_type;
             }
@@ -440,6 +466,18 @@ impl<'a> NarrowingContext<'a> {
                     if is_array_target && self.is_array_like(member) {
                         return false;
                     }
+                    // For class-to-class comparisons, use nominal identity.
+                    // Unrelated classes always survive the false branch.
+                    let member_is_class = self.get_class_def_id(member).is_some();
+                    let instance_is_class = self.get_class_def_id(instance_type).is_some();
+                    if member_is_class && instance_is_class {
+                        return match self.nominal_instanceof_relation(member, instance_type) {
+                            Some(true) => false, // member IS or EXTENDS instance → excluded
+                            // instance extends member or unrelated → keep in false branch
+                            Some(false) | None => true,
+                        };
+                    }
+                    // Non-class or resolver unavailable: fall back to structural checks.
                     // A member only fails to reach the false branch if it is GUARANTEED
                     // to pass the true branch. In TypeScript, this means the member
                     // is assignable to the instance type.
@@ -464,11 +502,96 @@ impl<'a> NarrowingContext<'a> {
         if is_array_target && self.is_array_like(resolved_source) {
             return TypeId::NEVER;
         }
+        // For class-to-class comparisons, use nominal identity
+        let source_is_class = self.get_class_def_id(resolved_source).is_some();
+        let target_is_class = self.get_class_def_id(instance_type).is_some();
+        if source_is_class && target_is_class {
+            return match self.nominal_instanceof_relation(resolved_source, instance_type) {
+                Some(true) => TypeId::NEVER, // definitely passes instanceof
+                // instance extends source or unrelated → keeps in false branch
+                Some(false) | None => source_type,
+            };
+        }
         if self.is_assignable_to(resolved_source, instance_type) {
             return TypeId::NEVER;
         }
 
         // Otherwise, it might reach the false branch, so we keep the original type.
         source_type
+    }
+
+    /// Extract the `DefId` from a type if it is a class (`Lazy(DefId)` with `DefKind::Class`).
+    ///
+    /// Returns `None` for non-class types, non-Lazy types, or when no resolver is available.
+    fn get_class_def_id(&self, type_id: TypeId) -> Option<DefId> {
+        let resolver = self.resolver?;
+
+        // Try 1: Direct Lazy(DefId) — the type hasn't been resolved yet
+        if let Some(def_id) = lazy_def_id(self.db, type_id)
+            && let Some(crate::def::DefKind::Class) = resolver.get_def_kind(def_id)
+        {
+            return Some(def_id);
+        }
+
+        // Try 2: Reverse-lookup — the type is an already-resolved instance Object type
+        // that was registered via insert_class_instance_type
+        resolver.class_def_for_instance_type(type_id)
+    }
+
+    /// Check if `ancestor_def` is in the extends chain of `descendant_def`.
+    ///
+    /// Walks the class hierarchy via `get_class_extends` to determine if one class
+    /// is a parent (directly or transitively) of another. Uses a fuel limit to
+    /// prevent infinite loops from malformed extends chains.
+    fn is_class_ancestor(&self, ancestor_def: DefId, descendant_def: DefId) -> bool {
+        let resolver = match self.resolver {
+            Some(r) => r,
+            None => return false,
+        };
+        let mut current = descendant_def;
+        let mut fuel = 50;
+        while fuel > 0 {
+            fuel -= 1;
+            match resolver.get_class_extends(current) {
+                Some(parent) if parent == ancestor_def => return true,
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Determine the nominal relationship between two class types for instanceof narrowing.
+    ///
+    /// Returns:
+    /// - `Some(true)` if the member class IS or EXTENDS the instance class (member passes instanceof)
+    /// - `Some(false)` if the instance class EXTENDS the member class (member might pass, narrow to instance)
+    /// - `None` if the classes are unrelated (member can never pass instanceof)
+    ///
+    /// When both types are classes, instanceof should use nominal identity rather than
+    /// structural subtyping. Two unrelated classes should not match even if they happen
+    /// to be structurally compatible (e.g., both have only optional properties).
+    fn nominal_instanceof_relation(
+        &self,
+        member_type: TypeId,
+        instance_type: TypeId,
+    ) -> Option<bool> {
+        let member_def = self.get_class_def_id(member_type)?;
+        let instance_def = self.get_class_def_id(instance_type)?;
+
+        if member_def == instance_def {
+            // Same class
+            return Some(true);
+        }
+        if self.is_class_ancestor(instance_def, member_def) {
+            // member extends instance (e.g., member=Dog, instance=Animal) → member passes instanceof
+            return Some(true);
+        }
+        if self.is_class_ancestor(member_def, instance_def) {
+            // instance extends member (e.g., member=Animal, instance=Dog) → narrow to instance
+            return Some(false);
+        }
+        // Unrelated classes
+        None
     }
 }

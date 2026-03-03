@@ -147,6 +147,25 @@ pub trait TypeResolver {
         false
     }
 
+    /// Get the parent class `DefId` for a class definition.
+    ///
+    /// Used by instanceof narrowing to check class hierarchy nominally,
+    /// preventing structural subtype checks from incorrectly keeping
+    /// unrelated class types in narrowed unions.
+    fn get_class_extends(&self, _def_id: DefId) -> Option<DefId> {
+        None
+    }
+
+    /// Reverse-lookup: get the class `DefId` for a resolved instance `TypeId`.
+    ///
+    /// When a class instance type (Object with properties) was registered via
+    /// `insert_class_instance_type`, this returns the originating class's `DefId`.
+    /// Used by instanceof narrowing to identify class types that have been
+    /// resolved from `Lazy(DefId)` to their structural representation.
+    fn class_def_for_instance_type(&self, _type_id: TypeId) -> Option<DefId> {
+        None
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// Used by the Best Common Type (BCT) algorithm to find common base classes.
@@ -249,6 +268,14 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).is_user_enum_def(def_id)
     }
 
+    fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
+        (**self).get_class_extends(def_id)
+    }
+
+    fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
+        (**self).class_def_for_instance_type(type_id)
+    }
+
     fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         (**self).get_base_type(type_id, interner)
     }
@@ -297,6 +324,10 @@ pub struct TypeEnvironment {
     class_instance_types: FxHashMap<u32, TypeId>,
     /// Maps `IntrinsicKind` to all `DefIds` that correspond to that boxed type.
     boxed_def_ids: FxHashMap<IntrinsicKind, Vec<DefId>>,
+    /// Maps class `DefIds` to their parent class `DefId` (for class hierarchy checks).
+    class_extends: FxHashMap<u32, DefId>,
+    /// Reverse map: instance `TypeId` → class `DefId` (for nominal instanceof narrowing).
+    instance_type_to_class: FxHashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
@@ -316,6 +347,8 @@ impl TypeEnvironment {
             enum_parents: FxHashMap::default(),
             class_instance_types: FxHashMap::default(),
             boxed_def_ids: FxHashMap::default(),
+            class_extends: FxHashMap::default(),
+            instance_type_to_class: FxHashMap::default(),
         }
     }
 
@@ -419,6 +452,10 @@ impl TypeEnvironment {
     /// Register a class `DefId`'s instance type.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
         self.class_instance_types.insert(def_id.0, instance_type);
+        // Reverse map: allow looking up which class a resolved instance type came from.
+        // This is critical for instanceof narrowing to identify class types after
+        // they've been resolved from Lazy(DefId) to Object types.
+        self.instance_type_to_class.insert(instance_type.0, def_id);
     }
 
     /// Register a `DefId`'s resolved type with type parameters.
@@ -511,6 +548,25 @@ impl TypeEnvironment {
     pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
         self.enum_parents.get(&member_def_id.0).copied()
     }
+
+    // =========================================================================
+    // Class Extends Relationships
+    // =========================================================================
+
+    /// Register a class's parent class `DefId`.
+    pub fn register_class_extends(&mut self, child_def_id: DefId, parent_def_id: DefId) {
+        self.class_extends.insert(child_def_id.0, parent_def_id);
+    }
+
+    /// Get the parent class `DefId` for a class.
+    pub fn get_class_extends_def(&self, def_id: DefId) -> Option<DefId> {
+        self.class_extends.get(&def_id.0).copied()
+    }
+
+    /// Reverse-lookup: get the class `DefId` for a resolved instance `TypeId`.
+    pub fn class_def_for_instance(&self, type_id: TypeId) -> Option<DefId> {
+        self.instance_type_to_class.get(&type_id.0).copied()
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -589,5 +645,13 @@ impl TypeResolver for TypeEnvironment {
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
         // TypeEnvironment doesn't have access to binder symbol information
         false
+    }
+
+    fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
+        self.get_class_extends_def(def_id)
+    }
+
+    fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
+        self.class_def_for_instance(type_id)
     }
 }
