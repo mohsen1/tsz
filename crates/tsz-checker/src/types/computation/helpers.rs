@@ -269,6 +269,16 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
         // This ensures type aliases (e.g., type Tup = [string, number]) are expanded
         // before checking for tuple elements and providing contextual typing
+        //
+        // We also save the ORIGINAL (unevaluated) contextual type for iterable fallback.
+        // When the contextual type is an Application like `Iterable<readonly [K, V]>`,
+        // the full evaluation chain (evaluate_type_with_env + evaluate_application_type)
+        // expands it to an Object type (with [Symbol.iterator]). The Object form loses
+        // the type argument information needed to provide element contextual types for
+        // array literals. The original Application retains the type args so the solver's
+        // get_array_element_type can use the app.args[0] heuristic to extract the element
+        // type (e.g., readonly [K, V] from Iterable<readonly [K, V]>).
+        let original_contextual_type = self.ctx.contextual_type;
         let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
             let ctx_type = self.evaluate_contextual_type(ctx_type);
             let ctx_type = self.evaluate_type_with_env(ctx_type);
@@ -333,6 +343,28 @@ impl<'a> CheckerState<'a> {
             )),
             None => None,
         };
+        // Fallback context from the ORIGINAL (unevaluated) contextual type.
+        // When the contextual type is an Application like Iterable<readonly [K, V]>,
+        // the evaluation chain expands it to an Object, losing the type arg info.
+        // The original Application retains its type args so get_array_element_type
+        // can extract the iterable's element type (e.g., readonly [K, V]) via args[0].
+        let iterable_element_ctx_helper = if applicable_contextual_type.is_none() {
+            original_contextual_type.and_then(|orig| {
+                // Only use the fallback if the original differs from the resolved form
+                // (meaning evaluation actually changed something, e.g., Application → Object)
+                if resolved_contextual_type != Some(orig) {
+                    Some(ContextualTypeContext::with_expected_and_options(
+                        self.ctx.types,
+                        orig,
+                        self.ctx.compiler_options.no_implicit_any,
+                    ))
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
         let fallback_unknown_array_element_context = effective_contextual.is_some_and(|ty| {
             ty == TypeId::UNKNOWN
                 || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
@@ -355,9 +387,20 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type =
                         helper.get_tuple_element_type_with_count(index, elem_count);
                 } else {
-                    self.ctx.contextual_type = helper.get_array_element_type().or_else(|| {
-                        fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
-                    });
+                    self.ctx.contextual_type = helper
+                        .get_array_element_type()
+                        .or_else(|| {
+                            // Fallback: try the pre-Application-evaluation form for
+                            // iterable types like Iterable<readonly [K, V]>. The fully-
+                            // evaluated Object form loses type argument info, but the
+                            // original Application retains it for element extraction.
+                            iterable_element_ctx_helper
+                                .as_ref()
+                                .and_then(|h| h.get_array_element_type())
+                        })
+                        .or_else(|| {
+                            fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
+                        });
                 }
             }
 
@@ -1339,6 +1382,47 @@ function f2<
         assert!(
             !errors.contains(&2345),
             "Should not emit TS2345 for template literal matching contextual type, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn generic_array_like_context_provides_element_type() {
+        // When contextual type is a generic Application like ReadonlyArray<[K, V]>,
+        // ensure the solver extracts the element type from the type arguments.
+        // This exercises the Application → evaluation path in get_array_element_type.
+        // The full Iterable<readonly [K, V]> path (used by Map constructor) is
+        // validated by conformance tests (for-of37, for-of40, for-of50) since it
+        // requires Symbol.iterator from lib definitions.
+        let source = r#"
+interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+}
+declare function f<K, V>(entries: ReadonlyArray<readonly [K, V]>): [K, V];
+const r = f([["", true]]);
+"#;
+        let errors = check_source_codes(source);
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        assert!(
+            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
+            "ReadonlyArray<readonly [K, V]> should contextually type array elements as tuples, got: {semantic_errors:?}"
+        );
+    }
+
+    #[test]
+    fn array_param_context_still_works() {
+        // Ensure the fix doesn't break the already-working array parameter path.
+        // When the parameter is a plain array type (readonly (readonly [K, V])[]),
+        // contextual typing should still work without needing the fallback.
+        let source = r#"
+declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
+const result = f([["", true]]);
+"#;
+        let errors = check_source_codes(source);
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        assert!(
+            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
+            "Array parameter should contextually type elements as tuples, got: {semantic_errors:?}"
         );
     }
 
