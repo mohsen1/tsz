@@ -996,41 +996,22 @@ impl<'a> CheckerState<'a> {
                 // Class expressions resolve through the constructor type system.
                 // Self-references like `let C = class { foo() { return new C(); } }`
                 // are valid — skip circularity diagnostics for them.
-                // Object literals with getters have deferred body evaluation, so
-                // `const a = { get self() { return a; } }` is valid too.  tsc never
-                // emits TS7022 for object literal initializers.
-                // Unwrap type assertion wrappers (satisfies/as/parens) to find
-                // the underlying expression kind.
-                let inner_init = {
-                    let mut cur = var_decl.initializer;
-                    while let Some(n) = self.ctx.arena.get(cur) {
-                        match n.kind {
-                            syntax_kind_ext::SATISFIES_EXPRESSION
-                            | syntax_kind_ext::AS_EXPRESSION => {
-                                if let Some(ta) = self.ctx.arena.get_type_assertion(n) {
-                                    cur = ta.expression;
-                                    continue;
-                                }
-                            }
-                            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                                if let Some(p) = self.ctx.arena.get_parenthesized(n) {
-                                    cur = p.expression;
-                                    continue;
-                                }
-                            }
-                            _ => {}
-                        }
-                        break;
-                    }
-                    cur
-                };
-                let is_skip_circularity = self.ctx.arena.get(inner_init).is_some_and(|n| {
+                //
+                // Object literals wrapped in `satisfies`/`as` have explicit type
+                // context, so getter self-references like
+                //   `const a = { get self() { return a; } } satisfies T`
+                // are valid and should NOT get TS7022.  Bare object literals
+                // like `var a = { f: a }` SHOULD still get TS7022.
+                let init_kind = self.ctx.arena.get(var_decl.initializer).map(|n| n.kind);
+                let has_type_wrapper = init_kind.is_some_and(|k| {
                     matches!(
-                        n.kind,
-                        syntax_kind_ext::CLASS_EXPRESSION
-                            | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        k,
+                        syntax_kind_ext::SATISFIES_EXPRESSION | syntax_kind_ext::AS_EXPRESSION
                     )
                 });
+                let is_skip_circularity = init_kind
+                    .is_some_and(|k| k == syntax_kind_ext::CLASS_EXPRESSION)
+                    || has_type_wrapper;
                 if !is_skip_circularity {
                     let is_deferred_initializer =
                         self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
