@@ -840,6 +840,16 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(output.trim_end_matches('\n'));
+                // Advance comment_emit_idx past all inner enum body comments
+                // and emit trailing comment on the closing `}` line.
+                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                self.emit_trailing_comments(enum_close_pos);
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
                 if let Some(func_node) = self.arena.get(*function_node)
@@ -1005,6 +1015,16 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(output.trim_end_matches('\n'));
+                // Advance comment_emit_idx past all inner enum body comments
+                // and emit trailing comment on the closing `}` line.
+                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                self.emit_trailing_comments(enum_close_pos);
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::CommonJSExport {
                 names,

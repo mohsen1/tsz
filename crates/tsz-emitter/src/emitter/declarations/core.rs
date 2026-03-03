@@ -338,6 +338,18 @@ impl<'a> Printer<'a> {
                 }
                 self.write(&output);
 
+                // The enum IR emitter handles comments INSIDE the enum body,
+                // so we must advance the main comment system past them to prevent
+                // orphaned duplicate comments after the IIFE.
+                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                // Emit trailing comment on the enum closing `}` line (e.g., `} // comment`)
+                self.emit_trailing_comments(enum_close_pos);
+
                 // Track enum name for subsequent namespace/enum merges.
                 if !enum_name.is_empty() {
                     self.declared_namespace_names.insert(enum_name);
