@@ -5650,9 +5650,10 @@ c.ro = "error: lhs of assignment can't be readonly";
     );
 
     // We should have the expected errors
+    // 5+ missing abstract members use TS2655 (with "and N more" truncation)
     assert!(
-        codes.contains(&2654),
-        "Should have error 2654 for missing implementations"
+        codes.contains(&2655),
+        "Should have error 2655 for 5+ missing abstract implementations"
     );
     assert!(
         codes.contains(&1253),
@@ -34635,5 +34636,212 @@ fn test_reverse_mapped_type_validate_preserves_optional() {
             .iter()
             .map(|d| d.code)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_abstract_class_5plus_missing_uses_ts2655_truncation() {
+    // When 5+ abstract members are missing, TSC uses TS2655 (class declaration)
+    // with "and N more" truncation instead of TS2654 (lists all).
+    use crate::parser::ParserState;
+
+    let source = r#"
+abstract class A {
+    abstract m1(): number;
+    abstract m2(): number;
+    abstract m3(): number;
+    abstract m4(): number;
+    abstract m5(): number;
+    abstract m6(): number;
+}
+class B extends A { }
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2655),
+        "Expected TS2655 for 5+ missing abstract members, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2654),
+        "Should NOT use TS2654 when 5+ members are missing, got: {codes:?}"
+    );
+
+    // Check truncation message format
+    let msg = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 2655)
+        .expect("TS2655 diagnostic should exist");
+    assert!(
+        msg.message_text.contains("and 2 more"),
+        "TS2655 message should contain 'and 2 more', got: {}",
+        msg.message_text
+    );
+    assert!(
+        msg.message_text.contains("'m1'") && msg.message_text.contains("'m4'"),
+        "TS2655 should list first 4 members, got: {}",
+        msg.message_text
+    );
+}
+
+#[test]
+fn test_abstract_class_expression_5plus_missing_uses_ts2650() {
+    // When 5+ abstract members are missing on a class expression, TSC uses TS2650.
+    use crate::parser::ParserState;
+
+    let source = r#"
+abstract class A {
+    abstract m1(): number;
+    abstract m2(): number;
+    abstract m3(): number;
+    abstract m4(): number;
+    abstract m5(): number;
+}
+const C = class extends A {};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2650),
+        "Expected TS2650 for 5+ missing abstract members on class expression, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2656),
+        "Should NOT use TS2656 when 5+ members are missing, got: {codes:?}"
+    );
+
+    let msg = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 2650)
+        .expect("TS2650 diagnostic should exist");
+    assert!(
+        msg.message_text.contains("and 1 more"),
+        "TS2650 message should contain 'and 1 more', got: {}",
+        msg.message_text
+    );
+}
+
+#[test]
+fn test_abstract_class_4_missing_still_uses_ts2654() {
+    // When 4 or fewer abstract members are missing, TSC uses TS2654 (lists all).
+    use crate::parser::ParserState;
+
+    let source = r#"
+abstract class A {
+    abstract m1(): number;
+    abstract m2(): number;
+    abstract m3(): number;
+    abstract m4(): number;
+}
+class B extends A { }
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2654),
+        "Expected TS2654 for 4 or fewer missing abstract members, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2655),
+        "Should NOT use TS2655 when <=4 members are missing, got: {codes:?}"
+    );
+
+    let msg = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 2654)
+        .expect("TS2654 diagnostic should exist");
+    assert!(
+        !msg.message_text.contains("more"),
+        "TS2654 should list all members without truncation, got: {}",
+        msg.message_text
+    );
+}
+
+#[test]
+fn test_abstract_constructor_emits_ts1242() {
+    // 'abstract' on a constructor should emit TS1242, not TS1244.
+    // TSC anchors at the 'abstract' keyword.
+    use crate::parser::ParserState;
+
+    let source = r#"
+abstract class A {
+    abstract constructor() {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1242),
+        "Expected TS1242 for abstract constructor, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1244),
+        "Should NOT emit TS1244 for abstract constructor, got: {codes:?}"
     );
 }

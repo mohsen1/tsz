@@ -507,9 +507,10 @@ impl ParserState {
             self.parse_abstract_class_declaration()
         } else if self.look_ahead_is_abstract_declaration() {
             use tsz_common::diagnostics::diagnostic_codes;
+            // TSC gives TS1242 specifically for 'abstract' before non-class declarations
             self.parse_error_at_current_token(
-                "Modifiers cannot appear here.",
-                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                "'abstract' modifier can only appear on a class, method, or property declaration.",
+                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
             );
             self.next_token();
             match self.token() {
