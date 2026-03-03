@@ -1,7 +1,40 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9884/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9885/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03l — JSDoc @type on object properties and braceless @type syntax (+4 tests)
+
+### Fixed: JSDoc @type annotations on object literal properties
+
+**Area**: jsdoc (64.7% → 65.1%, 88 → 87 failures)
+
+**Root cause (object properties)**: Object literal property computation in `object_literal.rs` did not
+check for JSDoc `@type` annotations. Properties like `/** @type {string|undefined} */ foo: undefined`
+used the initializer's type (`undefined`) as the property type, causing false TS2322 on later
+assignments like `obj.foo = 'hello'`.
+
+**Fix** (object_literal.rs, ~30 lines):
+- Call `jsdoc_type_annotation_for_node_direct(elem_idx)` to check for JSDoc @type
+- When present, use the declared type as contextual type (preserves literals like `"a"`)
+- Check initializer assignability against the declared type (emits TS2322 on mismatch)
+- Use the declared type as the property type in the resulting object
+
+### Fixed: Braceless @type syntax support
+
+**Root cause**: `extract_jsdoc_type_expression()` in `jsdoc.rs` required `{...}` braces around
+the type expression. Braceless forms like `/** @type string */` returned `None`.
+
+**Fix** (jsdoc.rs, ~15 lines):
+- Try braced form first (`@type {expression}`)
+- Fall back to braceless: take rest-of-line after `@type` whitespace
+- Guard against empty/comment-continuation lines (`@`, `*`, empty)
+
+**Tests fixed**: privateNamesConstructorChain-1, privateNamesConstructorChain-2,
+moduleExportsElementAccessAssignment2, +1 from snapshot scope change
+
+**Unit tests**: 9 tests in `jsdoc_type_tag_tests.rs` covering class fields, function params,
+object properties (override initializer, check initializer, preserve literals), and braceless forms.
 
 ## Session 2026-03-03k — Iterable element contextual typing for array literals (+3 tests)
 
