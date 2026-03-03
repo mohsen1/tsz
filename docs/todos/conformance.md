@@ -1,7 +1,52 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9896/12570 (78.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9899/12570 (78.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03r — TS2367 typeof overlap detection (+1 test at error-code level)
+
+### Fixed: typeof expressions in equality comparisons now use typeof result type for TS2367 overlap checks
+
+**Area**: expressions/typeGuards (65.08% → improved at error-code level for 3 typeof tests)
+
+**Root cause**: The TS2367 ("This comparison appears to be unintentional...") check in `binary.rs`
+used `literal_type_from_initializer()` to extract narrow types for overlap detection. This method
+doesn't handle `typeof` expressions (PREFIX_UNARY_EXPRESSION with TypeOfKeyword), falling back to
+`TypeId::STRING`. Since `STRING` overlaps with any string literal, `typeof x == "Object"` (capital O)
+was not detected as having no overlap.
+
+**Fix**: Added `typeof_result_type_if_typeof()` in `binary.rs` that detects typeof expressions and
+returns the typeof result type union (`"string" | "number" | "bigint" | "boolean" | "symbol" |
+"undefined" | "object" | "function"`). This type is used before `literal_type_from_initializer`
+in the TS2367 narrow type extraction.
+
+**Tests added**: 2 unit tests:
+- `ts2367_typeof_vs_invalid_typeof_string` — typeof vs "Object" triggers TS2367
+- `ts2367_typeof_vs_valid_typeof_string_no_error` — typeof vs "string" no TS2367
+
+**Tests fixed**: typeGuardOfFormTypeOfOther (error-code level)
+
+### Remaining fingerprint-level issues
+
+The 3 typeof tests (typeGuardOfFormTypeOfEqualEqualHasNoEffect, typeGuardOfFormTypeOfNotEqualHasNoEffect,
+typeGuardOfFormTypeOfOther) now pass at error-code level but fail at fingerprint level because our
+solver sorts union members differently from TSC. Our union displays as `"boolean" | "bigint" | ...`
+while TSC shows `"string" | "number" | "bigint" | "boolean" | ...`. This is a general union ordering
+issue in the type formatter, not specific to this fix.
+
+### Analysis: High-impact remaining gaps
+
+1. **TS2339 false positives** (57 tests would pass if removed): Diverse root causes including
+   instanceof narrowing, type parameter narrowing, destructuring, enum member access.
+
+2. **TS2322 false positives** (72 tests would pass if removed): Deep type inference/assignability
+   issues across generic inference, contextual typing, discriminated unions.
+
+3. **TS2345 false positives** (50 tests would pass if removed): Spread across generic instantiation,
+   contextual typing, and control flow narrowing.
+
+4. **Fingerprint-only failures** (844 tests): Error codes match but message text or location differs.
+   Common issues: union member ordering, diagnostic message truncation, location offsets.
 
 ## Session 2026-03-03q — JS class method body property inference (+2 tests)
 
