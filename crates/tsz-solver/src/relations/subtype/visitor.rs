@@ -242,6 +242,40 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
+        // Constraint-based fallback: when the intersection contains type parameters,
+        // replace each type parameter with its constraint and re-check.
+        // This handles patterns like `T & {} <: string` where `T extends string | undefined`:
+        // The constraint intersection `(string | undefined) & {}` simplifies to `string`,
+        // and `string <: string` succeeds.
+        {
+            let member_list = self.checker.interner.type_list(TypeListId(list_id));
+            let has_type_params = member_list
+                .iter()
+                .any(|&m| type_param_info(self.checker.interner, m).is_some());
+            if has_type_params {
+                let constraint_members: Vec<TypeId> = member_list
+                    .iter()
+                    .map(|&m| {
+                        if let Some(info) = type_param_info(self.checker.interner, m) {
+                            info.constraint.unwrap_or(TypeId::UNKNOWN)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                let constraint_intersection =
+                    self.checker.interner.intersection(constraint_members);
+                if constraint_intersection != self.source
+                    && self
+                        .checker
+                        .check_subtype(constraint_intersection, self.target)
+                        .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Trace: No intersection member matches target
         if let Some(tracer) = &mut self.checker.tracer
             && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoIntersectionMemberMatches {
