@@ -333,6 +333,12 @@ impl<'a> CheckerContext<'a> {
                 // Register mapping for InheritanceGraph bridge (Phase 3.2)
                 // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
                 env.register_def_symbol_mapping(def_id, sym_id);
+
+                // Set the body on the DefinitionInfo so the type formatter can
+                // find type alias names via find_type_alias_by_body(). Without
+                // this, type aliases show their structural expansion in diagnostics
+                // (e.g., "{ r: number; g: number; b: number }" instead of "Color").
+                self.definition_store.set_body(def_id, type_id);
             }
         }
     }

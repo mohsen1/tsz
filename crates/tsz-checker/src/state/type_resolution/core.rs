@@ -1145,6 +1145,12 @@ impl<'a> CheckerState<'a> {
                     // Compute and return the fully-evaluated structural type
                     let structural_type = self.get_type_of_symbol(sym_id);
 
+                    // Register the body type for the DefId so that the type
+                    // formatter can look up the alias name when formatting
+                    // diagnostics (e.g., show "Color" instead of "{ r: number; ... }").
+                    self.ctx
+                        .register_resolved_type(sym_id, structural_type, Vec::new());
+
                     self.ctx.leave_recursion();
                     return structural_type;
                 }

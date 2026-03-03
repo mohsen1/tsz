@@ -309,6 +309,67 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Like `try_jsdoc_with_ancestor_walk` but also returns the absolute start
+    /// position of the JSDoc comment in the source file.
+    ///
+    /// This is needed for `@satisfies` to compute the `@satisfies` keyword offset.
+    pub(crate) fn try_jsdoc_with_ancestor_walk_and_pos(
+        &self,
+        idx: NodeIndex,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<(String, u32)> {
+        let node = self.ctx.arena.get(idx)?;
+        if let Some((content, pos)) =
+            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+        {
+            return Some((content, pos));
+        }
+        let mut current = idx;
+        for _ in 0..4 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if let Some((content, pos)) =
+                self.try_leading_jsdoc_with_pos(comments, parent_node.pos, source_text)
+            {
+                return Some((content, pos));
+            }
+            current = parent;
+        }
+        None
+    }
+
+    /// Try to find a leading `JSDoc` comment and its start position.
+    fn try_leading_jsdoc_with_pos(
+        &self,
+        comments: &[tsz_common::comments::CommentRange],
+        pos: u32,
+        source_text: &str,
+    ) -> Option<(String, u32)> {
+        use tsz_common::comments::{
+            get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment,
+        };
+
+        let leading = get_leading_comments_from_cache(comments, pos, source_text);
+        if let Some(comment) = leading.last() {
+            let end = comment.end as usize;
+            let check = pos as usize;
+            if end <= check
+                && source_text
+                    .get(end..check)
+                    .is_some_and(|gap| gap.chars().all(char::is_whitespace))
+                && is_jsdoc_comment(comment, source_text)
+            {
+                return Some((get_jsdoc_content(comment, source_text), comment.pos));
+            }
+        }
+        None
+    }
+
     /// Try to find a leading `JSDoc` comment before a given position.
     pub(crate) fn try_leading_jsdoc(
         &self,

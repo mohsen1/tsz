@@ -1101,8 +1101,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             }
                         }
                         jsdoc_type
-                    } else if let Some(satisfies_type) =
-                        self.checker.jsdoc_satisfies_annotation_for_node(idx)
+                    } else if let Some((satisfies_type, keyword_pos)) =
+                        self.checker.jsdoc_satisfies_annotation_with_pos(idx)
                     {
                         // Set contextual type for JSDoc @satisfies, matching the
                         // `satisfies` expression handler behavior.
@@ -1119,7 +1119,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 expr_type,
                                 satisfies_type,
                                 paren.expression,
-                                None,
+                                Some(keyword_pos),
                             );
                         }
                         expr_type
