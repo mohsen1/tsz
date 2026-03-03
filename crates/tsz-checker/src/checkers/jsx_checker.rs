@@ -284,13 +284,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit TS7026 for a JSX closing element if it refers to an intrinsic tag
-    /// and no `JSX.IntrinsicElements` interface exists.
-    ///
-    /// tsc emits TS7026 independently for both the opening and closing tags of
-    /// a JSX element (e.g., both `<input>` and `</input>`).  The opening tag is
-    /// handled by `get_type_of_jsx_opening_element`; this method covers the
-    /// closing tag.
+    /// Emit TS7026 for a JSX closing element if no `JSX.IntrinsicElements` exists.
+    /// Covers the closing tag; opening tag is handled by `get_type_of_jsx_opening_element`.
     pub(crate) fn check_jsx_closing_element_for_implicit_any(&mut self, idx: NodeIndex) {
         // TS7026 is emitted unconditionally (not gated on noImplicitAny) when JSX.IntrinsicElements is absent.
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -339,10 +334,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the global JSX namespace type (JSX Namespace Type).
-    ///
-    /// Rule #36: Resolves the global `JSX` namespace which contains type definitions
-    /// for intrinsic elements and the Element type.
+    /// Get the global JSX namespace type (resolves `JSX` namespace for intrinsic elements).
     pub(crate) fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
         // First try file_locals (includes user-defined globals and merged lib symbols)
         if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
@@ -364,10 +356,7 @@ impl<'a> CheckerState<'a> {
 
     // JSX Intrinsic Elements Type
 
-    /// Get the JSX.IntrinsicElements interface type.
-    ///
-    /// Rule #36: Resolves `JSX.IntrinsicElements` which maps tag names to their prop types.
-    /// Returns None if the JSX namespace or `IntrinsicElements` interface is not available.
+    /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
     pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
         // Get the JSX namespace symbol
         let jsx_sym_id = self.get_jsx_namespace_type()?;
@@ -389,11 +378,7 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
     }
 
-    /// Get the JSX.IntrinsicAttributes type.
-    ///
-    /// This is the interface that all JSX elements must satisfy (e.g., `{ key?: string }`
-    /// in React). When this interface has required properties, tsc checks them against
-    /// provided attributes and emits TS2741 if missing.
+    /// Get the JSX.IntrinsicAttributes type (e.g. `{ key?: string }` in React).
     fn get_intrinsic_attributes_type(&mut self) -> Option<TypeId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
