@@ -522,8 +522,50 @@ impl<'a> CheckerState<'a> {
         // Phase 2: Process deferred methods with a partial `this` type so that
         // method body inference can resolve `this.x` references (e.g. `return this.b`).
         if !deferred_methods.is_empty() {
-            // Build a partial instance type from properties collected so far
-            let partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            // Build a partial instance type from properties collected so far,
+            // including placeholder entries for ALL deferred methods so that
+            // methods can reference each other via `this` (e.g. `typeof a`
+            // in return type where `a` defaults to `this.getNumber()`).
+            let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            for (_, method) in &deferred_methods {
+                if let Some(name) = self.get_property_name_resolved(method.name) {
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    if !partial_props.iter().any(|p| p.name == name_atom) {
+                        let placeholder = factory.callable(CallableShape {
+                            call_signatures: vec![CallSignature {
+                                type_params: Vec::new(),
+                                params: vec![tsz_solver::ParamInfo {
+                                    name: None,
+                                    type_id: TypeId::ANY,
+                                    optional: false,
+                                    rest: true,
+                                }],
+                                this_type: None,
+                                return_type: TypeId::ANY,
+                                type_predicate: None,
+                                is_method: true,
+                            }],
+                            construct_signatures: Vec::new(),
+                            properties: Vec::new(),
+                            string_index: None,
+                            number_index: None,
+                            symbol: None,
+                            is_abstract: false,
+                        });
+                        partial_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: placeholder,
+                            write_type: placeholder,
+                            optional: false,
+                            readonly: false,
+                            is_method: true,
+                            visibility: Visibility::Public,
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                        });
+                    }
+                }
+            }
             let partial_type = factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: partial_props,
