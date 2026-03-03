@@ -261,6 +261,17 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Skip `declare` property declarations — they are ambient/type-only declarations
+        // that have no runtime representation regardless of target or useDefineForClassFields.
+        // e.g. `declare x: number;` or `@dec declare field: T;` must never emit `x;` in JS.
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+
         // For JavaScript: Skip property declarations without initializers
         // (they are TypeScript-only declarations: typed props, bare props)
         // Exception: Private fields (#name) are always emitted — they are runtime declarations.
