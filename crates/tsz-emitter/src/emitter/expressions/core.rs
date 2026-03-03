@@ -242,7 +242,17 @@ impl<'a> Printer<'a> {
                 self.map_token_after(expr_node.end, node.end, b'(');
             }
             self.write("(");
+            // The new expression's own parens provide grouping, so clear
+            // the "needs parens" flags to avoid double-parenthesization
+            // when an argument contains a downlevel optional chain or
+            // nullish coalescing expression.
+            let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+            let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+            self.ctx.flags.optional_chain_needs_parens = false;
+            self.ctx.flags.nullish_coalescing_needs_parens = false;
             self.emit_comma_separated(&args.nodes);
+            self.ctx.flags.optional_chain_needs_parens = prev_optional;
+            self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
             // Map closing `)` — scan backward from node end
             self.map_closing_paren(node);
             self.write(")");

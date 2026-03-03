@@ -112,6 +112,13 @@ impl<'a> Printer<'a> {
             self.map_token_after(expr_node.end, node.end, b'(');
         }
         self.write("(");
+        // The call's own parens provide grouping, so clear the "needs parens"
+        // flags to avoid double-parenthesization when an argument contains a
+        // downlevel optional chain or nullish coalescing expression.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = false;
+        self.ctx.flags.nullish_coalescing_needs_parens = false;
         if let Some(ref args) = call.arguments {
             // For the first argument, emit any comments between '(' and the argument
             // This handles: func(/*comment*/ arg)
@@ -125,6 +132,8 @@ impl<'a> Printer<'a> {
             }
             self.emit_comma_separated(&args.nodes);
         }
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         // Map the closing `)` to its source position
         self.map_closing_paren(node);
         self.write(")");
@@ -132,6 +141,13 @@ impl<'a> Printer<'a> {
 
     fn emit_call_arguments(&mut self, node: &Node, args: Option<&tsz_parser::parser::NodeList>) {
         self.write("(");
+        // The call's own parens provide grouping, so clear the "needs parens"
+        // flags to avoid double-parenthesization when an argument contains a
+        // downlevel optional chain or nullish coalescing expression.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = false;
+        self.ctx.flags.nullish_coalescing_needs_parens = false;
         if let Some(args) = args {
             if let Some(first_arg) = args.nodes.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
@@ -141,6 +157,8 @@ impl<'a> Printer<'a> {
             }
             self.emit_comma_separated(&args.nodes);
         }
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.write(")");
     }
 
