@@ -1463,16 +1463,66 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if children_ctx_type.is_some() {
                         self.checker.ctx.contextual_type = children_ctx_type;
                     }
+                    // Collect children types for children prop synthesis.
+                    // tsc synthesizes a `children` prop from JSX element body children
+                    // and validates it against the component's `children` prop type.
+                    let mut child_types: Vec<TypeId> = Vec::new();
+                    let mut has_text_child = false;
                     for &child in &jsx.children.nodes {
-                        self.checker.get_type_of_node(child);
+                        let child_type = self.checker.get_type_of_node(child);
+                        if let Some(child_node) = self.checker.ctx.arena.get(child) {
+                            // Skip whitespace-only JsxText children — tsc ignores them
+                            // for children prop synthesis (only significant text counts).
+                            // Note: the parser hardcodes contains_only_trivia_white_spaces
+                            // to false, so we check the text content directly.
+                            if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16 {
+                                if let Some(text) = self.checker.ctx.arena.get_jsx_text(child_node)
+                                {
+                                    let is_whitespace_only =
+                                        text.text.chars().all(|c| c.is_ascii_whitespace());
+                                    if is_whitespace_only {
+                                        continue;
+                                    }
+                                }
+                                has_text_child = true;
+                                child_types.push(child_type);
+                            } else {
+                                child_types.push(child_type);
+                            }
+                        }
                     }
                     self.checker.ctx.contextual_type = prev_contextual;
+
+                    // Store children info for use in check_jsx_attributes_against_props.
+                    // Synthesize the children type:
+                    // - 0 children → None (no children prop synthesized)
+                    // - 1 child → the child's type directly
+                    // - 2+ children → array of union of child types
+                    let prev_children_info = self.checker.ctx.jsx_children_info.take();
+                    if !child_types.is_empty() {
+                        let synthesized_type = if child_types.len() == 1 {
+                            child_types[0]
+                        } else {
+                            // Multiple children: synthesize as an array type.
+                            // tsc uses the union of all child types as the element type.
+                            let element_type =
+                                self.checker.ctx.types.factory().union(child_types.clone());
+                            self.checker.ctx.types.factory().array(element_type)
+                        };
+                        self.checker.ctx.jsx_children_info =
+                            Some((child_types.len(), has_text_child, synthesized_type));
+                    }
 
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)
                     self.checker
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
-                    self.checker
-                        .get_type_of_jsx_opening_element(jsx.opening_element)
+                    let result = self
+                        .checker
+                        .get_type_of_jsx_opening_element(jsx.opening_element);
+
+                    // Restore previous children info (for nested JSX elements)
+                    self.checker.ctx.jsx_children_info = prev_children_info;
+                    result
                 } else {
                     TypeId::ERROR
                 }

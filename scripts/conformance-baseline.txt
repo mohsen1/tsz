@@ -740,6 +740,7 @@ FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxElementType.tsx
 FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteral.tsx
 FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteralWithGeneric.tsx
+FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild.tsx
 FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild2.tsx
 FAIL TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentAndFactoryUsedOnFragmentUse.tsx
@@ -763,6 +764,7 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
 FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
+FAIL TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.tsx
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
@@ -1711,15 +1713,12 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of32.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of33.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of34.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of35.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of55.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration3_es6.ts
@@ -2132,9 +2131,9 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/typeTagCircularReferenceOnConstruc
 FAIL TypeScript/tests/cases/conformance/jsdoc/typeTagNoErasure.ts
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenCanBeTupleType.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty13.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty14.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty15.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty2.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty7.tsx
@@ -2143,6 +2142,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/checkJsxNamespaceNamesQuestionableFo
 FAIL TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxAndJsxFragPragma.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryDeclarations.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryDeclarationsLocalTypes.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryLocalTypeGlobalFallback.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryWithFragmentIsError.tsx
@@ -2161,6 +2161,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution12.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution15.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution3.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution6.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution7.tsx
@@ -5817,7 +5818,6 @@ PASS TypeScript/tests/cases/compiler/jsxElementClassTooManyParams.tsx
 PASS TypeScript/tests/cases/compiler/jsxElementsAsIdentifierNames.tsx
 PASS TypeScript/tests/cases/compiler/jsxEmitAttributeWithPreserve.tsx
 PASS TypeScript/tests/cases/compiler/jsxEmitWithAttributes.ts
-PASS TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild.tsx
 PASS TypeScript/tests/cases/compiler/jsxFactoryAndJsxFragmentFactory.tsx
 PASS TypeScript/tests/cases/compiler/jsxFactoryAndJsxFragmentFactoryErrorNotIdentifier.tsx
 PASS TypeScript/tests/cases/compiler/jsxFactoryAndJsxFragmentFactoryNull.tsx
@@ -5851,7 +5851,6 @@ PASS TypeScript/tests/cases/compiler/jsxNamespaceReexports.tsx
 PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
-PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
 PASS TypeScript/tests/cases/compiler/keepImportsInDts1.ts
@@ -8986,13 +8985,16 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of27.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of28.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of31.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of36.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of4.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of42.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of44.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of5.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of52.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of53.ts
@@ -10495,8 +10497,8 @@ PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty10.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty12.tsx
+PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty14.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty16.tsx
-PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty9.tsx
@@ -10507,7 +10509,6 @@ PASS TypeScript/tests/cases/conformance/jsx/commentEmittingInPreserveJsx1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/inline/inlineJsxAndJsxFragPragmaOverridesCompilerOptions.tsx
-PASS TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryDeclarations.tsx
 PASS TypeScript/tests/cases/conformance/jsx/inline/inlineJsxFactoryOverridesCompilerOption.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxAttributeInitializer.ts
 PASS TypeScript/tests/cases/conformance/jsx/jsxEsprimaFbTestSuite.tsx
@@ -10529,7 +10530,6 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution13.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution14.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution16.tsx
-PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution9.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxCorrectlyParseLessThanComparison1.tsx
