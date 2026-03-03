@@ -335,7 +335,17 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the global JSX namespace type (resolves `JSX` namespace for intrinsic elements).
+    ///
+    /// When a custom `jsxFactory` is configured (e.g., `@jsxFactory: X.jsx`),
+    /// tsc resolves the JSX namespace from the factory's parent entity (e.g., `X.JSX`)
+    /// before falling back to the global JSX namespace.
     pub(crate) fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
+        // When a custom jsxFactory is set, try to resolve JSX namespace from the
+        // factory's parent entity. For `X.jsx`, look for `X.JSX`.
+        if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
+            return Some(jsx_sym);
+        }
+
         // First try file_locals (includes user-defined globals and merged lib symbols)
         if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             return Some(sym_id);

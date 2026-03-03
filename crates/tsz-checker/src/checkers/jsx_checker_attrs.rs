@@ -4,6 +4,7 @@
 //! Extracted from `jsx_checker.rs` to keep the main file under 2000 LOC.
 
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -914,5 +915,46 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// Try to resolve JSX namespace from a custom jsxFactory's parent entity.
+    ///
+    /// For `@jsxFactory: X.jsx`, resolves `X` in file scope, then looks for `JSX`
+    /// in its exports/members. Returns `None` if no custom factory or the namespace
+    /// can't be found.
+    pub(crate) fn resolve_jsx_namespace_from_factory(&mut self) -> Option<SymbolId> {
+        // Get the effective factory name (pragma overrides config)
+        let pragma_factory = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let factory = pragma_factory.or_else(|| {
+            if self.ctx.compiler_options.jsx_factory_from_config {
+                Some(self.ctx.compiler_options.jsx_factory.clone())
+            } else {
+                None
+            }
+        })?;
+
+        // Only applies to dotted factories (e.g., "X.jsx", "MyLib.createElement")
+        let dot_pos = factory.find('.')?;
+        let root_name = &factory[..dot_pos];
+        if root_name.is_empty() {
+            return None;
+        }
+
+        // Resolve the root entity (e.g., "X") in file scope
+        let root_sym = self.ctx.binder.file_locals.get(root_name)?;
+        let lib_binders = self.get_lib_binders();
+        let root_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(root_sym, &lib_binders)?;
+
+        // Look for "JSX" in the root entity's exports (namespace members)
+        let exports = root_symbol.exports.as_ref()?;
+        exports.get("JSX")
     }
 }

@@ -1875,3 +1875,115 @@ let k = <Comp a={{10}} />;
         "Optional children should not emit TS2741 when absent, got: {diags:?}"
     );
 }
+
+// =============================================================================
+// JSX empty expression not counted as child (TS2746 fix)
+// =============================================================================
+
+/// Empty JSX expressions like {/* comment */} should not count as children.
+/// This prevents false TS2746 ("expects a single child but multiple provided").
+#[test]
+fn jsx_empty_expression_not_counted_as_child() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    children: JSX.Element;
+}}
+function Wrapper(p: Props) {{ return <div>{{p.children}}</div>; }}
+const element = (
+    <Wrapper>
+        {{/* comment */}}
+        <div>Hello</div>
+    </Wrapper>
+);
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // TS2746 should NOT fire — the empty expression {/* comment */} doesn't count
+    assert!(
+        !diags.iter().any(|(c, _)| *c == 2746),
+        "Empty JSX expression should not count as child; got TS2746: {diags:?}"
+    );
+}
+
+/// Verify that a single non-comment child does NOT trigger TS2746.
+/// This complements the empty expression test above.
+#[test]
+fn jsx_single_real_child_no_ts2746() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    children: JSX.Element;
+}}
+function Wrapper(p: Props) {{ return <div>{{p.children}}</div>; }}
+const element = (
+    <Wrapper>
+        <div>Hello</div>
+    </Wrapper>
+);
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Single child — TS2746 should NOT fire
+    assert!(
+        !diags.iter().any(|(c, _)| *c == 2746),
+        "Single child should not trigger TS2746, got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// JSX factory namespace resolution (TS7026 fix)
+// =============================================================================
+
+/// When @jsxFactory is a dotted name like "X.jsx", the JSX namespace
+/// should be resolved from X.JSX, not just the global JSX namespace.
+#[test]
+fn jsx_factory_dotted_resolves_namespace_from_root_exports() {
+    let source = r#"
+namespace X {
+    export namespace JSX {
+        export interface IntrinsicElements {
+            [name: string]: any;
+        }
+        export interface Element {}
+    }
+    export function jsx() {}
+}
+let a = <div/>;
+"#;
+    let options = CheckerOptions {
+        jsx_mode: JsxMode::React,
+        jsx_factory: "X.jsx".to_string(),
+        jsx_factory_from_config: true,
+        ..CheckerOptions::default()
+    };
+
+    let file_name = "test.tsx";
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+    let diags: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // TS7026 should NOT fire — X.JSX.IntrinsicElements exists
+    assert!(
+        !diags.iter().any(|(c, _)| *c == 7026),
+        "Factory namespace X.JSX should be found; got TS7026: {diags:?}"
+    );
+}
