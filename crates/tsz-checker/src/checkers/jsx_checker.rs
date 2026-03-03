@@ -128,12 +128,16 @@ impl<'a> CheckerState<'a> {
                     props
                 };
 
-                // Check JSX attributes against the resolved props type
+                // Check JSX attributes against the resolved props type.
+                // For intrinsic elements, the display target is just the props type
+                // (tsc doesn't wrap intrinsic element props in IntrinsicAttributes).
+                let display_target = self.build_jsx_display_target(evaluated_props, None);
                 self.check_jsx_attributes_against_props(
                     jsx_opening.attributes,
                     evaluated_props,
                     jsx_opening.tag_name,
                     false, // intrinsic elements never have raw type params
+                    display_target,
                 );
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
@@ -209,15 +213,18 @@ impl<'a> CheckerState<'a> {
             // This fires even for generic components where we skip attribute checking.
             self.check_jsx_component_return_type(evaluated, tag_name_idx);
 
-            // Extract props type from the component and check attributes
+            // Extract props type from the component and check attributes.
+            // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) =
                 self.get_jsx_props_type_for_component(evaluated)
             {
+                let display_target = self.build_jsx_display_target(props_type, Some(evaluated));
                 self.check_jsx_attributes_against_props(
                     jsx_opening.attributes,
                     props_type,
                     jsx_opening.tag_name,
                     raw_has_type_params,
+                    display_target,
                 );
             } else if self.is_overloaded_sfc(evaluated) {
                 // JSX overload resolution: try each non-generic call signature against
@@ -1143,12 +1150,18 @@ impl<'a> CheckerState<'a> {
     /// expected property type from the props interface. Emits:
     /// - TS2322 for type mismatches and excess properties
     /// - TS2741 for missing required properties
+    ///
+    /// `display_target` is the pre-formatted string shown in TS2322 error messages
+    /// for excess properties. tsc uses `IntrinsicAttributes & PropsType` (or
+    /// `IntrinsicAttributes & IntrinsicClassAttributes<T> & PropsType`) rather
+    /// than just `PropsType`.
     pub(crate) fn check_jsx_attributes_against_props(
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         raw_props_has_type_params: bool,
+        display_target: String,
     ) {
         // TS2698: Validate spread attribute types BEFORE props type resolution.
         // This check fires regardless of the props type — it's about whether the
@@ -1329,11 +1342,10 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 "any".to_string()
                             };
-                            let props_name = self.format_type(props_type);
                             let message = format!(
-                                "Type '{{ {attr_name}: {attr_type_name}; }}' is not assignable to type '{props_name}'.\n  \
+                                "Type '{{ {attr_name}: {attr_type_name}; }}' is not assignable to type '{display_target}'.\n  \
                                      Object literal may only specify known properties, \
-                                     and '{attr_name}' does not exist in type '{props_name}'."
+                                     and '{attr_name}' does not exist in type '{display_target}'."
                             );
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node(
@@ -1564,6 +1576,7 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     tag_name_idx,
                     &overridden,
+                    &display_target,
                 );
             }
         }
@@ -1574,7 +1587,7 @@ impl<'a> CheckerState<'a> {
         // - a spread of type `any` covers all properties
         // - props type is any/error (skip_prop_checks)
         if !has_excess_property_error && !spread_covers_all && !skip_prop_checks {
-            // tsc anchors TS2741 (missing required property) at the tag name
+            // tsc anchors TS2741 (missing required property) at the tag name.
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
 
@@ -1597,6 +1610,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check that all required properties in the props type are provided as JSX attributes.
     /// Emits TS2741 for each missing required property.
+    ///
+    /// For TS2741, tsc uses the plain props type name (e.g., `AnotherComponentProps`),
+    /// NOT the `IntrinsicAttributes` intersection. This matches tsc's behavior where only
+    /// TS2322 uses the full intersection target.
     fn check_missing_required_jsx_props(
         &mut self,
         props_type: TypeId,

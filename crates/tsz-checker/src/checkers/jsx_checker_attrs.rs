@@ -27,6 +27,72 @@ struct JsxAttrsInfo {
 }
 
 impl<'a> CheckerState<'a> {
+    // ── JSX Display Target ────────────────────────────────────────────────
+
+    /// Get the unevaluated Lazy(DefId) type for JSX.IntrinsicAttributes.
+    pub(crate) fn get_intrinsic_attributes_lazy_type(&mut self) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let ia_sym_id = exports.get("IntrinsicAttributes")?;
+        let ty = self.type_reference_symbol_type(ia_sym_id);
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
+            return None;
+        }
+        Some(ty)
+    }
+
+    fn get_intrinsic_class_attributes_lazy_type(&mut self) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let ica_sym_id = exports.get("IntrinsicClassAttributes")?;
+        Some(self.type_reference_symbol_type(ica_sym_id))
+    }
+
+    /// Build pre-formatted display string for JSX TS2322 messages.
+    /// Returns e.g. `IntrinsicAttributes & PropsType` with correct member order.
+    pub(crate) fn build_jsx_display_target(
+        &mut self,
+        props_type: TypeId,
+        component_type: Option<TypeId>,
+    ) -> String {
+        let mut parts = Vec::new();
+        if let Some(ia) = self.get_intrinsic_attributes_lazy_type() {
+            parts.push(self.format_type(ia));
+        }
+        if let Some(comp) = component_type
+            && let Some(ica) = self.get_intrinsic_class_attributes_lazy_type()
+            && let Some(inst) = self.get_class_instance_type_for_component(comp)
+        {
+            let app = self.ctx.types.factory().application(ica, vec![inst]);
+            parts.push(self.format_type(app));
+        }
+        parts.push(self.format_type(props_type));
+        parts.join(" & ")
+    }
+
+    fn get_class_instance_type_for_component(&mut self, component_type: TypeId) -> Option<TypeId> {
+        let sigs =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        let sig = sigs.first()?;
+        if sig.return_type == TypeId::ANY || sig.return_type == TypeId::ERROR {
+            return None;
+        }
+        Some(sig.return_type)
+    }
+
+    // ── JSX Overload Resolution ───────────────────────────────────────────
+
     /// JSX overload resolution for overloaded Stateless Function Components.
     ///
     /// When a component has multiple non-generic call signatures, tries each
@@ -557,6 +623,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
+        display_target: &str,
     ) {
         use tsz_solver::operations::property::PropertyAccessResult;
 
@@ -584,8 +651,8 @@ impl<'a> CheckerState<'a> {
             // If spread type has no object shape (e.g., type parameter), emit
             // whole-type TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'".
             let spread_name = self.format_type(spread_type);
-            let props_name = self.format_type(props_type);
-            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
+            let message =
+                format!("Type '{spread_name}' is not assignable to type '{display_target}'.");
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
@@ -659,11 +726,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Emit a single TS2322 with whole-type message matching tsc's format:
-        // "Type '{ x: number; }' is not assignable to type 'Attribs1'."
+        // "Type '{ x: number; }' is not assignable to type 'IntrinsicAttributes & Attribs1'."
         if has_type_mismatch {
             let spread_name = self.format_type(spread_type);
-            let props_name = self.format_type(props_type);
-            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
+            let message =
+                format!("Type '{spread_name}' is not assignable to type '{display_target}'.");
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
