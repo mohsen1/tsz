@@ -939,25 +939,30 @@ impl ParserState {
     fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
         let expression = self.parse_expression();
         if expression.is_none() {
-            // Emit TS1109 at the full_start position (before leading trivia/whitespace),
-            // matching tsc's createMissingNode which uses getNodePos() =
-            // scanner.getTokenFullStart(). This is critical when the template expression
-            // is empty with trailing whitespace before EOF, since TS1005 below emits at
-            // getTokenStart() (after whitespace). The position difference prevents
-            // same-position dedup, allowing both errors to be reported (as tsc does).
-            // When there's no whitespace (e.g., `${\n` or `${<EOF>`), both positions
-            // are the same, so parse_error_at's same-position dedup correctly suppresses
-            // the duplicate (matching tsc's behavior).
+            // Emit TS1109 "Expression expected." for empty template expressions.
+            // Position depends on the current token:
+            // - If `}` (closing the template span): emit at token_start (after trivia),
+            //   matching tsc's createMissingNode with reportAtCurrentPosition=true.
+            // - Otherwise (e.g., EOF): emit at full_start (before trivia) so the
+            //   position differs from the TS1005 "'}' expected." that follows,
+            //   allowing both errors through dedup.
             {
                 use tsz_common::diagnostics::diagnostic_codes;
-                let start = self.u32_from_usize(self.scanner.get_token_full_start());
-                let end = self.u32_from_usize(self.scanner.get_token_end());
-                self.parse_error_at(
-                    start,
-                    end.saturating_sub(start),
-                    "Expression expected.",
-                    diagnostic_codes::EXPRESSION_EXPECTED,
-                );
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                } else {
+                    let start = self.u32_from_usize(self.scanner.get_token_full_start());
+                    let end = self.u32_from_usize(self.scanner.get_token_end());
+                    self.parse_error_at(
+                        start,
+                        end.saturating_sub(start),
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                }
             }
         }
 

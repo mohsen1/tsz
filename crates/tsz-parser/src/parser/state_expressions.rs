@@ -1868,7 +1868,16 @@ impl ParserState {
                 );
             }
 
-            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            // Emit TS1005 with message matching what tsc's parser recovery produces.
+            // When followed by `function` keyword (e.g., `@dec function() {}`), tsc
+            // emits "',' expected." because it treats the result as an expression in
+            // a comma context. For other tokens (e.g., `@dec () => {}`), tsc emits
+            // "';' expected." as a statement boundary.
+            if self.is_token(SyntaxKind::FunctionKeyword) {
+                self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+            } else {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
             let end_pos = self.token_end();
             self.arena
                 .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
