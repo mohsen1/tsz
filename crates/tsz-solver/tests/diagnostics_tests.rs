@@ -70,6 +70,61 @@ fn test_format_object_type_preserves_property_insertion_order() {
 }
 
 #[test]
+fn test_format_object_type_numeric_keys_sorted_first() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    // Simulate the tuple-like object: { 0: string; 1: number; length: 2; }
+    // Properties are stored sorted by Atom ID internally, which may not be
+    // numeric order. The formatter should sort: numeric keys first in numeric
+    // order, then string keys alphabetically.
+    let obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("0"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER),
+        PropertyInfo::new(
+            interner.intern_string("length"),
+            interner.literal_number(2.0),
+        ),
+    ]);
+
+    assert_eq!(
+        formatter.format(obj),
+        "{ 0: string; 1: number; length: 2; }"
+    );
+}
+
+#[test]
+fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    // When properties have the same declaration_order (e.g., from type
+    // evaluation merging), numeric keys should be sorted numerically.
+    // This simulates the case where all numeric keys get decl_order=1.
+    let mut prop1 = PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER);
+    let mut prop0 = PropertyInfo::new(interner.intern_string("0"), TypeId::STRING);
+    let mut prop_len = PropertyInfo::new(
+        interner.intern_string("length"),
+        interner.literal_number(2.0),
+    );
+    prop1.declaration_order = 1;
+    prop0.declaration_order = 1;
+    prop_len.declaration_order = 2;
+
+    // Build object shape directly to control declaration_order
+    let shape = crate::types::ObjectShape {
+        properties: vec![prop1, prop0, prop_len],
+        ..Default::default()
+    };
+    let obj = interner.object_with_index(shape);
+
+    assert_eq!(
+        formatter.format(obj),
+        "{ 0: string; 1: number; length: 2; }"
+    );
+}
+
+#[test]
 fn test_format_union_type() {
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
