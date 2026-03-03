@@ -1,7 +1,37 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **9822/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9824/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03a — JSX IntrinsicAttributes intersection display target
+
+### Fixed: JSX TS2322 messages missing IntrinsicAttributes intersection
+
+**Area**: jsx (62.56% → improved), fingerprint-level parity for TS2322 attribute errors
+
+**Root cause**: When emitting TS2322 for JSX attribute mismatches (excess properties, spread type
+mismatches), tsz showed just `PropsType` as the target, but tsc shows
+`IntrinsicAttributes & PropsType` (or `IntrinsicAttributes & IntrinsicClassAttributes<T> & PropsType`
+for class components).
+
+**Fix**: Added `build_jsx_display_target()` which constructs a pre-formatted intersection string
+with the correct member order (named types first, props last). Key design decision: uses a `String`
+rather than an interned `TypeId` intersection, because the interner's canonical sorting (by TypeId)
+destroys the declaration-order display that tsc uses.
+
+Also fixed `format_symbol_name()` to skip `JSX.` namespace qualification for global JSX namespace
+members, matching tsc's unqualified `IntrinsicAttributes` display.
+
+**Key lessons**:
+- TS2322 uses the full intersection target; TS2741 uses just the props type name
+- `check_assignable_or_report_at` performs both semantic checks AND formatting — cannot swap target
+- Intersection interner sorts by TypeId for canonicalization, destroying declaration order
+- Pre-formatted String is the right abstraction for display-only type information
+- `format_symbol_name` parent-chain walk needs special-casing for well-known global namespaces (JSX)
+
+**Files changed**: `jsx_checker.rs`, `jsx_checker_attrs.rs`, `format.rs`
+
+**Test results**: +1 genuine improvement (tsxAttributeResolution11.tsx), 0 regressions
 
 ## Session 2026-03-02w — IteratorResult yield type extraction for for-of loops
 
