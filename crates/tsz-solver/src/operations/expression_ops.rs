@@ -9,7 +9,7 @@ use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{TypeData, TypeId};
+use crate::types::{TemplateSpan, TypeData, TypeId};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -74,13 +74,17 @@ pub fn compute_conditional_expression_type(
 
 /// Computes the type of a template literal expression.
 ///
-/// Template literals always produce string type in TypeScript.
+/// In TypeScript, template literal expressions produce:
+/// - A concrete string literal type when all parts are literals (e.g., `hello ${42}` → "hello 42")
+/// - A template literal type when in a template literal context (parameter expects template literal)
+///   and parts include type parameters or other non-literal types
+/// - `string` type otherwise
 ///
 /// # Arguments
-/// * `parts` - Slice of type IDs for each template part
+/// * `parts` - Slice of type IDs for each interpolated expression
 ///
 /// # Returns
-/// * `TypeId::STRING` - Template literals always produce strings
+/// * `TypeId::STRING` - Template literals produce strings by default
 pub fn compute_template_expression_type(parts: &[TypeId]) -> TypeId {
     // Check for error propagation
     for &part in parts {
@@ -92,9 +96,84 @@ pub fn compute_template_expression_type(parts: &[TypeId]) -> TypeId {
         }
     }
 
-    // Template literals always produce string type
-    // The Checker handles type-checking each part's expression
+    // Template literals produce string type by default
     TypeId::STRING
+}
+
+/// Computes the type of a template literal expression in a template literal context.
+///
+/// When the contextual type is a template literal type (e.g., parameter expects `` `${T}:${U}` ``),
+/// the expression produces a template literal type instead of plain `string`.
+///
+/// # Arguments
+/// * `db` - The type database for interning
+/// * `texts` - The text parts of the template (head, middles, tail). Length = `parts.len()` + 1
+/// * `parts` - The type of each interpolated expression
+///
+/// # Returns
+/// A template literal type constructed from the texts and part types
+pub fn compute_template_expression_type_contextual(
+    db: &dyn TypeDatabase,
+    texts: &[String],
+    parts: &[TypeId],
+) -> TypeId {
+    // Check for error/never propagation
+    for &part in parts {
+        if part == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+        if part == TypeId::NEVER {
+            return TypeId::NEVER;
+        }
+    }
+
+    // Build template spans: interleaved text and type parts
+    let mut spans = Vec::new();
+    for (i, text) in texts.iter().enumerate() {
+        if !text.is_empty() {
+            spans.push(TemplateSpan::Text(db.intern_string(text)));
+        }
+        if i < parts.len() {
+            // For each interpolated part, check if it's assignable to the template constraint
+            // (string | number | bigint | boolean | null | undefined).
+            // If so, use the part type directly; otherwise widen to string.
+            let part = parts[i];
+            spans.push(TemplateSpan::Type(part));
+        }
+    }
+
+    db.template_literal(spans)
+}
+
+/// Checks whether a type is or contains a template literal contextual type.
+///
+/// In tsc, this means: string literal, template literal, or an instantiable type
+/// whose base constraint is a string literal/template literal, or a union/intersection
+/// containing any of the above.
+pub fn is_template_literal_contextual_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_template_literal_contextual_type_inner(db, type_id, 0)
+}
+
+fn is_template_literal_contextual_type_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 10 {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(
+            TypeData::Literal(crate::types::LiteralValue::String(_)) | TypeData::TemplateLiteral(_),
+        ) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|m| is_template_literal_contextual_type_inner(db, *m, depth + 1))
+        }
+        _ => false,
+    }
 }
 
 /// Computes the best common type (BCT) of a set of types.

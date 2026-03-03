@@ -829,7 +829,11 @@ impl<'a> CheckerState<'a> {
     /// Get type of template expression (template literal with substitutions).
     ///
     /// Type-checks all expressions within template spans to emit errors like TS2304.
-    /// Template expressions always produce string type.
+    ///
+    /// In TypeScript, template expressions produce:
+    /// - A template literal type when the contextual type expects one (e.g., parameter
+    ///   expects `` `${T}:${U}` ``), preserving type parameter information
+    /// - `string` type otherwise
     ///
     /// Uses `solver::compute_template_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
@@ -842,8 +846,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::STRING;
         };
 
-        // Type-check each template span's expression and collect types for solver
+        // Extract the head text (text before the first ${})
+        let head_text = self
+            .ctx
+            .arena
+            .get(template.head)
+            .and_then(|n| self.ctx.arena.get_literal(n))
+            .map(|lit| lit.text.clone())
+            .unwrap_or_default();
+
+        // Type-check each template span's expression and collect types + text parts
         let mut part_types = Vec::new();
+        let mut texts = vec![head_text];
         for &span_idx in &template.template_spans.nodes {
             let Some(span_node) = self.ctx.arena.get(span_idx) else {
                 continue;
@@ -856,11 +870,37 @@ impl<'a> CheckerState<'a> {
             // Type-check the expression - this will emit TS2304 if name is unresolved
             let part_type = self.get_type_of_node(span.expression);
             part_types.push(part_type);
+
+            // Extract the text after this expression (middle or tail)
+            let tail_text = self
+                .ctx
+                .arena
+                .get(span.literal)
+                .and_then(|n| self.ctx.arena.get_literal(n))
+                .map(|lit| lit.text.clone())
+                .unwrap_or_default();
+            texts.push(tail_text);
         }
 
-        // Use Solver API for type computation (Solver-First architecture)
-        // Template literals always produce string type, but we check for ERROR/NEVER propagation
-        expression_ops::compute_template_expression_type(&part_types)
+        // Check if we're in a template literal context:
+        // 1. Contextual type is/contains a template literal type or string literal type
+        // 2. Inside a const assertion (as const)
+        let in_template_context = self.ctx.in_const_assertion
+            || self.ctx.contextual_type.is_some_and(|ct| {
+                expression_ops::is_template_literal_contextual_type(self.ctx.types, ct)
+            });
+
+        if in_template_context {
+            // Construct a template literal type preserving type parameter shapes
+            expression_ops::compute_template_expression_type_contextual(
+                self.ctx.types,
+                &texts,
+                &part_types,
+            )
+        } else {
+            // Default: template literals produce string type
+            expression_ops::compute_template_expression_type(&part_types)
+        }
     }
 
     /// Get type of variable declaration.
@@ -1270,5 +1310,52 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ANY
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_codes;
+
+    #[test]
+    fn template_expr_contextual_type_no_false_positive() {
+        // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
+        // a template literal type should NOT produce TS2345
+        let source = r#"
+type Registry = { a: { a1: {} }; b: { b1: {} } };
+type Keyof<T> = keyof T & string;
+declare function f1<
+  Scope extends Keyof<Registry>,
+  Event extends Keyof<Registry[Scope]>,
+>(eventPath: `${Scope}:${Event}`): void;
+function f2<
+  Scope extends Keyof<Registry>,
+  Event extends Keyof<Registry[Scope]>,
+>(scope: Scope, event: Event) {
+  f1(`${scope}:${event}`);
+}
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2345),
+            "Should not emit TS2345 for template literal matching contextual type, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn template_expr_without_context_stays_string() {
+        // Template expression assigned to `string` should still work (not break)
+        let source = r#"
+function f(x: string, y: number): string {
+    return `${x} is ${y}`;
+}
+"#;
+        let errors = check_source_codes(source);
+        // Filter out TS2318 (lib not found) since test env has no lib definitions
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        assert!(
+            semantic_errors.is_empty(),
+            "Template expression returning string should produce no semantic errors, got: {semantic_errors:?}"
+        );
     }
 }

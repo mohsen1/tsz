@@ -251,3 +251,123 @@ fn test_bct_enum_members_widen_to_parent_enum() {
     let result = compute_best_common_type(&interner, &[member_a, member_b], Some(&resolver));
     assert_eq!(result, parent_enum_type);
 }
+
+// =========================================================================
+// Template Literal Expression Tests
+// =========================================================================
+
+#[test]
+fn test_template_expression_default_is_string() {
+    // Template expressions without context produce string type
+    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_template_expression_error_propagation() {
+    // ERROR in any part propagates
+    let result = compute_template_expression_type(&[TypeId::ERROR, TypeId::STRING]);
+    assert_eq!(result, TypeId::ERROR);
+}
+
+#[test]
+fn test_template_expression_never_propagation() {
+    // NEVER in any part propagates
+    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NEVER]);
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
+fn test_template_expression_contextual_produces_template_type() {
+    // When called with contextual info, should produce a template literal type
+    let interner = TypeInterner::new();
+    let result = compute_template_expression_type_contextual(
+        &interner,
+        &["hello ".to_string(), "!".to_string()],
+        &[TypeId::STRING],
+    );
+    // Should NOT be plain string — should be a template literal type `hello ${string}!`
+    assert_ne!(result, TypeId::STRING);
+    // Check it's a TemplateLiteral type
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::TemplateLiteral(_))),
+        "Expected TemplateLiteral type, got: {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_template_expression_contextual_all_literals_produces_string_literal() {
+    // When all parts are concrete literals, template_literal() returns a string literal
+    let interner = TypeInterner::new();
+    let lit_42 = interner.literal_number(42.0);
+    let result = compute_template_expression_type_contextual(
+        &interner,
+        &["value: ".to_string(), String::new()],
+        &[lit_42],
+    );
+    // The solver's template_literal() expands concrete literals to a string literal
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Literal(_))),
+        "Expected string literal type, got: {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_template_expression_contextual_error_still_propagates() {
+    let interner = TypeInterner::new();
+    let result = compute_template_expression_type_contextual(
+        &interner,
+        &["a".to_string(), "b".to_string()],
+        &[TypeId::ERROR],
+    );
+    assert_eq!(result, TypeId::ERROR);
+}
+
+#[test]
+fn test_is_template_literal_contextual_type_basic() {
+    let interner = TypeInterner::new();
+
+    // Template literal type → true
+    use crate::types::TemplateSpan;
+    let tl = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    assert!(is_template_literal_contextual_type(&interner, tl));
+
+    // String literal → true
+    let sl = interner.literal_string("hello");
+    assert!(is_template_literal_contextual_type(&interner, sl));
+
+    // Plain string → false
+    assert!(!is_template_literal_contextual_type(
+        &interner,
+        TypeId::STRING
+    ));
+
+    // Number → false
+    assert!(!is_template_literal_contextual_type(
+        &interner,
+        TypeId::NUMBER
+    ));
+}
+
+#[test]
+fn test_is_template_literal_contextual_type_union() {
+    let interner = TypeInterner::new();
+
+    // Union containing a template literal → true
+    use crate::types::TemplateSpan;
+    let tl = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("x-")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+    let union = interner.union(vec![tl, TypeId::NUMBER]);
+    assert!(is_template_literal_contextual_type(&interner, union));
+
+    // Union of plain types → false
+    let plain_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert!(!is_template_literal_contextual_type(&interner, plain_union));
+}
