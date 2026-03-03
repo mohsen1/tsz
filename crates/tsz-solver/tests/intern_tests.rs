@@ -291,6 +291,63 @@ fn test_interner_intersection_callable_vs_object_compatible_property() {
 }
 
 #[test]
+fn test_interner_intersection_object_intrinsic_with_primitive_is_never() {
+    let interner = TypeInterner::new();
+
+    // object & string = never (object excludes all primitives)
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, TypeId::STRING]),
+        TypeId::NEVER
+    );
+
+    // object & number = never
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, TypeId::NUMBER]),
+        TypeId::NEVER
+    );
+
+    // object & boolean = never
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, TypeId::BOOLEAN]),
+        TypeId::NEVER
+    );
+
+    // object & null = never
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, TypeId::NULL]),
+        TypeId::NEVER
+    );
+
+    // object & undefined = never
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, TypeId::UNDEFINED]),
+        TypeId::NEVER
+    );
+
+    // object & "hello" (string literal) = never
+    let hello = interner.literal_string("hello");
+    assert_eq!(
+        interner.intersection(vec![TypeId::OBJECT, hello]),
+        TypeId::NEVER
+    );
+
+    // But: object & { foo: string } should NOT be never (structural object is compatible)
+    let foo = interner.intern_string("foo");
+    let obj = interner.object(vec![PropertyInfo::new(foo, TypeId::STRING)]);
+    assert_ne!(
+        interner.intersection(vec![TypeId::OBJECT, obj]),
+        TypeId::NEVER
+    );
+
+    // And: {} & string should NOT be never (branded types allowed)
+    let empty_obj = interner.object(vec![]);
+    assert_ne!(
+        interner.intersection(vec![empty_obj, TypeId::STRING]),
+        TypeId::NEVER
+    );
+}
+
+#[test]
 fn test_interner_intersection_optional_object_literals_not_reduced() {
     let interner = TypeInterner::new();
 

@@ -301,11 +301,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        // Calling `never` emits TS2349 "This expression is not callable" and
-        // returns `never` (bottom type propagation).
+        // Calling `never` returns `never` (bottom type propagation).
         // tsc treats `never` as having no call signatures.
+        // For method calls (e.g., `a.toFixed()` where `a: never`), TS2339 is already
+        // emitted by the property access check, so we suppress the redundant TS2349.
+        // For direct calls on `never` (e.g., `f()` where `f: never`), emit TS2349.
         if callee_type == TypeId::NEVER {
-            self.error_not_callable_at(callee_type, call.expression);
+            let is_method_call = matches!(
+                self.ctx.arena.get(call.expression).map(|n| n.kind),
+                Some(
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+            );
+            if !is_method_call {
+                self.error_not_callable_at(callee_type, call.expression);
+            }
             return TypeId::NEVER;
         }
 

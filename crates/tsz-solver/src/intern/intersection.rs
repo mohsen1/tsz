@@ -181,6 +181,12 @@ impl TypeInterner {
         if self.intersection_has_null_undefined_with_object(&flat) {
             return TypeId::NEVER;
         }
+        // Check if the `object` intrinsic (non-primitive type) is intersected with a primitive.
+        // `object & string = never`, `object & number = never`, etc.
+        // Branded types like `string & { __brand: T }` use structural objects, not `object`.
+        if self.intersection_has_object_intrinsic_with_primitive(&flat) {
+            return TypeId::NEVER;
+        }
 
         // Distributivity: A & (B | C) → (A & B) | (A & C)
         // This enables better normalization and is required for soundness
