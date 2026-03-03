@@ -241,34 +241,67 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else {
-                let missing_list = missing_members
-                    .iter()
-                    .map(|s| format!("'{s}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                if is_class_expression {
-                    self.error_at_node(
-                        class_idx,
-                        &format!(
-                            "Non-abstract class expression is missing implementations for the following members of '{base_class_name}': {missing_list}."
-                        ),
-                        2656,
-                    );
+                // tsc points at the class name for declarations, not the `class` keyword
+                let error_node = if is_class_expression {
+                    class_idx
+                } else if class_data.name.is_some() {
+                    class_data.name
                 } else {
-                    // tsc points at the class name, not the `class` keyword
-                    let error_node = if class_data.name.is_some() {
-                        class_data.name
+                    class_idx
+                };
+
+                // TSC uses different error codes and message format based on count:
+                // - 2-4 members: TS2654/TS2656, lists all members
+                // - 5+ members: TS2655/TS2650, shows first 4 then "and N more"
+                if missing_members.len() > 4 {
+                    let truncated_list = missing_members[..4]
+                        .iter()
+                        .map(|s| format!("'{s}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let remaining = missing_members.len() - 4;
+
+                    if is_class_expression {
+                        self.error_at_node(
+                            error_node,
+                            &format!(
+                                "Non-abstract class expression is missing implementations for the following members of '{base_class_name}': {truncated_list} and {remaining} more."
+                            ),
+                            2650,
+                        );
                     } else {
-                        class_idx
-                    };
-                    self.error_at_node(
-                        error_node,
-                        &format!(
-                            "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
-                        ),
-                        diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
-                    );
+                        self.error_at_node(
+                            error_node,
+                            &format!(
+                                "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {truncated_list} and {remaining} more."
+                            ),
+                            2655,
+                        );
+                    }
+                } else {
+                    let missing_list = missing_members
+                        .iter()
+                        .map(|s| format!("'{s}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    if is_class_expression {
+                        self.error_at_node(
+                            error_node,
+                            &format!(
+                                "Non-abstract class expression is missing implementations for the following members of '{base_class_name}': {missing_list}."
+                            ),
+                            2656,
+                        );
+                    } else {
+                        self.error_at_node(
+                            error_node,
+                            &format!(
+                                "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
+                            ),
+                            diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
+                        );
+                    }
                 }
             }
         }

@@ -772,12 +772,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1242: 'abstract' modifier can only appear on a class, method, or property declaration.
-        // Constructors cannot be abstract.
-        if self.has_abstract_modifier(&ctor.modifiers) {
+        // Constructors cannot be abstract. TSC anchors the error at the 'abstract' keyword.
+        if let Some(abstract_mod) = self
+            .ctx
+            .arena
+            .find_modifier(&ctor.modifiers, tsz_scanner::SyntaxKind::AbstractKeyword)
+        {
             self.error_at_node(
-                member_idx,
+                abstract_mod,
                 "'abstract' modifier can only appear on a class, method, or property declaration.",
-                diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
             );
         }
 
