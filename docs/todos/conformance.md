@@ -1,7 +1,36 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9867/12570 (78.5%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9884/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03j — Reverse mapped type identity-like Application fix (+1 test)
+
+### Fixed: False positive TS2345 on identity-like Application templates in reverse mapped type inference
+
+**Area**: types/tuple (64.7%), compiler (reverse mapped type tests)
+
+**Root cause**: In `reverse_infer_through_template` (constraints.rs), when a mapped type template
+contains an Application like `KeepLiteralStrings<T[K]>` where `KeepLiteralStrings<T> = { [K in keyof T]: T[K] }`,
+the evaluation step resolves the placeholder `T` through its constraint (`Record<string, string[]>`),
+collapsing the Application to `string[]`. Since this matches the source value exactly, the reversal
+sees `source == template` and returns `None`, failing to infer `T[K]`. This caused a false TS2345
+error on the `test4` case in `reverseMappedTupleContext.ts`.
+
+**Fix** (constraints.rs, ~15 lines):
+- After the existing evaluation-based reversal path, added Case 2c fallback
+- When `evaluated_template == source_value` (identity-like Application detected), try reversing
+  through the Application's raw type arguments where `IndexAccess(T, K)` is still intact
+- Guard: only applies when evaluated == source, preventing incorrect reversal through
+  non-transparent Applications like `Reducer<S[K], A>`
+
+**Result**: +1 net test passing (`genericCallInferenceConditionalType2.ts`).
+`reverseMappedTupleContext.ts` still fails due to separate array-as-tuple contextual typing issue
+on line 22 (`create([() => 1, [() => ""]])`).
+
+**Remaining work in types/tuple area**:
+- Array literal contextual typing as tuples for mapped type parameters
+- Variadic tuple assignability (variadicTuples2.ts)
+- Rest tuple elements parsing (restTupleElements1.ts)
 
 ## Session 2026-03-03i — TS5107 deprecation diagnostic priority fix (+15 tests)
 
