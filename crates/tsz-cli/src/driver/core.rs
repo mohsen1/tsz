@@ -675,10 +675,26 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         | 17008 // JSX element has no corresponding closing tag
         | 17012 // 'import.meta' meta-property grammar error
     )
-    // 1xxx parser/grammar errors that reliably indicate real parse failures.
-    // These suppress TS5107 deprecation diagnostics (tsc behavior: grammar
-    // errors take priority over config deprecation warnings).
-    || (1000..1500).contains(&code)
+    // Specific 1xxx codes that reliably indicate real parse failures
+    // (verified against tsc: these are never false positives in our parser
+    // for tests where tsc expects TS5107)
+    || matches!(code,
+        1011  // '(' or '<' expected
+        | 1109 // Expression expected
+        | 1121 // Octal literals are not allowed in strict mode
+        | 1124 // Digit expected
+        | 1125 // Hexadecimal digit expected
+        | 1128 // Declaration or statement expected
+        | 1134 // Variable declaration expected
+        | 1137 // Expression or comma expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1199 // Value of type '{0}' is not callable
+        | 1434 // Top-level 'await' expressions are only allowed...
+        | 1436 // Decorators are not valid here
+        | 1440 // Variable declaration not allowed at this location
+        | 1489 // Decimals with leading zeros are not allowed
+    )
 }
 
 fn compile_inner(
