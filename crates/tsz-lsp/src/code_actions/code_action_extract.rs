@@ -24,7 +24,7 @@ impl<'a> CodeActionProvider<'a> {
     /// const extracted = foo.bar.baz;
     /// // ... use extracted here
     /// ```
-    pub(super) fn extract_variable(&self, root: NodeIndex, range: Range) -> Option<CodeAction> {
+    pub fn extract_variable(&self, root: NodeIndex, range: Range) -> Option<CodeAction> {
         // 1. Convert range to offsets
         let start_offset = self.line_map.position_to_offset(range.start, self.source)?;
         let end_offset = self.line_map.position_to_offset(range.end, self.source)?;

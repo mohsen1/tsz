@@ -4,12 +4,15 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use tsz::emitter::Printer;
+use tsz::lsp::code_actions::CodeActionProvider;
 use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
+use tsz::lsp::rename::file_rename::FileRenameProvider;
 use tsz::lsp::rename::linked_editing::LinkedEditingProvider;
 use tsz_solver::TypeInterner;
 
@@ -189,12 +192,89 @@ impl Server {
         )
     }
 
+    pub(crate) fn handle_emit_output(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+
+            let mut printer = Printer::with_source_text_len(&arena, source_text.len());
+            printer.set_source_text(&source_text);
+            printer.emit(root);
+            let output = printer.take_output();
+
+            let out_name = file
+                .strip_suffix(".ts")
+                .or_else(|| file.strip_suffix(".tsx"))
+                .map(|base| format!("{base}.js"))
+                .unwrap_or_else(|| format!("{file}.js"));
+
+            Some(serde_json::json!({
+                "outputFiles": [{
+                    "name": out_name,
+                    "text": output,
+                    "writeByteOrderMark": false,
+                }],
+                "emitSkipped": false,
+            }))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"outputFiles": [], "emitSkipped": true}))),
+        )
+    }
+
     pub(crate) fn handle_get_applicable_refactors(
         &mut self,
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
+            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
+            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+
+            let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&content);
+
+            let range = Range {
+                start: Position {
+                    line: start_line.saturating_sub(1),
+                    character: start_offset.saturating_sub(1),
+                },
+                end: Position {
+                    line: end_line.saturating_sub(1),
+                    character: end_offset.saturating_sub(1),
+                },
+            };
+
+            let provider =
+                CodeActionProvider::new(&arena, &binder, &line_map, file.to_string(), &content);
+
+            let mut refactors = Vec::new();
+
+            // Check if extract variable is applicable
+            if provider.extract_variable(root, range).is_some() {
+                refactors.push(serde_json::json!({
+                    "name": "Extract Symbol",
+                    "description": "Extract expression to variable",
+                    "actions": [{
+                        "name": "constant_extractedConstant",
+                        "description": "Extract to constant in enclosing scope"
+                    }]
+                }));
+            }
+
+            Some(serde_json::json!(refactors))
+        })();
+
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_get_edits_for_refactor(
@@ -202,7 +282,66 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!({"edits": []})))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let refactor = request.arguments.get("refactor")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
+            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
+            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+
+            let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&content);
+
+            let range = Range {
+                start: Position {
+                    line: start_line.saturating_sub(1),
+                    character: start_offset.saturating_sub(1),
+                },
+                end: Position {
+                    line: end_line.saturating_sub(1),
+                    character: end_offset.saturating_sub(1),
+                },
+            };
+
+            let provider =
+                CodeActionProvider::new(&arena, &binder, &line_map, file.to_string(), &content);
+
+            if refactor == "Extract Symbol" {
+                let action = provider.extract_variable(root, range)?;
+                let edit = action.edit?;
+                let mut file_edits = Vec::new();
+                for (fname, edits) in edit.changes {
+                    let mut text_changes = Vec::new();
+                    for e in edits {
+                        text_changes.push(serde_json::json!({
+                            "start": {
+                                "line": e.range.start.line + 1,
+                                "offset": e.range.start.character + 1
+                            },
+                            "end": {
+                                "line": e.range.end.line + 1,
+                                "offset": e.range.end.character + 1
+                            },
+                            "newText": e.new_text
+                        }));
+                    }
+                    file_edits.push(serde_json::json!({
+                        "fileName": fname,
+                        "textChanges": text_changes
+                    }));
+                }
+                return Some(serde_json::json!({ "edits": file_edits }));
+            }
+
+            None
+        })();
+
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"edits": []}))),
+        )
     }
 
     pub(crate) fn handle_organize_imports(
@@ -210,7 +349,63 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request
+                .arguments
+                .get("scope")
+                .and_then(|s| s.get("args"))
+                .and_then(|a| a.get("file"))
+                .and_then(|v| v.as_str())
+                .or_else(|| request.arguments.get("file").and_then(|v| v.as_str()))?;
+
+            let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
+
+            let organize_imports_ignore_case = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("organizeImportsIgnoreCase"))
+                .and_then(serde_json::Value::as_bool)
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("organizeImportsIgnoreCase")
+                        .and_then(serde_json::Value::as_bool)
+                })
+                .unwrap_or(self.organize_imports_ignore_case);
+
+            let line_map = LineMap::build(&content);
+            let provider =
+                CodeActionProvider::new(&arena, &binder, &line_map, file.to_string(), &content)
+                    .with_organize_imports_ignore_case(organize_imports_ignore_case);
+
+            let action = provider.organize_imports(root)?;
+
+            let mut text_changes = Vec::new();
+            if let Some(edit) = action.edit {
+                for (_fname, edits) in edit.changes {
+                    for e in edits {
+                        text_changes.push(serde_json::json!({
+                            "start": {
+                                "line": e.range.start.line + 1,
+                                "offset": e.range.start.character + 1
+                            },
+                            "end": {
+                                "line": e.range.end.line + 1,
+                                "offset": e.range.end.character + 1
+                            },
+                            "newText": e.new_text
+                        }));
+                    }
+                }
+            }
+
+            Some(serde_json::json!([{
+                "fileName": file,
+                "textChanges": text_changes
+            }]))
+        })();
+
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_get_edits_for_file_rename(
@@ -218,7 +413,112 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let old_file = request.arguments.get("oldFilePath")?.as_str()?;
+            let new_file = request.arguments.get("newFilePath")?.as_str()?;
+
+            let old_path = std::path::Path::new(old_file);
+            let new_path = std::path::Path::new(new_file);
+
+            let mut file_changes: Vec<serde_json::Value> = Vec::new();
+
+            // Scan all open files for imports that reference the renamed file
+            let open_files: Vec<(String, String)> = self
+                .open_files
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+
+            for (dep_file, source_text) in &open_files {
+                let (arena, _binder, root, _) = self.parse_and_bind_file(dep_file)?;
+                let line_map = LineMap::build(source_text);
+                let provider = FileRenameProvider::new(&arena, &line_map, source_text);
+                let imports = provider.find_import_specifier_nodes(root);
+
+                let dep_dir = std::path::Path::new(dep_file.as_str()).parent()?;
+                let mut text_changes: Vec<serde_json::Value> = Vec::new();
+
+                for import in &imports {
+                    // Check if this import points to the old file
+                    let spec = &import.current_specifier;
+                    if !spec.starts_with('.') {
+                        continue; // Only relative imports
+                    }
+                    let resolved = dep_dir.join(spec);
+                    let resolved_normalized = Self::normalize_module_path(&resolved);
+                    let old_normalized = Self::normalize_module_path(old_path);
+
+                    if resolved_normalized != old_normalized {
+                        continue;
+                    }
+
+                    // Compute new relative path
+                    let new_rel = Self::compute_relative_import(dep_dir, new_path);
+                    let quote_char = source_text
+                        .get(import.range.start.character as usize..)
+                        .and_then(|s| s.chars().next())
+                        .unwrap_or('"');
+
+                    text_changes.push(serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(import.range.start),
+                        "end": Self::lsp_to_tsserver_position(import.range.end),
+                        "newText": format!("{quote_char}{new_rel}{quote_char}"),
+                    }));
+                }
+
+                if !text_changes.is_empty() {
+                    file_changes.push(serde_json::json!({
+                        "fileName": dep_file,
+                        "textChanges": text_changes,
+                    }));
+                }
+            }
+
+            Some(serde_json::json!(file_changes))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn normalize_module_path(path: &std::path::Path) -> String {
+        let s = path.to_string_lossy();
+        let s = s
+            .strip_suffix(".ts")
+            .or_else(|| s.strip_suffix(".tsx"))
+            .or_else(|| s.strip_suffix(".js"))
+            .or_else(|| s.strip_suffix(".jsx"))
+            .unwrap_or(&s);
+        s.to_string()
+    }
+
+    fn compute_relative_import(from_dir: &std::path::Path, to_file: &std::path::Path) -> String {
+        let to_stem = to_file.with_extension("");
+
+        // Compute relative path components
+        let from_parts: Vec<_> = from_dir.components().collect();
+        let to_parts: Vec<_> = to_stem.components().collect();
+
+        let mut common = 0;
+        while common < from_parts.len().min(to_parts.len())
+            && from_parts[common] == to_parts[common]
+        {
+            common += 1;
+        }
+
+        let ups = from_parts.len() - common;
+        let mut parts: Vec<String> = Vec::new();
+        for _ in 0..ups {
+            parts.push("..".to_string());
+        }
+        for &comp in &to_parts[common..] {
+            parts.push(comp.as_os_str().to_string_lossy().to_string());
+        }
+
+        let rel = parts.join("/");
+        if rel.starts_with('.') {
+            rel
+        } else {
+            format!("./{rel}")
+        }
     }
 
     pub(crate) fn handle_format(
@@ -427,7 +727,7 @@ impl Server {
         )
     }
 
-    fn find_nearest_tsconfig(file: &str) -> Option<String> {
+    pub(super) fn find_nearest_tsconfig(file: &str) -> Option<String> {
         let mut current = std::path::Path::new(file).parent();
         while let Some(dir) = current {
             for name in ["tsconfig.json", "jsconfig.json"] {

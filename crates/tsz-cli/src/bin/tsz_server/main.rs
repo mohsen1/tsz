@@ -883,11 +883,7 @@ impl Server {
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.handle_brace(seq, &request),
             "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
-            "emitOutput" | "emit-output" => self.stub_response(
-                seq,
-                &request,
-                Some(serde_json::json!({"outputFiles": [], "emitSkipped": true})),
-            ),
+            "emitOutput" | "emit-output" => self.handle_emit_output(seq, &request),
             "getMoveToRefactoringFileSuggestions" => self.stub_response(
                 seq,
                 &request,

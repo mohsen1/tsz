@@ -5,6 +5,7 @@
 
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
+use tsz::lsp::highlighting::semantic_tokens::{SemanticTokenType, SemanticTokensProvider};
 use tsz::lsp::position::{LineMap, Position};
 
 impl Server {
@@ -1803,7 +1804,77 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         // getSyntacticClassifications returns ClassifiedSpan[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        // Use the scanner to classify tokens by syntax kind
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
+            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
+            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+
+            let source_text = self.open_files.get(file)?.clone();
+            let line_map = LineMap::build(&source_text);
+
+            let start_pos = Self::tsserver_to_lsp_position(start_line, start_offset);
+            let end_pos = Self::tsserver_to_lsp_position(end_line, end_offset);
+            let start_byte = line_map.position_to_offset(start_pos, &source_text)?;
+            let end_byte = line_map.position_to_offset(end_pos, &source_text)?;
+
+            let spans = Self::classify_tokens_syntactically(
+                &source_text,
+                start_byte as usize,
+                end_byte as usize,
+            );
+
+            Some(serde_json::json!(spans))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn classify_tokens_syntactically(
+        source_text: &str,
+        start: usize,
+        end: usize,
+    ) -> Vec<serde_json::Value> {
+        use tsz_scanner::SyntaxKind;
+        use tsz_scanner::scanner_impl::ScannerState;
+        let mut scanner = ScannerState::new(source_text.to_string(), false);
+        let mut spans = Vec::new();
+
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::EndOfFileToken {
+                break;
+            }
+            let pos = scanner.get_token_start();
+            let token_end = scanner.get_pos();
+            if token_end <= start {
+                continue;
+            }
+            if pos >= end {
+                break;
+            }
+            let classification = match token {
+                SyntaxKind::StringLiteral
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+                | SyntaxKind::TemplateMiddle
+                | SyntaxKind::TemplateTail => "string",
+                SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => "number",
+                SyntaxKind::RegularExpressionLiteral => "regexp",
+                SyntaxKind::SingleLineCommentTrivia | SyntaxKind::MultiLineCommentTrivia => {
+                    "comment"
+                }
+                k if tsz_scanner::token_is_keyword(k) => "keyword",
+                SyntaxKind::Identifier => "identifier",
+                _ => continue,
+            };
+            spans.push(serde_json::json!({
+                "textSpan": { "start": pos, "length": token_end - pos },
+                "classificationType": classification,
+            }));
+        }
+        spans
     }
 
     pub(crate) fn handle_semantic_classifications(
@@ -1812,7 +1883,93 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         // getSemanticClassifications returns ClassifiedSpan[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        // Decode the encoded semantic tokens into ClassifiedSpan format
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+
+            let start_line = request
+                .arguments
+                .get("startLine")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as u32;
+            let end_line = request
+                .arguments
+                .get("endLine")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(u32::MAX as u64) as u32;
+
+            let mut provider =
+                SemanticTokensProvider::new(&arena, &binder, &line_map, &source_text);
+            let encoded = provider.get_semantic_tokens(root);
+
+            // Decode delta-encoded tokens: [deltaLine, deltaStartChar, length, tokenType, modifiers]
+            let mut spans = Vec::new();
+            let mut current_line: u32 = 0;
+            let mut current_char: u32 = 0;
+
+            for chunk in encoded.chunks_exact(5) {
+                let delta_line = chunk[0];
+                let delta_char = chunk[1];
+                let length = chunk[2];
+                let token_type = chunk[3];
+
+                if delta_line > 0 {
+                    current_line += delta_line;
+                    current_char = delta_char;
+                } else {
+                    current_char += delta_char;
+                }
+
+                // Filter to requested range (1-based lines)
+                let line_1based = current_line + 1;
+                if line_1based < start_line {
+                    continue;
+                }
+                if line_1based > end_line {
+                    break;
+                }
+
+                let pos = Position::new(current_line, current_char);
+                let start_offset = line_map.position_to_offset(pos, &source_text)?;
+
+                let classification = Self::semantic_token_type_name(token_type);
+
+                spans.push(serde_json::json!({
+                    "textSpan": { "start": start_offset, "length": length },
+                    "classificationType": classification,
+                }));
+            }
+
+            Some(serde_json::json!(spans))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    const fn semantic_token_type_name(token_type: u32) -> &'static str {
+        match token_type {
+            x if x == SemanticTokenType::Namespace as u32 => "module name",
+            x if x == SemanticTokenType::Type as u32 => "type",
+            x if x == SemanticTokenType::Class as u32 => "class name",
+            x if x == SemanticTokenType::Enum as u32 => "enum name",
+            x if x == SemanticTokenType::Interface as u32 => "interface name",
+            x if x == SemanticTokenType::TypeParameter as u32 => "type parameter name",
+            x if x == SemanticTokenType::Parameter as u32 => "parameter name",
+            x if x == SemanticTokenType::Variable as u32 => "identifier",
+            x if x == SemanticTokenType::Property as u32 => "identifier",
+            x if x == SemanticTokenType::EnumMember as u32 => "enum member name",
+            x if x == SemanticTokenType::Function as u32 => "identifier",
+            x if x == SemanticTokenType::Method as u32 => "identifier",
+            x if x == SemanticTokenType::Keyword as u32 => "keyword",
+            x if x == SemanticTokenType::Comment as u32 => "comment",
+            x if x == SemanticTokenType::String as u32 => "string",
+            x if x == SemanticTokenType::Number as u32 => "number",
+            x if x == SemanticTokenType::Regexp as u32 => "regexp",
+            x if x == SemanticTokenType::Operator as u32 => "operator",
+            x if x == SemanticTokenType::Decorator as u32 => "identifier",
+            _ => "identifier",
+        }
     }
 
     pub(crate) fn handle_compiler_options_diagnostics(
@@ -1820,7 +1977,27 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // getCompilerOptionsDiagnostics returns Diagnostic[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        // getCompilerOptionsDiagnostics — validate tsconfig options
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let config_path = Self::find_nearest_tsconfig(file)?;
+            let config_text = std::fs::read_to_string(&config_path).ok()?;
+
+            let mut diagnostics: Vec<serde_json::Value> = Vec::new();
+
+            // Basic JSON parse validation
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&config_text) {
+                diagnostics.push(serde_json::json!({
+                    "start": { "line": 1, "offset": 1 },
+                    "end": { "line": 1, "offset": 1 },
+                    "text": format!("Invalid JSON in tsconfig: {e}"),
+                    "code": 5083,
+                    "category": "error",
+                }));
+            }
+
+            Some(serde_json::json!(diagnostics))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 }
