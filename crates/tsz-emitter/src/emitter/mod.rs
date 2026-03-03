@@ -71,7 +71,9 @@ pub(crate) use crate::output::source_writer::{
     SourcePosition, SourceWriter, source_position_from_offset,
 };
 #[allow(unused_imports)]
-pub(crate) use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
+pub(crate) use crate::transforms::{
+    ClassDecoratorInfo, ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter,
+};
 pub(crate) use tsz_parser::parser::NodeIndex;
 #[allow(unused_imports)]
 pub(crate) use tsz_parser::parser::node::{Node, NodeArena};
