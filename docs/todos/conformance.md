@@ -1,7 +1,63 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9854/12570 (78.4%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9867/12570 (78.5%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03i — TS5107 deprecation diagnostic priority fix (+15 tests)
+
+### Fixed: TS5107 deprecated option diagnostics suppressed by semantic 17xxx errors
+
+**Area**: classes/constructorDeclarations (64.1% → 71.8%, 14 → 11 failures), plus 10+ other areas
+
+**Root cause**: The grammar error classification in `driver/core.rs` used a blanket `17000..18000`
+range to identify "reliable grammar errors" that should suppress TS5107 deprecation diagnostics.
+This range incorrectly included checker-level semantic errors:
+- TS17009: "'super' must be called before accessing 'this'" — semantic, NOT grammar
+- TS17011: "'super' must be called before accessing a property of 'super'" — semantic, NOT grammar
+
+When these semantic errors were present alongside deprecated options (e.g., `alwaysStrict: false`,
+`target: ES5`), the blanket range classified them as grammar errors, which triggered the "grammar
+errors suppress TS5107" logic. Result: TS5107 was dropped, and only the semantic errors remained —
+but tsc expects ONLY TS5107 (it stops type-checking when deprecated options are detected).
+
+**Fix 1** (driver `core.rs`, ~50 lines):
+- Replaced `(17000..18000).contains(&d.code)` with specific whitelist:
+  - 17002 (JSX closing tag), 17006/17007 (exponentiation LHS), 17008 (JSX unclosed), 17012 (import.meta)
+- Extracted logic into testable `is_grammar_error_for_deprecation_priority()` helper function
+- 4 new unit tests verifying the classification
+
+**Fix 2** (conformance runner `runner.rs`, ~8 lines):
+- UTF-16 BOM test files (TextWithOriginalBytes path) were using empty compiler options
+  instead of parsing directives from decoded text
+- Fixed by calling `parse_test_file(&decoded_text)` to extract `@target`, `@strict`, etc.
+- This was needed for `instanceofOperator.ts` (UTF-16 file with `@target: es5, es2015`)
+
+**Conformance delta**: +15 tests across 10+ areas:
+- `thisInSuperCall.ts` (x4) — PASS (TS17009 no longer suppresses TS5107)
+- `derivedClassSuperCallsWithThisArg.ts` — PASS
+- `derivedClassSuperProperties.ts` — PASS (had 7 extra semantic errors, all cleared by TS5107 fatality)
+- `derivedClassSuperStatementPosition.ts` — PASS
+- `privateNameBadSuper.ts` (x2) — PASS
+- `thisInInvalidContexts.ts` (x2) — PASS
+- `superNewCall1.ts` — PASS
+- `instanceofOperator.ts` — PASS (UTF-16 fix)
+- `intersectionTypeInference3.ts` — PASS (secondary effect)
+- `genericCallInferenceConditionalType1.ts` — PASS (secondary effect)
+
+**Remaining TS5107-missing tests (10 tests)**:
+These have false-positive grammar errors from our parser/checker that tsc doesn't produce:
+- 3x `decoratorOnClassMethod*.ts` — false TS1436 ("Decorators are not valid here")
+- 3x `unicodeExtendedEscapes*.ts` — false TS1125 ("Hexadecimal digit expected")
+- 2x `jsdocParam*.ts` — false TS8024 (JS grammar error in @param tags)
+- `jsDeclarationsClasses.ts` — false TS8022 (JS grammar)
+- `mappedTypeProperties.ts` — false TS1128/TS1166/TS1169/TS1170 (parse errors)
+
+These need parser fixes to stop emitting false grammar errors for the specific test inputs.
+
+**Key insight**: The 17xxx diagnostic range in TypeScript is a mix of grammar and semantic errors.
+When writing grammar-error whitelists, always verify each code individually rather than using
+range-based checks. Checker-emitted 17xxx codes (17009, 17011) behave very differently from
+parser-emitted ones (17002, 17008) in tsc's priority system.
 
 ## Session 2026-03-03h — Union type property accessibility (TS2339 vs TS2445/TS2341)
 
