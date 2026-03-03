@@ -240,7 +240,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // TS1100: `eval` or `arguments` used as a function name in strict mode.
         // In class bodies, `arguments` is reported as TS1210 instead.
+        // Skip for ambient declarations (functions inside `declare global`, `.d.ts` files, etc.)
         if !has_declare
+            && !self.is_ambient_declaration(func_idx)
             && func.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
