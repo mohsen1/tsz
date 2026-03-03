@@ -874,7 +874,7 @@ impl<'a> InferenceContext<'a> {
         let candidate = InferenceCandidate {
             type_id: ty,
             priority,
-            is_fresh_literal: is_literal_type(self.interner, ty),
+            is_fresh_literal: !from_object_property && is_literal_type(self.interner, ty),
             from_object_property,
             object_property_index,
             object_property_name,
