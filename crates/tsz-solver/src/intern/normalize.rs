@@ -376,9 +376,10 @@ impl TypeInterner {
                     self.primitive_class_for(prop.type_id),
                     self.primitive_class_for(other.type_id),
                 )
-                    && a_class != b_class {
-                        return true;
-                    }
+                && a_class != b_class
+            {
+                return true;
+            }
         }
 
         false
