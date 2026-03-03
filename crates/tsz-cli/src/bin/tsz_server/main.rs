@@ -930,8 +930,7 @@ impl Server {
             "compileOnSaveEmitFile" => {
                 self.stub_response(seq, &request, Some(serde_json::json!(false)))
             }
-            "saveto" => self.stub_response(seq, &request, None),
-            "watchChange" => self.stub_response(seq, &request, None),
+            "saveto" | "watchChange" => self.stub_response(seq, &request, None),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),

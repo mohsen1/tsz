@@ -890,7 +890,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // Validate project reference constraints (TS6306, TS6310, TS6202)
     let ref_diagnostics = graph.validate();
     if !ref_diagnostics.is_empty() {
-        let pretty = args
+        let _pretty = args
             .pretty
             .unwrap_or_else(|| std::io::stderr().is_terminal());
         for diag in &ref_diagnostics {

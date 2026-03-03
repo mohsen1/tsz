@@ -1065,6 +1065,8 @@ pub(super) fn create_cross_file_lookup_binder(
     binder
 }
 
+// --- TS directive suppression (not yet wired up) ---
+#[allow(dead_code)]
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
@@ -1076,6 +1078,7 @@ fn build_line_starts(text: &str) -> Vec<u32> {
     starts
 }
 
+#[allow(dead_code)]
 /// Get the 0-based line number for a byte offset.
 fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
     match line_starts.binary_search(&offset) {
@@ -1084,17 +1087,20 @@ fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirectiveKind {
     ExpectError,
     Ignore,
 }
 
+#[allow(dead_code)]
 /// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
 const fn is_directive_separator(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
 }
 
+#[allow(dead_code)]
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
 fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
     if let Some(pos) = comment.find("@ts-expect-error") {
@@ -1112,6 +1118,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
     None
 }
 
+#[allow(dead_code)]
 /// A `@ts-expect-error` or `@ts-ignore` directive found in a source file comment.
 struct TsDirective {
     /// True for `@ts-expect-error`, false for `@ts-ignore`.
@@ -1126,6 +1133,7 @@ struct TsDirective {
     directive_text_start: u32,
 }
 
+#[allow(dead_code)]
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
 fn find_ts_directives(text: &str) -> Vec<TsDirective> {
     let line_starts = build_line_starts(text);
@@ -1208,6 +1216,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
     directives
 }
 
+#[allow(dead_code)]
 /// Apply `@ts-expect-error` and `@ts-ignore` directive suppression to diagnostics.
 ///
 /// 1. Finds all directive comments in the source text

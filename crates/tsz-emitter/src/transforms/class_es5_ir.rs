@@ -112,7 +112,7 @@ pub struct ES5ClassTransformer<'a> {
     transforms: Option<TransformContext>,
     /// Source text for extracting comments
     source_text: Option<&'a str>,
-    /// Class-level decorator NodeIndex list (for legacy decorator lowering)
+    /// Class-level decorator `NodeIndex` list (for legacy decorator lowering)
     class_decorators: Vec<NodeIndex>,
     /// Whether to emit member decorator __decorate calls inside the IIFE
     legacy_decorators: bool,
@@ -140,7 +140,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Enable legacy decorator lowering (emits __decorate calls for members inside the IIFE)
-    pub fn set_legacy_decorators(&mut self, enabled: bool) {
+    pub const fn set_legacy_decorators(&mut self, enabled: bool) {
         self.legacy_decorators = enabled;
     }
 
@@ -363,7 +363,7 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_expression(idx)
     }
 
-    /// Collect decorator NodeIndex list from a modifier list
+    /// Collect decorator `NodeIndex` list from a modifier list
     fn collect_decorators_from_modifiers(&self, modifiers: &Option<NodeList>) -> Vec<NodeIndex> {
         let Some(mods) = modifiers else {
             return Vec::new();

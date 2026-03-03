@@ -41,7 +41,7 @@ use tsz_parser::parser::node::NodeArena;
 
 /// Decorator information to pass to the ES5 class emitter
 pub struct ClassDecoratorInfo {
-    /// Class-level decorator NodeIndex list
+    /// Class-level decorator `NodeIndex` list
     pub class_decorators: Vec<NodeIndex>,
     /// Whether to emit member decorator __decorate calls inside the IIFE
     pub has_member_decorators: bool,
