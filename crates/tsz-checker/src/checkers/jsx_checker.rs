@@ -1321,9 +1321,11 @@ impl<'a> CheckerState<'a> {
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
-                            // Compute the attribute value type for the error message
+                            // Compute the attribute value type for the error message.
+                            // For shorthand boolean attributes, tsc uses the literal
+                            // `true` in the object display (e.g., `{ prop: true; }`).
                             let attr_type_name = if attr_data.initializer.is_none() {
-                                "boolean".to_string()
+                                "true".to_string()
                             } else if let Some(init_node) =
                                 self.ctx.arena.get(attr_data.initializer)
                             {
@@ -1363,11 +1365,10 @@ impl<'a> CheckerState<'a> {
                 // Get actual type of the attribute value
                 if attr_data.initializer.is_none() {
                     // Boolean attribute without value (e.g., <input disabled />)
-                    // tsc treats shorthand JSX attributes as type 'true' for assignability
-                    // since `<Foo x/>` is equivalent to `<Foo x={true}/>`.
-                    // tsc uses 'true' as the source type in error messages (matching the
-                    // actual value), not 'boolean'.
-                    // Update the attribute type for TS2741 source type formatting.
+                    // `<Foo x/>` is equivalent to `<Foo x={true}/>`.
+                    // tsc uses literal `true` in source object types (TS2741: `{ x: true; }`)
+                    // but widens to `boolean` for property-level assignability errors
+                    // (TS2322: `Type 'boolean' is not assignable to type 'number'`).
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
@@ -1844,7 +1845,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let factory = self.ctx.compiler_options.jsx_factory.clone();
+        // Check for per-file /** @jsx factory */ pragma — overrides global factory.
+        // In tsc, the @jsx pragma sets the factory for the current file and
+        // the scope check uses the pragma factory name (not the global one).
+        let pragma_factory = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| super::jsx_checker_attrs::extract_jsx_pragma(&sf.text));
+
+        let factory =
+            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
         if root_ident.is_empty() {
