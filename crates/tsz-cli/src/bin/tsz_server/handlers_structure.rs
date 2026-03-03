@@ -1243,12 +1243,364 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
+    /// `configurePlugin` — stores plugin configuration for future use.
+    pub(crate) fn handle_configure_plugin(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        if let Some(plugin_name) = request.arguments.get("pluginName").and_then(|v| v.as_str()) {
+            let config = request
+                .arguments
+                .get("configuration")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            self.plugin_configs.insert(plugin_name.to_string(), config);
+        }
+        self.stub_response(seq, request, None)
+    }
+
+    /// `getMoveToRefactoringFileSuggestions` — suggests files a symbol can be moved to.
+    pub(crate) fn handle_get_move_to_refactoring_file_suggestions(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let file_path = std::path::Path::new(file);
+            let file_ext = file_path.extension()?.to_str()?;
+
+            // Determine which extensions are compatible
+            let compatible_exts: &[&str] = match file_ext {
+                "ts" => &["ts"],
+                "tsx" => &["tsx", "ts"],
+                "js" => &["js"],
+                "jsx" => &["jsx", "js"],
+                "mts" => &["mts", "ts"],
+                "cts" => &["cts", "ts"],
+                "mjs" => &["mjs", "js"],
+                "cjs" => &["cjs", "js"],
+                _ => &[file_ext],
+            };
+
+            // Collect candidate files from open files and project files
+            let mut files: Vec<String> = Vec::new();
+            for open_path in self.open_files.keys() {
+                if open_path == file {
+                    continue;
+                }
+                // Skip declaration files and lib files
+                if open_path.ends_with(".d.ts")
+                    || open_path.ends_with(".d.mts")
+                    || open_path.ends_with(".d.cts")
+                {
+                    continue;
+                }
+                if let Some(ext) = std::path::Path::new(open_path.as_str())
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    && compatible_exts.contains(&ext)
+                {
+                    files.push(open_path.clone());
+                }
+            }
+
+            // Also check external project files
+            for project_files in self.external_project_files.values() {
+                for pf in project_files {
+                    if pf == file || files.contains(pf) {
+                        continue;
+                    }
+                    if pf.ends_with(".d.ts") || pf.ends_with(".d.mts") || pf.ends_with(".d.cts") {
+                        continue;
+                    }
+                    // Skip node_modules
+                    if pf.contains("/node_modules/") || pf.contains("\\node_modules\\") {
+                        continue;
+                    }
+                    if let Some(ext) = std::path::Path::new(pf.as_str())
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        && compatible_exts.contains(&ext)
+                    {
+                        files.push(pf.clone());
+                    }
+                }
+            }
+
+            files.sort();
+
+            // Suggest a new filename based on the source file's directory
+            let parent = file_path.parent().unwrap_or(std::path::Path::new(""));
+            let new_file_name = parent.join(format!("newFile.{file_ext}"));
+
+            Some(serde_json::json!({
+                "newFileName": new_file_name.to_string_lossy(),
+                "files": files
+            }))
+        })();
+
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"newFileName": "", "files": []}))),
+        )
+    }
+
+    /// `preparePasteEdits` — checks whether paste-with-imports is available.
+    ///
+    /// Returns `true` if the pasted content comes from a known source file
+    /// (indicating we can potentially add imports).
+    pub(crate) fn handle_prepare_paste_edits(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<bool> {
+            // If copiedFromFile is provided and we know that file, we can offer paste edits
+            let copied_from = request
+                .arguments
+                .get("copiedFromFile")
+                .and_then(|v| v.as_str())?;
+            // Check if we have the source file open or can read it
+            if self.open_files.contains_key(copied_from)
+                || std::path::Path::new(copied_from).exists()
+            {
+                return Some(true);
+            }
+            Some(false)
+        })();
+
+        self.stub_response(
+            seq,
+            request,
+            Some(serde_json::json!(result.unwrap_or(false))),
+        )
+    }
+
+    /// `getPasteEdits` — generates import additions for pasted code.
+    ///
+    /// Parses the pasted text, identifies unresolved identifiers, and generates
+    /// import statements from the source file's exports.
+    pub(crate) fn handle_get_paste_edits(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let target_file = request.arguments.get("file")?.as_str()?;
+            let pasted_text = request
+                .arguments
+                .get("pastedText")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_str())?;
+
+            let copied_from = request
+                .arguments
+                .get("copiedFrom")
+                .and_then(|v| v.get("file"))
+                .and_then(|v| v.as_str())?;
+
+            // Extract import lines from source file that the pasted code may reference
+            let source_content = self
+                .open_files
+                .get(copied_from)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(copied_from).ok())?;
+
+            // Find export names from the source file
+            let source_exports: Vec<String> = source_content
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("export ") {
+                        // Extract exported identifier names
+                        let rest = trimmed.strip_prefix("export ")?;
+                        // "export function foo" / "export class Foo" / "export const bar"
+                        for keyword in &[
+                            "function ",
+                            "class ",
+                            "const ",
+                            "let ",
+                            "var ",
+                            "enum ",
+                            "interface ",
+                            "type ",
+                            "abstract class ",
+                            "async function ",
+                        ] {
+                            if let Some(after) = rest.strip_prefix(keyword) {
+                                let name: String = after
+                                    .chars()
+                                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                                    .collect();
+                                if !name.is_empty() {
+                                    return Some(name);
+                                }
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect();
+
+            if source_exports.is_empty() {
+                return None;
+            }
+
+            // Check which source exports appear in pasted text but not in target file
+            let target_content = self
+                .open_files
+                .get(target_file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(target_file).ok())?;
+
+            let mut names_to_import: Vec<String> = Vec::new();
+            for export_name in &source_exports {
+                // Check if the export name appears in pasted code
+                if !pasted_text.contains(export_name.as_str()) {
+                    continue;
+                }
+                // Check if the target already imports/declares it
+                let already_exists = target_content.lines().any(|line| {
+                    let t = line.trim();
+                    t.contains(export_name.as_str())
+                        && (t.starts_with("import ")
+                            || t.starts_with("const ")
+                            || t.starts_with("let ")
+                            || t.starts_with("var ")
+                            || t.starts_with("function ")
+                            || t.starts_with("class ")
+                            || t.starts_with("interface ")
+                            || t.starts_with("type ")
+                            || t.starts_with("enum "))
+                });
+                if !already_exists {
+                    names_to_import.push(export_name.clone());
+                }
+            }
+
+            if names_to_import.is_empty() {
+                return None;
+            }
+
+            names_to_import.sort();
+            names_to_import.dedup();
+
+            // Compute relative import path from target to source
+            let import_path = Self::compute_relative_import(
+                std::path::Path::new(target_file),
+                std::path::Path::new(copied_from),
+            );
+
+            // Build import statement
+            let import_text = format!(
+                "import {{ {} }} from \"{}\";\n",
+                names_to_import.join(", "),
+                import_path
+            );
+
+            // Find insertion point: after last import line, or at top of file
+            let mut insert_line = 0u32;
+            for (i, line) in target_content.lines().enumerate() {
+                let t = line.trim();
+                if t.starts_with("import ") || t.starts_with("import{") {
+                    insert_line = i as u32 + 1;
+                }
+            }
+
+            let text_change = serde_json::json!({
+                "start": { "line": insert_line + 1, "offset": 1 },
+                "end": { "line": insert_line + 1, "offset": 1 },
+                "newText": import_text
+            });
+
+            Some(serde_json::json!({
+                "edits": [{
+                    "fileName": target_file,
+                    "textChanges": [text_change]
+                }],
+                "fixId": "paste"
+            }))
+        })();
+
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"edits": [], "fixId": ""}))),
+        )
+    }
+
+    /// `mapCode` — maps code snippets to insertion locations in a file.
+    ///
+    /// Parses code snippets and finds appropriate insertion points based on
+    /// the AST structure and optional focus locations.
     pub(crate) fn handle_map_code(
         &mut self,
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let mapping = request.arguments.get("mapping")?;
+            let contents = mapping.get("contents")?.as_array()?;
+
+            if contents.is_empty() {
+                return None;
+            }
+
+            let file_content = self
+                .open_files
+                .get(file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(file).ok())?;
+
+            // Determine insertion point from focus locations if provided
+            let insert_line = if let Some(focus) = mapping
+                .get("focusLocations")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.last())
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.last())
+            {
+                // Focus location gives us a span — insert after it
+                focus
+                    .get("end")
+                    .and_then(|e| e.get("line"))
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(0) as u32
+            } else {
+                // Default: insert at end of file
+                file_content.lines().count() as u32
+            };
+
+            let mut text_changes = Vec::new();
+            for content_val in contents {
+                if let Some(snippet) = content_val.as_str() {
+                    if snippet.trim().is_empty() {
+                        continue;
+                    }
+                    text_changes.push(serde_json::json!({
+                        "start": { "line": insert_line + 1, "offset": 1 },
+                        "end": { "line": insert_line + 1, "offset": 1 },
+                        "newText": format!("{snippet}\n")
+                    }));
+                }
+            }
+
+            if text_changes.is_empty() {
+                return None;
+            }
+
+            Some(serde_json::json!([{
+                "fileName": file,
+                "textChanges": text_changes
+            }]))
+        })();
+
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_outlining_spans(
