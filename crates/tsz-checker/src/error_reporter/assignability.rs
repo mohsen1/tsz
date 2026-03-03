@@ -222,7 +222,8 @@ impl<'a> CheckerState<'a> {
         // Suppress cascade errors from unresolved types
         if source == TypeId::ERROR
             || target == TypeId::ERROR
-            || source == TypeId::ANY
+            // any is assignable to everything except never — tsc reports TS2322 for any→never
+            || (source == TypeId::ANY && target != TypeId::NEVER)
             || target == TypeId::ANY
             || source == TypeId::UNKNOWN
             || target == TypeId::UNKNOWN

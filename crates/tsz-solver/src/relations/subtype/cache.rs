@@ -80,8 +80,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Any is assignable to anything (when allowed)
-        if allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
+        // Any is assignable to anything except never (when allowed).
+        // tsc: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never);`
+        if allow_any
+            && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
+            && target != TypeId::NEVER
+        {
             return SubtypeResult::True;
         }
 

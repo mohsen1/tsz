@@ -187,8 +187,10 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        matches!(source, TypeId::ERROR | TypeId::ANY)
+        matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
+            // any is assignable to everything except never — tsc reports TS2322 for any→never
+            || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
             || contains_infer_types(self.ctx.types, source)
