@@ -380,7 +380,7 @@ impl<'a> Printer<'a> {
     /// Detect the original quote character used in source text.
     /// Scans forward from node.pos to skip leading trivia (whitespace/comments)
     /// and find the actual quote character.
-    fn detect_original_quote(&self, node: &Node) -> Option<char> {
+    pub(in crate::emitter) fn detect_original_quote(&self, node: &Node) -> Option<char> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
         let start = node.pos as usize;

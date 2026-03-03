@@ -559,8 +559,9 @@ impl<'a> Printer<'a> {
         if node.kind == SyntaxKind::JsxText as u16 {
             if let Some(text) = self.arena.get_jsx_text(node) {
                 let processed = process_jsx_text(&text.text);
+                let decoded = decode_jsx_entities(&processed);
                 self.write("\"");
-                self.write(&escape_jsx_string(&processed));
+                self.write(&escape_jsx_text_for_js_with_quote(&decoded, '"'));
                 self.write("\"");
                 return;
             }
@@ -618,12 +619,21 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an attribute value, preserving original quote style for string literals.
+    /// For string literals, decodes HTML entities and Unicode-escapes non-ASCII.
     fn emit_jsx_attr_value(&mut self, value: &JsxAttrValue) {
         match value {
             JsxAttrValue::StringNode(idx) => {
-                // Emit via the standard string literal emitter which preserves
-                // the original quote character from the source text.
-                self.emit(*idx);
+                let node = self.arena.get(*idx);
+                let lit = node.and_then(|n| self.arena.get_literal(n));
+                if let (Some(n), Some(lit_data)) = (node, lit) {
+                    let decoded = decode_jsx_entities(&lit_data.text);
+                    let quote = self.detect_original_quote(n).unwrap_or('"');
+                    self.write_char(quote);
+                    self.write(&escape_jsx_text_for_js_with_quote(&decoded, quote));
+                    self.write_char(quote);
+                } else {
+                    self.emit(*idx);
+                }
             }
             JsxAttrValue::Bool(b) => {
                 self.write(if *b { "true" } else { "false" });
@@ -1084,21 +1094,121 @@ fn process_jsx_text(text: &str) -> String {
     parts.join(" ")
 }
 
-/// Escape a string for JS string literal context.
-fn escape_jsx_string(s: &str) -> String {
+/// Escape a string for JS string literal context with entity decoding and Unicode escaping.
+/// `quote` is the surrounding quote char (' or ") so we know which to escape.
+fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> String {
     let mut result = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
             '\\' => result.push_str("\\\\"),
-            '"' => result.push_str("\\\""),
             '\n' => result.push_str("\\n"),
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
-            '\'' => result.push_str("\\'"),
+            c if c == quote => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Non-ASCII chars get \uXXXX escaping (or surrogate pairs for > U+FFFF)
+            c if c as u32 > 0x7E => {
+                let cp = c as u32;
+                if cp > 0xFFFF {
+                    // UTF-16 surrogate pair
+                    let hi = 0xD800 + ((cp - 0x10000) >> 10);
+                    let lo = 0xDC00 + ((cp - 0x10000) & 0x3FF);
+                    result.push_str(&format!("\\u{:04X}\\u{:04X}", hi, lo));
+                } else {
+                    result.push_str(&format!("\\u{:04X}", cp));
+                }
+            }
             _ => result.push(c),
         }
     }
     result
+}
+
+/// Decode HTML/XML entities in JSX text.
+/// Handles named entities (&amp; &lt; &gt; &quot; &middot; &hellip; etc.),
+/// numeric decimal (&#123;), and hex (&#x7D;) references.
+/// Unknown named entities are left as-is (e.g. &notAnEntity;).
+fn decode_jsx_entities(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            // Collect entity body until ';' or non-entity char
+            let mut body = String::new();
+            let mut found_semi = false;
+            while let Some(&next) = chars.peek() {
+                if next == ';' {
+                    chars.next();
+                    found_semi = true;
+                    break;
+                }
+                if next.is_alphanumeric() || next == '#' {
+                    body.push(next);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if found_semi {
+                if let Some(decoded) = resolve_entity(&body) {
+                    result.push_str(&decoded);
+                } else {
+                    // Unknown entity -- leave as-is
+                    result.push('&');
+                    result.push_str(&body);
+                    result.push(';');
+                }
+            } else {
+                result.push('&');
+                result.push_str(&body);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Resolve a single HTML entity body (without & and ;) to its character(s).
+fn resolve_entity(body: &str) -> Option<String> {
+    // Numeric: &#123; or &#x7D;
+    if body.starts_with('#') {
+        let num_part = &body[1..];
+        let cp = if num_part.starts_with('x') || num_part.starts_with('X') {
+            u32::from_str_radix(&num_part[1..], 16).ok()?
+        } else {
+            num_part.parse::<u32>().ok()?
+        };
+        return char::from_u32(cp).map(|c| c.to_string());
+    }
+    // Named entities
+    let c = match body {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "nbsp" => '\u{00A0}',
+        "middot" => '\u{00B7}',
+        "mdash" => '\u{2014}',
+        "ndash" => '\u{2013}',
+        "hellip" => '\u{2026}',
+        "laquo" => '\u{00AB}',
+        "raquo" => '\u{00BB}',
+        "bull" => '\u{2022}',
+        "copy" => '\u{00A9}',
+        "reg" => '\u{00AE}',
+        "trade" => '\u{2122}',
+        "hearts" => '\u{2665}',
+        "larr" => '\u{2190}',
+        "rarr" => '\u{2192}',
+        "uarr" => '\u{2191}',
+        "darr" => '\u{2193}',
+        _ => return None,
+    };
+    Some(c.to_string())
 }
 
 /// Check if a property name needs quoting in an object literal.
