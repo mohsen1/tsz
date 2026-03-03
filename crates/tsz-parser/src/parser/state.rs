@@ -201,7 +201,7 @@ impl ParserState {
     /// - `parse_semicolon()` uses `abs_diff > 3`
     ///
     /// Returns true if we should report an error, false if we should suppress it
-    fn should_report_error(&self) -> bool {
+    pub(crate) fn should_report_error(&self) -> bool {
         // Always report first error
         if self.last_error_pos == 0 {
             return true;
@@ -1345,9 +1345,17 @@ impl ParserState {
 
     /// Error: TS1389 - '{0}' is not allowed as a variable declaration name.
     /// Emitted when a reserved word appears as the binding name of a var/let/const/using declaration.
+    ///
+    /// In tsc, the reserved word is NOT consumed — the variable declaration list aborts and the
+    /// keyword is reparsed by the statement loop. For `var class;`, this means `class` gets parsed
+    /// as a class declaration, which then emits TS1005 `'{' expected.` when it finds `;`.
+    /// We consume the token to avoid complex recovery differences, but explicitly emit the TS1005
+    /// that tsc would produce when `class` is the keyword (since the class declaration would
+    /// expect `{` at the semicolon position).
     pub(crate) fn error_reserved_word_in_variable_declaration(&mut self) {
         if self.should_report_error() {
             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let keyword = self.token();
             let word = self.current_keyword_text();
             let msg = diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
                 .replace("{0}", word);
@@ -1357,6 +1365,13 @@ impl ParserState {
             );
             // Consume the reserved word token to prevent cascading errors
             self.next_token();
+            // In tsc, `var class;` causes the variable declaration list to abort, then the
+            // statement loop reparses `class` as a class declaration which expects `{` but
+            // finds `;`, emitting TS1005 '{' expected.' at the semicolon. We emit this
+            // directly since we consume the token rather than letting it be reparsed.
+            if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
         }
     }
 

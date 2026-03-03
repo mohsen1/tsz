@@ -196,7 +196,15 @@ impl BinderState {
 
             if let Some(exports) = prior_exports {
                 for (name, &child_id) in exports.iter() {
-                    self.current_scope.set(name.clone(), child_id);
+                    // Filter out enum members from namespace scope seeding.
+                    // Enum members should only be accessible via qualified form (e.g., Enum.Member).
+                    let is_enum_member = self
+                        .symbols
+                        .get(child_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member {
+                        self.current_scope.set(name.clone(), child_id);
+                    }
                 }
             }
 

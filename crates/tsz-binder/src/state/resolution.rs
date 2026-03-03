@@ -4,7 +4,7 @@
 //! lookup, filtered name resolution, private identifier resolution, import
 //! resolution with re-export chain following, and scope discovery.
 
-use crate::{ContainerKind, ScopeId, SymbolId};
+use crate::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tracing::{Level, debug, span};
@@ -190,9 +190,19 @@ impl BinderState {
                         self.get_symbol_with_libs(container_sym_id, lib_binders)
                     && let Some(exports) = container_symbol.exports.as_ref()
                     && let Some(member_id) = exports.get(name)
-                    && let Some(found) = consider(member_id)
                 {
-                    return Some(found);
+                    // Filter out enum members from Module scope exports.
+                    // Enum members should only be accessible via qualified form (e.g., Enum.Member),
+                    // not as unqualified names inside merged namespace bodies.
+                    let is_enum_member = self
+                        .symbols
+                        .get(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member {
+                        if let Some(found) = consider(member_id) {
+                            return Some(found);
+                        }
+                    }
                 }
 
                 scope_id = scope.parent;
@@ -293,9 +303,16 @@ impl BinderState {
             && let Some(container_symbol) = self.get_symbol_with_libs(container_sym_id, lib_binders)
             && let Some(exports) = container_symbol.exports.as_ref()
             && let Some(member_id) = exports.get(name)
-            && let Some(found) = consider(member_id)
         {
-            return Some(found);
+            let is_enum_member = self
+                .symbols
+                .get(member_id)
+                .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+            if !is_enum_member {
+                if let Some(found) = consider(member_id) {
+                    return Some(found);
+                }
+            }
         }
 
         None
