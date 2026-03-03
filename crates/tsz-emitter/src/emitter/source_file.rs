@@ -128,10 +128,14 @@ impl<'a> Printer<'a> {
         // We use prev_end to track the previous statement's end position;
         // for the first statement, we use node.pos to preserve file-level comments.
         // Track position of first erased statement for header comment filtering.
+        // Only set when the erased statement is at the START of the file (no
+        // non-erased statements before it). This prevents suppressing header
+        // comments that belong to early non-erased statements.
         let mut first_erased_stmt_pos: Option<u32> = None;
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_erased_end: Option<u32> = None;
+            let mut seen_non_erased = false;
             let stmt_nodes = &source.statements.nodes;
             for (stmt_i, &stmt_idx) in stmt_nodes.iter().enumerate() {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
@@ -167,7 +171,9 @@ impl<'a> Printer<'a> {
                         //   belonging to the previous non-erased statement.
                         let range_start = if let Some(pe) = prev_erased_end {
                             pe
-                        } else if first_erased_stmt_pos.is_none() {
+                        } else if first_erased_stmt_pos.is_none() && !seen_non_erased {
+                            // Only track for header comment filtering when the
+                            // erased statement is at the very start of the file.
                             let actual_start =
                                 self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                             first_erased_stmt_pos = Some(actual_start);
@@ -179,6 +185,7 @@ impl<'a> Printer<'a> {
                         prev_erased_end = Some(stmt_token_end);
                     } else {
                         prev_erased_end = None;
+                        seen_non_erased = true;
                     }
                 }
             }
