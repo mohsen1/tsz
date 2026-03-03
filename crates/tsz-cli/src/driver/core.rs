@@ -752,6 +752,9 @@ fn compile_inner(
     if resolved.allow_importing_ts_extensions {
         resolved.checker.allow_importing_ts_extensions = true;
     }
+    if resolved.rewrite_relative_import_extensions {
+        resolved.checker.rewrite_relative_import_extensions = true;
+    }
     if config.is_none()
         && args.module.is_none()
         && matches!(resolved.printer.module, ModuleKind::None)

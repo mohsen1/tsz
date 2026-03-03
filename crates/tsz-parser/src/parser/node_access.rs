@@ -32,10 +32,10 @@ use super::syntax_kind_ext::{
     EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, FUNCTION_DECLARATION,
     FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION, IMPORT_TYPE,
     INDEX_SIGNATURE, INTERFACE_DECLARATION, METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK,
-    MODULE_DECLARATION, NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN,
-    PARAMETER, PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
-    SATISFIES_EXPRESSION, SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION, TYPE_PREDICATE,
-    VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
+    MODULE_DECLARATION, NAMED_EXPORTS, NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION,
+    OBJECT_BINDING_PATTERN, PARAMETER, PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION,
+    PROPERTY_SIGNATURE, SATISFIES_EXPRESSION, SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION,
+    TYPE_PREDICATE, VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
 impl NodeArena {
@@ -375,6 +375,12 @@ impl NodeArena {
                         k if k == MODULE_DECLARATION => {
                             self.is_namespace_instantiated(export_decl.export_clause)
                         }
+                        // Named exports (`export { name }`) make a namespace instantiated.
+                        // tsc resolves each specifier to check if it has a value meaning,
+                        // but at the parser level we conservatively treat all named exports
+                        // as potentially instantiating (matches tsc's practical behavior
+                        // for import-alias re-export patterns).
+                        k if k == NAMED_EXPORTS => true,
                         _ => false,
                     }
                 } else {
