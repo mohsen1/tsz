@@ -1,7 +1,40 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9884/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9886/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03n — Rest callback parameter contextual typing (+3 tests)
+
+### Fixed: Rest callback parameters getting wrong contextual type from variadic tuple patterns
+
+**Area**: types/tuple (64.7% → improved), also compiler/ and classes/members
+
+**Root cause**: When contextually typing a callback with a rest parameter like `(...x) => {}`,
+the checker called `get_parameter_type(0)` which expands a tuple rest param `[A, B, C]` and
+returns element 0 (`A`). For rest callback params, the full tuple type should be returned.
+
+Example: `pipe<T>(...args: [...T, (...values: T) => void])` called as
+`pipe("foo", 123, true, (...x) => {})` — T is correctly inferred as `[string, number, boolean]`,
+but the callback's rest param `x` was typed as `"foo"` (first element) instead of the tuple.
+
+**Fix** (3 files):
+- `contextual/extractors.rs`: Added `extract_rest_param_type_at()` function that collects
+  remaining params into a tuple instead of returning just the element at position
+- `contextual/core.rs`: Added `get_rest_parameter_type()` method to `ContextualTypeContext`
+  using new `RestParameterExtractor` visitor
+- `checker/function_type.rs`: When param has `dot_dot_dot_token`, use `get_rest_parameter_type()`
+  instead of `get_parameter_type()`
+
+**Tests added**: 3 unit tests in `contextual_tests.rs`:
+- `test_contextual_rest_param_from_tuple_rest` — rest param from `(...values: [A, B, C])`
+- `test_contextual_rest_param_from_individual_params` — rest param from `(a: A, b: B, c: C)`
+- `test_contextual_rest_param_from_mixed_params` — rest param from `(a: A, ...rest: B[])`
+
+**Tests fixed**: contextuallyTypingRestParameters, privateNamesConstructorChain-1/-2
+
+**Remaining in variadicTuples2**: TS2555 on line 70 (`ft2(0)`) — emitting arity error instead
+of argument type mismatch for rest tuple params that require minimum elements. Separate issue
+in `arg_count_bounds` for variadic tuple rest parameters.
 
 ## Session 2026-03-03m — Object property display ordering for tuple-like types
 
