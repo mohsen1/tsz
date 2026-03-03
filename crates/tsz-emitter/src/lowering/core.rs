@@ -441,12 +441,15 @@ impl<'a> LoweringPass<'a> {
         }) else {
             return true;
         };
-        let mut start = node.end as usize;
-        if let Some(import_decl) = self.arena.get_import_decl(node)
+        // Use the module specifier end as the base offset, since node.end may
+        // include trailing trivia that extends into the next statement.
+        let mut start = if let Some(import_decl) = self.arena.get_import_decl(node)
             && let Some(module_node) = self.arena.get(import_decl.module_specifier)
         {
-            start = start.max(module_node.end as usize);
-        }
+            module_node.end as usize
+        } else {
+            node.end as usize
+        };
         start = start.min(source_text.len());
         let bytes = source_text.as_bytes();
         while start < bytes.len() {
