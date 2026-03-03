@@ -323,6 +323,19 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)
         });
 
+        // When the contextual type is a homomorphic mapped type (e.g., { [K in keyof T]: ... }),
+        // array literals should be typed as tuples to preserve per-element type info.
+        // Homomorphic mapped types preserve array/tuple structure, so the input must
+        // maintain individual element types for reverse mapped type inference to work.
+        // Without this, array literals become Array(union) which loses element-level detail.
+        let force_tuple_for_mapped = tuple_context.is_none()
+            && resolved_contextual_type.is_some_and(|resolved| {
+                tsz_solver::type_queries::is_homomorphic_mapped_type_context(
+                    self.ctx.types,
+                    resolved,
+                )
+            });
+
         // Use the applicable (narrowed) type for contextual typing when available,
         // falling back to the full resolved contextual type.
         // When tuple context came from a type parameter constraint, don't use it for
@@ -503,6 +516,21 @@ impl<'a> CheckerState<'a> {
 
         if tuple_context.is_some() {
             return factory.tuple(tuple_elements);
+        }
+
+        // When contextual type is a homomorphic mapped type, force tuple typing.
+        // This preserves per-element types for reverse mapped type inference.
+        if force_tuple_for_mapped {
+            let mapped_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
+                .iter()
+                .map(|&type_id| tsz_solver::TupleElement {
+                    type_id,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                })
+                .collect();
+            return factory.tuple(mapped_tuple_elements);
         }
 
         // When in a const assertion context, array literals become tuples (not arrays)
