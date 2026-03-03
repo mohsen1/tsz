@@ -889,7 +889,7 @@ impl Runner {
                     Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
                 }
             }
-            DecodedSourceText::TextWithOriginalBytes(_decoded_text, original_bytes) => {
+            DecodedSourceText::TextWithOriginalBytes(decoded_text, original_bytes) => {
                 if print_test_files {
                     file_preview = Some(format!(
                         "\n--- {} (UTF-16 BOM, {} bytes) ---\n",
@@ -899,7 +899,13 @@ impl Runner {
                 }
 
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
-                    let options: HashMap<String, String> = HashMap::new();
+                    // Parse directives from the decoded text so we get the correct
+                    // compiler options (target, strict, etc.) for the tsconfig.
+                    // Previously this was `HashMap::new()` which meant UTF-16 tests
+                    // ran with default (empty) options, missing deprecated-option
+                    // diagnostics like TS5107 for `target: es5`.
+                    let parsed_directives = parse_test_file(&decoded_text)?;
+                    let options = parsed_directives.directives.options;
                     let ext = path
                         .extension()
                         .and_then(|e| e.to_str())
