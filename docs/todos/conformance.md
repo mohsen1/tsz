@@ -1,7 +1,66 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9831/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9836/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03e — IIFE control flow analysis
+
+### Fixed: IIFE bodies treated as part of containing control flow
+
+**Area**: controlFlow (63.2% → 64.9%, 21 → 20 failures)
+
+**Root cause**: Non-async, non-generator IIFEs (Immediately Invoked Function Expressions) were treated
+as regular closures in the binder's flow graph. This meant:
+1. Variables narrowed before the IIFE lost their narrowing inside the body (closure boundary reset)
+2. Assignments inside IIFEs didn't propagate to the outer scope's control flow
+3. Return statements inside IIFEs made the outer flow unreachable
+
+**tsc's approach**: tsc treats non-async, non-generator IIFEs as part of the containing control flow:
+- No `FlowStart` node is created → narrowing flows through naturally
+- `currentFlow` is NOT restored after the body → assignments propagate to outer scope
+- `return` statements redirect to a branch label (not the outer function's return)
+- `currentReturnTarget` is set to a new branch label for the IIFE's return paths
+
+**Fix** (binder, `declaration.rs` + `binding.rs` + `state/mod.rs`, ~120 lines):
+1. `bind_function_expression()` and `bind_arrow_function()`: detect IIFEs via
+   `!func.is_async && !func.asterisk_token && arena.is_immediately_invoked(idx)`.
+   For IIFEs, skip `with_fresh_flow_inner()` and bind body inline in outer flow context.
+2. `CALL_EXPRESSION` handler: for IIFEs, bind arguments BEFORE the function expression
+   (matching tsc's `bindEach(node.arguments); bind(node.expression)` order).
+3. Added `return_targets: Vec<FlowNodeId>` to BinderState — IIFE return statements
+   redirect flow to this label. After the body, the return label becomes `current_flow`.
+4. `with_fresh_flow_inner()`: saves/restores `return_targets` to prevent nested
+   non-IIFE functions from leaking to enclosing IIFE return labels.
+5. Return statement handler: if `return_targets.last()` exists, adds antecedent to
+   the return target before setting flow to unreachable.
+
+**Key design insight**: By NOT creating a `FlowStart` node for IIFE bodies, the checker's
+closure boundary check (`is_captured_variable` at START nodes) is never triggered. Narrowing
+flows through naturally without any checker-side changes. The `return_targets` stack mirrors
+the function nesting, and `with_fresh_flow_inner`'s save/restore prevents leakage.
+
+**Tests**: 5 unit tests in `state/tests.rs`:
+- `iife_no_flow_start_node` — regular IIFE has 1 FlowStart (file only)
+- `non_iife_function_gets_flow_start_node` — regular function has 2 FlowStarts
+- `async_iife_gets_flow_start_node` — async IIFE treated as regular closure
+- `generator_iife_gets_flow_start_node` — generator IIFE treated as regular closure
+- `arrow_iife_no_flow_start_node` — arrow IIFE has 1 FlowStart (file only)
+
+**Conformance delta**: +1 test (9835 → 9836):
+- `controlFlowIIFE.ts` — PASS (6 false positives removed: TS2339×3, TS2356, TS18048, TS2454)
+
+**Not fixed (remaining controlFlow failures)**:
+- `controlFlowIfStatement.ts`: extra TS2322 — `typeof x.p` type query doesn't use narrowed type
+- `controlFlowNoIntermediateErrors.ts`: extra TS2367 — loop back-edge doesn't widen type
+- `controlFlowOptionalChain.ts`: missing TS2454 + several extras — optional chain narrowing gaps
+- `controlFlowGenericTypes.ts`: extra TS2322 — generic type narrowing
+- `dependentDestructuredVariables.ts`: parser issues (TS1005, TS1096, TS1131)
+- `exhaustiveSwitchStatements1.ts`: exhaustive switch narrowing incomplete
+
+**Files changed**: `crates/tsz-binder/src/binding/declaration.rs`,
+`crates/tsz-binder/src/nodes/binding.rs`, `crates/tsz-binder/src/state/core.rs`,
+`crates/tsz-binder/src/state/mod.rs`, `crates/tsz-binder/src/state/tests.rs`,
+`crates/tsz-checker/src/checkers/jsx_checker.rs` (LOC trim)
 
 ## Session 2026-03-03d — JSDoc @implements tag checking for JS files
 
