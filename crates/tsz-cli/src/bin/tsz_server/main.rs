@@ -549,6 +549,8 @@ pub(crate) struct Server {
     pub(crate) _log_config: LogConfig,
     /// Whether telemetry responses should be emitted.
     pub(crate) enable_telemetry: bool,
+    /// Plugin configurations stored via `configurePlugin` command.
+    pub(crate) plugin_configs: FxHashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -613,6 +615,7 @@ impl Server {
             _server_mode: server_mode,
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,
+            plugin_configs: FxHashMap::default(),
         })
     }
 
@@ -884,20 +887,12 @@ impl Server {
             "brace" => self.handle_brace(seq, &request),
             "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
             "emitOutput" | "emit-output" => self.handle_emit_output(seq, &request),
-            "getMoveToRefactoringFileSuggestions" => self.stub_response(
-                seq,
-                &request,
-                Some(serde_json::json!({"newFileName": "", "files": []})),
-            ),
-            "preparePasteEdits" => {
-                self.stub_response(seq, &request, Some(serde_json::json!(false)))
+            "getMoveToRefactoringFileSuggestions" => {
+                self.handle_get_move_to_refactoring_file_suggestions(seq, &request)
             }
-            "getPasteEdits" => self.stub_response(
-                seq,
-                &request,
-                Some(serde_json::json!({"edits": [], "fixId": ""})),
-            ),
-            "configurePlugin" => self.stub_response(seq, &request, None),
+            "preparePasteEdits" => self.handle_prepare_paste_edits(seq, &request),
+            "getPasteEdits" => self.handle_get_paste_edits(seq, &request),
+            "configurePlugin" => self.handle_configure_plugin(seq, &request),
             "breakpointStatement" => self.handle_breakpoint_statement(seq, &request),
             "jsxClosingTag" => self.handle_jsx_closing_tag(seq, &request),
             "braceCompletion" => self.handle_brace_completion(seq, &request),

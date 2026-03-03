@@ -1,8 +1,9 @@
 # tsserver Compatibility — Remaining Work
 
 ## Status
-tsz-server implements ~95% of tsserver's public commands. The fourslash test suite
-passes 2,540/2,540, and most commands return real results.
+tsz-server implements all tsserver public commands. The fourslash test suite
+passes 2,540/2,540. All commands return real results or protocol-compatible
+responses.
 
 ## P0 — Stubbed commands with existing infrastructure to support them
 
@@ -24,12 +25,12 @@ passes 2,540/2,540, and most commands return real results.
 - [x] `getSyntacticClassifications` — scanner-based token classification (string, number, keyword, etc.).
 - [x] `getSemanticClassifications` — decoded from `SemanticTokensProvider` delta encoding.
 
-## P2 — Low priority / edge-case commands
+## P2 — Edge-case commands
 
-- [ ] `getMoveToRefactoringFileSuggestions` — returns empty. Needs move-to-file refactoring.
-- [ ] `preparePasteEdits` / `getPasteEdits` — returns empty. VS Code paste-with-imports feature.
-- [ ] `configurePlugin` — no-op. No plugin system.
-- [ ] `mapCode` — returns `[]`. Code mapping / source maps.
+- [x] `getMoveToRefactoringFileSuggestions` — scans open/project files filtered by extension, suggests new filename.
+- [x] `preparePasteEdits` / `getPasteEdits` — paste-with-imports: detects exports from source file, generates import statements in target.
+- [x] `configurePlugin` — stores plugin configuration in server for future plugin system use.
+- [x] `mapCode` — inserts code snippets at focus location or end of file.
 
 ## Protocol commands (dispatched, minimal responses)
 
