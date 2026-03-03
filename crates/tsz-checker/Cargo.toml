@@ -66,5 +66,9 @@ path = "tests/spread_rest_tests.rs"
 name = "ts1210_class_arguments_tests"
 path = "tests/ts1210_class_arguments_tests.rs"
 
+[[test]]
+name = "jsdoc_implements_tests"
+path = "tests/jsdoc_implements_tests.rs"
+
 [lints]
 workspace = true
