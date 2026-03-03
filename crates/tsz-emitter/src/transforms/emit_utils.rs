@@ -193,6 +193,22 @@ pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> b
             }
             false
         }
+        // `import x = require("...")` (external module reference) doesn't instantiate.
+        // But `import X = Namespace` (internal alias) DOES instantiate.
+        k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+            if let Some(import_decl) = arena.get_import_decl(node) {
+                // Check if it's type-only first
+                if import_decl.is_type_only {
+                    return true;
+                }
+                // External module reference: `require("...")` produces a string literal
+                // as module_specifier. Entity name aliases produce identifiers/qualified names.
+                if let Some(ref_node) = arena.get(import_decl.module_specifier) {
+                    return ref_node.kind == SyntaxKind::StringLiteral as u16;
+                }
+            }
+            false
+        }
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             if let Some(export_decl) = arena.get_export_decl(node) {
                 if export_decl.is_type_only {

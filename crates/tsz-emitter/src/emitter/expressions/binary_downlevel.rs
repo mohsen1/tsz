@@ -15,20 +15,76 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     pub(in crate::emitter) fn emit_exponentiation_expression(&mut self, binary: &BinaryExprData) {
+        // Unwrap type assertion parens from operands: `(<number>--temp) ** 3` has
+        // parens around a type assertion that gets stripped in JS, leaving `--temp`
+        // which doesn't need parens inside Math.pow() args.
+        // Non-type-assertion parens like `(void --temp)` must be preserved.
+        let left = self.unwrap_type_assertion_paren(binary.left);
+        let right = self.unwrap_type_assertion_paren(binary.right);
         if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
             self.emit(binary.left);
             self.write(" = Math.pow(");
-            self.emit(binary.left);
+            self.emit(left);
             self.write(", ");
-            self.emit(binary.right);
+            self.emit(right);
             self.write(")");
         } else {
             self.write("Math.pow(");
-            self.emit(binary.left);
+            self.emit(left);
             self.write(", ");
-            self.emit(binary.right);
+            self.emit(right);
             self.write(")");
         }
+    }
+
+    /// Unwrap `ParenthesizedExpression` wrapping type assertions for Math.pow() args.
+    ///
+    /// When `(<number>--temp) ** 3` is lowered to `Math.pow(...)`, the type assertion
+    /// `<number>` is stripped, and the remaining `(--temp)` parens are unnecessary
+    /// inside a function argument. But `(void --temp) ** 3` must keep its parens
+    /// because `Math.pow(void --temp, 3)` would be parsed differently.
+    fn unwrap_type_assertion_paren(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return idx;
+        }
+        let Some(paren) = self.arena.get_parenthesized(node) else {
+            return idx;
+        };
+        if paren.expression.is_none() {
+            return idx;
+        }
+        // Only unwrap if the inner expression is a type assertion chain
+        let inner_expr = self.unwrap_type_assertions(paren.expression);
+        if inner_expr != paren.expression {
+            // The paren wrapped a type assertion — return the underlying expression
+            inner_expr
+        } else {
+            // Not a type assertion — keep the paren as-is
+            idx
+        }
+    }
+
+    /// Unwrap chains of TypeAssertion / AsExpression / SatisfiesExpression
+    /// to find the underlying runtime expression.
+    fn unwrap_type_assertions(&self, mut idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.arena.get(idx) {
+            if matches!(
+                node.kind,
+                syntax_kind_ext::TYPE_ASSERTION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+            ) {
+                if let Some(ta) = self.arena.get_type_assertion(node) {
+                    idx = ta.expression;
+                    continue;
+                }
+            }
+            break;
+        }
+        idx
     }
 
     pub(in crate::emitter) fn emit_logical_assignment_expression(
