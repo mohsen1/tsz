@@ -296,9 +296,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
             query::PropertyAccessResolutionKind::Union(members) => {
+                // Each union member must be resolved with a fresh visited set.
+                // Without this, when two union branches contain the same Application type
+                // (e.g., `Foo<number> & { a: string } | Foo<number> & { b: number }`),
+                // the visited set from the first branch prevents the Application from
+                // being evaluated in the second branch, causing false TS2339 errors.
                 let resolved_members: Vec<TypeId> = members
                     .iter()
-                    .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
+                    .map(|&member| {
+                        let mut branch_visited = visited.clone();
+                        self.resolve_type_for_property_access_inner(member, &mut branch_visited)
+                    })
                     .collect();
                 factory.union_preserve_members(resolved_members)
             }
