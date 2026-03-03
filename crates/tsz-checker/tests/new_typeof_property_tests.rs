@@ -123,3 +123,47 @@ let instance = new c.prop();
         "Should emit TS2554 for wrong arg count on typeof constructor, got: {codes:?}"
     );
 }
+
+/// `typeof x.p` inside an if-block where `x.p` has been narrowed by an equality
+/// check should resolve to the narrowed type, not the declared union type.
+/// This matches TypeScript's control-flow–aware typeof type queries.
+#[test]
+fn test_typeof_qualified_name_narrowed_by_equality_check() {
+    let codes = get_error_codes(
+        r#"
+interface I<T> {
+  p: T;
+}
+function e(x: I<"A" | "B">) {
+    if (x.p === "A") {
+        let a: "A" = (null as unknown as typeof x.p)
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Should not emit TS2322 when typeof x.p is narrowed by x.p === \"A\", got: {codes:?}"
+    );
+}
+
+/// `typeof x.p` outside of any narrowing block should still resolve to
+/// the full declared type (no spurious narrowing).
+#[test]
+fn test_typeof_qualified_name_no_narrowing_outside_guard() {
+    let codes = get_error_codes(
+        r#"
+interface I<T> {
+  p: T;
+}
+function e(x: I<"A" | "B">) {
+    let a: "A" = (null as unknown as typeof x.p)
+}
+"#,
+    );
+    // "A" | "B" is not assignable to "A", so TS2322 should fire
+    assert!(
+        codes.contains(&2322),
+        "Should emit TS2322 when typeof x.p is not narrowed, got: {codes:?}"
+    );
+}

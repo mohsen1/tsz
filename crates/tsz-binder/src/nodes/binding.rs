@@ -822,11 +822,14 @@ impl BinderState {
                 self.current_flow = flow;
             }
 
-            // Type assertions / as / satisfies
+            // Type assertions / as / satisfies — record flow so type-position children
+            // (e.g. QualifiedName inside `typeof x.p` in `... as typeof x.p`) can
+            // find the enclosing flow context via parent-walk for flow narrowing.
             k if k == syntax_kind_ext::TYPE_ASSERTION
                 || k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
             {
+                self.record_flow(idx);
                 if node.has_data()
                     && let Some(assertion) = arena.type_assertions.get(node.data_index as usize)
                 {
@@ -955,8 +958,9 @@ impl BinderState {
                 }
             }
 
-            // Parenthesized expressions - traverse into inner expression
+            // Parenthesized expressions - record flow and traverse into inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.record_flow(idx);
                 if let Some(paren) = arena.get_parenthesized(node) {
                     self.bind_node(arena, paren.expression);
                 }
