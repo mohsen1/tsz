@@ -902,7 +902,13 @@ impl<'a> Printer<'a> {
         } else {
             self.write_line();
             self.increase_indent();
+            let before = self.writer.len();
             self.emit(body);
+            // If the body was completely erased (e.g. const enum, interface),
+            // emit `;` to produce a valid empty statement.
+            if self.writer.len() == before {
+                self.write(";");
+            }
             self.decrease_indent();
         }
     }
@@ -1158,7 +1164,13 @@ impl<'a> Printer<'a> {
 
         self.emit(labeled.label);
         self.write(": ");
+        let before = self.writer.len();
         self.emit(labeled.statement);
+        // If the labeled body was completely erased (e.g. const enum, interface),
+        // emit `;` to produce a valid empty statement.
+        if self.writer.len() == before {
+            self.write(";");
+        }
     }
 
     pub(super) fn emit_do_statement(&mut self, node: &Node) {
@@ -1178,7 +1190,13 @@ impl<'a> Printer<'a> {
         } else {
             self.write_line();
             self.increase_indent();
+            let before = self.writer.len();
             self.emit(loop_stmt.statement);
+            // If the body was completely erased (e.g. const enum, interface),
+            // emit `;` to produce a valid empty statement.
+            if self.writer.len() == before {
+                self.write(";");
+            }
             self.decrease_indent();
             self.write_line();
         }
@@ -1210,8 +1228,26 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(with_stmt.then_statement) {
             self.map_closing_paren_backward(node.pos, body_node.pos);
         }
-        self.write(") ");
-        self.emit(with_stmt.then_statement);
+        self.write(")");
+        let body_is_block = self
+            .arena
+            .get(with_stmt.then_statement)
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        if body_is_block {
+            self.write(" ");
+            self.emit(with_stmt.then_statement);
+        } else {
+            self.write_line();
+            self.increase_indent();
+            let before = self.writer.len();
+            self.emit(with_stmt.then_statement);
+            // If the body was completely erased (e.g. const enum, interface),
+            // emit `;` to produce a valid empty statement.
+            if self.writer.len() == before {
+                self.write(";");
+            }
+            self.decrease_indent();
+        }
     }
 }
 
