@@ -362,7 +362,7 @@ impl ProjectReferenceGraph {
     }
 
     /// Validate project reference constraints.
-    /// Returns a list of (error_code, message) pairs for any violations.
+    /// Returns a list of (`error_code`, message) pairs for any violations.
     pub fn validate(&self) -> Vec<ProjectReferenceDiagnostic> {
         let mut diagnostics = Vec::new();
 

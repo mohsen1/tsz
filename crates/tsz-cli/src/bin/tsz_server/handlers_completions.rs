@@ -1681,13 +1681,12 @@ impl Server {
                         };
                         let normalize_no_ext = |s: &str| {
                             let s = normalize_source(s);
-                            let s = s
-                                .strip_suffix(".js")
+
+                            s.strip_suffix(".js")
                                 .or_else(|| s.strip_suffix(".mjs"))
                                 .or_else(|| s.strip_suffix(".cjs"))
                                 .unwrap_or(&s)
-                                .to_string();
-                            s
+                                .to_string()
                         };
                         let item_source = normalize_no_ext(item_source);
                         let requested_source = normalize_no_ext(requested_source);

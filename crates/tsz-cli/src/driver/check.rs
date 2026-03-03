@@ -741,11 +741,7 @@ pub(super) fn collect_diagnostics(
                             }
                             // Suppress if a structural parse error is within the cascade window
                             !structural_error_positions.iter().any(|&err_pos| {
-                                let dist = if err_pos <= diag.start {
-                                    diag.start - err_pos
-                                } else {
-                                    err_pos - diag.start
-                                };
+                                let dist = diag.start.abs_diff(err_pos);
                                 dist <= MAX_CASCADE_DISTANCE
                             })
                         });
@@ -1052,11 +1048,7 @@ pub(super) fn check_file_for_parallel<'a>(
                         return true;
                     }
                     !structural_error_positions.iter().any(|&err_pos| {
-                        let dist = if err_pos <= diag.start {
-                            diag.start - err_pos
-                        } else {
-                            err_pos - diag.start
-                        };
+                        let dist = diag.start.abs_diff(err_pos);
                         dist <= MAX_CASCADE_DISTANCE
                     })
                 });

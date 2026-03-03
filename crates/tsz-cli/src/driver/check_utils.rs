@@ -141,10 +141,8 @@ pub(super) fn required_helpers(
 
     // esModuleInterop helpers: __importStar for namespace imports/re-exports,
     // __importDefault for default named imports/re-exports.
-    if es_module_interop {
-        if let Some(helper) = detect_es_module_interop_helper(file) {
-            return vec![helper];
-        }
+    if es_module_interop && let Some(helper) = detect_es_module_interop_helper(file) {
+        return vec![helper];
     }
 
     Vec::new()
@@ -210,14 +208,14 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
                                 prop_node.end.saturating_sub(prop_node.pos),
                             ));
                         }
-                        if let Some(ident) = file.arena.get_identifier(prop_node) {
-                            if ident.escaped_text == "default" {
-                                return Some((
-                                    "__importDefault",
-                                    prop_node.pos,
-                                    prop_node.end.saturating_sub(prop_node.pos),
-                                ));
-                            }
+                        if let Some(ident) = file.arena.get_identifier(prop_node)
+                            && ident.escaped_text == "default"
+                        {
+                            return Some((
+                                "__importDefault",
+                                prop_node.pos,
+                                prop_node.end.saturating_sub(prop_node.pos),
+                            ));
                         }
                     }
                 }
@@ -272,14 +270,14 @@ fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u3
                             check_node.end.saturating_sub(check_node.pos),
                         ));
                     }
-                    if let Some(ident) = file.arena.get_identifier(check_node) {
-                        if ident.escaped_text == "default" {
-                            return Some((
-                                "__importDefault",
-                                check_node.pos,
-                                check_node.end.saturating_sub(check_node.pos),
-                            ));
-                        }
+                    if let Some(ident) = file.arena.get_identifier(check_node)
+                        && ident.escaped_text == "default"
+                    {
+                        return Some((
+                            "__importDefault",
+                            check_node.pos,
+                            check_node.end.saturating_sub(check_node.pos),
+                        ));
                     }
                 }
             }
@@ -1093,7 +1091,7 @@ enum DirectiveKind {
 }
 
 /// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
-fn is_directive_separator(b: u8) -> bool {
+const fn is_directive_separator(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
 }
 

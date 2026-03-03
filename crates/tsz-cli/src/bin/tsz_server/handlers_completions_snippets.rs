@@ -656,12 +656,9 @@ impl Server {
             wanted.push(pascal.clone());
             wanted.push(format!("{pascal}_"));
         }
-        for target in wanted {
-            if project_items.iter().any(|item| item.label == target) {
-                return Some(target);
-            }
-        }
-        None
+        wanted
+            .into_iter()
+            .find(|target| project_items.iter().any(|item| item.label == *target))
     }
 
     fn class_member_snippet_underscored_type_names(
@@ -785,11 +782,9 @@ impl Server {
                 let existing_ok =
                     Self::class_member_snippet_insert_text(&provider_candidates[idx]).is_some();
                 let fallback_ok = Self::class_member_snippet_insert_text(&fallback).is_some();
-                if !existing_ok && fallback_ok {
-                    provider_candidates[idx] = fallback;
-                } else if existing_ok
-                    && fallback_ok
-                    && detail_score(&fallback) > detail_score(&provider_candidates[idx])
+                if fallback_ok
+                    && (!existing_ok
+                        || detail_score(&fallback) > detail_score(&provider_candidates[idx]))
                 {
                     provider_candidates[idx] = fallback;
                 }
