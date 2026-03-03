@@ -165,6 +165,40 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.take_output()
     }
 
+    /// Emit a simple async body with no await, returning hoisted var names.
+    pub fn emit_simple_generator_body_with_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<String>) {
+        self.emit_generator_body_and_hoisted_vars(body_idx, false)
+    }
+
+    /// Emit a generator body with await, returning hoisted var names.
+    pub fn emit_generator_body_with_await_and_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<String>) {
+        self.emit_generator_body_and_hoisted_vars(body_idx, true)
+    }
+
+    fn emit_generator_body_and_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+    ) -> (String, Vec<String>) {
+        let mut ir = self
+            .transformer
+            .transform_generator_body(body_idx, has_await);
+        let hoisted = AsyncES5Transformer::extract_and_remove_var_decls(&mut ir);
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.emit(&ir);
+        (printer.take_output(), hoisted)
+    }
+
     /// Emit a complete async function transformation
     pub fn emit_async_function(&mut self, func_idx: NodeIndex) -> String {
         let ir = self.transformer.transform_async_function(func_idx);

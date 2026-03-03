@@ -223,10 +223,10 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let generator_body = if body_has_await {
-                async_emitter.emit_generator_body_with_await(body)
+            let (generator_body, hoisted_vars) = if body_has_await {
+                async_emitter.emit_generator_body_with_await_and_hoisted_vars(body)
             } else {
-                async_emitter.emit_simple_generator_body(body)
+                async_emitter.emit_simple_generator_body_with_hoisted_vars(body)
             };
             let generator_mappings = async_emitter.take_mappings();
 
@@ -236,6 +236,18 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function () {");
             self.write_line();
             self.increase_indent();
+            // Emit hoisted var declarations before return __generator(...)
+            if !hoisted_vars.is_empty() {
+                self.write("var ");
+                for (i, var_name) in hoisted_vars.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                }
+                self.write(";");
+                self.write_line();
+            }
             if !generator_mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
                 let base_line = self.writer.current_line();
