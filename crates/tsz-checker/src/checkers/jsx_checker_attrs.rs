@@ -1,5 +1,5 @@
 //! JSX attribute compatibility checks (union props, spread property types, overwrite detection,
-//! overload resolution).
+//! overload resolution, and pragma parsing).
 //!
 //! Extracted from `jsx_checker.rs` to keep the main file under 2000 LOC.
 
@@ -7,6 +7,64 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+
+/// Extract the `@jsx` pragma factory name from a source file's leading comments.
+///
+/// Matches the tsc behavior: scans for `@jsx <identifier>` in block comments
+/// (`/* ... */` or `/** ... */`). Returns the factory expression (e.g., `"h"`,
+/// `"React.createElement"`). Only the first occurrence is used.
+pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
+    // Only scan leading comments (pragmas must appear before code).
+    // We limit scanning to prevent searching entire large files.
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    while pos < bytes.len() {
+        // Skip whitespace
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        // Look for block comments (/* ... */ or /** ... */)
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                // Search for @jsx within this comment
+                if let Some(jsx_pos) = comment_body.find("@jsx ") {
+                    let after_jsx = &comment_body[jsx_pos + 5..];
+                    let factory: String = after_jsx
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
+                        .collect();
+                    if !factory.is_empty() {
+                        return Some(factory);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break; // Unterminated comment
+            }
+            continue;
+        }
+        // Look for line comments (// ...)
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            // Line comments can't contain @jsx pragmas (tsc only uses block comments)
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        // Hit non-comment code — stop scanning
+        break;
+    }
+    None
+}
 
 /// A JSX attribute with its source information for overload matching.
 struct JsxAttrInfo {
@@ -77,7 +135,12 @@ impl<'a> CheckerState<'a> {
             let app = self.ctx.types.factory().application(ica, vec![inst]);
             parts.push(self.format_type(app));
         }
-        parts.push(self.format_type(props_type));
+        // Skip empty object types (`{}`) in the display — tsc simplifies
+        // `IntrinsicAttributes & {}` to just `IntrinsicAttributes`.
+        let props_str = self.format_type(props_type);
+        if props_str != "{}" {
+            parts.push(props_str);
+        }
         parts.join(" & ")
     }
 
@@ -641,18 +704,47 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if the failure is a weak type violation (TS2559).
+        // When the target type has only optional properties (a "weak type") and the source
+        // shares no common property names, tsc emits TS2559 instead of TS2322.
+        {
+            let analysis = self.analyze_assignability_failure(spread_type, props_type);
+            if matches!(
+                analysis.failure_reason,
+                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+            ) {
+                let source_str = self.format_type(spread_type);
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    &[&source_str, display_target],
+                );
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    tag_name_idx,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                );
+                return;
+            }
+        }
+
         // Resolve the spread type to extract its properties
         let resolved_spread = self.evaluate_type_with_env(spread_type);
         let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
+
+        // tsc uses the component's props type name (e.g., "PoisonedProp") for TS2322
+        // in spread attribute checking, NOT the full intersection with IntrinsicAttributes.
+        // The full intersection display_target is only used for TS2559 (weak type).
+        let props_display = self.format_type(props_type);
 
         let Some(spread_shape) =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
         else {
             // If spread type has no object shape (e.g., type parameter), emit
-            // whole-type TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'".
+            // whole-type TS2322: "Type 'U' is not assignable to type 'Attribs1'".
             let spread_name = self.format_type(spread_type);
             let message =
-                format!("Type '{spread_name}' is not assignable to type '{display_target}'.");
+                format!("Type '{spread_name}' is not assignable to type '{props_display}'.");
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
@@ -726,11 +818,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Emit a single TS2322 with whole-type message matching tsc's format:
-        // "Type '{ x: number; }' is not assignable to type 'IntrinsicAttributes & Attribs1'."
+        // "Type '{ x: number; }' is not assignable to type 'PoisonedProp'."
+        // tsc uses the props type name, not the full IntrinsicAttributes intersection.
         if has_type_mismatch {
             let spread_name = self.format_type(spread_type);
             let message =
-                format!("Type '{spread_name}' is not assignable to type '{display_target}'.");
+                format!("Type '{spread_name}' is not assignable to type '{props_display}'.");
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
