@@ -172,6 +172,61 @@ impl<'a> EnumES5Transformer<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
     }
 
+    /// Extract a leading block/JSDoc comment that appears immediately before `pos`.
+    ///
+    /// Scans backward from `pos` skipping whitespace/newlines.  If we land on `*/`
+    /// we scan further back for the matching `/*` and return the comment text.
+    fn extract_leading_comment_at(&self, pos: u32) -> Option<String> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let pos = pos as usize;
+        if pos == 0 {
+            return None;
+        }
+        let mut i = pos;
+        // Skip trailing whitespace/newlines before the token
+        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            i -= 1;
+        }
+        // Check if we landed on `*/` (end of a block comment)
+        if i >= 2 && bytes[i - 1] == b'/' && bytes[i - 2] == b'*' {
+            let comment_end = i;
+            let mut j = i - 2;
+            loop {
+                if j < 2 {
+                    break;
+                }
+                if bytes[j - 1] == b'/' && bytes[j] == b'*' {
+                    let comment_start = j - 1;
+                    let comment_text = &source_text[comment_start..comment_end];
+                    if comment_text.starts_with("/**") && !comment_text.starts_with("/***") {
+                        return Some(comment_text.to_string());
+                    }
+                    if comment_text.starts_with("/*") {
+                        return Some(comment_text.to_string());
+                    }
+                    break;
+                }
+                j -= 1;
+            }
+        }
+        None
+    }
+
+    /// Extract trailing inline comment from right after the member name end.
+    ///
+    /// Handles `/* block */` and `// line` comments on the same line.
+    fn extract_trailing_comment_at(&self, end: u32) -> Option<String> {
+        let source_text = self.source_text?;
+        for comment in crate::emitter::get_trailing_comment_ranges(source_text, end as usize) {
+            let text = &source_text[comment.pos as usize..comment.end as usize];
+            if text.starts_with("//") || text.starts_with("/*") {
+                return Some(text.to_string());
+            }
+        }
+        None
+    }
+
     /// Transform enum members to IR statements
     fn transform_members(&mut self, members: &NodeList, enum_name: &str) -> Vec<IRNode> {
         let mut statements = Vec::new();
@@ -266,12 +321,42 @@ impl<'a> EnumES5Transformer<'a> {
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
 
+            // Extract leading comment (JSDoc/block comment before the member name)
+            let leading_comment = self.extract_leading_comment_at(member_node.pos);
+            // Extract trailing inline comment after the member name (e.g., `/* blue */`)
+            // The comment sits right after the name identifier (before any initializer or comma).
+            let name_end = self
+                .arena
+                .get(member_data.name)
+                .map_or(member_node.pos, |n| n.end);
+            let trailing_comment = self.extract_trailing_comment_at(name_end);
+
+            // Insert leading comment before the member statement
+            if let Some(text) = leading_comment {
+                let is_block = text.starts_with("/*");
+                // Strip the `/*` / `/**` prefix and `*/` suffix for the Comment node text
+                let inner = if is_block {
+                    text[2..text.len().saturating_sub(2)].to_string()
+                } else {
+                    text
+                };
+                statements.push(IRNode::Comment {
+                    text: inner,
+                    is_block,
+                });
+            }
+
             // Track the evaluated value for use in subsequent member initializers
             if let Some(val) = self.last_value {
                 self.member_values.insert(member_name.clone(), val);
             }
             self.member_names.insert(member_name);
             statements.push(stmt);
+
+            // Insert trailing comment after the member statement (same line)
+            if let Some(text) = trailing_comment {
+                statements.push(IRNode::TrailingComment(text));
+            }
         }
 
         statements

@@ -173,70 +173,78 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Extract leading `JSDoc` comment from a node (if any).
-    /// Returns the comment text including the /** ... */ delimiters.
+    /// Returns the comment text including the `/** ... */` delimiters.
+    ///
+    /// Scans backward from `node.pos` (the token start, not including trivia)
+    /// looking for an immediately adjacent block comment separated only by
+    /// whitespace.  This avoids the pitfall of the old forward-scan approach
+    /// which was confused when `node.end` of the previous sibling included
+    /// the current member's trivia.
     fn extract_leading_comment(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
         let source_text = self.source_text?;
-
-        // Scan backwards from node.pos to find the start of this member's section
-        // We need to go back far enough to include any JSDoc comments
         let bytes = source_text.as_bytes();
-        let mut search_pos = node.pos as usize;
-
-        // Scan back to find opening brace or end of previous member
-        let mut brace_depth = 0;
-        while search_pos > 0 {
-            let ch = bytes[search_pos - 1];
-
-            // Track brace depth (we're scanning backwards, so braces are reversed)
-            if ch == b'}' {
-                brace_depth += 1;
-            } else if ch == b'{' {
-                if brace_depth == 0 {
-                    // Found the opening brace of the class body - stop here
-                    break;
-                }
-                brace_depth -= 1;
-            }
-
-            // Also stop at semicolons at depth 0 (end of previous member)
-            if ch == b';' && brace_depth == 0 {
-                break;
-            }
-
-            search_pos -= 1;
-
-            // Safety limit: don't scan back more than 1000 chars
-            if node.pos as usize - search_pos > 1000 {
-                search_pos = node.pos.saturating_sub(1000) as usize;
-                break;
-            }
+        let pos = node.pos as usize;
+        if pos == 0 {
+            return None;
         }
 
-        // Get comments starting from the beginning of this member's "section"
-        let comments = crate::emitter::get_leading_comment_ranges(source_text, search_pos);
+        // Scan backward from `pos` skipping whitespace/newlines.
+        // If we find `*/` we look further back for the matching `/*`.
+        let mut i = pos;
+        // Skip trailing whitespace/newlines before the token
+        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            i -= 1;
+        }
 
-        // Find the last JSDoc-style comment that ends before or at node.pos
-        for comment in comments.iter().rev() {
-            // Only consider comments that end before or at the node's start
-            if comment.end > node.pos {
-                continue;
-            }
-
-            let comment_text = &source_text[comment.pos as usize..comment.end as usize];
-            // Check if it's a JSDoc comment (starts with /** not just /*)
-            if comment_text.starts_with("/**") && !comment_text.starts_with("/***") {
-                return Some(comment_text.to_string());
-            }
-            // Also accept regular block comments for now
-            if comment_text.starts_with("/*") && !comment_text.starts_with("/**") {
-                return Some(comment_text.to_string());
+        // Check if we landed on `*/` (end of a block comment)
+        if i >= 2 && bytes[i - 1] == b'/' && bytes[i - 2] == b'*' {
+            let comment_end = i; // exclusive end of comment text
+            // Scan backwards to find the matching `/*`
+            // We look for the LAST `/*` before this position that is a true
+            // comment opener (not inside a string — simplified scan).
+            let mut j = i - 2; // j points at `*` of `*/`
+            loop {
+                if j < 2 {
+                    break;
+                }
+                // Look for `/*` or `/**`
+                if bytes[j - 1] == b'/' && bytes[j] == b'*' {
+                    // Found `/*` at j-1..j+1
+                    let comment_start = j - 1;
+                    let comment_text = &source_text[comment_start..comment_end];
+                    if comment_text.starts_with("/**") && !comment_text.starts_with("/***") {
+                        return Some(comment_text.to_string());
+                    }
+                    if comment_text.starts_with("/*") {
+                        return Some(comment_text.to_string());
+                    }
+                    break;
+                }
+                j -= 1;
             }
         }
 
         None
     }
 
-    /// Extract trailing comment on the same line as a class method declaration.
+    /// Deprecated shim kept for call sites in `class_es5_ir_members.rs` that
+    /// still use the old signature.  Delegates to the new single-argument form.
+    #[allow(dead_code)]
+    fn extract_leading_comment_from(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        _prev_end: Option<u32>,
+    ) -> Option<String> {
+        self.extract_leading_comment(node)
+    }
+
+    /// Extract trailing comment on the same line as a class method's closing `}`.
+    ///
+    /// Finds the first `}` at brace depth 0 within the body block — that is, the
+    /// actual closing brace of the function body — and returns any trailing comment
+    /// on the same line.  Previous code scanned the entire body range and picked the
+    /// LAST `}` with a trailing comment, which could accidentally pick up the class's
+    /// closing brace comment instead of the method's own comment.
     fn extract_trailing_comment_for_method(&self, body_idx: NodeIndex) -> Option<String> {
         let source_text = self.source_text?;
         let body_node = self.arena.get(body_idx)?;
@@ -246,18 +254,51 @@ impl<'a> ES5ClassTransformer<'a> {
         if start >= end {
             return None;
         }
-        let mut trailing = None;
-        for (offset, &byte) in bytes[start..end].iter().enumerate() {
-            if byte == b'}'
-                && let Some(comment) =
-                    crate::emitter::get_trailing_comment_ranges(source_text, (start + offset) + 1)
-                        .first()
-            {
-                trailing =
-                    Some(source_text[comment.pos as usize..comment.end as usize].to_string());
+        // Track brace depth starting from the opening `{` of the block.
+        // We skip the initial opening brace (depth stays 0 initially).
+        // For each `{` after that, depth increments; for each `}`, if depth==0
+        // we have found the matching closing brace of the block; otherwise decrement.
+        let mut depth: usize = 0;
+        let mut in_string: Option<u8> = None; // `'` or `"`
+        let mut i = start;
+        while i < end {
+            let byte = bytes[i];
+            // Rudimentary string/template literal skip to avoid counting braces inside strings
+            if in_string.is_none() {
+                match byte {
+                    b'{' => {
+                        // Skip the opening brace of the body block itself (depth stays 0)
+                        if i == start {
+                            // opening brace of the block — don't count
+                        } else {
+                            depth += 1;
+                        }
+                    }
+                    b'}' => {
+                        if depth == 0 {
+                            // This is the closing brace of the block
+                            let after = i + 1;
+                            return crate::emitter::get_trailing_comment_ranges(source_text, after)
+                                .first()
+                                .map(|c| source_text[c.pos as usize..c.end as usize].to_string());
+                        }
+                        depth -= 1;
+                    }
+                    b'\'' | b'"' | b'`' => {
+                        in_string = Some(byte);
+                    }
+                    _ => {}
+                }
+            } else if let Some(delim) = in_string {
+                if byte == b'\\' {
+                    i += 1; // skip escaped char
+                } else if byte == delim {
+                    in_string = None;
+                }
             }
+            i += 1;
         }
-        trailing
+        None
     }
 
     fn extract_trailing_comment_for_node(
@@ -530,6 +571,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Find constructor implementation
         let mut constructor_data = None;
+        let mut constructor_member_node: Option<&tsz_parser::parser::node::Node> = None;
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -540,6 +582,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
                 // Only use constructor with body (not overload signatures)
                 if ctor_data.body.is_some() {
+                    constructor_member_node = Some(member_node);
                     constructor_data = Some(ctor_data);
                     break;
                 }
@@ -551,12 +594,17 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut params = Vec::new();
         let mut body_source_range = None;
         let mut trailing_comment = None;
+        let mut leading_comment = None;
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
 
         if let Some(ctor) = constructor_data {
             // Extract parameters
             params = self.extract_parameters(&ctor.parameters);
             trailing_comment = self.extract_trailing_comment_for_method(ctor.body);
+            // Extract leading JSDoc/block comment from the constructor declaration.
+            if let Some(member_node) = constructor_member_node {
+                leading_comment = self.extract_leading_comment(member_node);
+            }
             // ES5 class-lowered constructors should follow TypeScript's normalized
             // multi-line function body formatting, not original source single-line shape.
             body_source_range = None;
@@ -650,6 +698,7 @@ impl<'a> ES5ClassTransformer<'a> {
             parameters: params,
             body: ctor_body,
             body_source_range,
+            leading_comment,
         };
 
         if let Some(comment) = trailing_comment {

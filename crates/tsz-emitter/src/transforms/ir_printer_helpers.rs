@@ -121,11 +121,37 @@ impl<'a> IRPrinter<'a> {
             }
         }
 
-        // Emit the rest of the body
-        for stmt in body {
+        // Emit the rest of the body, handling Comment/TrailingComment nodes.
+        // A Comment before a statement is emitted as a leading comment on its own line.
+        // A TrailingComment after a statement is emitted on the same line as the statement.
+        let mut i = 0;
+        while i < body.len() {
+            let node = &body[i];
+            // Skip standalone TrailingComment nodes (consumed by peek-ahead below)
+            if matches!(node, IRNode::TrailingComment(_)) {
+                i += 1;
+                continue;
+            }
+            // Leading comment: emit on its own line before the statement
+            if let IRNode::Comment { .. } = node {
+                self.write_indent();
+                self.emit_node(node);
+                self.write_line();
+                i += 1;
+                continue;
+            }
             self.write_indent();
-            self.emit_node(stmt);
+            self.emit_node(node);
+            // Peek ahead for trailing comment on the same line
+            if i + 1 < body.len()
+                && let IRNode::TrailingComment(text) = &body[i + 1]
+            {
+                self.write(" ");
+                self.write(text);
+                i += 1; // consume the trailing comment
+            }
             self.write_line();
+            i += 1;
         }
 
         self.decrease_indent();

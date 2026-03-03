@@ -475,6 +475,19 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                // Skip exported variable statements where all declarations have no
+                // initializer (e.g., `export var b: number;`).  These emit no code, so
+                // their leading JSDoc comment must be suppressed rather than orphaned.
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(inner_node) = self.arena.get(export.export_clause)
+                    && inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && self.namespace_variable_has_no_initializers(export.export_clause)
+                {
+                    self.skip_comments_for_erased_node(stmt_node);
+                    continue;
+                }
+
                 // Compute upper bound for trailing comment scan: use the next statement's
                 // position to avoid scanning past the current statement into the next line.
                 // For the last statement, use the body's closing brace position to avoid
@@ -1063,6 +1076,38 @@ impl<'a> Printer<'a> {
             self.emit_trailing_comments_before(token_end, comment_upper_bound);
             self.write_line();
         }
+    }
+
+    /// Returns true when a variable statement node has no initializers in any of its
+    /// declarators (e.g., `export var b: number;`).  Used to suppress orphaned leading
+    /// comments for exported variable declarations that produce no runtime code.
+    fn namespace_variable_has_no_initializers(&self, var_stmt_idx: NodeIndex) -> bool {
+        let Some(var_node) = self.arena.get(var_stmt_idx) else {
+            return false;
+        };
+        let Some(var_stmt) = self.arena.get_variable(var_node) else {
+            return false;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if decl.initializer.is_some() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Get export names from a declaration clause (function, class, variable, enum)

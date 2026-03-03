@@ -11,10 +11,14 @@ fn test_ir_enum_numeric() {
             EnumMember {
                 name: "A".to_string(),
                 value: EnumMemberValue::Auto(0),
+                leading_comment: None,
+                trailing_comment: None,
             },
             EnumMember {
                 name: "B".to_string(),
                 value: EnumMemberValue::Auto(1),
+                leading_comment: None,
+                trailing_comment: None,
             },
         ],
         namespace_export: None,
@@ -35,10 +39,14 @@ fn test_ir_enum_string() {
             EnumMember {
                 name: "A".to_string(),
                 value: EnumMemberValue::String("alpha".to_string()),
+                leading_comment: None,
+                trailing_comment: None,
             },
             EnumMember {
                 name: "B".to_string(),
                 value: EnumMemberValue::String("beta".to_string()),
+                leading_comment: None,
+                trailing_comment: None,
             },
         ],
         namespace_export: None,

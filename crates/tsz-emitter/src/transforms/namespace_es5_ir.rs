@@ -904,6 +904,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
             body_source_range,
+            leading_comment: None,
         };
 
         if is_exported {

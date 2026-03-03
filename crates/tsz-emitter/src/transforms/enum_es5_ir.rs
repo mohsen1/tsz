@@ -111,6 +111,8 @@ fn transform_enum_members(
         result.push(EnumMember {
             name: member_name,
             value,
+            leading_comment: None,
+            trailing_comment: None,
         });
     }
 
