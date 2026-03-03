@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
-        let (mut return_type, type_predicate) =
+        let (mut return_type, mut type_predicate) =
             if method.type_annotation.is_none() && method.body.is_some() {
                 // Infer return type from body when there's no annotation
                 // Push the this type for proper resolution
@@ -84,6 +84,22 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.return_type_and_predicate(method.type_annotation, &params)
             };
+
+        // Check JSDoc @returns for type predicates on class methods.
+        // Mirrors the logic in get_type_of_function (function_type.rs) for standalone
+        // functions. In JS files, method return type predicates like
+        // `@return {this is Entry}` are specified via JSDoc instead of syntax.
+        if type_predicate.is_none() {
+            let method_jsdoc = self.find_jsdoc_for_function(method_idx);
+            if let Some(pred) = self.extract_jsdoc_return_type_predicate(&method_jsdoc, &params) {
+                return_type = if pred.asserts {
+                    TypeId::VOID
+                } else {
+                    TypeId::BOOLEAN
+                };
+                type_predicate = Some(pred);
+            }
+        }
 
         // Wrap unannotated generator/async method return types (matching get_type_of_function).
         let has_annotation = method.type_annotation.is_some();

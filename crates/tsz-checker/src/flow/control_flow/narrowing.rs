@@ -269,22 +269,23 @@ impl<'a> FlowAnalyzer<'a> {
                 None
             }
             PredicateSignatureKind::Union(members) => {
-                // CRITICAL FIX: For Union, ALL members must have the same predicate
-                // If the type is A | B and only A has a predicate, we can't safely narrow
+                // For unions, collect predicates from members that have them.
+                // TSC allows narrowing when some members have type predicates and
+                // others don't — e.g., Entry.isInit(): this is Entry + Group.isInit(): false.
+                // If multiple members have predicates, they must match.
                 let mut common_sig: Option<PredicateSignature> = None;
 
                 for member in members {
-                    let sig = self.predicate_signature_for_type(member)?;
-
-                    if let Some(ref common) = common_sig {
-                        // Simplified check: predicates must match exactly
-                        // (Real TS does subtype compatibility check, but identity is safe for now)
-                        if common.predicate != sig.predicate {
-                            return None;
+                    if let Some(sig) = self.predicate_signature_for_type(member) {
+                        if let Some(ref common) = common_sig {
+                            if common.predicate != sig.predicate {
+                                return None;
+                            }
+                        } else {
+                            common_sig = Some(sig);
                         }
-                    } else {
-                        common_sig = Some(sig);
                     }
+                    // Members without predicates are skipped — they don't block narrowing
                 }
                 common_sig
             }

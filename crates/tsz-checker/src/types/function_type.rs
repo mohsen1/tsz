@@ -1371,7 +1371,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Parses the JSDoc comment for type predicate patterns in the return tag and
     /// builds a `TypePredicate` with proper parameter index resolution.
-    fn extract_jsdoc_return_type_predicate(
+    pub(crate) fn extract_jsdoc_return_type_predicate(
         &mut self,
         func_jsdoc: &Option<String>,
         params: &[tsz_solver::ParamInfo],
