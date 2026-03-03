@@ -1458,11 +1458,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Type aliases often reduce to simpler forms that CAN be reversed.
             let evaluated_template = self.checker.evaluate_type(template);
             if evaluated_template != template {
-                return self.reverse_infer_through_template(
+                let reversed = self.reverse_infer_through_template(
                     source_value,
                     evaluated_template,
                     target_placeholder,
                 );
+                if reversed.is_some() {
+                    return reversed;
+                }
+            }
+
+            // Case 2c: Evaluation collapsed the placeholder (resolved T through its
+            // constraint), producing a type structurally equal to the source. This means
+            // the Application is identity-like (e.g., KeepLiteralStrings<T[K]> = { [K in keyof T]: T[K] }
+            // evaluates to string[] when T extends Record<string, string[]>, matching source string[]).
+            // In this case, try to reverse through the Application's type arguments directly.
+            //
+            // Guard: Only apply when evaluated result equals the source. This prevents
+            // incorrect reversal through non-transparent Applications like Reducer<S[K], A>
+            // where the Application wraps the placeholder in a different structure.
+            if evaluated_template == source_value {
+                for &t_arg in &template_app.args {
+                    if let Some(rev) =
+                        self.reverse_infer_through_template(source_value, t_arg, target_placeholder)
+                    {
+                        return Some(rev);
+                    }
+                }
             }
             return None;
         }
