@@ -188,3 +188,57 @@ fn test_no_input_diagnostics_preserve_config_errors() {
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert_eq!(codes, vec![5052, 18003]);
 }
+
+/// TS17009 ("super before this") is a checker-level semantic error,
+/// NOT a grammar error. It must NOT suppress TS5107 deprecation diagnostics.
+#[test]
+fn test_ts17009_does_not_suppress_deprecation() {
+    use super::is_grammar_error_for_deprecation_priority;
+    assert!(
+        !is_grammar_error_for_deprecation_priority(17009),
+        "TS17009 is a semantic error and must not suppress TS5107"
+    );
+}
+
+/// TS17011 ("super before property access") is a checker-level semantic error,
+/// NOT a grammar error. It must NOT suppress TS5107 deprecation diagnostics.
+#[test]
+fn test_ts17011_does_not_suppress_deprecation() {
+    use super::is_grammar_error_for_deprecation_priority;
+    assert!(
+        !is_grammar_error_for_deprecation_priority(17011),
+        "TS17011 is a semantic error and must not suppress TS5107"
+    );
+}
+
+/// TS17006/17007 (exponentiation LHS) ARE grammar-level errors that
+/// correctly suppress TS5107 in tsc.
+#[test]
+fn test_exponentiation_errors_do_suppress_deprecation() {
+    use super::is_grammar_error_for_deprecation_priority;
+    assert!(
+        is_grammar_error_for_deprecation_priority(17006),
+        "TS17006 should suppress TS5107"
+    );
+    assert!(
+        is_grammar_error_for_deprecation_priority(17007),
+        "TS17007 should suppress TS5107"
+    );
+}
+
+/// 8xxx JS grammar errors and specific 1xxx parser errors should suppress TS5107.
+#[test]
+fn test_grammar_error_classification() {
+    use super::is_grammar_error_for_deprecation_priority;
+    // 8xxx: JS grammar errors
+    assert!(is_grammar_error_for_deprecation_priority(8024));
+    // 1xxx parser errors in whitelist
+    assert!(is_grammar_error_for_deprecation_priority(1125));
+    assert!(is_grammar_error_for_deprecation_priority(1128));
+    assert!(is_grammar_error_for_deprecation_priority(1436));
+    // Semantic errors: must NOT be grammar errors
+    assert!(!is_grammar_error_for_deprecation_priority(2322));
+    assert!(!is_grammar_error_for_deprecation_priority(2345));
+    assert!(!is_grammar_error_for_deprecation_priority(2358));
+    assert!(!is_grammar_error_for_deprecation_priority(2559));
+}

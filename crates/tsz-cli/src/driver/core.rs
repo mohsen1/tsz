@@ -653,6 +653,50 @@ pub(crate) fn compile_with_cache_and_changes(
     )
 }
 
+/// Returns true if the given diagnostic code is a grammar-level error that should
+/// take priority over TS5107/TS5101 deprecation diagnostics.
+///
+/// When deprecated compiler options produce TS5107, tsc makes them fatal (stops
+/// compilation early). However, tsc suppresses TS5107 when real file-level grammar
+/// errors exist. This function identifies which diagnostic codes count as "grammar
+/// errors" for that suppression logic.
+///
+/// NOT a blanket 17000..18000 range: many 17xxx codes (17009 "super before this",
+/// 17011 "super before property access") are checker-level semantic errors that
+/// must NOT suppress TS5107.
+fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
+    // 8xxx: JS grammar errors — always real
+    (8000..9000).contains(&code)
+    // Specific 17xxx grammar-level errors only.
+    || matches!(code,
+        17002 // Expected corresponding JSX closing tag
+        | 17006 // Unary expression not allowed as LHS of exponentiation
+        | 17007 // Type assertion not allowed as LHS of exponentiation
+        | 17008 // JSX element has no corresponding closing tag
+        | 17012 // 'import.meta' meta-property grammar error
+    )
+    // Specific 1xxx codes that reliably indicate real parse failures
+    // (verified against tsc: these are never false positives in our parser
+    // for tests where tsc expects TS5107)
+    || matches!(code,
+        1011  // '(' or '<' expected
+        | 1109 // Expression expected
+        | 1121 // Octal literals are not allowed in strict mode
+        | 1124 // Digit expected
+        | 1125 // Hexadecimal digit expected
+        | 1128 // Declaration or statement expected
+        | 1134 // Variable declaration expected
+        | 1137 // Expression or comma expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1199 // Value of type '{0}' is not callable
+        | 1434 // Top-level 'await' expressions are only allowed...
+        | 1436 // Decorators are not valid here
+        | 1440 // Variable declaration not allowed at this location
+        | 1489 // Decimals with leading zeros are not allowed
+    )
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1074,32 +1118,9 @@ fn compile_inner(
     // error codes that tsc reliably emits — our parser can produce false-positive 1xxx
     // codes that would wrongly suppress TS5107 if we checked the full range.
     if has_deprecation_diagnostics {
-        let has_reliable_grammar_errors = diagnostics.iter().any(|d| {
-            // 8xxx: JS grammar errors — always real
-            (8000..9000).contains(&d.code)
-            // 17xxx: exponentiation grammar errors — always real
-            || (17000..18000).contains(&d.code)
-            // Specific 1xxx codes that reliably indicate real parse failures
-            // (verified against tsc: these are never false positives in our parser
-            // for tests where tsc expects TS5107)
-            || matches!(d.code,
-                1011  // '(' or '<' expected
-                | 1109 // Expression expected
-                | 1121 // Octal literals are not allowed in strict mode
-                | 1124 // Digit expected
-                | 1125 // Hexadecimal digit expected
-                | 1128 // Declaration or statement expected
-                | 1134 // Variable declaration expected
-                | 1137 // Expression or comma expected
-                | 1144 // '{' or ';' expected
-                | 1145 // '{' or JSX element expected
-                | 1199 // Value of type '{0}' is not callable
-                | 1434 // Top-level 'await' expressions are only allowed...
-                | 1436 // Decorators are not valid here
-                | 1440 // Variable declaration not allowed at this location
-                | 1489 // Decimals with leading zeros are not allowed
-            )
-        });
+        let has_reliable_grammar_errors = diagnostics
+            .iter()
+            .any(|d| is_grammar_error_for_deprecation_priority(d.code));
         if has_reliable_grammar_errors {
             // Real grammar errors take priority — drop TS5107 from config diagnostics.
             config_diagnostics.retain(|d| {
