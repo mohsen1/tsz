@@ -876,6 +876,10 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        // `import.meta` usage makes the file a module (ESM-only syntax).
+        if self.contains_import_meta(statements) {
+            return true;
+        }
         false
     }
 

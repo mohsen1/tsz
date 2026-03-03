@@ -55,6 +55,10 @@ pub struct LoweringPass<'a> {
     /// to the enclosing scope because the class IIFE creates its own scope
     /// and `class_es5_ir` handles _this capture independently.
     pub(super) in_es5_class: bool,
+    /// Names that are re-exported via `export { Name }` (without a module specifier).
+    /// Used to determine if a namespace/enum IIFE should fold exports into the
+    /// closing argument (e.g., `(A || (exports.A = A = {}))`).
+    pub(super) re_exported_names: rustc_hash::FxHashSet<String>,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
@@ -85,6 +89,7 @@ impl<'a> LoweringPass<'a> {
             current_class_alias: None,
             in_assignment_target: false,
             in_es5_class: false,
+            re_exported_names: rustc_hash::FxHashSet::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
         }
@@ -861,15 +866,17 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
-        let mut is_exported = self.is_commonjs()
+        // Check if exported directly, via force_export, or via re-export (`export { Name }`)
+        let re_exported = self
+            .get_identifier_text_ref(enum_decl.name)
+            .is_some_and(|n| self.re_exported_names.contains(n));
+        let is_exported = self.is_commonjs()
             && !self.has_export_assignment
             && (force_export
+                || re_exported
                 || self
                     .arena
                     .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword));
-        if force_export && self.is_commonjs() && !self.has_export_assignment {
-            is_exported = true;
-        }
 
         let enum_name = if is_exported && enum_decl.name.is_some() {
             self.get_identifier_id(enum_decl.name)
@@ -947,20 +954,22 @@ impl<'a> LoweringPass<'a> {
             true
         };
 
+        // Check if exported via re-export (`export { Name }`)
+        let re_exported = namespace_name
+            .as_ref()
+            .is_some_and(|n| self.re_exported_names.contains(n));
+
         // Track this name as declared
         if let Some(name) = namespace_name {
             self.declared_names.insert(name);
         }
-
-        let mut is_exported = self.is_commonjs()
+        let is_exported = self.is_commonjs()
             && !self.has_export_assignment
             && (force_export
+                || re_exported
                 || self
                     .arena
                     .has_modifier(&module_decl.modifiers, SyntaxKind::ExportKeyword));
-        if force_export && self.is_commonjs() && !self.has_export_assignment {
-            is_exported = true;
-        }
 
         let module_name = if is_exported {
             self.get_module_root_name(module_decl.name)

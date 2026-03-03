@@ -520,6 +520,17 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                // Skip namespace/enum export specifiers already folded
+                                // into the IIFE closing arg (e.g., `(A || (exports.A = A = {}))`).
+                                if self
+                                    .ctx
+                                    .module_state
+                                    .iife_exported_names
+                                    .contains(&local_name)
+                                {
+                                    continue;
+                                }
+
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");

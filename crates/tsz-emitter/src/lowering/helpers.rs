@@ -20,7 +20,12 @@ impl<'a> LoweringPass<'a> {
         };
 
         self.has_export_assignment = self.contains_export_assignment(&source.statements);
-        self.commonjs_mode = if self.ctx.is_commonjs() {
+        // AMD/UMD wrapper bodies are processed as CJS (the wrapper provides
+        // `exports` parameter), so the lowering pass must produce CommonJSExport
+        // directives for them just like it does for CommonJS module kind.
+        self.commonjs_mode = if self.ctx.is_commonjs()
+            || matches!(self.ctx.options.module, ModuleKind::AMD | ModuleKind::UMD)
+        {
             true
         } else if self.ctx.auto_detect_module && matches!(self.ctx.options.module, ModuleKind::None)
         {
@@ -28,6 +33,59 @@ impl<'a> LoweringPass<'a> {
         } else {
             false
         };
+
+        // Pre-scan for `export { Name }` re-exports (without module specifier).
+        // These names need the IIFE export fold even though their declarations
+        // don't have the `export` keyword directly.
+        if self.commonjs_mode {
+            self.collect_re_exported_names(&source.statements);
+        }
+    }
+
+    /// Collect names from `export { Name }` statements (without a module specifier).
+    fn collect_re_exported_names(&mut self, statements: &tsz_parser::parser::NodeList) {
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(node) else {
+                continue;
+            };
+            // Only local re-exports (no module specifier)
+            if export_decl.module_specifier.is_some() || export_decl.is_type_only {
+                continue;
+            }
+            // The export_clause for `export { A }` is a NAMED_EXPORTS node
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                // The local name (property_name if aliased, otherwise name)
+                let local_name_idx = if spec.property_name.is_some() {
+                    spec.property_name
+                } else {
+                    spec.name
+                };
+                if let Some(name) = self.get_identifier_text_ref(local_name_idx) {
+                    self.re_exported_names.insert(name.to_string());
+                }
+            }
+        }
     }
 
     pub(super) const fn is_commonjs(&self) -> bool {
