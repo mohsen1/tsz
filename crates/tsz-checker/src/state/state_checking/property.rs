@@ -57,7 +57,6 @@ impl<'a> CheckerState<'a> {
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
-            let mut matched_shapes = Vec::new();
 
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
@@ -90,54 +89,51 @@ impl<'a> CheckerState<'a> {
                 }
 
                 target_shapes.push(shape.clone());
-
-                if self.is_subtype_of(source, member) {
-                    matched_shapes.push(shape);
-                }
             }
 
             if target_shapes.is_empty() {
                 return;
             }
 
-            let effective_shapes = if matched_shapes.is_empty() {
-                // No union member fully matches the source. Try discriminant-based
-                // narrowing: if a source property has a unit type (string/number literal)
-                // that matches exactly one union member's property type, narrow to that
-                // member. This matches tsc's behavior for discriminated unions.
-                // Example: { kind: "sq", x: 12 } vs Square | Rectangle | Circle
-                //   -> kind: "sq" matches Square -> check excess against Square only
-                let mut discriminant_shapes = Vec::new();
-                for source_prop in source_props {
-                    if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
-                        continue;
-                    }
-                    let mut matching_indices = Vec::new();
-                    for (i, shape) in target_shapes.iter().enumerate() {
-                        if let Some(target_prop) =
-                            shape.properties.iter().find(|p| p.name == source_prop.name)
-                            && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
-                        {
-                            matching_indices.push(i);
-                        }
-                    }
-                    // If this property narrows to a strict subset of members, use it
-                    if !matching_indices.is_empty() && matching_indices.len() < target_shapes.len()
+            // For union excess property checking, tsc uses two strategies:
+            //
+            // 1. Discriminant narrowing: if a source property has a unit literal
+            //    value (e.g. kind: "sq") that narrows to a strict subset of union
+            //    members, check excess against only those members. This matches
+            //    tsc's behavior for discriminated unions.
+            //
+            // 2. Fallback: check if property exists in ANY member of the union.
+            //    A property is only excess if it doesn't appear in any member.
+            //    This differs from the old `matched_shapes` approach which
+            //    incorrectly restricted property existence checks to only
+            //    structurally-matched members, causing false TS2353 errors.
+            let mut discriminant_shapes = Vec::new();
+            for source_prop in source_props {
+                if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
+                    continue;
+                }
+                let mut matching_indices = Vec::new();
+                for (i, shape) in target_shapes.iter().enumerate() {
+                    if let Some(target_prop) =
+                        shape.properties.iter().find(|p| p.name == source_prop.name)
+                        && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
                     {
-                        discriminant_shapes = matching_indices
-                            .iter()
-                            .map(|&i| target_shapes[i].clone())
-                            .collect();
-                        break;
+                        matching_indices.push(i);
                     }
                 }
-                if discriminant_shapes.is_empty() {
-                    target_shapes
-                } else {
-                    discriminant_shapes
+                // If this property narrows to a strict subset of members, use it
+                if !matching_indices.is_empty() && matching_indices.len() < target_shapes.len() {
+                    discriminant_shapes = matching_indices
+                        .iter()
+                        .map(|&i| target_shapes[i].clone())
+                        .collect();
+                    break;
                 }
+            }
+            let effective_shapes = if discriminant_shapes.is_empty() {
+                target_shapes
             } else {
-                matched_shapes
+                discriminant_shapes
             };
 
             for source_prop in source_props {
