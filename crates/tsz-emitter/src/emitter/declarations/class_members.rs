@@ -435,7 +435,7 @@ impl<'a> Printer<'a> {
         &mut self,
         block_idx: NodeIndex,
         param_props: &[String],
-        field_inits: &[(String, NodeIndex, u32)],
+        field_inits: &[(String, NodeIndex, u32, Vec<String>)],
         auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         let Some(block_node) = self.arena.get(block_idx) else {
@@ -512,6 +512,33 @@ impl<'a> Printer<'a> {
         }
 
         self.write("{");
+        // Skip same-line comments on constructor body opening `{`.
+        // tsc suppresses these for function/method/constructor bodies.
+        // Use the first statement's position (or closing `}` position) as max_pos
+        // to avoid consuming trailing comments that belong on the closing `}`.
+        if !self.ctx.options.remove_comments {
+            if let Some(text) = self.source_text {
+                let bytes = text.as_bytes();
+                let start = block_node.pos as usize;
+                let end = (block_node.end as usize).min(bytes.len());
+                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                    let brace_end = (start + offset + 1) as u32;
+                    // Find first content position after opening brace (first statement
+                    // or closing `}` brace) to bound the skip range tightly.
+                    // Using the closing `}` position (not block_node.end which includes
+                    // trailing trivia) prevents consuming comments after `}`.
+                    let closing_brace_pos =
+                        self.find_token_end_before_trivia(block_node.pos, block_node.end);
+                    let first_content_pos = block
+                        .statements
+                        .nodes
+                        .first()
+                        .and_then(|&s| self.arena.get(s))
+                        .map_or(closing_brace_pos, |s| s.pos);
+                    self.skip_trailing_same_line_comments(brace_end, first_content_pos);
+                }
+            }
+        }
         self.write_line();
         self.increase_indent();
 
@@ -597,7 +624,7 @@ impl<'a> Printer<'a> {
     fn emit_constructor_prologue(
         &mut self,
         param_props: &[String],
-        field_inits: &[(String, NodeIndex, u32)],
+        field_inits: &[(String, NodeIndex, u32, Vec<String>)],
         auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         for name in param_props {
@@ -608,7 +635,7 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
-        for (name, init_idx, member_end) in field_inits {
+        for (name, init_idx, init_end, trailing_comments) in field_inits {
             if self.ctx.options.use_define_for_class_fields {
                 self.write("Object.defineProperty(this, ");
                 self.emit_string_literal_text(name);
@@ -632,8 +659,17 @@ impl<'a> Printer<'a> {
                 self.write(" = ");
                 self.emit_expression(*init_idx);
                 self.write(";");
-                // Emit trailing same-line comments from the original class field
-                self.emit_trailing_comments(*member_end);
+                // Emit trailing comments from the original class field.
+                // If pre-collected (field appeared before constructor in source), use them.
+                // Otherwise fall back to position-based lookup (field after constructor).
+                if !trailing_comments.is_empty() {
+                    for comment in trailing_comments {
+                        self.write_space();
+                        self.write(comment);
+                    }
+                } else {
+                    self.emit_trailing_comments(*init_end);
+                }
             }
             self.write_line();
         }
