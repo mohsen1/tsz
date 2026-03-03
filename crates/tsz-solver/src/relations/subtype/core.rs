@@ -669,6 +669,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // Variadic tuple identity: [...T] is assignable to T.
+            // tsc treats [...T] as structurally equivalent to T when T is a
+            // type parameter constrained to an array/tuple type.
+            if let Some(s_list) = tuple_list_id(self.interner, source) {
+                let s_elems = self.interner.tuple_list(s_list);
+                if s_elems.len() == 1 && s_elems[0].rest {
+                    let spread_inner = s_elems[0].type_id;
+                    // Check if the spread inner type is the same type parameter as target,
+                    // or is assignable to target
+                    if spread_inner == target || self.check_subtype(spread_inner, target).is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             // A concrete type is never a subtype of an opaque type parameter.
             // The type parameter T could be instantiated as any type satisfying its constraint,
             // so we cannot guarantee that source <: T unless source is never/any (handled above).

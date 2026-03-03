@@ -286,6 +286,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
             let mut elements = Vec::new();
             let mut seen_optional = false;
+            let mut seen_rest = false;
 
             for &elem_idx in &tuple_type.elements.nodes {
                 if elem_idx.is_none() {
@@ -300,6 +301,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 use tsz_parser::parser::syntax_kind_ext;
                 if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
                     // Optional element (e.g., `string?`)
+                    // TS1266: An optional element cannot follow a rest element
+                    if seen_rest {
+                        self.ctx.error(
+                            elem_node.pos,
+                            elem_node.end - elem_node.pos,
+                            crate::diagnostics::diagnostic_messages::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT.to_string(),
+                            crate::diagnostics::diagnostic_codes::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT,
+                        );
+                    }
                     seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check(wrapped.type_node);
@@ -311,10 +321,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
-                    // Rest element (e.g., `...string[]`)
-                    // Rest elements can come after optional elements, so we don't error
+                    // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check(wrapped.type_node);
+                        // Only track seen_rest for concrete array/tuple rest elements.
+                        // Variadic type parameter spreads (...T) don't count as "rest"
+                        // for TS1265/TS1266 purposes — they represent variadic tuples.
+                        let is_concrete_rest = self.is_array_or_tuple_type(elem_type);
+                        if is_concrete_rest {
+                            // TS1265: A rest element cannot follow another rest element
+                            if seen_rest {
+                                self.ctx.error(
+                                    elem_node.pos,
+                                    elem_node.end - elem_node.pos,
+                                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
+                                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
+                                );
+                            }
+                            seen_rest = true;
+                        }
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name: None,
@@ -333,9 +358,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                             .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
 
-                        if data.question_token {
+                        if data.dot_dot_dot_token {
+                            let is_concrete_rest = self.is_array_or_tuple_type(elem_type);
+                            if is_concrete_rest {
+                                // TS1265: A rest element cannot follow another rest element
+                                if seen_rest {
+                                    self.ctx.error(
+                                        elem_node.pos,
+                                        elem_node.end - elem_node.pos,
+                                        crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
+                                        crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
+                                    );
+                                }
+                                seen_rest = true;
+                            }
+                        } else if data.question_token {
+                            // TS1266: An optional element cannot follow a rest element
+                            if seen_rest {
+                                self.ctx.error(
+                                    elem_node.pos,
+                                    elem_node.end - elem_node.pos,
+                                    crate::diagnostics::diagnostic_messages::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT.to_string(),
+                                    crate::diagnostics::diagnostic_codes::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT,
+                                );
+                            }
                             seen_optional = true;
-                        } else if seen_optional && !data.dot_dot_dot_token {
+                        } else if seen_optional {
                             self.ctx.error(
                                 elem_node.pos,
                                 elem_node.end - elem_node.pos,
@@ -1830,6 +1878,15 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
+    /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
+    /// type parameter spreads. Only concrete array/tuple rest elements are subject to
+    /// the "rest after rest" and "optional after rest" restrictions.
+    fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
+        tsz_solver::is_array_type(self.ctx.types, type_id)
+            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+    }
+
     fn is_this_type_allowed(&self, this_node_idx: tsz_parser::parser::NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 

@@ -133,6 +133,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker
                 .check_tuple_to_array_subtype(s_tuple_id, t_elem)
         } else {
+            // Variadic tuple identity: [...T] is assignable to T (and any supertype of T)
+            // when T is a type parameter constrained to an array/tuple type.
+            // tsc treats [...T] as structurally equivalent to T for assignability.
+            let s_elems = self.checker.interner.tuple_list(s_tuple_id);
+            if s_elems.len() == 1
+                && s_elems[0].rest
+                && self
+                    .checker
+                    .check_subtype(s_elems[0].type_id, self.target)
+                    .is_true()
+            {
+                return SubtypeResult::True;
+            }
+
             // Trace: Tuple source doesn't match non-tuple/non-array target
             if let Some(tracer) = &mut self.checker.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
