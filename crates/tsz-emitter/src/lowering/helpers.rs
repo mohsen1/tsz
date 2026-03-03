@@ -200,9 +200,16 @@ impl<'a> LoweringPass<'a> {
         };
 
         if self.class_has_private_members(class_data) {
+            // Compute whether we need the SET helper before taking the mutable borrow
+            let needs_set = self.class_has_private_field_writes(class_data);
             let helpers = self.transforms.helpers_mut();
             helpers.class_private_field_get = true;
-            helpers.class_private_field_set = true;
+            // Only emit SET helper when the class has actual writes to private fields
+            // (assignments like `this.#field = value`), not just reads or initializers.
+            // WeakMap.set() in the constructor does NOT use __classPrivateFieldSet.
+            if needs_set {
+                helpers.class_private_field_set = true;
+            }
         }
     }
 
@@ -248,6 +255,115 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
+    /// Check if a class has any writes to private fields in its method bodies.
+    /// This includes `this.#field = value` and compound assignments like `this.#field += value`.
+    pub(super) fn class_has_private_field_writes(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Scan method bodies, constructor body, accessor bodies
+            let body_idx = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.arena.get_method_decl(member_node).and_then(|m| {
+                        let body = m.body;
+                        if body.0 != 0 { Some(body) } else { None }
+                    })
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    self.arena.get_constructor(member_node).and_then(|c| {
+                        let body = c.body;
+                        if body.0 != 0 { Some(body) } else { None }
+                    })
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena.get_accessor(member_node).and_then(|a| {
+                        let body = a.body;
+                        if body.0 != 0 { Some(body) } else { None }
+                    })
+                }
+                _ => None,
+            };
+
+            if let Some(body) = body_idx {
+                if self.subtree_has_private_field_write(body) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Scan a subtree for binary expressions that assign to private fields.
+    /// Uses a position-range scan over all arena nodes within the subtree.
+    fn subtree_has_private_field_write(&self, idx: tsz_parser::parser::NodeIndex) -> bool {
+        let Some(root) = self.arena.get(idx) else {
+            return false;
+        };
+        let start = root.pos;
+        let end = root.end;
+
+        for i in 0..self.arena.len() {
+            let nidx = tsz_parser::parser::NodeIndex(i as u32);
+            let Some(n) = self.arena.get(nidx) else {
+                continue;
+            };
+            if n.pos < start || n.end > end {
+                continue;
+            }
+            if n.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            // Check if this binary expression is an assignment to a private field
+            let Some(bin) = self.arena.get_binary_expr(n) else {
+                continue;
+            };
+            let op = bin.operator_token;
+            // Check for any assignment operator
+            if !(op == SyntaxKind::EqualsToken as u16
+                || op == SyntaxKind::PlusEqualsToken as u16
+                || op == SyntaxKind::MinusEqualsToken as u16
+                || op == SyntaxKind::AsteriskEqualsToken as u16
+                || op == SyntaxKind::SlashEqualsToken as u16
+                || op == SyntaxKind::PercentEqualsToken as u16
+                || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || op == SyntaxKind::AmpersandEqualsToken as u16
+                || op == SyntaxKind::BarEqualsToken as u16
+                || op == SyntaxKind::CaretEqualsToken as u16
+                || op == SyntaxKind::BarBarEqualsToken as u16
+                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || op == SyntaxKind::QuestionQuestionEqualsToken as u16)
+            {
+                continue;
+            }
+            // Check if left side is a property access with private identifier
+            let Some(left_node) = self.arena.get(bin.left) else {
+                continue;
+            };
+            if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.arena.get_access_expr(left_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .get(access.name_or_argument)
+                .is_some_and(|name_n| name_n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn class_has_auto_accessor_members(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
@@ -287,6 +403,161 @@ impl<'a> LoweringPass<'a> {
         mods.nodes
             .iter()
             .any(|&mod_idx| self.arena.get(mod_idx).is_some_and(|n| n.kind == modifier))
+    }
+
+    /// Check if a class has any decorators (class-level or member-level)
+    pub(super) fn class_has_decorators(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        // Check class-level decorators
+        if let Some(mods) = &class_data.modifiers {
+            if mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+            }) {
+                return true;
+            }
+        }
+        // Check member-level decorators
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let mods = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|m| m.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|p| p.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|a| a.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            if let Some(mods) = mods {
+                if mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a class has any decorated members with computed property names
+    pub(super) fn class_has_computed_decorated_member(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let (mods, name_idx) = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(m) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    (m.modifiers.as_ref(), m.name)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(p) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    (p.modifiers.as_ref(), p.name)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(a) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (a.modifiers.as_ref(), a.name)
+                }
+                _ => continue,
+            };
+            // Check if member has decorators
+            let has_decorators = mods.is_some_and(|m| {
+                m.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
+            if !has_decorators {
+                continue;
+            }
+            // Check if name is computed (but not a string literal)
+            if let Some(name_node) = self.arena.get(name_idx) {
+                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    if let Some(computed) = self.arena.get_computed_property(name_node) {
+                        if let Some(expr_node) = self.arena.get(computed.expression) {
+                            if expr_node.kind != SyntaxKind::StringLiteral as u16 {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a class has any decorated private members
+    pub(super) fn class_has_private_decorated_member(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let (mods, name_idx) = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(m) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    (m.modifiers.as_ref(), m.name)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(p) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    (p.modifiers.as_ref(), p.name)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(a) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (a.modifiers.as_ref(), a.name)
+                }
+                _ => continue,
+            };
+            let has_decorators = mods.is_some_and(|m| {
+                m.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
+            if !has_decorators {
+                continue;
+            }
+            if let Some(name_node) = self.arena.get(name_idx) {
+                if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub(super) fn needs_es5_object_literal_transform(&self, elements: &[NodeIndex]) -> bool {

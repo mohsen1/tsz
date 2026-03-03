@@ -483,12 +483,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_heritage_clauses(heritage);
         }
 
-        if class.members.nodes.is_empty() {
-            self.write(" {}");
-            self.write_line();
-            return;
-        }
-
         self.write(" {");
         self.write_line();
         self.increase_indent();
@@ -499,6 +493,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
+
+        // Emit `#private;` if any member has a private identifier name (e.g., #foo)
+        if self.class_has_private_identifier_member(&class.members) {
+            self.write_indent();
+            self.write("#private;");
+            self.write_line();
+        }
 
         for &member_idx in &class.members.nodes {
             self.emit_class_member(member_idx);

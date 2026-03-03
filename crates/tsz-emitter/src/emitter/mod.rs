@@ -48,10 +48,10 @@ pub use types::printer as type_printer;
 
 pub(crate) use self::core::get_operator_text;
 pub(crate) use self::core::is_valid_identifier_name;
+pub use self::core::{JsxEmit, Printer, PrinterOptions};
 pub(crate) use self::core::{
     ParamTransform, ParamTransformPlan, RestParamTransform, TempScopeState, TemplateParts,
 };
-pub use self::core::{Printer, PrinterOptions};
 pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,
 };

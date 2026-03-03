@@ -287,6 +287,55 @@ pub const DISPOSE_RESOURCES_HELPER: &str = r#"var __disposeResources = (this && 
     return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
 });"#;
 
+/// Helper code for __esDecorate (TC39 decorators)
+pub const ES_DECORATE_HELPER: &str = r#"var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
+    function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
+    var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
+    var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+    var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
+    var _, done = false;
+    for (var i = decorators.length - 1; i >= 0; i--) {
+        var context = {};
+        for (var p in contextIn) context[p] = p === "access" ? {} : contextIn[p];
+        for (var p in contextIn.access) context.access[p] = contextIn.access[p];
+        context.addInitializer = function (f) { if (done) throw new TypeError("Cannot add initializers after decoration has completed"); extraInitializers.push(accept(f || null)); };
+        var result = (0, decorators[i])(kind === "accessor" ? { get: descriptor.get, set: descriptor.set } : descriptor[key], context);
+        if (kind === "accessor") {
+            if (result === void 0) continue;
+            if (result === null || typeof result !== "object") throw new TypeError("Object expected");
+            if (_ = accept(result.get)) descriptor.get = _;
+            if (_ = accept(result.set)) descriptor.set = _;
+            if (_ = accept(result.init)) initializers.unshift(_);
+        }
+        else if (_ = accept(result)) {
+            if (kind === "field") initializers.unshift(_);
+            else descriptor[key] = _;
+        }
+    }
+    if (target) Object.defineProperty(target, contextIn.name, descriptor);
+    done = true;
+};"#;
+
+/// Helper code for __runInitializers (TC39 decorators)
+pub const RUN_INITIALIZERS_HELPER: &str = r#"var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};"#;
+
+/// Helper code for __propKey (TC39 decorators - computed property key)
+pub const PROP_KEY_HELPER: &str = r#"var __propKey = (this && this.__propKey) || function (x) {
+    return typeof x === "symbol" ? x : "".concat(x);
+};"#;
+
+/// Helper code for __setFunctionName (TC39 decorators)
+pub const SET_FUNCTION_NAME_HELPER: &str = r#"var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
+    if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
+    return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
+};"#;
+
 /// Tracks which helper functions are needed in the output.
 #[derive(Default, Clone)]
 pub struct HelpersNeeded {
@@ -312,6 +361,10 @@ pub struct HelpersNeeded {
     pub create_binding: bool,
     pub add_disposable_resource: bool,
     pub dispose_resources: bool,
+    pub es_decorate: bool,
+    pub run_initializers: bool,
+    pub prop_key: bool,
+    pub set_function_name: bool,
 }
 
 /// Generate helper code for the needed helpers.
@@ -351,9 +404,25 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(CREATE_BINDING_HELPER);
         output.push('\n');
     }
-    // Priority 2: decorate, importStar (with setModuleDefault), exportStar
+    // Priority 2: decorate, esDecorate, runInitializers, importStar (with setModuleDefault), exportStar
     if helpers.decorate {
         output.push_str(DECORATE_HELPER);
+        output.push('\n');
+    }
+    if helpers.es_decorate {
+        output.push_str(ES_DECORATE_HELPER);
+        output.push('\n');
+    }
+    if helpers.run_initializers {
+        output.push_str(RUN_INITIALIZERS_HELPER);
+        output.push('\n');
+    }
+    if helpers.set_function_name {
+        output.push_str(SET_FUNCTION_NAME_HELPER);
+        output.push('\n');
+    }
+    if helpers.prop_key {
+        output.push_str(PROP_KEY_HELPER);
         output.push('\n');
     }
     if helpers.import_star {
@@ -412,12 +481,12 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(IMPORT_DEFAULT_HELPER);
         output.push('\n');
     }
-    if helpers.class_private_field_get {
-        output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
-        output.push('\n');
-    }
     if helpers.class_private_field_set {
         output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
+        output.push('\n');
+    }
+    if helpers.class_private_field_get {
+        output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
         output.push('\n');
     }
     if helpers.class_private_field_in {

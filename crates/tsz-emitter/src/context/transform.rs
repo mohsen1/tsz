@@ -311,6 +311,13 @@ pub enum TransformDirective {
         dependencies: Arc<[String]>,
     },
 
+    /// TC39 Decorators: Transform class with TC39 (non-legacy) decorators
+    /// to IIFE wrapper pattern using __esDecorate/__runInitializers helpers.
+    TC39Decorators {
+        /// Original class node index
+        class_node: NodeIndex,
+    },
+
     /// Chain multiple transforms (composition)
     /// Transforms are applied in order.
     Chain(Vec<Self>),

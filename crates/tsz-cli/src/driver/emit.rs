@@ -69,6 +69,22 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
             let mut printer_options = context.options.printer.clone();
             printer_options.type_only_nodes = type_only_nodes;
 
+            // Wire JSX options from resolved compiler options to printer
+            if let Some(jsx) = context.options.jsx {
+                printer_options.jsx = config_jsx_to_emitter_jsx(jsx);
+            }
+            if !context.options.checker.jsx_factory.is_empty() {
+                printer_options.jsx_factory = Some(context.options.checker.jsx_factory.clone());
+            }
+            if !context.options.checker.jsx_fragment_factory.is_empty() {
+                printer_options.jsx_fragment_factory =
+                    Some(context.options.checker.jsx_fragment_factory.clone());
+            }
+            if !context.options.checker.jsx_import_source.is_empty() {
+                printer_options.jsx_import_source =
+                    Some(context.options.checker.jsx_import_source.clone());
+            }
+
             // For Node16/NodeNext, resolve the per-file module format based on
             // file extension and nearest package.json "type" field.
             // .mts/.mjs -> ESM, .cts/.cjs -> CJS, .ts/.js -> depends on package.json
@@ -480,6 +496,17 @@ pub(crate) fn normalize_type_roots(
         }
     }
     Some(normalized)
+}
+
+/// Convert config `JsxEmit` to emitter `JsxEmit`.
+fn config_jsx_to_emitter_jsx(jsx: JsxEmit) -> tsz::emitter::JsxEmit {
+    match jsx {
+        JsxEmit::Preserve => tsz::emitter::JsxEmit::Preserve,
+        JsxEmit::React => tsz::emitter::JsxEmit::React,
+        JsxEmit::ReactJsx => tsz::emitter::JsxEmit::ReactJsx,
+        JsxEmit::ReactJsxDev => tsz::emitter::JsxEmit::ReactJsxDev,
+        JsxEmit::ReactNative => tsz::emitter::JsxEmit::ReactNative,
+    }
 }
 
 #[cfg(test)]

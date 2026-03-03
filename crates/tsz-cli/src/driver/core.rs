@@ -1882,6 +1882,27 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.preserve_const_enums {
         options.printer.preserve_const_enums = true;
     }
+    if let Some(jsx) = args.jsx {
+        let jsx_emit = match jsx {
+            crate::args::JsxEmit::Preserve => crate::config::JsxEmit::Preserve,
+            crate::args::JsxEmit::React => crate::config::JsxEmit::React,
+            crate::args::JsxEmit::ReactJsx => crate::config::JsxEmit::ReactJsx,
+            crate::args::JsxEmit::ReactJsxDev => crate::config::JsxEmit::ReactJsxDev,
+            crate::args::JsxEmit::ReactNative => crate::config::JsxEmit::ReactNative,
+        };
+        options.jsx = Some(jsx_emit);
+    }
+    if let Some(ref factory) = args.jsx_factory {
+        options.checker.jsx_factory = factory.clone();
+        options.checker.jsx_factory_from_config = true;
+    }
+    if let Some(ref frag) = args.jsx_fragment_factory {
+        options.checker.jsx_fragment_factory = frag.clone();
+        options.checker.jsx_fragment_factory_from_config = true;
+    }
+    if let Some(ref source) = args.jsx_import_source {
+        options.checker.jsx_import_source = source.clone();
+    }
     if args.remove_comments {
         options.printer.remove_comments = true;
     }

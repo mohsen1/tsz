@@ -1,12 +1,46 @@
 use super::Printer;
+use super::core::JsxEmit;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
-    // JSX
+    // JSX - Preserve Mode (default)
     // =========================================================================
 
     pub(super) fn emit_jsx_element(&mut self, node: &Node) {
+        match self.ctx.options.jsx {
+            JsxEmit::React => self.emit_jsx_element_classic(node),
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_element_automatic(node),
+            _ => self.emit_jsx_element_preserve(node),
+        }
+    }
+
+    pub(super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
+        match self.ctx.options.jsx {
+            JsxEmit::React => self.emit_jsx_self_closing_classic(node),
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => {
+                self.emit_jsx_self_closing_automatic(node);
+            }
+            _ => self.emit_jsx_self_closing_preserve(node),
+        }
+    }
+
+    pub(super) fn emit_jsx_fragment(&mut self, node: &Node) {
+        match self.ctx.options.jsx {
+            JsxEmit::React => self.emit_jsx_fragment_classic(node),
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_fragment_automatic(node),
+            _ => self.emit_jsx_fragment_preserve(node),
+        }
+    }
+
+    // =========================================================================
+    // JSX Preserve Mode
+    // =========================================================================
+
+    fn emit_jsx_element_preserve(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_element(node) else {
             return;
         };
@@ -18,7 +52,7 @@ impl<'a> Printer<'a> {
         self.emit(jsx.closing_element);
     }
 
-    pub(super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
+    fn emit_jsx_self_closing_preserve(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_opening(node) else {
             return;
         };
@@ -40,6 +74,657 @@ impl<'a> Printer<'a> {
         self.write("/>");
     }
 
+    fn emit_jsx_fragment_preserve(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_fragment(node) else {
+            return;
+        };
+
+        self.write("<>");
+        for &child in &jsx.children.nodes {
+            self.emit(child);
+        }
+        self.write("</>");
+    }
+
+    // =========================================================================
+    // JSX Classic Transform (jsx=react)
+    // Output: React.createElement(tag, props, ...children)
+    // =========================================================================
+
+    fn emit_jsx_element_classic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_element(node) else {
+            return;
+        };
+
+        let Some(opening_node) = self.arena.get(jsx.opening_element) else {
+            return;
+        };
+        let Some(opening) = self.arena.get_jsx_opening(opening_node) else {
+            return;
+        };
+
+        let tag_name = opening.tag_name;
+        let attributes = opening.attributes;
+        let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+
+        self.emit_create_element_call(tag_name, attributes, &children);
+    }
+
+    fn emit_jsx_self_closing_classic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_opening(node) else {
+            return;
+        };
+
+        let tag_name = jsx.tag_name;
+        let attributes = jsx.attributes;
+
+        self.emit_create_element_call(tag_name, attributes, &[]);
+    }
+
+    fn emit_jsx_fragment_classic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_fragment(node) else {
+            return;
+        };
+
+        let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+        let factory = self.get_jsx_factory();
+        let fragment_factory = self.get_jsx_fragment_factory();
+
+        self.write(&factory);
+        self.write("(");
+        self.write(&fragment_factory);
+        self.write(", null");
+
+        // Children
+        let filtered_children = self.collect_jsx_children(&children);
+        for child in &filtered_children {
+            self.write(", ");
+            self.emit_jsx_child_as_expression(*child);
+        }
+
+        self.write(")");
+    }
+
+    /// Emit `factory(tag, props, ...children)`
+    fn emit_create_element_call(
+        &mut self,
+        tag_name: NodeIndex,
+        attributes: NodeIndex,
+        children: &[NodeIndex],
+    ) {
+        let factory = self.get_jsx_factory();
+
+        // Collect attributes info
+        let attrs_info = self.collect_jsx_attributes_info(attributes);
+        let filtered_children = self.collect_jsx_children(children);
+        let has_spread = attrs_info.has_spread;
+
+        self.write(&factory);
+        self.write("(");
+
+        // Tag name
+        self.emit_jsx_tag_name_as_argument(tag_name);
+
+        // Props
+        self.write(", ");
+        if attrs_info.attrs.is_empty() && !has_spread {
+            self.write("null");
+        } else if has_spread {
+            self.emit_jsx_spread_attrs_classic(&attrs_info.attrs);
+        } else {
+            self.emit_jsx_attrs_as_object(&attrs_info.attrs);
+        }
+
+        // Children — tsc formats multiple children on separate indented lines
+        let multiline_children = filtered_children.len() > 1;
+        if multiline_children {
+            self.write(",");
+            self.increase_indent();
+        }
+        for (i, child) in filtered_children.iter().enumerate() {
+            if multiline_children {
+                self.write_line();
+            } else {
+                self.write(", ");
+            }
+            self.emit_jsx_child_as_expression(*child);
+            if multiline_children && i < filtered_children.len() - 1 {
+                self.write(",");
+            }
+        }
+        self.write(")");
+        if multiline_children {
+            self.decrease_indent();
+        }
+    }
+
+    // =========================================================================
+    // JSX Automatic Transform (jsx=react-jsx)
+    // Output: _jsx(tag, { ...props, children }) or _jsxs(tag, { ...props, children: [...] })
+    // =========================================================================
+
+    fn emit_jsx_element_automatic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_element(node) else {
+            return;
+        };
+
+        let Some(opening_node) = self.arena.get(jsx.opening_element) else {
+            return;
+        };
+        let Some(opening) = self.arena.get_jsx_opening(opening_node) else {
+            return;
+        };
+
+        let tag_name = opening.tag_name;
+        let attributes = opening.attributes;
+        let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+
+        self.emit_jsx_automatic_call(tag_name, attributes, &children);
+    }
+
+    fn emit_jsx_self_closing_automatic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_opening(node) else {
+            return;
+        };
+
+        let tag_name = jsx.tag_name;
+        let attributes = jsx.attributes;
+
+        self.emit_jsx_automatic_call(tag_name, attributes, &[]);
+    }
+
+    fn emit_jsx_fragment_automatic(&mut self, node: &Node) {
+        let Some(jsx) = self.arena.get_jsx_fragment(node) else {
+            return;
+        };
+
+        let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+        let filtered_children = self.collect_jsx_children(&children);
+        let is_jsxs = filtered_children.len() > 1;
+        let func = if is_jsxs { "_jsxs" } else { "_jsx" };
+
+        self.write(func);
+        self.write("(");
+
+        // Fragment tag
+        self.write("_Fragment");
+
+        // Props with children
+        self.write(", { ");
+        if !filtered_children.is_empty() {
+            self.write("children: ");
+            if is_jsxs {
+                self.write("[");
+                for (i, child) in filtered_children.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.emit_jsx_child_as_expression(*child);
+                }
+                self.write("]");
+            } else {
+                self.emit_jsx_child_as_expression(filtered_children[0]);
+            }
+            self.write(" ");
+        }
+        self.write("}");
+
+        self.write(")");
+    }
+
+    /// Emit `_jsx(tag, { ...props, children })` or `_jsxs(tag, { ...props, children: [...] })`
+    fn emit_jsx_automatic_call(
+        &mut self,
+        tag_name: NodeIndex,
+        attributes: NodeIndex,
+        children: &[NodeIndex],
+    ) {
+        let attrs_info = self.collect_jsx_attributes_info(attributes);
+        let filtered_children = self.collect_jsx_children(children);
+        let is_jsxs = filtered_children.len() > 1;
+
+        // Extract key from attributes
+        let key_attr = attrs_info
+            .attrs
+            .iter()
+            .find(|a| matches!(a, JsxAttrInfo::Named { name, .. } if name == "key"))
+            .cloned();
+        let non_key_attrs: Vec<JsxAttrInfo> = attrs_info
+            .attrs
+            .iter()
+            .filter(|a| !matches!(a, JsxAttrInfo::Named { name, .. } if name == "key"))
+            .cloned()
+            .collect();
+        let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
+
+        let func = if is_jsxs { "_jsxs" } else { "_jsx" };
+        self.write(func);
+        self.write("(");
+
+        // Tag name
+        self.emit_jsx_tag_name_as_argument(tag_name);
+
+        // Props object (with children embedded)
+        self.write(", ");
+        let has_children = !filtered_children.is_empty();
+        let has_spread_in_non_key = non_key_attrs
+            .iter()
+            .any(|a| matches!(a, JsxAttrInfo::Spread { .. }));
+
+        if !has_non_key_attrs && !has_children {
+            self.write("{}");
+        } else if has_spread_in_non_key {
+            // Inline spread: { named, ...spread, children }
+            self.emit_jsx_spread_attrs_automatic(&non_key_attrs, &filtered_children, is_jsxs);
+        } else {
+            self.write("{ ");
+            // Emit non-key attrs
+            let mut first = true;
+            for attr in &non_key_attrs {
+                if let JsxAttrInfo::Named { name, value } = attr {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.emit_jsx_prop_name(name);
+                    self.write(": ");
+                    self.emit_jsx_attr_value(value);
+                }
+            }
+            // Children
+            if has_children {
+                if !first {
+                    self.write(", ");
+                }
+                self.write("children: ");
+                if is_jsxs {
+                    self.write("[");
+                    for (i, child) in filtered_children.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.emit_jsx_child_as_expression(*child);
+                    }
+                    self.write("]");
+                } else {
+                    self.emit_jsx_child_as_expression(filtered_children[0]);
+                }
+            }
+            self.write(" }");
+        }
+
+        // Key as third argument (for automatic transform)
+        if let Some(JsxAttrInfo::Named { value, .. }) = &key_attr {
+            self.write(", ");
+            self.emit_jsx_attr_value(value);
+        }
+
+        self.write(")");
+    }
+
+    // =========================================================================
+    // Shared JSX Helpers
+    // =========================================================================
+
+    /// Get the JSX factory function name (e.g. "React.createElement" or custom)
+    fn get_jsx_factory(&self) -> String {
+        self.ctx
+            .options
+            .jsx_factory
+            .as_deref()
+            .unwrap_or("React.createElement")
+            .to_string()
+    }
+
+    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom)
+    fn get_jsx_fragment_factory(&self) -> String {
+        self.ctx
+            .options
+            .jsx_fragment_factory
+            .as_deref()
+            .unwrap_or("React.Fragment")
+            .to_string()
+    }
+
+    /// Emit a JSX tag name as a function argument.
+    /// Intrinsic elements (lowercase) → string literal.
+    /// Component elements (uppercase/dotted/namespaced) → identifier/expression.
+    fn emit_jsx_tag_name_as_argument(&mut self, tag_name: NodeIndex) {
+        let Some(node) = self.arena.get(tag_name) else {
+            self.write("\"\"");
+            return;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            // Check if it's an intrinsic element (starts with lowercase)
+            if let Some(ident) = self.arena.get_identifier(node) {
+                let text = self.arena.resolve_identifier_text(ident);
+                if text.starts_with(|c: char| c.is_ascii_lowercase()) {
+                    self.write("\"");
+                    self.write(text);
+                    self.write("\"");
+                } else {
+                    self.write(text);
+                }
+                return;
+            }
+        }
+
+        // Property access (e.g. Foo.Bar) or other expression — emit as-is
+        self.emit(tag_name);
+    }
+
+    /// Collect attributes from a JSX attributes node, returning info about each attribute.
+    fn collect_jsx_attributes_info(&self, attributes: NodeIndex) -> JsxAttrsInfo {
+        let mut result = JsxAttrsInfo {
+            attrs: Vec::new(),
+            has_spread: false,
+        };
+
+        let Some(attrs_node) = self.arena.get(attributes) else {
+            return result;
+        };
+        let Some(attrs) = self.arena.get_jsx_attributes(attrs_node) else {
+            return result;
+        };
+
+        for &prop in &attrs.properties.nodes {
+            let Some(prop_node) = self.arena.get(prop) else {
+                continue;
+            };
+
+            if prop_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                if let Some(attr) = self.arena.get_jsx_attribute(prop_node) {
+                    let name = self.get_jsx_attr_name(attr.name);
+                    let value = if attr.initializer.is_some() {
+                        self.get_jsx_attr_value_info(attr.initializer)
+                    } else {
+                        // Attribute without value (e.g. `<div disabled />`) → true
+                        JsxAttrValue::Bool(true)
+                    };
+                    result.attrs.push(JsxAttrInfo::Named { name, value });
+                }
+            } else if prop_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                if let Some(spread) = self.arena.get_jsx_spread_attribute(prop_node) {
+                    result.has_spread = true;
+                    result.attrs.push(JsxAttrInfo::Spread {
+                        expr: spread.expression,
+                    });
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Get the name of a JSX attribute (identifier or namespaced).
+    fn get_jsx_attr_name(&self, name_idx: NodeIndex) -> String {
+        let Some(node) = self.arena.get(name_idx) else {
+            return String::new();
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(node) {
+                return self.arena.resolve_identifier_text(ident).to_string();
+            }
+        }
+
+        if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            if let Some(ns) = self.arena.get_jsx_namespaced_name(node) {
+                let ns_text = self
+                    .arena
+                    .get(ns.namespace)
+                    .and_then(|n| self.arena.get_identifier(n))
+                    .map(|i| self.arena.resolve_identifier_text(i))
+                    .unwrap_or("");
+                let name_text = self
+                    .arena
+                    .get(ns.name)
+                    .and_then(|n| self.arena.get_identifier(n))
+                    .map(|i| self.arena.resolve_identifier_text(i))
+                    .unwrap_or("");
+                return format!("{ns_text}:{name_text}");
+            }
+        }
+
+        String::new()
+    }
+
+    /// Get value info from a JSX attribute initializer.
+    fn get_jsx_attr_value_info(&self, init_idx: NodeIndex) -> JsxAttrValue {
+        let Some(node) = self.arena.get(init_idx) else {
+            return JsxAttrValue::Bool(true);
+        };
+
+        // String literal (e.g. `"hello"`) — preserve original node for quote fidelity
+        if node.kind == SyntaxKind::StringLiteral as u16 {
+            return JsxAttrValue::StringNode(init_idx);
+        }
+
+        // JSX expression container (e.g. `{expr}`)
+        if node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            if let Some(expr) = self.arena.get_jsx_expression(node) {
+                if expr.expression.is_some() {
+                    return JsxAttrValue::Expr(expr.expression);
+                }
+            }
+            return JsxAttrValue::Bool(true);
+        }
+
+        // JSX element used as attr value
+        JsxAttrValue::Expr(init_idx)
+    }
+
+    /// Collect non-trivial JSX children. Filters out whitespace-only text nodes
+    /// (matching tsc's behavior of trimming JSX text).
+    fn collect_jsx_children(&self, children: &[NodeIndex]) -> Vec<NodeIndex> {
+        let mut result = Vec::new();
+        for &child in children {
+            let Some(node) = self.arena.get(child) else {
+                continue;
+            };
+
+            if node.kind == SyntaxKind::JsxText as u16 {
+                if let Some(text) = self.arena.get_jsx_text(node) {
+                    if text.contains_only_trivia_white_spaces {
+                        continue;
+                    }
+                    // Process JSX text: trim and normalize as tsc does
+                    let processed = process_jsx_text(&text.text);
+                    if processed.is_empty() {
+                        continue;
+                    }
+                }
+                result.push(child);
+            } else if node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                // Empty JSX expression containers `{}` are skipped
+                if let Some(expr) = self.arena.get_jsx_expression(node) {
+                    if expr.expression.is_some() {
+                        result.push(child);
+                    }
+                }
+            } else {
+                result.push(child);
+            }
+        }
+        result
+    }
+
+    /// Emit a JSX child as an expression in the `createElement` args.
+    fn emit_jsx_child_as_expression(&mut self, child: NodeIndex) {
+        let Some(node) = self.arena.get(child) else {
+            return;
+        };
+
+        if node.kind == SyntaxKind::JsxText as u16 {
+            if let Some(text) = self.arena.get_jsx_text(node) {
+                let processed = process_jsx_text(&text.text);
+                self.write("\"");
+                self.write(&escape_jsx_string(&processed));
+                self.write("\"");
+                return;
+            }
+        }
+
+        if node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            if let Some(expr) = self.arena.get_jsx_expression(node) {
+                if expr.expression.is_some() {
+                    self.emit(expr.expression);
+                    return;
+                }
+            }
+        }
+
+        // JSX element, fragment, or self-closing element — emit recursively
+        // This will hit the transform dispatch again for nested JSX.
+        self.emit(child);
+    }
+
+    /// Emit JSX attributes as a JS object literal: `{ key: value, ... }`
+    fn emit_jsx_attrs_as_object(&mut self, attrs: &[JsxAttrInfo]) {
+        let named: Vec<_> = attrs
+            .iter()
+            .filter(|a| matches!(a, JsxAttrInfo::Named { .. }))
+            .collect();
+        if named.is_empty() {
+            self.write("{}");
+            return;
+        }
+        self.write("{ ");
+        let mut first = true;
+        for attr in &named {
+            if let JsxAttrInfo::Named { name, value } = attr {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.emit_jsx_prop_name(name);
+                self.write(": ");
+                self.emit_jsx_attr_value(value);
+            }
+        }
+        self.write(" }");
+    }
+
+    /// Emit a property name, quoting if needed.
+    fn emit_jsx_prop_name(&mut self, name: &str) {
+        if needs_quoting(name) {
+            self.write("\"");
+            self.write(name);
+            self.write("\"");
+        } else {
+            self.write(name);
+        }
+    }
+
+    /// Emit an attribute value, preserving original quote style for string literals.
+    fn emit_jsx_attr_value(&mut self, value: &JsxAttrValue) {
+        match value {
+            JsxAttrValue::StringNode(idx) => {
+                // Emit via the standard string literal emitter which preserves
+                // the original quote character from the source text.
+                self.emit(*idx);
+            }
+            JsxAttrValue::Bool(b) => {
+                self.write(if *b { "true" } else { "false" });
+            }
+            JsxAttrValue::Expr(idx) => {
+                self.emit(*idx);
+            }
+        }
+    }
+
+    /// Emit classic spread attrs: handles mixes of spread and named attrs.
+    /// Uses `Object.assign` when there are spreads mixed with named props.
+    fn emit_jsx_spread_attrs_classic(&mut self, attrs: &[JsxAttrInfo]) {
+        // Group consecutive named attrs and emit them as object literals,
+        // interleaved with spread expressions via Object.assign.
+        // e.g. <div a="1" {...x} b="2" /> → Object.assign({a: "1"}, x, {b: "2"})
+        // If only spreads: just the spread expression(s)
+        // If single spread with no named: spread expr
+        // Multiple: Object.assign(...)
+        let groups = group_jsx_attrs(attrs);
+
+        if groups.len() == 1 {
+            match &groups[0] {
+                AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
+                AttrGroup::Spread(expr) => self.emit(*expr),
+            }
+        } else {
+            self.write("Object.assign(");
+            for (i, group) in groups.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                match group {
+                    AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
+                    AttrGroup::Spread(expr) => self.emit(*expr),
+                }
+            }
+            self.write(")");
+        }
+    }
+
+    /// Emit automatic transform props with inline spread syntax.
+    /// tsc emits `{ named, ...spread, children }` — a single object literal.
+    fn emit_jsx_spread_attrs_automatic(
+        &mut self,
+        attrs: &[JsxAttrInfo],
+        children: &[NodeIndex],
+        is_jsxs: bool,
+    ) {
+        self.write("{ ");
+        let mut first = true;
+
+        for attr in attrs {
+            match attr {
+                JsxAttrInfo::Named { name, value } => {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.emit_jsx_prop_name(name);
+                    self.write(": ");
+                    self.emit_jsx_attr_value(value);
+                }
+                JsxAttrInfo::Spread { expr } => {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write("...");
+                    self.emit(*expr);
+                }
+            }
+        }
+
+        // Add children prop
+        if !children.is_empty() {
+            if !first {
+                self.write(", ");
+            }
+            self.write("children: ");
+            if is_jsxs {
+                self.write("[");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.emit_jsx_child_as_expression(*child);
+                }
+                self.write("]");
+            } else {
+                self.emit_jsx_child_as_expression(children[0]);
+            }
+        }
+
+        self.write(" }");
+    }
+
+    // =========================================================================
+    // JSX Preserve Mode Helpers (existing, now called via preserve methods)
+    // =========================================================================
+
     pub(super) fn emit_jsx_opening_element(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_opening(node) else {
             return;
@@ -59,18 +744,6 @@ impl<'a> Printer<'a> {
         self.write("</");
         self.emit(jsx.tag_name);
         self.write(">");
-    }
-
-    pub(super) fn emit_jsx_fragment(&mut self, node: &Node) {
-        let Some(jsx) = self.arena.get_jsx_fragment(node) else {
-            return;
-        };
-
-        self.write("<>");
-        for &child in &jsx.children.nodes {
-            self.emit(child);
-        }
-        self.write("</>");
     }
 
     pub(super) fn emit_jsx_attributes(&mut self, node: &Node) {
@@ -197,6 +870,244 @@ impl<'a> Printer<'a> {
         self.write(":");
         self.emit(ns.name);
     }
+
+    // =========================================================================
+    // JSX Auto Import Injection
+    // =========================================================================
+
+    /// Check if the file needs JSX runtime auto-imports and return the import text.
+    /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
+    /// Only imports the functions that are actually used in the file.
+    pub(super) fn jsx_auto_import_text(&self) -> Option<String> {
+        match self.ctx.options.jsx {
+            JsxEmit::ReactJsx => {
+                let source = self
+                    .ctx
+                    .options
+                    .jsx_import_source
+                    .as_deref()
+                    .unwrap_or("react");
+                let usage = self.scan_jsx_usage();
+                if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
+                    return None;
+                }
+                let mut imports = Vec::new();
+                if usage.needs_jsx {
+                    imports.push("jsx as _jsx");
+                }
+                if usage.needs_jsxs {
+                    imports.push("jsxs as _jsxs");
+                }
+                if usage.needs_fragment {
+                    imports.push("Fragment as _Fragment");
+                }
+                Some(format!(
+                    "import {{ {} }} from \"{source}/jsx-runtime\";\n",
+                    imports.join(", ")
+                ))
+            }
+            JsxEmit::ReactJsxDev => {
+                let source = self
+                    .ctx
+                    .options
+                    .jsx_import_source
+                    .as_deref()
+                    .unwrap_or("react");
+                let usage = self.scan_jsx_usage();
+                if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
+                    return None;
+                }
+                let mut imports = Vec::new();
+                if usage.needs_jsx || usage.needs_jsxs {
+                    imports.push("jsxDEV as _jsxDEV");
+                }
+                if usage.needs_fragment {
+                    imports.push("Fragment as _Fragment");
+                }
+                Some(format!(
+                    "import {{ {} }} from \"{source}/jsx-dev-runtime\";\n",
+                    imports.join(", ")
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Scan the AST to determine which JSX runtime functions are needed.
+    fn scan_jsx_usage(&self) -> JsxUsage {
+        let mut usage = JsxUsage {
+            needs_jsx: false,
+            needs_jsxs: false,
+            needs_fragment: false,
+        };
+        for i in 0..self.arena.len() {
+            let nidx = tsz_parser::parser::NodeIndex(i as u32);
+            let Some(node) = self.arena.get(nidx) else {
+                continue;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
+                    usage.needs_jsx = true;
+                }
+                k if k == syntax_kind_ext::JSX_ELEMENT => {
+                    // Check if this element has multiple children (→ _jsxs) or not (→ _jsx)
+                    if let Some(jsx) = self.arena.get_jsx_element(node) {
+                        let children = self.collect_jsx_children(&jsx.children.nodes);
+                        if children.len() > 1 {
+                            usage.needs_jsxs = true;
+                        } else {
+                            usage.needs_jsx = true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                    usage.needs_fragment = true;
+                    // Fragments also use _jsx or _jsxs
+                    if let Some(frag) = self.arena.get_jsx_fragment(node) {
+                        let children = self.collect_jsx_children(&frag.children.nodes);
+                        if children.len() > 1 {
+                            usage.needs_jsxs = true;
+                        } else {
+                            usage.needs_jsx = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        usage
+    }
+}
+
+// =============================================================================
+// Internal Data Types
+// =============================================================================
+
+struct JsxUsage {
+    needs_jsx: bool,
+    needs_jsxs: bool,
+    needs_fragment: bool,
+}
+
+#[derive(Clone)]
+enum JsxAttrInfo {
+    Named { name: String, value: JsxAttrValue },
+    Spread { expr: NodeIndex },
+}
+
+#[derive(Clone)]
+enum JsxAttrValue {
+    /// String literal attribute — carries the node index for quote-preserving emission
+    StringNode(NodeIndex),
+    Bool(bool),
+    Expr(NodeIndex),
+}
+
+struct JsxAttrsInfo {
+    attrs: Vec<JsxAttrInfo>,
+    has_spread: bool,
+}
+
+enum AttrGroup {
+    Named(Vec<JsxAttrInfo>),
+    Spread(NodeIndex),
+}
+
+/// Group consecutive named attributes together, with spreads as separators.
+fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
+    let mut groups: Vec<AttrGroup> = Vec::new();
+    let mut current_named: Vec<JsxAttrInfo> = Vec::new();
+
+    for attr in attrs {
+        match attr {
+            JsxAttrInfo::Spread { expr } => {
+                if !current_named.is_empty() {
+                    groups.push(AttrGroup::Named(std::mem::take(&mut current_named)));
+                }
+                groups.push(AttrGroup::Spread(*expr));
+            }
+            named => {
+                current_named.push(named.clone());
+            }
+        }
+    }
+
+    if !current_named.is_empty() {
+        groups.push(AttrGroup::Named(current_named));
+    }
+
+    // If the first element is a spread, prepend an empty object for Object.assign
+    if !groups.is_empty() && matches!(groups[0], AttrGroup::Spread(_)) {
+        groups.insert(0, AttrGroup::Named(Vec::new()));
+    }
+
+    groups
+}
+
+// =============================================================================
+// JSX Text Processing (matches tsc behavior)
+// =============================================================================
+
+/// Process JSX text content matching tsc's `getTransformedJsxText` algorithm:
+///
+/// - If the text has no newlines, return it as-is (preserving whitespace).
+/// - If multi-line, trim each line's leading/trailing whitespace, skip empty
+///   lines, and join with a single space.
+fn process_jsx_text(text: &str) -> String {
+    // No newlines at all → return as-is (even if whitespace-only)
+    if !text.contains('\n') {
+        return text.to_string();
+    }
+
+    // Multi-line processing (matches tsc's algorithm)
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut parts: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = if i == 0 {
+            // First line: trim end only
+            line.trim_end()
+        } else if i == lines.len() - 1 {
+            // Last line: trim start only
+            line.trim_start()
+        } else {
+            // Middle lines: trim both
+            line.trim()
+        };
+
+        if trimmed.is_empty() {
+            continue;
+        }
+        parts.push(trimmed.to_string());
+    }
+
+    parts.join(" ")
+}
+
+/// Escape a string for JS string literal context.
+fn escape_jsx_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\'' => result.push_str("\\'"),
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+/// Check if a property name needs quoting in an object literal.
+fn needs_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    // Names with colons (namespaced), hyphens, or starting with digits need quoting
+    name.contains(':') || name.contains('-') || name.starts_with(|c: char| c.is_ascii_digit())
 }
 
 #[cfg(test)]

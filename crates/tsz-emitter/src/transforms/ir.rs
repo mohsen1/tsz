@@ -329,6 +329,12 @@ pub enum IRNode {
         value: Box<Self>,
     },
 
+    /// __classPrivateFieldIn(weakmap, obj)
+    PrivateFieldIn {
+        weakmap_name: String,
+        obj: Box<Self>,
+    },
+
     /// WeakMap.set for private field init: `_weakmap.set(this, value);`
     WeakMapSet {
         weakmap_name: String,

@@ -565,13 +565,16 @@ impl<'a> LoweringPass<'a> {
                     !emit_utils::is_valid_identifier_name(class_name)
                 };
                 if is_anonymous {
+                    let heritage = self.get_extends_heritage(&class.heritage_clauses);
                     let directive = if self.ctx.target_es5 {
-                        let heritage = self.get_extends_heritage(&class.heritage_clauses);
                         self.mark_class_helpers(export_decl.export_clause, heritage);
                         TransformDirective::CommonJSExportDefaultClassES5 {
                             class_node: export_decl.export_clause,
                         }
                     } else {
+                        if self.ctx.needs_es2022_lowering && self.class_has_private_members(class) {
+                            self.mark_class_helpers(export_decl.export_clause, heritage);
+                        }
                         TransformDirective::CommonJSExportDefaultExpr
                     };
                     self.transforms.insert(export_decl.export_clause, directive);
@@ -731,14 +734,36 @@ impl<'a> LoweringPass<'a> {
 
         let heritage = self.get_extends_heritage(&class.heritage_clauses);
         if self.ctx.target_es5
-            || (self.ctx.needs_es2022_lowering && self.class_has_auto_accessor_members(class))
+            || (self.ctx.needs_es2022_lowering
+                && (self.class_has_auto_accessor_members(class)
+                    || self.class_has_private_members(class)))
         {
             self.mark_class_helpers(idx, heritage);
         }
 
+        // TC39 (non-legacy) decorator detection
+        let has_tc39_decorators =
+            !self.ctx.options.legacy_decorators && self.class_has_decorators(class);
+        if has_tc39_decorators {
+            let needs_prop_key = self.class_has_computed_decorated_member(class);
+            let needs_set_function_name = self.class_has_private_decorated_member(class);
+            let helpers = self.transforms.helpers_mut();
+            helpers.es_decorate = true;
+            helpers.run_initializers = true;
+            if needs_prop_key {
+                helpers.prop_key = true;
+            }
+            if needs_set_function_name {
+                helpers.set_function_name = true;
+            }
+        }
+
         // Determine the base transform
         let needs_es5_transform = self.ctx.target_es5;
-        let base_directive = if needs_es5_transform {
+        let base_directive = if has_tc39_decorators && !needs_es5_transform {
+            // TC39 decorator transform (ES2015+ targets)
+            TransformDirective::TC39Decorators { class_node: idx }
+        } else if needs_es5_transform {
             // ES5 class transform
             TransformDirective::ES5Class {
                 class_node: idx,
