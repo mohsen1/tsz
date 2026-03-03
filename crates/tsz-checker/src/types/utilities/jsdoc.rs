@@ -1449,25 +1449,44 @@ impl<'a> CheckerState<'a> {
         }
         let tag_pos = tag_pos?;
         let rest = &jsdoc[tag_pos + "@type".len()..];
-        let open = rest.find('{')?;
-        let after_open = &rest[open + 1..];
-        let mut depth = 1usize;
-        let mut end_idx = None;
-        for (i, ch) in after_open.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_idx = Some(i);
-                        break;
+
+        // Try braced form first: @type {expression}
+        if let Some(open) = rest.find('{') {
+            let after_open = &rest[open + 1..];
+            let mut depth = 1usize;
+            let mut end_idx = None;
+            for (i, ch) in after_open.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_idx = Some(i);
+                            break;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+            }
+            if let Some(end_idx) = end_idx {
+                return Some(after_open[..end_idx].trim());
             }
         }
-        let end_idx = end_idx?;
-        Some(after_open[..end_idx].trim())
+
+        // Braceless form: @type expression (rest of line after whitespace)
+        // Used in tsc for inline types like `@type () => string` or
+        // `@type ({ type: 'foo' } | { type: 'bar' }) & { prop: number }`.
+        let rest = rest.trim_start();
+        if rest.is_empty() || rest.starts_with('@') || rest.starts_with('*') {
+            return None;
+        }
+        // Take the rest of the line (up to end-of-line, closing comment, or next @tag)
+        let end = rest
+            .find('\n')
+            .or_else(|| rest.find("*/"))
+            .unwrap_or(rest.len());
+        let expr = rest[..end].trim().trim_end_matches('*').trim();
+        if expr.is_empty() { None } else { Some(expr) }
     }
 
     /// Check if a node has a JSDoc `@readonly` tag.
