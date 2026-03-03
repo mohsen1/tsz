@@ -1452,6 +1452,18 @@ impl<'a> CheckerState<'a> {
                             env.insert_class_instance_type(def_id, *instance_type);
                         }
                     }
+                    // Register class extends relationship for nominal instanceof narrowing.
+                    // Look up the parent class via InheritanceGraph (SymbolId-based) and
+                    // convert to DefId so the solver can walk the extends chain.
+                    if let Some(def_id) = def_id {
+                        let parents = self.ctx.inheritance_graph.get_parents(sym_id);
+                        if let Some(&parent_sym) = parents.first() {
+                            let symbol_to_def = self.ctx.symbol_to_def.borrow();
+                            if let Some(&parent_def_id) = symbol_to_def.get(&parent_sym) {
+                                env.register_class_extends(def_id, parent_def_id);
+                            }
+                        }
+                    }
                 } else if type_params.is_empty() {
                     // Check if resolve_lib_type_by_name already registered type params
                     // for this DefId. This happens for lib interfaces like Promise<T>,

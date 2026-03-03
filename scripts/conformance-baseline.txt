@@ -463,7 +463,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -612,7 +611,6 @@ FAIL TypeScript/tests/cases/compiler/innerAliases2.ts
 FAIL TypeScript/tests/cases/compiler/innerModExport1.ts
 FAIL TypeScript/tests/cases/compiler/innerModExport2.ts
 FAIL TypeScript/tests/cases/compiler/instanceofOnInstantiationExpression.ts
-FAIL TypeScript/tests/cases/compiler/instanceofWithStructurallyIdenticalTypes.ts
 FAIL TypeScript/tests/cases/compiler/instantiateContextualTypes.ts
 FAIL TypeScript/tests/cases/compiler/instantiateTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
@@ -1843,7 +1841,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTy
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfIsOrderIndependent.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfNotEqualHasNoEffect.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfOther.ts
-FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFromPropNameInUnionType.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardRedundancy.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInFunction.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInIfStatement.ts
@@ -2428,7 +2425,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAndUnionT
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -5060,6 +5056,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5490,6 +5487,7 @@ PASS TypeScript/tests/cases/compiler/instanceofNarrowReadonlyArray.ts
 PASS TypeScript/tests/cases/compiler/instanceofOperator.ts
 PASS TypeScript/tests/cases/compiler/instanceofTypeAliasToGenericClass.ts
 PASS TypeScript/tests/cases/compiler/instanceofWithPrimitiveUnion.ts
+PASS TypeScript/tests/cases/compiler/instanceofWithStructurallyIdenticalTypes.ts
 PASS TypeScript/tests/cases/compiler/instanceSubtypeCheck1.ts
 PASS TypeScript/tests/cases/compiler/instanceSubtypeCheck2.ts
 PASS TypeScript/tests/cases/compiler/instantiateConstraintsToTypeArguments2.ts
@@ -9826,6 +9824,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTy
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfNumber.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfPrimitiveSubtype.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormTypeOfString.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFromPropNameInUnionType.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsDefeat.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInClassAccessors.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInClassMethods.ts
@@ -11829,6 +11828,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts

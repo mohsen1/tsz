@@ -4363,3 +4363,60 @@ type DS<TRec extends MyRecord | { [key: string]: unknown }> =
         "Should NOT emit TS2344 for union-constrained type param in conditional type true branch.\nActual: {diagnostics:?}"
     );
 }
+
+/// Issue: instanceof narrowing uses structural subtyping instead of nominal class identity.
+///
+/// When class A has only optional properties, `is_assignable_to(B, A)` returns true
+/// structurally even though B is an unrelated class. This causes instanceof narrowing
+/// to keep B in the true branch and exclude it from the false branch incorrectly.
+///
+/// Status: FIXED (2026-03-03)
+#[test]
+fn test_instanceof_narrowing_nominal_class_identity() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+class A { a?: string; }
+class B { b: number = 0; }
+function test(x: A | B) {
+    if (x instanceof A) {
+        x.a;  // OK: x is A
+    } else {
+        x.b;  // OK: x is B
+    }
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Instanceof narrowing should use nominal identity for classes.\n\
+         True branch should be A, false branch should be B.\n\
+         Actual errors: {diagnostics:?}"
+    );
+}
+
+/// Instanceof narrowing with inheritance: subclass should survive true branch.
+#[test]
+fn test_instanceof_narrowing_with_class_hierarchy() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+class Animal { name?: string; }
+class Dog extends Animal { bark(): void {} }
+class Cat extends Animal { meow(): void {} }
+function test(x: Dog | Cat) {
+    if (x instanceof Animal) {
+        x;  // Dog | Cat (both extend Animal)
+    }
+    if (x instanceof Dog) {
+        x.bark();  // OK: x is Dog
+    } else {
+        x.meow();  // OK: x is Cat
+    }
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Instanceof narrowing with class hierarchy should work nominally.\n\
+         Actual errors: {diagnostics:?}"
+    );
+}
