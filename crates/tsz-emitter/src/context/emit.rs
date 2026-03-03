@@ -103,10 +103,11 @@ pub struct ModuleTransformState {
     /// Whether "use strict" has been emitted
     pub strict_mode_emitted: bool,
 
-    /// Names of function exports that were hoisted to the preamble
+    /// Function exports that were hoisted to the preamble
     /// (`exports.f = f;` emitted before any statements). Used to skip
     /// duplicate inline emission in `export { f }` clauses.
-    pub hoisted_func_exports: Vec<String>,
+    /// Each entry is `(exported_name, local_name)`.
+    pub hoisted_func_exports: Vec<(String, String)>,
 
     /// Whether a `export default function func()` was hoisted to the preamble
     /// (`exports.default = func;`). When true, skip inline emission.

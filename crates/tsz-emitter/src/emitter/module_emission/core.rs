@@ -237,6 +237,19 @@ impl<'a> Printer<'a> {
         }
 
         if export.is_default_export {
+            // `export default m` where `m` is an identifier referring to a type-only entity
+            // (e.g., a non-instantiated namespace or interface) should not emit anything.
+            // tsc elides these entirely — the only output is `export {};` from the file-level
+            // module-marker logic.
+            if let Some(clause_node) = self.arena.get(export.export_clause) {
+                if (clause_node.kind == SyntaxKind::Identifier as u16
+                    || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
+                    && !self.export_default_target_has_runtime_value(export.export_clause)
+                {
+                    return;
+                }
+            }
+
             // Check if the clause is a declaration (function/class) that doesn't need semicolon
             let clause_is_func_or_class =
                 if let Some(clause_node) = self.arena.get(export.export_clause) {
@@ -259,6 +272,7 @@ impl<'a> Printer<'a> {
                 self.write(" from ");
                 self.emit(export.module_specifier);
             }
+            self.emit_import_attributes(export.attributes);
             self.write_semicolon();
             return;
         }
@@ -297,6 +311,7 @@ impl<'a> Printer<'a> {
                 self.write(" from ");
                 self.emit(export.module_specifier);
             }
+            self.emit_import_attributes(export.attributes);
             self.write_semicolon();
             return;
         }
@@ -310,6 +325,7 @@ impl<'a> Printer<'a> {
             self.emit(export.export_clause);
             self.write(" from ");
             self.emit(export.module_specifier);
+            self.emit_import_attributes(export.attributes);
             self.write_semicolon();
             return;
         }
@@ -1370,10 +1386,11 @@ export { impl as myFunc };
         printer.emit(root);
         let output = printer.get_output().to_string();
 
-        // The preamble should contain `exports.myFunc = myFunc;` (using the exported name)
+        // The preamble should contain `exports.myFunc = impl;`
+        // (using the local name `impl`, not the exported alias `myFunc` — tsc behavior)
         assert!(
-            output.contains("exports.myFunc = myFunc;"),
-            "Should emit hoisted exports.myFunc = myFunc; in preamble.\nOutput:\n{output}"
+            output.contains("exports.myFunc = impl;"),
+            "Should emit hoisted exports.myFunc = impl; in preamble.\nOutput:\n{output}"
         );
         assert!(
             !output.contains("exports.myFunc = void 0"),

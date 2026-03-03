@@ -616,6 +616,130 @@ impl<'a> Printer<'a> {
     /// This mirrors TypeScript behavior for `export import X = Y;` inside namespaces:
     /// when `Y` is type-only (e.g. non-instantiated namespace), no runtime assignment
     /// should be emitted.
+    /// Check whether `export default <identifier>` should emit runtime code.
+    ///
+    /// For `export default`, only purely type-level declarations (interface, type alias)
+    /// should be skipped. Ambient value declarations (`declare function`, `declare class`,
+    /// `declare var`) still represent runtime values and should emit `exports.default = X;`.
+    /// This is more permissive than `namespace_alias_target_has_runtime_value` which
+    /// treats `declare function` as having no runtime emit (correct for namespace aliasing
+    /// but not for `export default`).
+    pub(in crate::emitter) fn export_default_target_has_runtime_value(
+        &self,
+        target: NodeIndex,
+    ) -> bool {
+        let node = match self.arena.get(target) {
+            Some(n) => n,
+            None => return true, // conservative default
+        };
+
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return true; // qualified names etc. are conservatively treated as runtime
+        }
+
+        let name = self.get_identifier_text_idx(target);
+        if name.is_empty() {
+            return true;
+        }
+
+        // Search source file statements for the declaration
+        let statements = self.scope_statements_for_runtime_lookup(None);
+        if statements.is_empty() {
+            return true; // conservative: can't resolve, assume runtime
+        }
+
+        let mut found_type_only = false;
+        let mut found_value = false;
+
+        for stmt_idx in &statements {
+            let Some(stmt_node) = self.arena.get(*stmt_idx) else {
+                continue;
+            };
+
+            // Unwrap export declarations to find the inner declaration
+            let check_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                    self.arena.get(export.export_clause)
+                } else {
+                    None
+                }
+            } else {
+                Some(stmt_node)
+            };
+
+            let Some(check) = check_node else { continue };
+
+            match check.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = self.arena.get_interface(check)
+                        && self.get_identifier_text_idx(iface.name) == name
+                    {
+                        found_type_only = true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(ta) = self.arena.get_type_alias(check)
+                        && self.get_identifier_text_idx(ta.name) == name
+                    {
+                        found_type_only = true;
+                    }
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(check)
+                        && self.get_identifier_text_idx(func.name) == name
+                    {
+                        found_value = true;
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(check)
+                        && self.get_identifier_text_idx(class.name) == name
+                    {
+                        found_value = true;
+                    }
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    if let Some(enum_decl) = self.arena.get_enum(check)
+                        && self.get_identifier_text_idx(enum_decl.name) == name
+                    {
+                        found_value = true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let names = self.collect_variable_names_from_node(check);
+                    if names.contains(&name.to_string()) {
+                        found_value = true;
+                    }
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if let Some(module) = self.arena.get_module(check)
+                        && self.get_identifier_text_idx(module.name) == name
+                    {
+                        // Namespaces are values if they're instantiated
+                        if self.is_instantiated_module(module.body) {
+                            found_value = true;
+                        } else {
+                            found_type_only = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // If we found a value declaration, it has runtime value
+        // even if there's also a type declaration with the same name
+        if found_value {
+            return true;
+        }
+        // If we only found type declarations, it's type-only
+        if found_type_only {
+            return false;
+        }
+        // Unresolved: conservative default - assume runtime value
+        true
+    }
+
     pub(in crate::emitter) fn namespace_alias_target_has_runtime_value(
         &self,
         target: NodeIndex,

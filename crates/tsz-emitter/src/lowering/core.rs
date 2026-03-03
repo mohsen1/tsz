@@ -1234,6 +1234,11 @@ impl<'a> LoweringPass<'a> {
                 // with additional segments (not for plain foo(...args)).
                 if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
                     self.transforms.helpers_mut().spread_array = true;
+                    // When downlevelIteration is enabled, spread on iterables
+                    // needs __read to convert iterator results to arrays.
+                    if self.ctx.options.downlevel_iteration {
+                        self.transforms.helpers_mut().read = true;
+                    }
                 }
             }
         }

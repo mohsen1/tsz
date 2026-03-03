@@ -35,7 +35,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let wrap_spread_with_read = false;
+        let wrap_spread_with_read = self.ctx.target_es5 && self.ctx.options.downlevel_iteration;
 
         // Split array into segments by spread elements
         let mut segments: Vec<ArraySegment> = Vec::new();
@@ -58,101 +58,76 @@ impl<'a> Printer<'a> {
             segments.push(ArraySegment::Elements(&elements[current_start..]));
         }
 
-        // Emit using __spreadArray for exact tsc matching
-        match segments.as_slice() {
-            [] => {
-                // Should not happen due to empty check above
-                self.write("[]");
-            }
-            [ArraySegment::Elements(elems)] => {
-                // No spreads, emit normally
-                self.write("[");
-                self.emit_comma_separated(elems);
-                self.write("]");
-            }
-            [ArraySegment::Spread(spread_idx)] => {
-                // Only a spread element: [...a] -> __spreadArray([], a, true)
-                self.write("__spreadArray([], ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                }
-                self.write(", true)");
-            }
-            [
-                ArraySegment::Spread(spread_idx),
-                ArraySegment::Elements(elems),
-            ] => {
-                // Spread first, then elements: [...a, 1, 2] -> __spreadArray(a, [1, 2], false)
-                self.write("__spreadArray(");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                }
-                self.write(", ");
-                self.write("[");
-                self.emit_comma_separated(elems);
-                self.write("]");
-                self.write(", false)");
-            }
-            [
-                ArraySegment::Elements(elems),
-                ArraySegment::Spread(spread_idx),
-            ] => {
-                // Elements first, then spread: [1, 2, ...a] -> __spreadArray([1, 2], a, false)
-                self.write("__spreadArray(");
-                self.write("[");
-                self.emit_comma_separated(elems);
-                self.write("]");
-                self.write(", ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                }
-                self.write(", false)");
-            }
-            [
-                ArraySegment::Elements(prefix_elems),
-                ArraySegment::Spread(spread_idx),
-                ArraySegment::Elements(suffix_elems),
-            ] => {
-                // Elements, spread, elements: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
-                self.write("__spreadArray(");
-                self.write("[");
-                self.emit_comma_separated(prefix_elems);
-                self.write("]");
-                self.write(", ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
-                }
-                self.write(", false)");
-                // Append suffix with concat
-                if !suffix_elems.is_empty() {
-                    self.write(".concat(");
+        // Emit using __spreadArray for exact tsc matching.
+        // tsc uses nested __spreadArray calls for multi-segment arrays:
+        //   [1, ...a, 2, ...b] -> __spreadArray(__spreadArray(__spreadArray([1], a, false), [2], false), b, false)
+        if segments.is_empty() {
+            self.write("[]");
+        } else if segments.len() == 1 {
+            match &segments[0] {
+                ArraySegment::Elements(elems) => {
+                    // No spreads, emit normally
                     self.write("[");
-                    self.emit_comma_separated(suffix_elems);
+                    self.emit_comma_separated(elems);
                     self.write("]");
-                    self.write(")");
+                }
+                ArraySegment::Spread(spread_idx) => {
+                    // Only a spread element: [...a] -> __spreadArray([], a, true)
+                    // When __read wraps the spread, the pack arg is false because
+                    // __read already produces an array.
+                    self.write("__spreadArray([], ");
+                    if let Some(spread_node) = self.arena.get(*spread_idx) {
+                        self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
+                    }
+                    if wrap_spread_with_read {
+                        self.write(", false)");
+                    } else {
+                        self.write(", true)");
+                    }
                 }
             }
-            [first, rest @ ..] => {
-                // Fallback for more complex patterns: use concat chain
-                self.emit_array_segment(first);
-                for segment in rest {
-                    self.write(".concat(");
-                    match segment {
-                        ArraySegment::Elements(elems) => {
-                            self.write("[");
-                            self.emit_comma_separated(elems);
-                            self.write("]");
-                        }
-                        ArraySegment::Spread(spread_idx) => {
-                            if let Some(spread_node) = self.arena.get(*spread_idx) {
-                                self.emit_spread_expression_with_read(
-                                    spread_node,
-                                    wrap_spread_with_read,
-                                );
-                            }
-                        }
+        } else {
+            // Multiple segments: use nested __spreadArray calls.
+            // Open __spreadArray( for all pairs (segments.len() - 1 calls).
+            for _ in 0..segments.len() - 1 {
+                self.write("__spreadArray(");
+            }
+
+            // Emit the first segment as the innermost base.
+            match &segments[0] {
+                ArraySegment::Elements(elems) => {
+                    self.write("[");
+                    self.emit_comma_separated(elems);
+                    self.write("]");
+                }
+                ArraySegment::Spread(spread_idx) => {
+                    // First segment is spread: base is __spreadArray([], spread, false)
+                    self.write("__spreadArray([], ");
+                    if let Some(spread_node) = self.arena.get(*spread_idx) {
+                        self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
-                    self.write(")");
+                    self.write(", false)");
+                }
+            }
+
+            // Emit remaining segments, each closing one __spreadArray call.
+            for segment in &segments[1..] {
+                match segment {
+                    ArraySegment::Elements(elems) => {
+                        self.write(", [");
+                        self.emit_comma_separated(elems);
+                        self.write("], false)");
+                    }
+                    ArraySegment::Spread(spread_idx) => {
+                        self.write(", ");
+                        if let Some(spread_node) = self.arena.get(*spread_idx) {
+                            self.emit_spread_expression_with_read(
+                                spread_node,
+                                wrap_spread_with_read,
+                            );
+                        }
+                        self.write(", false)");
+                    }
                 }
             }
         }
@@ -177,21 +152,6 @@ impl<'a> Printer<'a> {
                 self.write(")");
             } else {
                 self.emit(spread.expression);
-            }
-        }
-    }
-
-    fn emit_array_segment(&mut self, segment: &ArraySegment) {
-        match segment {
-            ArraySegment::Elements(elems) => {
-                self.write("[");
-                self.emit_comma_separated(elems);
-                self.write("]");
-            }
-            ArraySegment::Spread(_) => {
-                // This should not happen as the first segment
-                // [...a] case is handled differently
-                self.write("[]");
             }
         }
     }

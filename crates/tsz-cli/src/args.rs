@@ -59,7 +59,7 @@ pub struct CliArgs {
     pub lib: Option<Vec<String>>,
 
     /// Specify what JSX code is generated.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, ignore_case = true)]
     pub jsx: Option<JsxEmit>,
 
     /// Specify the JSX factory function (e.g. 'React.createElement').

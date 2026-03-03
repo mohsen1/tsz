@@ -613,7 +613,7 @@ export const bar = 42;
 
     assert_eq!(
         func_exports,
-        vec!["foo"],
+        vec![("foo".to_string(), "foo".to_string())],
         "Overloaded function should produce only one func_export entry"
     );
     assert_eq!(
