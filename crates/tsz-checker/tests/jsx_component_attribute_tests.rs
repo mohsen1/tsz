@@ -1662,3 +1662,216 @@ let x = <Greet name="world" />;
         "Non-generic SFC should not emit IntrinsicAttributes TS2322, got: {ts2322_about_ia:?}"
     );
 }
+
+// =====================================================================
+// JSX Children Type Checking Tests
+// =====================================================================
+
+/// Helper: Standard JSX namespace preamble with `ElementAttributesProperty` + `ElementChildrenAttribute`.
+/// Element has a `__brand` property so it's not just `{}` — this prevents `any[]` from being
+/// assignable to `JSX.Element` (which would break TS2746 single-child detection).
+const JSX_CHILDREN_PREAMBLE: &str = r#"
+interface Array<T> { length: number; [n: number]: T; }
+declare namespace JSX {
+    interface Element { __brand: string }
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+"#;
+
+#[test]
+fn jsx_children_single_element_child_satisfies_element_type() {
+    // Single element child should satisfy `children: JSX.Element`
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    b: string;
+    children: JSX.Element;
+}}
+function Comp(p: Prop) {{ return <div>{{p.b}}</div>; }}
+let k = <Comp a={{10}} b="hi"><div>hi</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Single element child should satisfy JSX.Element children type, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_missing_required_children_emits_ts2741() {
+    // Component requiring `children` but given no children body should emit TS2741
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element;
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Missing required children should emit TS2741, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_double_specified_emits_ts2710() {
+    // Children as both attribute and body should emit TS2710
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element;
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}} children={{<div/>}}><div>hi</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::ARE_SPECIFIED_TWICE_THE_ATTRIBUTE_NAMED_WILL_BE_OVERWRITTEN
+        ),
+        "Children specified both as attribute and body should emit TS2710, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_multiple_children_for_single_type_emits_ts2746() {
+    // Multiple children when `children: JSX.Element` (non-array) should emit TS2746
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element;
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Multiple children for non-array children type should emit TS2746, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_multiple_children_for_array_type_no_error() {
+    // Multiple children when `children: JSX.Element[]` should be OK
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Multiple children for array children type should NOT emit TS2746, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_with_array_allows_multiple() {
+    // `children: JSX.Element | JSX.Element[]` should accept multiple children
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element | JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Union with array member should accept multiple children, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_whitespace_only_text_ignored() {
+    // Whitespace-only text children should not count as children
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}>   </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Should not get any type errors about extra children properties
+    let children_errors: Vec<_> = diags
+        .iter()
+        .filter(|(c, _)| {
+            *c == diagnostic_codes::ARE_SPECIFIED_TWICE_THE_ATTRIBUTE_NAMED_WILL_BE_OVERWRITTEN
+                || *c == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        })
+        .collect();
+    assert!(
+        children_errors.is_empty(),
+        "Whitespace-only text should not produce children errors, got: {children_errors:?}"
+    );
+}
+
+#[test]
+fn jsx_children_optional_children_no_error_when_absent() {
+    // Optional `children?` should not require children body
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children?: JSX.Element;
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Optional children should not emit TS2741 when absent, got: {diags:?}"
+    );
+}

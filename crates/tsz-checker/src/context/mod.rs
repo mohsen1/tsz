@@ -451,6 +451,15 @@ pub struct CheckerContext<'a> {
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 
+    /// Temporarily holds information about children of the current JSX element
+    /// being checked. Set in dispatch.rs before calling `get_type_of_jsx_opening_element`,
+    /// consumed in `check_jsx_attributes_against_props` for children validation.
+    /// Contains (`child_count`, `has_text_child`, `synthesized_children_type`).
+    /// - `child_count`: number of non-whitespace children in the JSX body
+    /// - `has_text_child`: whether any `JsxText` children exist
+    /// - `synthesized_children_type`: the type to use as the `children` prop value
+    pub jsx_children_info: Option<(usize, bool, TypeId)>,
+
     /// The callable type of the current call expression being checked.
     /// Set before `collect_call_argument_types_with_context` so spread-handling
     /// code can query rest parameter positions via `ContextualTypeContext`.

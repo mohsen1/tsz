@@ -189,7 +189,17 @@ impl<'a> CheckerState<'a> {
         let diag_checkpoint = self.ctx.diagnostics.len();
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
-        let attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
+        let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
+
+        // Include synthesized children from JSX element body
+        if let Some((_child_count, _has_text, synthesized_type)) = self.ctx.jsx_children_info.take()
+        {
+            attrs_info.attrs.push(JsxAttrInfo {
+                name: "children".to_string(),
+                type_id: synthesized_type,
+                from_spread: false,
+            });
+        }
 
         // Try each overload
         let has_any_attrs = !attrs_info.attrs.is_empty() || attrs_info.has_spread;
@@ -384,16 +394,14 @@ impl<'a> CheckerState<'a> {
         let provided_names: rustc_hash::FxHashSet<&str> =
             info.attrs.iter().map(|a| a.name.as_str()).collect();
 
-        // Check 1: All required props must be provided
+        // Check 1: All required props must be provided.
+        // Children are now included in provided_names via synthesis above.
         if !info.has_any_spread {
             for prop in &shape.properties {
                 if prop.optional {
                     continue;
                 }
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                if prop_name == "children" {
-                    continue;
-                }
                 if !provided_names.contains(prop_name.as_str()) {
                     return false;
                 }
@@ -568,6 +576,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Include synthesized children prop if body children exist
+        let children_info = self.ctx.jsx_children_info.take();
+        if let Some((_child_count, _has_text, synthesized_type)) = children_info {
+            provided_attrs.push(("children".to_string(), synthesized_type));
+        }
+
         // Skip union check when there are no concrete attributes to check,
         // or when spread attributes are involved (handled separately).
         if provided_attrs.is_empty() || has_spread {
@@ -618,7 +632,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check 2: All required properties in the member are provided.
-            // Skip `children` (synthesized from JSX element body, not checked here).
+            // Children are now included in provided_names via synthesis above.
             let all_required_present = if let Some(shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, member_resolved)
             {
@@ -627,9 +641,6 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                     let prop_name = self.ctx.types.resolve_atom(prop.name);
-                    if prop_name == "children" {
-                        return true;
-                    }
                     provided_names.contains(prop_name.as_str())
                 })
             } else {
@@ -772,7 +783,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
-                if req_name == "children" || req_name == "key" || req_name == "ref" {
+                if req_name == "key" || req_name == "ref" {
                     continue;
                 }
                 if !spread_prop_names.contains(&req_name)

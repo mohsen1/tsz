@@ -1142,6 +1142,36 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a specific attribute name exists as an EXPLICIT JSX attribute
+    /// (not from a spread). Used for TS2710 double-specification detection.
+    fn has_explicit_jsx_attribute(&self, attributes_idx: NodeIndex, name: &str) -> bool {
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return false;
+        };
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                    continue;
+                };
+                if let Some(attr_name) = self.get_jsx_attribute_name(name_node)
+                    && attr_name == name
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     // JSX Attribute Type Checking
 
     /// Check JSX attributes against an already-evaluated props type.
@@ -1163,30 +1193,20 @@ impl<'a> CheckerState<'a> {
         raw_props_has_type_params: bool,
         display_target: String,
     ) {
-        // TS2698: Validate spread attribute types BEFORE props type resolution.
-        // This check fires regardless of the props type — it's about whether the
-        // spread source is a valid object type, not about the target props.
-        // Must run before the `props_type == ANY` early return below, since
-        // intrinsic elements with `[key: string]: any` resolve to ANY props.
-        // Resolve Lazy(DefId) types to their concrete Object forms.
-        // Normal property access calls resolve_type_for_property_access() before checking,
-        // but JSX attribute checking skipped this step — interface-referenced props arrived
-        // as Lazy(DefId) and the solver's PropertyAccessEvaluator couldn't resolve them
-        // (QueryCache's resolve_lazy returns None), causing silent TypeId::ANY fallback.
+        // Take children_info EARLY — nested JSX in attribute values would steal it.
+        let children_info = self.ctx.jsx_children_info.take();
+
+        // Resolve Lazy(DefId) props before any checks (TS2698 needs this too).
         let props_type = self.resolve_type_for_property_access(props_type);
 
-        // When props is a union type (e.g., discriminated unions like
-        // `{ editable: false } | { editable: true, onEdit: ... }`),
-        // per-property checking doesn't work because `get_object_shape` returns None
-        // for unions. Instead, build an attributes object type from the JSX attributes
-        // and check whole-object assignability against the union props type.
-        // This lets the solver's union assignability handle discriminated unions correctly.
+        // Union props: delegate to whole-object assignability checking.
         if tsz_solver::is_union_type(self.ctx.types, props_type) {
+            // Restore children_info for the union path which takes it independently
+            self.ctx.jsx_children_info = children_info;
             self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx);
             return;
         }
-        // When props_type is any/error or contains error types, skip attribute-vs-props
-        // checking but still validate spread types (TS2698) which is independent of props.
+        // Skip attribute-vs-props checking for any/error props.
         let skip_prop_checks = props_type == TypeId::ANY
             || props_type == TypeId::ERROR
             || tsz_solver::contains_error_type(self.ctx.types, props_type);
@@ -1198,42 +1218,25 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if the props type has a string index signature (e.g., [s: string]: any).
-        // When it does, any attribute name is valid, so skip excess property checking.
+        // String index signature → any attribute name is valid.
         let has_string_index =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
                 .is_some_and(|shape| shape.string_index.is_some());
 
-        // When the props type contains unresolved type parameters (e.g. a generic component
-        // `StatelessComponent<T>`), TypeScript suppresses *excess-property* errors because
-        // a spread may satisfy the type parameter. We still check *type-mismatch* errors
-        // for concrete properties that are found in the intersection. This flag is used
-        // in the PropertyNotFound branch below.
-        //
-        // We check BOTH the evaluated props type AND the raw (pre-evaluation) type.
-        // The raw check is important because evaluation may collapse type parameters:
-        // e.g., `T & { children?: ReactNode }` evaluates to `{ children?: ReactNode; x: number }`
-        // when T has constraint `{ x: number }`, losing the type parameter information.
+        // Suppress excess-property errors when props has unresolved type params.
+        // Check both raw and evaluated props (evaluation may collapse type params).
         let props_has_type_params = raw_props_has_type_params
             || tsz_solver::contains_type_parameters(self.ctx.types, props_type);
 
-        // Track provided attribute names and their types for missing-required-property check.
-        // Types are used to build a proper source type in TS2741 messages (e.g.,
-        // `{ property1: string; property2: number; }` instead of `{ property1, property2 }`).
         let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
 
-        // Track explicit attribute names → their name node indices for TS2783
-        // (spread overwrite detection). When a spread contains a required property
-        // that was already specified as an explicit attribute, we emit TS2783.
+        // TS2783: track explicit attr names for spread overwrite detection.
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
-        // Track spread attributes for deferred assignability checking (TS2322).
-        // We collect (spread_type, spread_expr_idx, attr_index_in_list) and check
-        // after the loop so we can account for explicit attributes that override
-        // spread properties.
+        // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
         let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
 
         // Check each attribute
@@ -1294,28 +1297,15 @@ impl<'a> CheckerState<'a> {
                         from_index_signature,
                         ..
                     } => {
-                        // data-* and aria-* attributes are only type-checked when they're
-                        // explicitly declared as named properties. When resolved via a string
-                        // index signature, tsc skips them (HTML convention).
+                        // data-*/aria-* via index signature: skip (HTML convention).
                         if is_data_or_aria && from_index_signature {
                             continue;
                         }
-                        // Strip `undefined` from optional property types for write-position
-                        // checking. When a prop is declared as `text?: string`, the solver's
-                        // `optional_property_type` returns `string | undefined` (the read type).
-                        // But providing a JSX attribute means the property IS present, so the
-                        // target type for assignability should be `string` (the write type).
-                        // This matches TSC's `removeMissingType` behavior for JSX attributes.
+                        // Strip undefined from optional props (write-position checking).
                         tsz_solver::remove_undefined(self.ctx.types, type_id)
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
-                        // Excess property: attribute doesn't exist in props type.
-                        // Skip if:
-                        //  - props has a string index signature (any attr is valid), or
-                        //  - attr starts with "data-" or "aria-" (HTML convention), or
-                        //  - props type contains unresolved type parameters (tsc suppresses
-                        //    excess-property errors for generic components because a spread
-                        //    may satisfy the type parameter).
+                        // Excess property check (skip for index sig, data-*/aria-*, type params).
                         if !has_string_index
                             && !props_has_type_params
                             && !attr_name.starts_with("data-")
@@ -1362,13 +1352,9 @@ impl<'a> CheckerState<'a> {
                     _ => continue,
                 };
 
-                // Get actual type of the attribute value
+                // Check attribute value assignability
                 if attr_data.initializer.is_none() {
-                    // Boolean attribute without value (e.g., <input disabled />)
-                    // `<Foo x/>` is equivalent to `<Foo x={true}/>`.
-                    // tsc uses literal `true` in source object types (TS2741: `{ x: true; }`)
-                    // but widens to `boolean` for property-level assignability errors
-                    // (TS2322: `Type 'boolean' is not assignable to type 'number'`).
+                    // Shorthand boolean attribute (e.g., <input disabled />).
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
@@ -1401,11 +1387,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                // TS2783: Check if a later spread attribute will overwrite this attribute.
-                // e.g., `<Foo a={1} {...props}>` where `props` contains `a`.
-                // IMPORTANT: Must check overwrite BEFORE assignability. If the attribute
-                // will be overwritten by a later spread, tsc skips the type check
-                // (emitting only TS2783, not TS2322).
+                // TS2783: Check if a later spread overwrites this attr (skip type check if so).
                 let overwritten = self.check_jsx_attr_overwritten_by_spread(
                     &attr_name,
                     attr_data.name,
@@ -1414,21 +1396,16 @@ impl<'a> CheckerState<'a> {
                 );
 
                 if !overwritten {
-                    // Set contextual type so attribute values preserve narrow literal
-                    // types instead of widening. e.g., <Foo bar="A" /> where
-                    // bar: "A" | "B" keeps "A" as literal, not widened to string.
+                    // Set contextual type to preserve narrow literal types.
                     let prev_contextual_type = self.ctx.contextual_type;
                     self.ctx.contextual_type = Some(expected_type);
                     let actual_type = self.compute_type_of_node(value_node_idx);
                     self.ctx.contextual_type = prev_contextual_type;
 
-                    // Update the attribute type for TS2741 source type formatting.
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = actual_type;
                     }
-
-                    // Check assignability — tsc anchors JSX attribute errors at the
-                    // attribute NAME (not the value expression)
+                    // Assignability check — tsc anchors at the attribute NAME.
                     if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
                         self.check_assignable_or_report_at(
                             actual_type,
@@ -1439,16 +1416,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                // Extract the spread type to track which properties it provides.
-                // This is used for the TS2741 (missing required property) check below.
                 let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
                     continue;
                 };
                 let spread_expr_idx = spread_data.expression;
-                // Set contextual type from props so inline object literals in spreads
-                // preserve literal types (e.g., `{...{y: true}}` keeps `y: true`
-                // instead of widening to `y: boolean`). tsc contextually types
-                // spread expressions against the element's props type.
+                // Set contextual type so spread literals preserve narrow types.
                 let prev_contextual_type = self.ctx.contextual_type;
                 if !skip_prop_checks {
                     self.ctx.contextual_type = Some(props_type);
@@ -1457,8 +1429,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.contextual_type = prev_contextual_type;
                 let spread_type = self.resolve_type_for_property_access(spread_type);
 
-                // When spread type is any/error/unknown, it potentially provides all
-                // properties, so we skip further checking.
+                // any/error/unknown spread covers all properties.
                 if spread_type == TypeId::ANY
                     || spread_type == TypeId::ERROR
                     || spread_type == TypeId::UNKNOWN
@@ -1506,10 +1477,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    // After TS2783 check, clear tracking only for required properties
-                    // that the spread provides. Optional properties don't definitely
-                    // overwrite, so the explicit attribute may still be overwritten by
-                    // a later spread with the same property as required.
+                    // Clear required spread props from tracking.
                     for sp in &spread_props {
                         if !sp.optional {
                             let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
@@ -1518,9 +1486,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Extract property names and types from the spread type for TS2741 tracking.
-                // This allows the missing-required-property check to account for
-                // properties provided via spread, with accurate type info for error messages.
+                // Extract spread props for TS2741 tracking.
                 if let Some(spread_shape) =
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
                 {
@@ -1530,24 +1496,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Track this spread for deferred assignability checking (TS2322).
-                // We check after the loop to account for explicit attribute overrides.
+                // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
                     spread_entries.push((spread_type, spread_expr_idx, attr_i));
                 }
             }
         }
 
-        // TS2322: Check spread attribute property types against props type.
-        // For each spread, check whether properties it provides are type-compatible
-        // with the expected props. tsc checks each spread's properties individually
-        // against the corresponding props type properties and emits TS2322 for type
-        // mismatches. Missing required properties are handled separately by TS2741.
-        //
-        // Collect explicit attribute names that appear AFTER each spread position,
-        // since those override the spread's contribution for those properties.
+        // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
-            // Collect all explicit attribute names with their position in the attr list.
             let mut explicit_attr_names_with_pos: Vec<(usize, String)> = Vec::new();
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
                 let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1563,10 +1520,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for &(spread_type, _spread_expr_idx, _spread_pos) in &spread_entries {
-                // Skip properties that also appear as explicit attributes — either
-                // before or after the spread. When after: the explicit attr overrides
-                // the spread. When before: the spread overwrites the explicit attr
-                // (TSC handles that case with TS2783, not TS2322 on the spread).
+                // Skip props that also appear as explicit attributes.
                 let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()
                     .map(|(_, name)| name.as_str())
@@ -1582,21 +1536,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check for missing required properties (TS2741)
-        // Skip if:
-        // - we already reported excess property errors (tsc doesn't pile on with TS2741)
-        // - a spread of type `any` covers all properties
-        // - props type is any/error (skip_prop_checks)
+        // JSX children synthesis: incorporate body children into provided props.
+        if let Some((child_count, _has_text_child, synthesized_type)) = children_info {
+            // TS2710: explicit children attr + body children = double specification.
+            let has_explicit_children_attr =
+                self.has_explicit_jsx_attribute(attributes_idx, "children");
+            if has_explicit_children_attr && !skip_prop_checks {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    tag_name_idx,
+                    diagnostic_codes::ARE_SPECIFIED_TWICE_THE_ATTRIBUTE_NAMED_WILL_BE_OVERWRITTEN,
+                    &["children"],
+                );
+            }
+
+            provided_attrs.push(("children".to_string(), synthesized_type));
+            // TS2746: single child expected but multiple provided.
+            if child_count > 1 && !skip_prop_checks {
+                self.check_jsx_children_count(props_type, tag_name_idx);
+            }
+        }
+
+        // TS2741: missing required properties.
         if !has_excess_property_error && !spread_covers_all && !skip_prop_checks {
-            // tsc anchors TS2741 (missing required property) at the tag name.
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
 
-        // Check for missing required properties from JSX.IntrinsicAttributes.
-        // tsc checks provided attributes against IntrinsicAttributes separately from
-        // the component's own props type. When IntrinsicAttributes has required
-        // properties (e.g., `key: string` without `?`), tsc emits TS2741 if they're
-        // not provided.
+        // Also check required IntrinsicAttributes.
         if !has_excess_property_error
             && !spread_covers_all
             && let Some(intrinsic_attrs_type) = self.get_intrinsic_attributes_type()
@@ -1609,12 +1575,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check that all required properties in the props type are provided as JSX attributes.
-    /// Emits TS2741 for each missing required property.
-    ///
-    /// For TS2741, tsc uses the plain props type name (e.g., `AnotherComponentProps`),
-    /// NOT the `IntrinsicAttributes` intersection. This matches tsc's behavior where only
-    /// TS2322 uses the full intersection target.
+    /// Check that all required properties in the props type are provided. Emits TS2741.
     fn check_missing_required_jsx_props(
         &mut self,
         props_type: TypeId,
@@ -1633,20 +1594,12 @@ impl<'a> CheckerState<'a> {
 
             let prop_name = self.ctx.types.resolve_atom(prop.name);
 
-            // Skip 'children' — TSC synthesizes children from JSX element body,
-            // which we don't implement yet. Reporting 'children' as missing would
-            // produce false positives.
-            if prop_name == "children" {
-                continue;
-            }
-
+            // 'children' is now handled via jsx_children_info synthesis in
             if provided_attrs.iter().any(|(a, _)| a == &prop_name) {
                 continue;
             }
 
-            // Build a synthetic object type from the provided attributes for the
-            // error message. tsc formats this as `{ property1: string; property2: number; }`,
-            // not just `{ property1, property2 }`.
+            // Build synthetic source type for the error message.
             let source_type = if provided_attrs.is_empty() {
                 "{}".to_string()
             } else {
@@ -1683,12 +1636,82 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check `IntrinsicAttributes` required properties when component props couldn't
-    /// be extracted (e.g., no `ElementAttributesProperty` interface).
+    /// Check TS2746: when the component's `children` prop expects a single child
+    /// but multiple children are provided in the JSX element body.
     ///
-    /// This runs as a fallback when `get_jsx_props_type_for_component` returns None.
-    /// It collects provided attribute names and checks `IntrinsicAttributes` for any
-    /// required properties that aren't provided.
+    /// tsc checks if the `children` prop type is NOT an array-like type. If the
+    /// type is a single value type (not array, not tuple), it emits TS2746.
+    fn check_jsx_children_count(&mut self, props_type: TypeId, tag_name_idx: NodeIndex) {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let resolved = self.resolve_type_for_property_access(props_type);
+        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return,
+        };
+        let children_type = self.evaluate_type_with_env(children_type);
+        if children_type == TypeId::ANY || children_type == TypeId::ERROR {
+            return;
+        }
+
+        if self.type_accepts_multiple_children(children_type) {
+            return;
+        }
+
+        // Fallback: any[] assignable to children type (handles complex aliases like ReactNode).
+        let any_array = self.ctx.types.factory().array(TypeId::ANY);
+        if self.is_assignable_to(any_array, children_type) {
+            return;
+        }
+
+        let children_type_str = self.format_type(children_type);
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            tag_name_idx,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
+            &["children", &children_type_str],
+        );
+    }
+
+    /// Check if a type can accept multiple children values.
+    /// Returns true if the type is array-like, or if it's a union where any member
+    /// is array-like (e.g., `string | Element[]` or `ReactNode`).
+    /// Evaluates each type to resolve type aliases (e.g., `ReactFragment` → {} | Array<...>).
+    fn type_accepts_multiple_children(&mut self, type_id: TypeId) -> bool {
+        // Evaluate to resolve type aliases and lazy references
+        let type_id = self.evaluate_type_with_env(type_id);
+
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR {
+            return true;
+        }
+
+        // Direct array/tuple check
+        if tsz_solver::is_array_type(self.ctx.types, type_id)
+            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+        {
+            return true;
+        }
+
+        // Object with numeric index signature
+        if tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+            .is_some_and(|shape| shape.number_index.is_some())
+        {
+            return true;
+        }
+
+        // Union: check if any member accepts multiple children.
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            let members_vec: Vec<TypeId> = members.to_vec();
+            return members_vec
+                .iter()
+                .any(|&m| self.type_accepts_multiple_children(m));
+        }
+
+        false
+    }
+
+    /// Fallback: check `IntrinsicAttributes` when component props couldn't be extracted.
     fn check_jsx_intrinsic_attributes_only(
         &mut self,
         attributes_idx: NodeIndex,
