@@ -365,6 +365,9 @@ impl<'a> CheckerState<'a> {
         // Check that class properly implements all interfaces from implements clauses (error 2420)
         self.check_implements_clauses(stmt_idx, class);
 
+        // Check JSDoc @implements tags (JS files only)
+        self.check_jsdoc_implements_clauses(stmt_idx, class);
+
         // Check that class properties are compatible with index signatures (TS2411)
         // Get the class instance type (not constructor type) to access instance index signatures
         let class_instance_type = self.get_class_instance_type(stmt_idx, class);
@@ -505,6 +508,9 @@ impl<'a> CheckerState<'a> {
 
         // Check that class properly implements all interfaces from implements clauses (error 2420)
         self.check_implements_clauses(class_idx, class);
+
+        // Check JSDoc @implements tags (JS files only)
+        self.check_jsdoc_implements_clauses(class_idx, class);
 
         // Check that class properties are compatible with index signatures (TS2411)
         // Get the class instance type (not constructor type) to access instance index signatures

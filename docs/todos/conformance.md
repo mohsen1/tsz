@@ -1,7 +1,64 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9823/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9826/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03c — Object intrinsic intersection reduction + TS2349 suppression
+
+### Fixed: `object & primitive → never` intersection reduction
+
+**Area**: types/nonPrimitive (56.25% → 68.8%), cross-cutting intersection reduction
+
+**Root cause 1 (intersection)**: The `object` intrinsic type (TypeId::OBJECT) represents all
+non-primitive types. It is disjoint from ALL primitive types (string, number, boolean, bigint,
+symbol, null, undefined). But `normalize_intersection` had no check for this — `object & string`
+remained as-is instead of reducing to `never`. The existing `intersection_has_null_undefined_with_object()`
+only checked structural types (`TypeData::Object`, `TypeData::Array`, etc.), not the `object` intrinsic.
+
+**Fix 1** (solver, `normalize.rs`):
+1. New `intersection_has_object_intrinsic_with_primitive()` — detects `TypeId::OBJECT` intersected
+   with any primitive (via `primitive_class_for()`). Returns `true` → intersection reduces to `never`.
+2. Extended `intersection_has_null_undefined_with_object()` to also recognize `TypeId::OBJECT` as an
+   object type (was only matching structural TypeData variants).
+3. Branded types like `{} & string` or `{ __brand: T } & string` remain unaffected — only the
+   `object` keyword is disjoint from primitives.
+
+**Root cause 2 (TS2349)**: When calling a method on `never` type (e.g., `a.toFixed()` after typeof
+narrowing), both TS2339 ("property does not exist") and TS2349 ("not callable") were emitted. tsc only
+emits TS2339 in this case. The redundant TS2349 came from `check_call_expression()` in `call.rs`
+which unconditionally emitted "not callable" for any call on `never`.
+
+**Fix 2** (checker, `call.rs`): Check if the callee is a property/element access expression
+(method call). If so, suppress TS2349 since TS2339 from the property access already covers the error.
+Direct calls on `never`-typed values still emit TS2349.
+
+**Key insight**: `object` is NOT the same as `{}` (empty object). `object` excludes all primitives;
+`{}` accepts everything. Branded type patterns use structural objects, not the `object` keyword.
+
+**Tests**: 8 assertions in `test_interner_intersection_object_intrinsic_with_primitive_is_never`:
+- `object & string/number/boolean/null/undefined/"hello" → never`
+- `object & { foo: string } ≠ never` (structural object compatible)
+- `{} & string ≠ never` (branded type preserved)
+
+**Conformance delta**: +6 tests (9822 → 9828 in run, 9824-9826 in snapshot due to nondeterminism):
+- `nonPrimitiveNarrow.ts` — PASS
+- `nonPrimitiveStrictNull.ts` — PASS
+- `genericCallInferenceConditionalType1.ts` — PASS
+- `genericCallInferenceConditionalType2.ts` — PASS
+- `privateNamesConstructorChain-1.ts` — PASS (nondeterministic)
+- `privateNamesConstructorChain-2.ts` — PASS (nondeterministic)
+
+**Remaining unfixed in types/nonPrimitive area** (5 tests still failing):
+- `nonPrimitiveUnionIntersection.ts`: TS2741 emitted instead of TS2353 on line 10 (excess property
+  checking vs missing property precedence issue)
+- `nonPrimitiveAccessProperty.ts`: fingerprint-only — we say `'object'` but tsc says `'{}'` for
+  destructuring
+- `nonPrimitiveAsProperty.ts`: fingerprint-only — different error line/message
+- `nonPrimitiveAssignError.ts`: fingerprint-only — TS2741 message text differs (`'object'` vs `'{}'`)
+- `nonPrimitiveInGeneric.ts`: fingerprint-only — literal `'123'` vs widened `'number'` in message
+
+**Files changed**: `crates/tsz-solver/src/intern/normalize.rs`, `crates/tsz-solver/src/intern/intersection.rs`,
+`crates/tsz-checker/src/types/computation/call.rs`, `crates/tsz-solver/tests/intern_tests.rs`
 
 ## Session 2026-03-03b — Intersection source explain path (TS2739/TS2741)
 

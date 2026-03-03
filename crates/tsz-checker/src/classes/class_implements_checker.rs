@@ -1194,4 +1194,341 @@ impl<'a> CheckerState<'a> {
             current_heritage = next_heritage;
         }
     }
+
+    // ============================================================================
+    // JSDoc @implements checking
+    // ============================================================================
+
+    /// Extract type names from `@implements` JSDoc tags on a class declaration.
+    /// Supports both `@implements {TypeName}` and `@implements TypeName` syntax.
+    /// Returns a list of type name strings.
+    fn extract_jsdoc_implements_names(&self, class_idx: NodeIndex) -> Vec<String> {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return Vec::new();
+        };
+
+        let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        let needle = "@implements";
+        for (pos, _) in jsdoc.match_indices(needle) {
+            let after = pos + needle.len();
+            if after >= jsdoc.len() {
+                continue;
+            }
+            // Ensure @implements is not a prefix of another tag
+            let next_ch = jsdoc[after..].chars().next().unwrap();
+            if next_ch.is_ascii_alphanumeric() {
+                continue;
+            }
+
+            // Skip whitespace after @implements
+            let rest = jsdoc[after..].trim_start();
+            if rest.is_empty() {
+                continue;
+            }
+
+            // Extract type name — either `{TypeName}` or `TypeName`
+            let type_name = if rest.starts_with('{') {
+                // Find matching }
+                if let Some(close) = rest.find('}') {
+                    rest[1..close].trim()
+                } else {
+                    continue;
+                }
+            } else {
+                // Take until whitespace or end of line
+                let end = rest
+                    .find(|c: char| c.is_whitespace() || c == '*')
+                    .unwrap_or(rest.len());
+                rest[..end].trim()
+            };
+
+            if !type_name.is_empty() {
+                names.push(type_name.to_string());
+            }
+        }
+        names
+    }
+
+    /// Check JSDoc `@implements` tags on a class declaration (JS files only).
+    /// This is the JSDoc equivalent of syntactic `implements` clauses.
+    /// Reports TS2420 (missing interface members), TS2416 (incompatible member types),
+    /// and TS2720 (implementing a class instead of extending).
+    pub(crate) fn check_jsdoc_implements_clauses(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        // Only check in JS files
+        if !self.ctx.is_js_file() {
+            return;
+        }
+
+        // Abstract classes don't need to implement interface members
+        if self.has_abstract_modifier(&class_data.modifiers) {
+            return;
+        }
+
+        let implements_names = self.extract_jsdoc_implements_names(class_idx);
+        if implements_names.is_empty() {
+            return;
+        }
+
+        // Get class name for error messages
+        let class_name = if class_data.name.is_some() {
+            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    ident.escaped_text.clone()
+                } else {
+                    String::from("<anonymous>")
+                }
+            } else {
+                String::from("<anonymous>")
+            }
+        } else {
+            String::from("<anonymous>")
+        };
+        let class_error_idx = if class_data.name.is_some() {
+            class_data.name
+        } else {
+            class_idx
+        };
+
+        // Get the class instance type — this includes JS constructor this-properties
+        let class_instance_type = self.get_class_instance_type(class_idx, class_data);
+
+        // Collect class member names from instance type shape for existence checks
+        let mut class_member_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        let mut class_member_type_map: rustc_hash::FxHashMap<String, TypeId> =
+            rustc_hash::FxHashMap::default();
+        if let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, class_instance_type)
+        {
+            for prop in &shape.properties {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                class_member_names.insert(name.clone());
+                class_member_type_map.insert(name, prop.type_id);
+            }
+        }
+
+        for target_name in &implements_names {
+            // Resolve the target symbol from file_locals
+            let Some(sym_id) = self.ctx.binder.file_locals.get(target_name) else {
+                continue;
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+
+            let is_class = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+
+            // Check for private/protected members (TS2720 — should extend, not implement)
+            let mut has_private_members = false;
+            if is_class {
+                for &decl_idx in &symbol.declarations {
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && let Some(base_class_data) = self.ctx.arena.get_class(node)
+                            && self.class_has_private_or_protected_members(base_class_data) {
+                                has_private_members = true;
+                            }
+                }
+            }
+
+            if has_private_members {
+                let message = format!(
+                    "Class '{class_name}' incorrectly implements class '{target_name}'. Did you mean to extend '{target_name}' and inherit its members as a subclass?"
+                );
+                self.error_at_node(
+                    class_error_idx,
+                    &message,
+                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                );
+                continue;
+            }
+
+            // Get the interface/class type and check members.
+            // For classes, get_type_of_symbol returns the constructor type, so we need
+            // to use get_class_instance_type to get the instance shape with members.
+            let interface_type = if is_class {
+                // Find the class declaration and get its instance type
+                let mut instance_type = None;
+                for &decl_idx in &symbol.declarations {
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && let Some(target_class_data) = self.ctx.arena.get_class(node) {
+                            instance_type =
+                                Some(self.get_class_instance_type(decl_idx, target_class_data));
+                            break;
+                        }
+                }
+                instance_type.unwrap_or(TypeId::ERROR)
+            } else {
+                let raw_type = self.get_type_of_symbol(sym_id);
+                self.evaluate_type_for_assignability(raw_type)
+            };
+
+            let mut missing_members: Vec<String> = Vec::new();
+            let mut incompatible_members: Vec<(String, String, String)> = Vec::new();
+            let mut interface_has_index_signature = false;
+
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
+            {
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    interface_has_index_signature = true;
+                }
+
+                for prop in &shape.properties {
+                    let member_name = self.ctx.types.resolve_atom(prop.name);
+                    let interface_member_type = prop.type_id;
+
+                    // Skip optional properties
+                    if prop.optional {
+                        continue;
+                    }
+
+                    // Check if class has this member
+                    if let Some(&class_member_type) = class_member_type_map.get(&member_name) {
+                        // Check type compatibility
+                        if interface_member_type != TypeId::ANY
+                            && class_member_type != TypeId::ANY
+                            && interface_member_type != TypeId::ERROR
+                            && class_member_type != TypeId::ERROR
+                            && self.should_report_assignability_mismatch(
+                                class_member_type,
+                                interface_member_type,
+                                class_idx,
+                            )
+                        {
+                            let expected_str = self.format_type(interface_member_type);
+                            let actual_str = self.format_type(class_member_type);
+                            incompatible_members.push((
+                                member_name.clone(),
+                                expected_str,
+                                actual_str,
+                            ));
+                        }
+                    } else {
+                        missing_members.push(member_name);
+                    }
+                }
+            }
+
+            // Check index signatures
+            if interface_has_index_signature {
+                let class_has_index_signature =
+                    class_data.members.nodes.iter().any(|&member_idx| {
+                        if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                            member_node.kind == syntax_kind_ext::INDEX_SIGNATURE
+                        } else {
+                            false
+                        }
+                    });
+
+                if !class_has_index_signature && missing_members.is_empty() {
+                    // tsc emits just the top-level message; index signature detail is a sub-diagnostic
+                    self.error_at_node(
+                        class_error_idx,
+                        &format!(
+                            "Class '{class_name}' incorrectly implements interface '{target_name}'."
+                        ),
+                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                    );
+                }
+            }
+
+            // Report missing members
+            let diagnostic_code = if is_class {
+                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+            } else {
+                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+            };
+
+            if !missing_members.is_empty() {
+                let missing_message = if missing_members.len() == 1 {
+                    format!(
+                        "Property '{}' is missing in type '{}' but required in type '{}'.",
+                        missing_members[0], class_name, target_name
+                    )
+                } else {
+                    let formatted_list = if missing_members.len() > 4 {
+                        let first_four = missing_members
+                            .iter()
+                            .take(4)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{}, and {} more", first_four, missing_members.len() - 4)
+                    } else {
+                        missing_members.join(", ")
+                    };
+                    format!(
+                        "Type '{class_name}' is missing the following properties from type '{target_name}': {formatted_list}"
+                    )
+                };
+
+                let full_message = if is_class {
+                    format!(
+                        "Class '{class_name}' incorrectly implements class '{target_name}'. Did you mean to extend '{target_name}' and inherit its members as a subclass?\n  {missing_message}"
+                    )
+                } else {
+                    format!(
+                        "Class '{class_name}' incorrectly implements interface '{target_name}'.\n  {missing_message}"
+                    )
+                };
+
+                self.error_at_node(class_error_idx, &full_message, diagnostic_code);
+            }
+
+            // Report incompatible member types (TS2416)
+            for (member_name, expected, actual) in incompatible_members {
+                // For JSDoc @implements, we don't have a specific member node to point to,
+                // so use the class name node for the error location.
+                // Find the class member node if possible for better error location
+                let error_node_idx = class_data
+                    .members
+                    .nodes
+                    .iter()
+                    .find_map(|&member_idx| {
+                        if let Some(name) = self.get_member_name(member_idx)
+                            && name == member_name
+                        {
+                            if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                self.get_member_name_node(member_node)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(class_error_idx);
+
+                self.error_at_node(
+                    error_node_idx,
+                    &format!(
+                        "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{target_name}'."
+                    ),
+                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                );
+                self.report_type_not_assignable_detail(
+                    error_node_idx,
+                    &actual,
+                    &expected,
+                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                );
+            }
+        }
+    }
 }
