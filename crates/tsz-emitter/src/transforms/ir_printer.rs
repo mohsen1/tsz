@@ -94,6 +94,15 @@ impl<'a> IRPrinter<'a> {
         ))
     }
 
+    /// Check if a node is a `return [opcode ...];` generator op return statement.
+    /// Used to decide whether to inline `case N: return [opcode];` on one line.
+    fn is_generator_return(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ReturnStatement(Some(expr)) if matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+        )
+    }
+
     fn emit_namespace_bound_enum_iife(
         &mut self,
         enum_name: &str,
@@ -982,12 +991,21 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
+                hoisted_vars,
             } => {
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 self.write(", void 0, void 0, function () {");
                 self.write_line();
                 self.increase_indent();
+                // Emit hoisted var declarations before return __generator(...)
+                for var_name in hoisted_vars {
+                    self.write_indent();
+                    self.write("var ");
+                    self.write(var_name);
+                    self.write(";");
+                    self.write_line();
+                }
                 self.write_indent();
                 self.emit_node(generator_body);
                 self.decrease_indent();
@@ -1029,15 +1047,23 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
 
-                    for case in cases {
+                    for case_item in cases {
                         self.write_indent();
                         self.write("case ");
-                        self.write(&case.label.to_string());
+                        self.write(&case_item.label.to_string());
                         self.write(":");
-                        if !case.statements.is_empty() {
+                        // tsc puts single-return-generator-op cases on one line:
+                        //   case 0: return [4 /*yield*/, x];
+                        if case_item.statements.len() == 1
+                            && Self::is_generator_return(&case_item.statements[0])
+                        {
+                            self.write(" ");
+                            self.emit_node(&case_item.statements[0]);
+                            self.write_line();
+                        } else if !case_item.statements.is_empty() {
                             self.write_line();
                             self.increase_indent();
-                            for stmt in &case.statements {
+                            for stmt in &case_item.statements {
                                 self.write_indent();
                                 self.emit_node(stmt);
                                 self.write_line();
