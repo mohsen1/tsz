@@ -1,4 +1,4 @@
-use super::{ModuleKind, Printer};
+use super::{JsxEmit, ModuleKind, Printer};
 use crate::output::source_writer::{SourcePosition, source_position_from_offset};
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -893,6 +893,27 @@ impl<'a> Printer<'a> {
                         return true;
                     }
                     if self.ctx.is_commonjs() && is_external {
+                        // When JSX mode requires a factory (React by default),
+                        // don't erase imports matching the factory name — JSX
+                        // elements implicitly reference it but the text-based
+                        // heuristic won't find it in the source.
+                        if matches!(
+                            self.ctx.options.jsx,
+                            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+                        ) {
+                            let import_name =
+                                self.get_identifier_text_idx(import_data.import_clause);
+                            let factory_root = self
+                                .ctx
+                                .options
+                                .jsx_factory
+                                .as_deref()
+                                .and_then(|f| f.split('.').next())
+                                .unwrap_or("React");
+                            if import_name == factory_root {
+                                return false;
+                            }
+                        }
                         return !self.import_equals_has_value_usage_after_node(node, import_data);
                     }
                 }
