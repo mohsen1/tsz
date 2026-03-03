@@ -1113,16 +1113,22 @@ impl<'a> CheckerState<'a> {
                             },
                         );
                     } else {
-                        // Single accessor so far: getter-only is readonly
+                        // Single accessor so far: getter-only is readonly.
+                        // Set-only: read type is `undefined`.
                         let readonly = is_getter;
+                        let (read_type, write_type) = if is_getter {
+                            (accessor_type, accessor_type)
+                        } else {
+                            (TypeId::UNDEFINED, accessor_type)
+                        };
                         let order = prop_order;
                         prop_order += 1;
                         properties.insert(
                             name_atom,
                             PropertyInfo {
                                 name: name_atom,
-                                type_id: accessor_type,
-                                write_type: accessor_type,
+                                type_id: read_type,
+                                write_type,
                                 optional: false,
                                 readonly,
                                 is_method: false,

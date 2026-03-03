@@ -380,10 +380,13 @@ impl<'a> CheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor
-                .getter
-                .or(accessor.setter)
-                .unwrap_or(TypeId::UNKNOWN);
+            let read_type = accessor.getter.unwrap_or_else(|| {
+                if accessor.setter.is_some() {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::UNKNOWN
+                }
+            });
             let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
