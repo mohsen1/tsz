@@ -114,6 +114,9 @@ pub struct CheckerOptions {
     /// When true, allow import paths to end with `.ts`, `.tsx`, `.mts`, `.cts` extensions.
     /// When false (default), such imports emit TS5097.
     pub allow_importing_ts_extensions: bool,
+    /// When true, `.ts` extensions in relative imports are rewritten to `.js` in output.
+    /// Implies the same TS5097 suppression as `allow_importing_ts_extensions`.
+    pub rewrite_relative_import_extensions: bool,
     /// When true, the effective module resolution is Classic.
     /// Used by `module_not_found_diagnostic()` to decide between TS2792 and TS2307.
     /// TS2792 ("Did you mean to set moduleResolution to nodenext?") is only emitted
@@ -189,6 +192,7 @@ impl Default for CheckerOptions {
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             allow_importing_ts_extensions: false,
+            rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
         }

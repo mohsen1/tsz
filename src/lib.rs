@@ -625,6 +625,7 @@ impl CompilerOptions {
             suppress_implicit_any_index_errors: false,
             no_implicit_use_strict: false,
             allow_importing_ts_extensions: false,
+            rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
         }

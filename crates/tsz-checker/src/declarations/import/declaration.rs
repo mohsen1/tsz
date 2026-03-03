@@ -401,8 +401,10 @@ impl<'a> CheckerState<'a> {
             emitted_dts_import_error = true;
         }
 
-        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled
+        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
+        // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
         if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
             && let Some(ext) = ts_extension_suffix(module_name)
         {
