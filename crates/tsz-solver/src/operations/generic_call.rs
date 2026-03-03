@@ -1005,12 +1005,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_mergeable_direct_inference_candidate(&self, ty: TypeId) -> bool {
+        // Primitives (null, undefined, string, number, boolean, void, never, etc.)
+        // are always safe to merge into a union — they don't indicate structural
+        // ambiguity. Without this, `equal(B, D | undefined)` would discard the
+        // union and use only the first candidate, causing false TS2345 errors.
+        if ty.is_nullish() || ty.is_any_or_unknown() || ty == TypeId::NEVER || ty == TypeId::VOID {
+            return true;
+        }
         match self.interner.lookup(ty) {
             Some(
                 TypeData::Object(_)
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
-                | TypeData::Tuple(_),
+                | TypeData::Tuple(_)
+                | TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_),
             ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
