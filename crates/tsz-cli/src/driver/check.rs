@@ -705,9 +705,13 @@ pub(super) fn collect_diagnostics(
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
                 if should_filter_type_errors {
-                    // Keep syntax/semantic diagnostics and JS grammar diagnostics (TS8xxx).
-                    checker_diagnostics
-                        .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
+                    // Keep syntax/semantic diagnostics (< 2000), JS grammar diagnostics
+                    // (TS8xxx), and specific semantic codes that tsc's plainJSErrors allows.
+                    checker_diagnostics.retain(|diag| {
+                        diag.code < 2000
+                            || (8000..9000).contains(&diag.code)
+                            || is_plain_js_allowed_code(diag.code)
+                    });
                 }
 
                 // Suppress semantic errors that cascade from structural parse failures.

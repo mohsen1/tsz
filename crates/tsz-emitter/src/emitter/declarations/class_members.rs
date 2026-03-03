@@ -516,27 +516,27 @@ impl<'a> Printer<'a> {
         // tsc suppresses these for function/method/constructor bodies.
         // Use the first statement's position (or closing `}` position) as max_pos
         // to avoid consuming trailing comments that belong on the closing `}`.
-        if !self.ctx.options.remove_comments {
-            if let Some(text) = self.source_text {
-                let bytes = text.as_bytes();
-                let start = block_node.pos as usize;
-                let end = (block_node.end as usize).min(bytes.len());
-                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
-                    let brace_end = (start + offset + 1) as u32;
-                    // Find first content position after opening brace (first statement
-                    // or closing `}` brace) to bound the skip range tightly.
-                    // Using the closing `}` position (not block_node.end which includes
-                    // trailing trivia) prevents consuming comments after `}`.
-                    let closing_brace_pos =
-                        self.find_token_end_before_trivia(block_node.pos, block_node.end);
-                    let first_content_pos = block
-                        .statements
-                        .nodes
-                        .first()
-                        .and_then(|&s| self.arena.get(s))
-                        .map_or(closing_brace_pos, |s| s.pos);
-                    self.skip_trailing_same_line_comments(brace_end, first_content_pos);
-                }
+        if !self.ctx.options.remove_comments
+            && let Some(text) = self.source_text
+        {
+            let bytes = text.as_bytes();
+            let start = block_node.pos as usize;
+            let end = (block_node.end as usize).min(bytes.len());
+            if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                let brace_end = (start + offset + 1) as u32;
+                // Find first content position after opening brace (first statement
+                // or closing `}` brace) to bound the skip range tightly.
+                // Using the closing `}` position (not block_node.end which includes
+                // trailing trivia) prevents consuming comments after `}`.
+                let closing_brace_pos =
+                    self.find_token_end_before_trivia(block_node.pos, block_node.end);
+                let first_content_pos = block
+                    .statements
+                    .nodes
+                    .first()
+                    .and_then(|&s| self.arena.get(s))
+                    .map_or(closing_brace_pos, |s| s.pos);
+                self.skip_trailing_same_line_comments(brace_end, first_content_pos);
             }
         }
         self.write_line();

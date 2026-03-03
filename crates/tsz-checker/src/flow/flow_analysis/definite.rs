@@ -173,7 +173,21 @@ impl<'a> CheckerState<'a> {
         )
         .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
 
-        let narrowed = analyzer.get_flow_type(idx, declared_type, flow_node);
+        // Strip `undefined` from the initial type for parameters with default values.
+        // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`
+        // starts as `string` (not `string | undefined`) because the default guarantees it.
+        let initial_type = if let Some(sym_id) = self.get_symbol_for_identifier(idx)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            && sym.value_declaration.is_some()
+            && let Some(decl_node) = self.ctx.arena.get(sym.value_declaration)
+            && let Some(param) = self.ctx.arena.get_parameter(decl_node)
+            && param.initializer.is_some()
+        {
+            tsz_solver::remove_undefined(self.ctx.types, declared_type)
+        } else {
+            declared_type
+        };
+        let narrowed = analyzer.get_flow_type(idx, initial_type, flow_node);
 
         // Correlated narrowing for destructured bindings.
         // When `const { data, isSuccess } = useQuery()` and we check `isSuccess`,

@@ -241,13 +241,12 @@ impl<'a> Printer<'a> {
             // (e.g., a non-instantiated namespace or interface) should not emit anything.
             // tsc elides these entirely — the only output is `export {};` from the file-level
             // module-marker logic.
-            if let Some(clause_node) = self.arena.get(export.export_clause) {
-                if (clause_node.kind == SyntaxKind::Identifier as u16
+            if let Some(clause_node) = self.arena.get(export.export_clause)
+                && (clause_node.kind == SyntaxKind::Identifier as u16
                     || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
-                    && !self.export_default_target_has_runtime_value(export.export_clause)
-                {
-                    return;
-                }
+                && !self.export_default_target_has_runtime_value(export.export_clause)
+            {
+                return;
             }
 
             // Check if the clause is a declaration (function/class) that doesn't need semicolon

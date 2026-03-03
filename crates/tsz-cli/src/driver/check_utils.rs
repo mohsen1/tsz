@@ -1375,6 +1375,25 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
     )
 }
 
+/// Semantic diagnostic codes (>= 2000) that tsc allows through for plain JS files.
+/// Mirrors tsc's `plainJSErrors` set from `program.ts`.
+pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
+    matches!(
+        code,
+        2451  // Cannot redeclare block-scoped variable '{0}'
+        | 2492 // Cannot redeclare identifier '{0}' in catch clause
+        | 2528 // A module cannot have multiple default exports
+        | 2752 // The first export default is here
+        | 2753 // Another export default is here
+        | 2774 // This condition will always return true since this function is always defined
+        | 2801 // This condition will always return true since this '{0}' is always defined
+        | 2803 // Cannot assign to private method '{0}'. Private methods are not writable
+        | 2839 // This condition will always return '{0}' since JS compares objects by reference
+        | 2845 // This condition will always return '{0}'
+        | 18013 // Property '{0}' is not accessible outside class '{1}' (private identifier)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

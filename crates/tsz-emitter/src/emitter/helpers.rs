@@ -804,26 +804,22 @@ impl<'a> Printer<'a> {
                     // (e.g., `export declare namespace Foo { ... }`, `export interface Bar { }`)
                     if let Some(inner_node) = self.arena.get(export_data.export_clause) {
                         // `export { type A, type B }` — all specifiers individually type-only
-                        if inner_node.kind == syntax_kind_ext::NAMED_EXPORTS {
-                            if let Some(named_exports) = self.arena.get_named_imports(inner_node) {
-                                let all_type_only = !named_exports.elements.nodes.is_empty()
-                                    && named_exports.elements.nodes.iter().all(|&spec_idx| {
-                                        if let Some(spec_node) = self.arena.get(spec_idx)
-                                            && let Some(spec) = self.arena.get_specifier(spec_node)
-                                        {
-                                            spec.is_type_only
-                                                || self
-                                                    .ctx
-                                                    .options
-                                                    .type_only_nodes
-                                                    .contains(&spec_idx)
-                                        } else {
-                                            false
-                                        }
-                                    });
-                                if all_type_only {
-                                    return true;
-                                }
+                        if inner_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                            && let Some(named_exports) = self.arena.get_named_imports(inner_node)
+                        {
+                            let all_type_only = !named_exports.elements.nodes.is_empty()
+                                && named_exports.elements.nodes.iter().all(|&spec_idx| {
+                                    if let Some(spec_node) = self.arena.get(spec_idx)
+                                        && let Some(spec) = self.arena.get_specifier(spec_node)
+                                    {
+                                        spec.is_type_only
+                                            || self.ctx.options.type_only_nodes.contains(&spec_idx)
+                                    } else {
+                                        false
+                                    }
+                                });
+                            if all_type_only {
+                                return true;
                             }
                         }
                         // `export default m` where `m` refers to a type-only entity
