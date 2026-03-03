@@ -704,6 +704,14 @@ impl BinderState {
                     );
                     self.bind_node(arena, ret.expression);
                 }
+                // For return statements inside IIFEs, redirect flow to the return
+                // target label. This ensures the IIFE's return doesn't make the
+                // outer function's flow unreachable.
+                if node.kind == syntax_kind_ext::RETURN_STATEMENT
+                    && let Some(&return_target) = self.return_targets.last()
+                {
+                    self.add_antecedent(return_target, self.current_flow);
+                }
                 self.current_flow = self.unreachable_flow;
             }
 
@@ -897,13 +905,33 @@ impl BinderState {
                 }
             }
 
-            // Call expressions - traverse into callee and arguments
+            // Call expressions - traverse into callee and arguments.
+            // For IIFEs, bind arguments BEFORE the function expression so that
+            // argument side-effects are in the flow context before the IIFE body.
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = arena.get_call_expr(node) {
-                    self.bind_node(arena, call.expression);
-                    if let Some(args) = &call.arguments {
-                        for &arg in &args.nodes {
-                            self.bind_node(arena, arg);
+                    let callee_idx = arena.skip_parenthesized(call.expression);
+                    let is_iife = arena.get(callee_idx).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || n.kind == syntax_kind_ext::ARROW_FUNCTION
+                    });
+
+                    if is_iife {
+                        // IIFE: bind arguments first (in outer flow context), then callee.
+                        // This matches tsc's binding order for IIFEs.
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_node(arena, arg);
+                            }
+                        }
+                        self.bind_node(arena, call.expression);
+                    } else {
+                        // Normal call: bind callee first, then arguments.
+                        self.bind_node(arena, call.expression);
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_node(arena, arg);
+                            }
                         }
                     }
                     let flow = self.create_flow_call(idx);

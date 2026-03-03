@@ -243,6 +243,11 @@ impl BinderState {
                 param_count = func.parameters.nodes.len(),
                 "Entering arrow function"
             );
+
+            // Arrow functions are never generators (no asterisk_token).
+            // Check async + immediately-invoked for IIFE treatment.
+            let is_iife = !func.is_async && arena.is_immediately_invoked(idx);
+
             self.bind_modifiers(arena, func.modifiers.as_ref());
             // Enter function scope
             self.enter_scope(ContainerKind::Function, idx);
@@ -250,36 +255,69 @@ impl BinderState {
             // Bind type parameters (e.g., <T> in arrow functions)
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
-            // Capture enclosing flow for closures (preserves narrowing for const/let variables)
-            self.with_fresh_flow_inner(
-                |binder| {
-                    // Bind parameters
-                    tracing::debug!(
-                        param_count = func.parameters.nodes.len(),
-                        "Binding arrow function parameters"
-                    );
-                    for &param_idx in &func.parameters.nodes {
-                        binder.bind_parameter(arena, param_idx);
+            if is_iife {
+                // IIFE: bind body inline in the outer flow context (no FlowStart node).
+                let return_label = self.create_branch_label();
+                self.return_targets.push(return_label);
+
+                tracing::debug!(
+                    param_count = func.parameters.nodes.len(),
+                    "Binding arrow IIFE parameters"
+                );
+                for &param_idx in &func.parameters.nodes {
+                    self.bind_parameter(arena, param_idx);
+                }
+                self.collect_hoisted_from_node(arena, func.body);
+                self.process_hoisted_functions(arena);
+                self.process_hoisted_vars(arena);
+                self.bind_node(arena, func.body);
+
+                // Merge fall-through with return flows
+                self.add_antecedent(return_label, self.current_flow);
+                let return_label = self.return_targets.pop().unwrap();
+
+                if let Some(label_node) = self.flow_nodes.get(return_label) {
+                    match label_node.antecedent.len() {
+                        0 => self.current_flow = self.unreachable_flow,
+                        1 => self.current_flow = label_node.antecedent[0],
+                        _ => self.current_flow = return_label,
                     }
-
-                    // Hoisting: Collect var and function declarations from the function body
-                    // Note: Function declarations in blocks are block-scoped in strict mode
-                    // and external modules. In non-strict scripts, they hoist (Annex B).
-                    binder.collect_hoisted_from_node(arena, func.body);
-                    binder.process_hoisted_functions(arena);
-                    binder.process_hoisted_vars(arena);
-
-                    // Bind body (could be a block or an expression)
-                    binder.bind_node(arena, func.body);
-                },
-                true,
-            );
+                } else {
+                    self.current_flow = self.unreachable_flow;
+                }
+            } else {
+                // Non-IIFE: isolated flow scope
+                self.with_fresh_flow_inner(
+                    |binder| {
+                        tracing::debug!(
+                            param_count = func.parameters.nodes.len(),
+                            "Binding arrow function parameters"
+                        );
+                        for &param_idx in &func.parameters.nodes {
+                            binder.bind_parameter(arena, param_idx);
+                        }
+                        binder.collect_hoisted_from_node(arena, func.body);
+                        binder.process_hoisted_functions(arena);
+                        binder.process_hoisted_vars(arena);
+                        binder.bind_node(arena, func.body);
+                    },
+                    true,
+                );
+            }
 
             self.exit_scope(arena);
         }
     }
 
     /// Bind a function expression - creates a scope and binds the body.
+    ///
+    /// For non-async, non-generator IIFEs (Immediately Invoked Function Expressions),
+    /// the body is bound inline in the outer control flow context. This means:
+    /// - Narrowed variables from the outer scope remain narrowed inside the IIFE
+    /// - Assignments inside the IIFE propagate to the outer scope's control flow
+    /// - Return statements are redirected to a branch label (not the outer function's return)
+    ///
+    /// This matches tsc's behavior where IIFEs are part of the containing control flow.
     pub(crate) fn bind_function_expression(
         &mut self,
         arena: &NodeArena,
@@ -287,6 +325,12 @@ impl BinderState {
         idx: NodeIndex,
     ) {
         if let Some(func) = arena.get_function(node) {
+            // A non-async, non-generator IIFE is considered part of the containing
+            // control flow. Return statements behave similarly to break statements
+            // that exit to a label just past the statement body.
+            let is_iife =
+                !func.is_async && !func.asterisk_token && arena.is_immediately_invoked(idx);
+
             self.bind_modifiers(arena, func.modifiers.as_ref());
             // Enter function scope
             self.enter_scope(ContainerKind::Function, idx);
@@ -301,26 +345,50 @@ impl BinderState {
             // Bind type parameters
             self.bind_type_parameters(arena, func.type_parameters.as_ref());
 
-            // Capture enclosing flow for closures (preserves narrowing for const/let variables)
-            self.with_fresh_flow_inner(
-                |binder| {
-                    // Bind parameters
-                    for &param_idx in &func.parameters.nodes {
-                        binder.bind_parameter(arena, param_idx);
+            if is_iife {
+                // IIFE: bind body inline in the outer flow context (no FlowStart node).
+                // This preserves narrowing and propagates assignments to the outer scope.
+                let return_label = self.create_branch_label();
+                self.return_targets.push(return_label);
+
+                for &param_idx in &func.parameters.nodes {
+                    self.bind_parameter(arena, param_idx);
+                }
+                self.collect_hoisted_from_node(arena, func.body);
+                self.process_hoisted_functions(arena);
+                self.process_hoisted_vars(arena);
+                self.bind_node(arena, func.body);
+
+                // Merge the fall-through flow with the return label
+                self.add_antecedent(return_label, self.current_flow);
+                let return_label = self.return_targets.pop().unwrap();
+
+                // Finalize: if the return label has antecedents, use it as current flow.
+                // This mirrors tsc's finishFlowLabel behavior.
+                if let Some(label_node) = self.flow_nodes.get(return_label) {
+                    match label_node.antecedent.len() {
+                        0 => self.current_flow = self.unreachable_flow,
+                        1 => self.current_flow = label_node.antecedent[0],
+                        _ => self.current_flow = return_label,
                     }
-
-                    // Hoisting: Collect var and function declarations from the function body
-                    // Note: Function declarations in blocks are block-scoped in strict mode
-                    // and external modules. In non-strict scripts, they hoist (Annex B).
-                    binder.collect_hoisted_from_node(arena, func.body);
-                    binder.process_hoisted_functions(arena);
-                    binder.process_hoisted_vars(arena);
-
-                    // Bind body
-                    binder.bind_node(arena, func.body);
-                },
-                true,
-            );
+                } else {
+                    self.current_flow = self.unreachable_flow;
+                }
+            } else {
+                // Non-IIFE: isolated flow scope with captured enclosing flow
+                self.with_fresh_flow_inner(
+                    |binder| {
+                        for &param_idx in &func.parameters.nodes {
+                            binder.bind_parameter(arena, param_idx);
+                        }
+                        binder.collect_hoisted_from_node(arena, func.body);
+                        binder.process_hoisted_functions(arena);
+                        binder.process_hoisted_vars(arena);
+                        binder.bind_node(arena, func.body);
+                    },
+                    true,
+                );
+            }
 
             self.exit_scope(arena);
         }
@@ -1136,9 +1204,14 @@ impl BinderState {
             start_node.antecedent.push(prev_flow);
         }
 
+        // Save and clear return_targets so that return statements inside
+        // non-IIFE functions don't redirect to an enclosing IIFE's return target.
+        let prev_return_targets = std::mem::take(&mut self.return_targets);
+
         self.current_flow = start_flow;
         bind_body(self);
         self.current_flow = prev_flow;
+        self.return_targets = prev_return_targets;
     }
 
     // =========================================================================
