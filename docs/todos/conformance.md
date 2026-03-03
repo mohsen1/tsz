@@ -1,7 +1,69 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9885/12570 (78.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9895/12570 (78.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03p — Readonly tuple/array element access diagnostics (+4 tests)
+
+### Fixed: Three readonly element access diagnostic issues
+
+**Area**: types/tuple (64.7% → 67.6%), also classes/members, compiler
+
+**Root cause 1 — TS2540 column offset**: For `v[0] = 1` where `v` is `readonly [number, number, ...number[]]`,
+the TS2540 error was anchored at the full element access expression (`v[0]`, col 1) instead of the argument
+expression inside brackets (`0`, col 3). TSC anchors at the argument.
+
+**Fix**: In `readonly.rs`, changed `error_readonly_property_at(&name, target_idx)` to use
+`access.name_or_argument` for element access expressions (not index signatures).
+
+**Root cause 2 — ReadonlyChecker visitor bug**: The `ReadonlyChecker` in `index_signatures.rs` delegated
+`visit_readonly_type()` to the inner type without considering that `ReadonlyType(Tuple)` and
+`ReadonlyType(Array)` have implicit readonly number index signatures. `visit_tuple()` always returned
+`false`, so `is_readonly_index_signature()` reported false for readonly tuples/arrays. This meant
+computed index access like `v[0+1] = 1` on readonly tuples silently passed with no error.
+
+**Fix**: In `ReadonlyChecker::visit_readonly_type()`, added explicit check for `Array` and `Tuple` inner
+types — when the requested `IndexKind` is `Number`, return `true` (since the `ReadonlyType` wrapper makes
+the implicit number index signature readonly).
+
+**Root cause 3 — Missing TS2542 for delete**: The delete expression handler in `helpers.rs` didn't check
+for readonly index signatures on the operand. `delete v[2]` on a readonly tuple emitted no error.
+
+**Fix**: Added `check_readonly_assignment(unary.operand, idx)` call in the delete handler when the operand
+is a property reference (property access or element access expression).
+
+**Tests added**: 4 unit tests:
+- `test_readonly_tuple_has_readonly_number_index` — solver-level ReadonlyChecker fix
+- `test_readonly_array_has_readonly_number_index` — solver-level ReadonlyChecker fix
+- `test_readonly_tuple_computed_index_assignment_2542` — checker integration test
+- `test_delete_readonly_element_access_2542` — checker integration test
+
+**Tests fixed**: readonlyArraysAndTuples, genericCallInferenceConditionalType2,
+privateNamesConstructorChain-1, privateNamesConstructorChain-2
+
+### Remaining in types/tuple (11 failures)
+
+1. **Type alias preservation** (optionalTupleElements1, unionsOfTupleTypes1, arityAndOrderCompatibility01):
+   We expand `T1` to `[string, number]` in diagnostic messages instead of preserving alias names.
+   Fix location: `crates/tsz-solver/src/diagnostics/format.rs` — need alias name tracking.
+
+2. **Tuple element-level TS2322 elaboration** (tupleElementTypes1, typeInferenceWithTupleType):
+   We emit tuple-level `Type '[undefined, undefined]' is not assignable to type '[number, any]'`
+   instead of element-level `Type 'undefined' is not assignable to type 'number'` at the specific element.
+   Fix location: checker assignability elaboration for tuple types.
+
+3. **Var redeclaration type** (strictTupleLength): `declare var t1: [number]; var t1 = t2;` — we use the
+   redeclared type `[number, number]` instead of the original `[number]` for subsequent type checks.
+   Fix location: binder/checker var redeclaration handling.
+
+4. **Variadic tuple issues** (variadicTuples1, variadicTuples2, contextualTypeTupleEnd):
+   Missing TS2345 for empty array not assignable to `[...unknown[], number]`, extra TS2555 arity errors.
+   Fix location: `crates/tsz-solver/src/inference/` — variadic tuple type parameter inference.
+
+5. **TS2741 column offset** (contextualTypeWithTuple): Similar to TS2540 column fix but for TS2741
+   "Property 'a' is missing" — pointing at wrong column. Plus extra TS2322.
+
+6. **restTupleElements1**: Parser issue with `?` syntax (TS17019 missing, TS1005 extra).
 
 ## Session 2026-03-03o — Array literal tuple typing for homomorphic mapped types (+3 tests)
 
