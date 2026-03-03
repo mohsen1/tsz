@@ -283,6 +283,18 @@ impl<'a> CheckerState<'a> {
                     if self.member_requires_nominal(&method.modifiers, method.name) {
                         has_nominal_members = true;
                     }
+
+                    // In JS/checkJs mode, method body `this.prop = value` assignments
+                    // serve as property declarations (same as constructor assignments).
+                    // Scan before deferring so properties are in the partial `this` type.
+                    if self.ctx.is_js_file() && !method.body.is_none() {
+                        self.collect_js_constructor_this_properties(
+                            method.body,
+                            &mut properties,
+                            current_sym,
+                        );
+                    }
+
                     // Defer method processing to phase 2
                     deferred_methods.push((member_idx, method));
                 }
@@ -1109,11 +1121,13 @@ impl<'a> CheckerState<'a> {
         (type_params, scope_updates)
     }
 
-    /// Scan a constructor body for `this.prop = value` assignments and add
-    /// them as instance properties. This implements the JS/checkJs pattern
-    /// where constructor assignments serve as implicit property declarations.
+    /// Scan a body (constructor or method) for `this.prop = value` assignments
+    /// and add them as instance properties. This implements the JS/checkJs
+    /// pattern where assignments serve as implicit property declarations.
     ///
-    /// Only top-level expression statements in the constructor body are scanned.
+    /// Also handles the `var self = this; self.prop = value` alias pattern.
+    ///
+    /// Only top-level expression statements in the body are scanned.
     /// Properties that already exist (from explicit declarations or parameter
     /// properties) are skipped — explicit declarations take precedence.
     fn collect_js_constructor_this_properties(
@@ -1132,9 +1146,12 @@ impl<'a> CheckerState<'a> {
             block.statements.nodes.clone()
         };
 
+        // Phase 1: Detect `var/let/const alias = this` patterns
+        let this_aliases = self.collect_this_aliases(&stmts);
+
         for &stmt_idx in &stmts {
             let Some((prop_name, rhs_idx, is_private)) =
-                self.extract_this_property_assignment(stmt_idx)
+                self.extract_this_property_assignment(stmt_idx, &this_aliases)
             else {
                 continue;
             };
@@ -1184,11 +1201,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Extract a `this.propName = rhs` pattern from an expression statement.
+    /// Scan statements for `var/let/const X = this` patterns and return
+    /// the set of alias identifier names.
+    fn collect_this_aliases(&self, stmts: &[NodeIndex]) -> Vec<String> {
+        let mut aliases = Vec::new();
+        for &stmt_idx in stmts {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            // VariableStatement → declarations (NodeList of VARIABLE_DECLARATION_LIST)
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.ctx.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    // Check initializer is `this`
+                    if let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                        && init_node.kind == SyntaxKind::ThisKeyword as u16 {
+                            // Get the name identifier
+                            if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                    aliases.push(ident.escaped_text.clone());
+                                }
+                        }
+                }
+            }
+        }
+        aliases
+    }
+
+    /// Extract a `this.propName = rhs` or `alias.propName = rhs` pattern
+    /// from an expression statement. The `this_aliases` parameter contains
+    /// names of variables known to alias `this` (e.g., `var self = this`).
     /// Returns `(property_name, rhs_node_index, is_private)` if matched.
     fn extract_this_property_assignment(
         &self,
         stmt_idx: NodeIndex,
+        this_aliases: &[String],
     ) -> Option<(String, NodeIndex, bool)> {
         let stmt_node = self.ctx.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
@@ -1204,14 +1268,28 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Check LHS is this.propName
+        // Check LHS is this.propName or alias.propName
         let lhs_node = self.ctx.arena.get(binary.left)?;
         if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
         }
         let access = self.ctx.arena.get_access_expr(lhs_node)?;
-        let this_node = self.ctx.arena.get(access.expression)?;
-        if this_node.kind != SyntaxKind::ThisKeyword as u16 {
+        let obj_node = self.ctx.arena.get(access.expression)?;
+
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            // Check if the identifier is a known `this` alias
+            if let Some(ident) = self.ctx.arena.get_identifier(obj_node) {
+                this_aliases.iter().any(|a| a == &ident.escaped_text)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !is_this_or_alias {
             return None;
         }
 

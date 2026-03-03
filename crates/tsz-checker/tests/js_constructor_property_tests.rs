@@ -179,6 +179,92 @@ function test(x) {
     );
 }
 
+/// Method body `this.prop = value` infers class property (not just constructor)
+#[test]
+fn test_js_method_body_this_prop_no_false_ts2339() {
+    let source = r#"
+class Base {
+    m() {
+        this.p = 1;
+    }
+}
+class Derived extends Base {
+    m() {
+        this.p = 1;
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for method body this.prop, got: {ts2339:?}"
+    );
+}
+
+/// `var self = this; self.prop = value` alias pattern in constructor
+#[test]
+fn test_js_self_alias_this_prop_constructor() {
+    let source = r#"
+class C {
+    constructor() {
+        var self = this;
+        self.x = 1;
+        self.m = function() {
+            console.log(self.x);
+        };
+    }
+}
+var c = new C();
+c.x;
+c.m();
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for self-alias constructor properties, got: {ts2339:?}"
+    );
+}
+
+/// `var self = this; self.prop = value` alias in methods
+#[test]
+fn test_js_self_alias_this_prop_method() {
+    let source = r#"
+class C {
+    constructor() {
+        var self = this;
+        self.x = 1;
+    }
+    mreal() {
+        var self = this;
+        self.y = 2;
+    }
+}
+var c = new C();
+c.x;
+c.y;
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for self-alias method properties, got: {ts2339:?}"
+    );
+}
+
 /// Non-existent property still emits TS2339 (regression guard)
 #[test]
 fn test_js_constructor_nonexistent_prop_still_errors() {
