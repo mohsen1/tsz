@@ -1469,27 +1469,35 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     let mut child_types: Vec<TypeId> = Vec::new();
                     let mut has_text_child = false;
                     for &child in &jsx.children.nodes {
-                        let child_type = self.checker.get_type_of_node(child);
                         if let Some(child_node) = self.checker.ctx.arena.get(child) {
                             // Skip whitespace-only JsxText children — tsc ignores them
                             // for children prop synthesis (only significant text counts).
-                            // Note: the parser hardcodes contains_only_trivia_white_spaces
-                            // to false, so we check the text content directly.
-                            if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16 {
-                                if let Some(text) = self.checker.ctx.arena.get_jsx_text(child_node)
-                                {
-                                    let is_whitespace_only =
-                                        text.text.chars().all(|c| c.is_ascii_whitespace());
-                                    if is_whitespace_only {
-                                        continue;
-                                    }
+                            if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
+                                && let Some(text) = self.checker.ctx.arena.get_jsx_text(child_node)
+                            {
+                                let is_whitespace_only =
+                                    text.text.chars().all(|c| c.is_ascii_whitespace());
+                                if is_whitespace_only {
+                                    continue;
                                 }
-                                has_text_child = true;
-                                child_types.push(child_type);
-                            } else {
-                                child_types.push(child_type);
+                            }
+                            // Skip empty JSX expressions (e.g., {/* comment */})
+                            // — tsc does not count these as children.
+                            if child_node.kind == syntax_kind_ext::JSX_EXPRESSION
+                                && let Some(expr_data) =
+                                    self.checker.ctx.arena.get_jsx_expression(child_node)
+                                && expr_data.expression == NodeIndex::NONE
+                            {
+                                continue;
                             }
                         }
+                        let child_type = self.checker.get_type_of_node(child);
+                        if let Some(child_node) = self.checker.ctx.arena.get(child)
+                            && child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
+                        {
+                            has_text_child = true;
+                        }
+                        child_types.push(child_type);
                     }
                     self.checker.ctx.contextual_type = prev_contextual;
 
