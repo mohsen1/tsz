@@ -162,6 +162,9 @@ pub struct EmitContext {
     /// Whether exponentiation (`**` / `**=`) needs downleveling (target < ES2016)
     pub needs_es2016_lowering: bool,
 
+    /// Whether ES2018 features need downleveling (object rest/spread → `__rest`).
+    pub needs_es2018_lowering: bool,
+
     /// Whether ES2019 features need downleveling (optional catch binding).
     pub needs_es2019_lowering: bool,
 
@@ -219,6 +222,7 @@ impl EmitContext {
             flags: EmitFlags::default(),
             target_es5: false,
             needs_es2016_lowering: false,
+            needs_es2018_lowering: false,
             needs_es2019_lowering: false,
             needs_es2020_lowering: false,
             needs_es2021_lowering: false,
@@ -241,6 +245,7 @@ impl EmitContext {
         let target = self.options.target;
         self.target_es5 = matches!(target, ScriptTarget::ES3 | ScriptTarget::ES5);
         self.needs_es2016_lowering = !target.supports_es2016();
+        self.needs_es2018_lowering = !target.supports_es2018();
         self.needs_es2019_lowering = !target.supports_es2019();
         self.needs_es2020_lowering = !target.supports_es2020();
         self.needs_es2021_lowering = !target.supports_es2021();

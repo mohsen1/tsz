@@ -207,7 +207,8 @@ resolve_tsz_binary() {
 
     for tsz_bin in "${candidates[@]}"; do
         if [[ -x "$tsz_bin" ]]; then
-            TSZ_BIN="$tsz_bin"
+            # Resolve to absolute path so it works after cd
+            TSZ_BIN="$(cd "$(dirname "$tsz_bin")" && pwd)/$(basename "$tsz_bin")"
             export TSZ_BIN
             return 0
         fi

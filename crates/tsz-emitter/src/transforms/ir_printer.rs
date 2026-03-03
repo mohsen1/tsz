@@ -1106,6 +1106,13 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(value);
                 self.write(", \"f\")");
             }
+            IRNode::PrivateFieldIn { weakmap_name, obj } => {
+                self.write("__classPrivateFieldIn(");
+                self.write(weakmap_name);
+                self.write(", ");
+                self.emit_node(obj);
+                self.write(")");
+            }
             IRNode::WeakMapSet {
                 weakmap_name,
                 key,

@@ -457,8 +457,13 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Emit JSX auto-import for jsx=react-jsx / react-jsxdev
+        if let Some(jsx_import) = self.jsx_auto_import_text() {
+            self.write(&jsx_import);
+        }
+
         // Emit runtime helpers (must come BEFORE __esModule marker)
-        // Order: "use strict" → helpers → __esModule → exports init
+        // Order: "use strict" → jsx-import → helpers → __esModule → exports init
 
         // Use helpers from TransformContext (populated during lowering pass)
         // This eliminates O(N) arena scans - all helpers are detected in Phase 1

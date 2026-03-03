@@ -612,4 +612,41 @@ impl<'a> Printer<'a> {
             || node.kind == SyntaxKind::ThisKeyword as u16
             || node.kind == SyntaxKind::SuperKeyword as u16
     }
+
+    /// Check if a token is a compound assignment operator (+=, -=, etc.)
+    pub(in crate::emitter) fn is_compound_assignment(&self, token: u16) -> bool {
+        token == SyntaxKind::PlusEqualsToken as u16
+            || token == SyntaxKind::MinusEqualsToken as u16
+            || token == SyntaxKind::AsteriskEqualsToken as u16
+            || token == SyntaxKind::SlashEqualsToken as u16
+            || token == SyntaxKind::PercentEqualsToken as u16
+            || token == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || token == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::AmpersandEqualsToken as u16
+            || token == SyntaxKind::CaretEqualsToken as u16
+            || token == SyntaxKind::BarEqualsToken as u16
+    }
+
+    /// Get the base operator for a compound assignment (e.g., `+=` → `+`)
+    pub(in crate::emitter) fn get_compound_base_operator(&self, token: u16) -> String {
+        match token {
+            t if t == SyntaxKind::PlusEqualsToken as u16 => "+".to_string(),
+            t if t == SyntaxKind::MinusEqualsToken as u16 => "-".to_string(),
+            t if t == SyntaxKind::AsteriskEqualsToken as u16 => "*".to_string(),
+            t if t == SyntaxKind::SlashEqualsToken as u16 => "/".to_string(),
+            t if t == SyntaxKind::PercentEqualsToken as u16 => "%".to_string(),
+            t if t == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => "**".to_string(),
+            t if t == SyntaxKind::LessThanLessThanEqualsToken as u16 => "<<".to_string(),
+            t if t == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => ">>".to_string(),
+            t if t == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => {
+                ">>>".to_string()
+            }
+            t if t == SyntaxKind::AmpersandEqualsToken as u16 => "&".to_string(),
+            t if t == SyntaxKind::CaretEqualsToken as u16 => "^".to_string(),
+            t if t == SyntaxKind::BarEqualsToken as u16 => "|".to_string(),
+            _ => "=".to_string(),
+        }
+    }
 }

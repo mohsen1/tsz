@@ -57,6 +57,7 @@ pub mod emitter;
 pub mod enum_es5;
 pub mod enum_es5_ir;
 pub mod es5;
+pub mod es_decorators;
 pub mod helpers;
 pub mod ir;
 pub mod ir_printer;

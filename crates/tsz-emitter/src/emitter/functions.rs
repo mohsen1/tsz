@@ -142,7 +142,31 @@ impl<'a> Printer<'a> {
             .arena
             .get(func.body)
             .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
-        if !body_is_block && self.concise_body_needs_parens(func.body) {
+
+        // If we have pending object rest params and a concise body, convert to block body
+        if !body_is_block && !self.pending_object_rest_params.is_empty() {
+            let rest_params: Vec<(String, NodeIndex)> =
+                std::mem::take(&mut self.pending_object_rest_params);
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            // Emit the rest preamble
+            for (temp_name, pattern_idx) in &rest_params {
+                self.write("var ");
+                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
+                self.write(";");
+                self.write_line();
+            }
+            // Emit the concise body as a return statement
+            self.write("return ");
+            self.function_scope_depth += 1;
+            self.emit(func.body);
+            self.function_scope_depth -= 1;
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+        } else if !body_is_block && self.concise_body_needs_parens(func.body) {
             self.write("(");
             self.emit(func.body);
             self.write(")");
@@ -579,6 +603,14 @@ impl<'a> Printer<'a> {
 
     /// Emit function parameters for JavaScript (no types)
     pub(super) fn emit_function_parameters_js(&mut self, params: &[NodeIndex]) {
+        // Check if any parameter needs ES2018 object rest lowering
+        let needs_rest_lowering = self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
+            && self.any_param_has_object_rest(params);
+
+        // Clear any previous pending rest params
+        self.pending_object_rest_params.clear();
+
         let mut first = true;
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
@@ -614,6 +646,22 @@ impl<'a> Printer<'a> {
                 // Emit leading comments before the parameter (e.g., inline JSDoc
                 // comments like `/** comment */ a`). tsc preserves these in JS output.
                 self.emit_comments_before_pos(param_node.pos);
+
+                // ES2018 object rest lowering: replace destructuring param with a temp
+                if needs_rest_lowering && self.param_has_object_rest(param_idx) {
+                    let temp = self.get_temp_var_name();
+                    self.write(&temp);
+                    // Skip type annotation comments
+                    if param.type_annotation.is_some()
+                        && let Some(type_node) = self.arena.get(param.type_annotation)
+                    {
+                        self.skip_comments_in_range(type_node.pos, type_node.end);
+                    }
+                    // Don't emit default value here — it'll be in the body as `if (_a === void 0)`
+                    // Skip initializer comments too
+                    self.pending_object_rest_params.push((temp, param.name));
+                    continue;
+                }
 
                 if param.dot_dot_dot_token {
                     self.write("...");

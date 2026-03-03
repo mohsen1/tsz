@@ -1,4 +1,5 @@
 use super::super::Printer;
+use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::{NodeIndex, node::Node, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -35,6 +36,40 @@ impl<'a> Printer<'a> {
 
             self.emit_optional_call_expression(node, call.expression, &call.arguments);
             return;
+        }
+
+        // Private field call lowering:
+        // `this.#fn(args)` → `__classPrivateFieldGet(this, _C_fn, "f").call(this, args)`
+        if !self.private_field_weakmaps.is_empty() {
+            if let Some(expr_node) = self.arena.get(call.expression)
+                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(name_node) = self.arena.get(access.name_or_argument)
+                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            {
+                if let Some(field_name) =
+                    get_private_field_name(self.arena, access.name_or_argument)
+                {
+                    let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                    if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned()
+                    {
+                        self.write("__classPrivateFieldGet(");
+                        self.emit(access.expression);
+                        self.write(", ");
+                        self.write(&weakmap_name);
+                        self.write(", \"f\").call(");
+                        self.emit(access.expression);
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
+                }
+            }
         }
 
         if self.ctx.target_es5

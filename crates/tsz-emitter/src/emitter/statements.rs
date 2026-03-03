@@ -108,7 +108,8 @@ impl<'a> Printer<'a> {
             && !needs_this_capture
             && is_function_body_block
             && self.hoisted_assignment_value_temps.is_empty()
-            && self.hoisted_for_of_temps.is_empty();
+            && self.hoisted_for_of_temps.is_empty()
+            && self.pending_object_rest_params.is_empty();
 
         if should_emit_single_line {
             if is_function_body_block {
@@ -183,6 +184,20 @@ impl<'a> Printer<'a> {
             self.write(" = this;");
             self.write_line();
         }
+
+        // Inject object rest parameter destructuring preamble for ES2018 lowering.
+        // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
+        if is_function_body_block && !self.pending_object_rest_params.is_empty() {
+            let rest_params: Vec<(String, NodeIndex)> =
+                std::mem::take(&mut self.pending_object_rest_params);
+            for (temp_name, pattern_idx) in &rest_params {
+                self.write("var ");
+                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
+                self.write(";");
+                self.write_line();
+            }
+        }
+
         let hoisted_var_byte_offset = if is_function_body_block {
             Some((self.writer.len(), self.writer.current_line()))
         } else {

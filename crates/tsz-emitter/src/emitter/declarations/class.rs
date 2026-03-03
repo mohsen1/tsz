@@ -1,5 +1,7 @@
 use super::super::{Printer, ScriptTarget};
-use crate::transforms::private_fields_es5::get_private_field_name;
+use crate::transforms::private_fields_es5::{
+    PrivateFieldInfo, collect_private_fields, get_private_field_name,
+};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -601,6 +603,49 @@ impl<'a> Printer<'a> {
             self.emit_comments_before_pos(node.pos);
         }
 
+        // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
+        let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
+            && self.ctx.options.target != ScriptTarget::ESNext;
+        let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
+            collect_private_fields(self.arena, _idx, &class_name)
+        } else {
+            Vec::new()
+        };
+
+        // Save the previous private field map (for nested classes)
+        let prev_private_field_weakmaps = std::mem::take(&mut self.private_field_weakmaps);
+        let prev_pending_weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+
+        if !private_fields.is_empty() {
+            // Emit `var _C_field1, _C_field2;` before the class
+            self.write("var ");
+            for (i, field) in private_fields.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(&field.weakmap_name);
+            }
+            self.write(";");
+            self.write_line();
+
+            // Set up the private field map for expression lowering
+            for field in &private_fields {
+                self.private_field_weakmaps
+                    .insert(field.name.clone(), field.weakmap_name.clone());
+            }
+
+            // Mark helpers as needed (TODO: wire through lowering pass)
+            // self.ctx.helpers.class_private_field_get = true;
+            // self.ctx.helpers.class_private_field_set = true;
+
+            // Prepare WeakMap initializations for after the class body
+            self.pending_weakmap_inits = private_fields
+                .iter()
+                .filter(|f| !f.is_static)
+                .map(|f| format!("{} = new WeakMap()", f.weakmap_name))
+                .collect();
+        }
+
         self.write("class");
 
         let override_name = self.anonymous_default_export_name.clone();
@@ -704,6 +749,22 @@ impl<'a> Printer<'a> {
             self.pending_auto_accessor_inits = auto_accessor_instance_inits.clone();
         }
 
+        // Add private field WeakMap.set inits to auto_accessor_inits for constructor emission.
+        // Private fields use the same `_name.set(this, value)` pattern as auto accessors.
+        if !private_fields.is_empty() {
+            for field in &private_fields {
+                if !field.is_static {
+                    let init = if field.has_initializer {
+                        Some(field.initializer)
+                    } else {
+                        None // will emit `void 0`
+                    };
+                    self.pending_auto_accessor_inits
+                        .push((field.weakmap_name.clone(), init));
+                }
+            }
+        }
+
         // Check if we need to lower class fields to constructor.
         // This is needed when target < ES2022 OR when useDefineForClassFields is false
         // (legacy behavior where fields are assigned in the constructor).
@@ -795,9 +856,11 @@ impl<'a> Printer<'a> {
         }
 
         // If no constructor but we have field inits, synthesize one
+        let has_private_field_inits = private_fields.iter().any(|f| !f.is_static);
         let synthesize_constructor = !has_constructor
             && (!field_inits.is_empty()
-                || (lower_auto_accessors_to_weakmap && !auto_accessor_instance_inits.is_empty()));
+                || (lower_auto_accessors_to_weakmap && !auto_accessor_instance_inits.is_empty())
+                || has_private_field_inits);
 
         if synthesize_constructor {
             // Increment function_scope_depth so async arrow functions inside
@@ -815,6 +878,33 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
+            // Private field WeakMap.set inits first (before non-private field inits)
+            for field in &private_fields {
+                if !field.is_static {
+                    self.write(&field.weakmap_name);
+                    self.write(".set(this, ");
+                    if field.has_initializer {
+                        self.emit_expression(field.initializer);
+                    } else {
+                        self.write("void 0");
+                    }
+                    self.write(");");
+                    self.write_line();
+                }
+            }
+            if lower_auto_accessors_to_weakmap {
+                for (storage_name, init_idx) in &auto_accessor_instance_inits {
+                    self.write(storage_name);
+                    self.write(".set(this, ");
+                    match init_idx {
+                        Some(init) => self.emit_expression(*init),
+                        None => self.write("void 0"),
+                    }
+                    self.write(");");
+                    self.write_line();
+                }
+            }
+            // Non-private field inits after WeakMap.set calls
             for (name, init_idx, init_end, _trailing) in &field_inits {
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
@@ -844,18 +934,6 @@ impl<'a> Printer<'a> {
                     self.emit_trailing_comments(*init_end);
                 }
                 self.write_line();
-            }
-            if lower_auto_accessors_to_weakmap {
-                for (storage_name, init_idx) in &auto_accessor_instance_inits {
-                    self.write(storage_name);
-                    self.write(".set(this, ");
-                    match init_idx {
-                        Some(init) => self.emit_expression(*init),
-                        None => self.write("void 0"),
-                    }
-                    self.write(");");
-                    self.write_line();
-                }
             }
             self.decrease_indent();
             self.write("}");
@@ -907,6 +985,32 @@ impl<'a> Printer<'a> {
 
         let mut field_init_comment_idx = 0usize;
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
+            // Skip private field declarations entirely when lowering to WeakMap pattern
+            if !private_fields.is_empty()
+                && let Some(member_node) = self.arena.get(member_idx)
+                && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(prop) = self.arena.get_property_decl(member_node)
+                && self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                // Skip comments that belong to this erased member
+                if let Some(mn) = self.arena.get(member_idx) {
+                    let skip_end = class
+                        .members
+                        .nodes
+                        .get(member_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map_or(mn.end, |next| next.pos);
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= skip_end
+                    {
+                        self.comment_emit_idx += 1;
+                    }
+                }
+                continue;
+            }
             // Skip property declarations that were lowered
             if needs_class_field_lowering
                 && let Some(member_node) = self.arena.get(member_idx)
@@ -1496,6 +1600,14 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Emit private field WeakMap initializations after class body:
+        // _C_field1 = new WeakMap();
+        if !self.pending_weakmap_inits.is_empty() {
+            self.write_line();
+            self.write(&self.pending_weakmap_inits.join(", "));
+            self.write(";");
+        }
+
         // Emit deferred static blocks as IIFEs after the class body
         for (static_block_idx, saved_comment_idx) in deferred_static_blocks {
             self.write_line();
@@ -1515,6 +1627,10 @@ impl<'a> Printer<'a> {
             }
             self.write(")();");
         }
+
+        // Restore private field state (for nested classes)
+        self.private_field_weakmaps = prev_private_field_weakmaps;
+        self.pending_weakmap_inits = prev_pending_weakmap_inits;
 
         // Track class name to prevent duplicate var declarations for merged namespaces.
         // When a class and namespace have the same name (declaration merging), the class

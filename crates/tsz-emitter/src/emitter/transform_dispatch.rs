@@ -64,6 +64,9 @@ enum EmitDirective {
     },
     SubstituteArguments,
     ES5SuperCall,
+    TC39Decorators {
+        class_node: NodeIndex,
+    },
     ModuleWrapper {
         format: crate::context::transform::ModuleFormat,
         dependencies: Arc<[String]>,
@@ -168,6 +171,9 @@ impl<'a> Printer<'a> {
             } => EmitDirective::ModuleWrapper {
                 format: *format,
                 dependencies: std::sync::Arc::clone(dependencies),
+            },
+            TransformDirective::TC39Decorators { class_node } => EmitDirective::TC39Decorators {
+                class_node: *class_node,
             },
             TransformDirective::Chain(directives) => {
                 let mut flattened = Vec::new();
@@ -736,6 +742,10 @@ impl<'a> Printer<'a> {
                 }
             }
 
+            EmitDirective::TC39Decorators { class_node } => {
+                self.emit_tc39_decorators(node, idx, class_node);
+            }
+
             EmitDirective::Chain(directives) => {
                 self.emit_chained_directives(node, idx, directives.as_slice());
             }
@@ -803,6 +813,26 @@ impl<'a> Printer<'a> {
         }
 
         es5_emitter
+    }
+
+    fn emit_tc39_decorators(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        _idx: NodeIndex,
+        class_node: NodeIndex,
+    ) {
+        use crate::transforms::es_decorators::TC39DecoratorEmitter;
+
+        let mut emitter = TC39DecoratorEmitter::new(self.arena);
+        emitter.set_indent_level(self.writer.indent_level() as usize);
+        if let Some(text) = self.source_text_for_map() {
+            emitter.set_source_text(text);
+        }
+        let output = emitter.emit_class(class_node);
+        self.write(&output);
+        // Skip comments within the class range - the TC39 decorator emitter
+        // handles them separately.
+        self.skip_comments_for_erased_node(node);
     }
 
     fn emit_commonjs_inner(
@@ -941,6 +971,9 @@ impl<'a> Printer<'a> {
                         _ => {}
                     }
                 }
+            }
+            EmitDirective::TC39Decorators { class_node } => {
+                self.emit_tc39_decorators(node, idx, *class_node);
             }
             EmitDirective::Chain(directives) => {
                 self.emit_chained_directives(node, idx, directives.as_slice());
@@ -1280,6 +1313,9 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5SuperCall => {
                 // Transform super(...) to _super.call(this, ...)
                 self.emit_super_call_es5(node);
+            }
+            EmitDirective::TC39Decorators { class_node } => {
+                self.emit_tc39_decorators(node, idx, *class_node);
             }
             EmitDirective::ModuleWrapper {
                 format,

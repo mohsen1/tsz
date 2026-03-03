@@ -16,6 +16,22 @@ use tsz_scanner::SyntaxKind;
 // Emitter Options
 // =============================================================================
 
+/// JSX emit mode — controls how JSX is transformed in the output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JsxEmit {
+    /// Keep the JSX as part of the output (default).
+    #[default]
+    Preserve = 0,
+    /// Classic transform: `React.createElement(tag, props, ...children)`.
+    React = 1,
+    /// Automatic transform: `_jsx(tag, { children, ...props })`.
+    ReactJsx = 2,
+    /// Automatic dev transform: `_jsxDEV(tag, { children, ...props }, ...)`.
+    ReactJsxDev = 3,
+    /// Keep the JSX but emit `.js` files (React Native).
+    ReactNative = 4,
+}
+
 /// Printer configuration options.
 #[derive(Clone, Debug)]
 pub struct PrinterOptions {
@@ -49,6 +65,14 @@ pub struct PrinterOptions {
     pub module_detection_force: bool,
     /// When true, preserve const enum declarations instead of erasing them
     pub preserve_const_enums: bool,
+    /// JSX emit mode
+    pub jsx: JsxEmit,
+    /// Custom JSX factory function (e.g. "React.createElement", "h")
+    pub jsx_factory: Option<String>,
+    /// Custom JSX fragment factory (e.g. "React.Fragment", "Fragment")
+    pub jsx_fragment_factory: Option<String>,
+    /// Module specifier for automatic JSX runtime (e.g. "react")
+    pub jsx_import_source: Option<String>,
 }
 
 impl Default for PrinterOptions {
@@ -69,6 +93,10 @@ impl Default for PrinterOptions {
             es_module_interop: false,
             module_detection_force: false,
             preserve_const_enums: false,
+            jsx: JsxEmit::Preserve,
+            jsx_factory: None,
+            jsx_fragment_factory: None,
+            jsx_import_source: None,
         }
     }
 }
@@ -275,6 +303,11 @@ pub struct Printer<'a> {
     /// iterator/result temps, matching tsc temp ordering.
     pub(crate) reserved_iterator_return_temps: FxHashMap<NodeIndex, String>,
 
+    /// Pending object rest parameter replacements for ES2018 lowering.
+    /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
+    /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
+    pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
+
     /// Current nesting depth of function/method/constructor scopes.
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
@@ -306,6 +339,16 @@ pub struct Printer<'a> {
     /// Maps `enum_name -> (member_name -> EnumValue)`.
     /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
     pub(crate) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
+
+    /// Private field WeakMap mapping for ES2015-ES2021 class private field lowering.
+    /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (WeakMap variable name).
+    /// When non-empty, property accesses with private identifiers are lowered to
+    /// `__classPrivateFieldGet`/`__classPrivateFieldSet` helper calls.
+    pub(crate) private_field_weakmaps: FxHashMap<String, String>,
+
+    /// Pending WeakMap initializations to emit after the class body.
+    /// Each entry is `_ClassName_fieldName = new WeakMap()`.
+    pub(crate) pending_weakmap_inits: Vec<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -396,6 +439,7 @@ impl<'a> Printer<'a> {
             file_identifiers: FxHashSet::default(),
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
+            pending_object_rest_params: Vec::new(),
             function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
@@ -429,6 +473,8 @@ impl<'a> Printer<'a> {
             object_literal_accessor_depth: 0,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
+            private_field_weakmaps: FxHashMap::default(),
+            pending_weakmap_inits: Vec::new(),
         }
     }
 

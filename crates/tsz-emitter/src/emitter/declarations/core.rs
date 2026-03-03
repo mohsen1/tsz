@@ -163,6 +163,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Check if any declaration has object rest that needs ES2018 lowering
+        let has_object_rest = self.ctx.needs_es2018_lowering
+            && decl_list
+                .declarations
+                .nodes
+                .iter()
+                .any(|&idx| self.decl_has_object_rest(idx));
+
         // Emit keyword based on node flags.
         let flags = node.flags as u32;
         let is_using = flags & tsz_parser::parser::node_flags::USING != 0;
@@ -181,7 +189,23 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        if !decl_list.declarations.nodes.is_empty() {
+
+        if has_object_rest {
+            // Emit declarations with object rest lowering
+            self.write(" ");
+            let mut first = true;
+            for &decl_idx in &decl_list.declarations.nodes {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                if self.decl_has_object_rest(decl_idx) {
+                    self.emit_var_decl_with_object_rest(decl_idx);
+                } else {
+                    self.emit(decl_idx);
+                }
+            }
+        } else if !decl_list.declarations.nodes.is_empty() {
             self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
         } else if !is_let {

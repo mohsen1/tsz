@@ -283,7 +283,8 @@ impl<'a> LoweringPass<'a> {
                         let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
                         self.mark_class_helpers(idx, heritage);
                     } else if self.ctx.needs_es2022_lowering
-                        && self.class_has_auto_accessor_members(class_data)
+                        && (self.class_has_auto_accessor_members(class_data)
+                            || self.class_has_private_members(class_data))
                     {
                         let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
                         self.mark_class_helpers(idx, heritage);
@@ -315,7 +316,7 @@ impl<'a> LoweringPass<'a> {
                 || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
             {
                 if let Some(pattern) = self.arena.get_binding_pattern(node) {
-                    if self.ctx.target_es5
+                    if (self.ctx.target_es5 || self.ctx.needs_es2018_lowering)
                         && node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         && pattern.elements.nodes.iter().any(|&elem_idx| {
                             let Some(elem_node) = self.arena.get(elem_idx) else {

@@ -1,4 +1,5 @@
 use super::super::{Printer, get_operator_text};
+use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -11,6 +12,97 @@ impl<'a> Printer<'a> {
         let Some(binary) = self.arena.get_binary_expr(node) else {
             return;
         };
+
+        // Private field lowering: `this.#field = value` → `__classPrivateFieldSet(this, _C_field, value, "f")`
+        // Also handles `#field in obj` → `__classPrivateFieldIn(_C_field, obj)`
+        if !self.private_field_weakmaps.is_empty() {
+            // Handle `#field in obj` → `__classPrivateFieldIn(_C_field, obj)`
+            if binary.operator_token == SyntaxKind::InKeyword as u16 {
+                if let Some(left_node) = self.arena.get(binary.left)
+                    && left_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    if let Some(field_name) = get_private_field_name(self.arena, binary.left) {
+                        let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                        if let Some(weakmap_name) =
+                            self.private_field_weakmaps.get(clean_name).cloned()
+                        {
+                            // TODO: wire through lowering pass
+                            // self.ctx.helpers.class_private_field_in = true;
+                            self.write("__classPrivateFieldIn(");
+                            self.write(&weakmap_name);
+                            self.write(", ");
+                            self.emit(binary.right);
+                            self.write(")");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Handle `this.#field = value` → `__classPrivateFieldSet(this, _C_field, value, "f")`
+            if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                if let Some(left_node) = self.arena.get(binary.left)
+                    && left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(left_node)
+                    && let Some(name_node) = self.arena.get(access.name_or_argument)
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    if let Some(field_name) =
+                        get_private_field_name(self.arena, access.name_or_argument)
+                    {
+                        let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                        if let Some(weakmap_name) =
+                            self.private_field_weakmaps.get(clean_name).cloned()
+                        {
+                            self.write("__classPrivateFieldSet(");
+                            self.emit(access.expression);
+                            self.write(", ");
+                            self.write(&weakmap_name);
+                            self.write(", ");
+                            self.emit(binary.right);
+                            self.write(", \"f\")");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Handle compound assignment: `this.#field += value` →
+            // `__classPrivateFieldSet(this, _C_field, __classPrivateFieldGet(this, _C_field, "f") + value, "f")`
+            if self.is_compound_assignment(binary.operator_token) {
+                if let Some(left_node) = self.arena.get(binary.left)
+                    && left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(left_node)
+                    && let Some(name_node) = self.arena.get(access.name_or_argument)
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    if let Some(field_name) =
+                        get_private_field_name(self.arena, access.name_or_argument)
+                    {
+                        let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                        if let Some(weakmap_name) =
+                            self.private_field_weakmaps.get(clean_name).cloned()
+                        {
+                            let base_op = self.get_compound_base_operator(binary.operator_token);
+                            self.write("__classPrivateFieldSet(");
+                            self.emit(access.expression);
+                            self.write(", ");
+                            self.write(&weakmap_name);
+                            self.write(", __classPrivateFieldGet(");
+                            self.emit(access.expression);
+                            self.write(", ");
+                            self.write(&weakmap_name);
+                            self.write(", \"f\") ");
+                            self.write(&base_op);
+                            self.write(" ");
+                            self.emit(binary.right);
+                            self.write(", \"f\")");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
 
         // ES5: lower assignment destructuring patterns
         if self.ctx.target_es5
@@ -229,13 +321,32 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Private field new: `new this.#C()` → `new (__classPrivateFieldGet(this, _C_C, "f"))()`
+        let needs_private_parens = !self.private_field_weakmaps.is_empty()
+            && self.arena.get(call.expression).is_some_and(|expr_node| {
+                expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && self
+                        .arena
+                        .get_access_expr(expr_node)
+                        .and_then(|access| self.arena.get(access.name_or_argument))
+                        .is_some_and(|name_node| {
+                            name_node.kind == SyntaxKind::PrivateIdentifier as u16
+                        })
+            });
+
         self.write("new ");
+        if needs_private_parens {
+            self.write("(");
+        }
         // Signal new-callee position so `emit_parenthesized` preserves parens
         // around call expressions: `new (x() as T)` → `new (x())` not `new x()`.
         let prev_new = self.paren_in_new_callee;
         self.paren_in_new_callee = true;
         self.emit(call.expression);
         self.paren_in_new_callee = prev_new;
+        if needs_private_parens {
+            self.write(")");
+        }
         if let Some(ref args) = call.arguments {
             // Map opening `(` — scan forward from callee end
             if let Some(expr_node) = self.arena.get(call.expression) {
