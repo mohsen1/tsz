@@ -1,7 +1,41 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9824/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9823/12570 (78.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03b — Intersection source explain path (TS2739/TS2741)
+
+### Fixed: Intersection source vs object target missing-property diagnostics
+
+**Area**: types/intersection (62.5% → 68.2% at area level)
+
+**Root cause**: When an intersection type (e.g., `number & { __brand: T }` or `string & { a: string }`)
+was assigned to an object type, `explain_failure_inner` had no handler for intersection sources.
+It fell through to the generic `TypeMismatch` reason, producing TS2322 instead of TS2739/TS2741.
+
+**Fix**: Added intersection source handling in `explain.rs` (after the existing Object→Object checks,
+around line 275). Uses `collect_properties()` from `crate::objects` to merge all object-like properties
+from intersection members, then calls `explain_object_failure()` to compare against the target.
+This correctly produces:
+- `MissingProperties` → TS2739 (multiple missing props)
+- `MissingProperty` → TS2741 (single missing prop)
+
+**Tests added**: 2 unit tests in `compat_tests.rs`:
+- `test_explain_intersection_source_missing_properties`: branded type → object with 2 missing props
+- `test_explain_intersection_source_single_missing_property`: string & partial → object with 1 missing
+
+**Code-level improvements** (tests still fail at fingerprint level due to type display):
+- `intersectionAsWeakTypeSource.ts`: TS2322→TS2739 (correct code now emitted)
+- `typeofAmbientExternalModules.ts`: missing TS2741 now emitted
+
+**Key lesson**: `collect_properties()` in `objects/collect.rs` handles the hard work of recursively
+walking intersection members and merging properties. The fix was ~20 lines because it leverages
+existing solver infrastructure.
+
+**Not fixed (deferred)**:
+- `intersectionReductionStrict.ts`: Missing TS2322 for write-context union-keyed index access
+  (`x1[k] = 'bar' as any`). Requires solver-level write-type computation for union keys.
+- Fingerprint-level failures: type display differences (alias vs expanded form) — separate concern.
 
 ## Session 2026-03-03a — JSX IntrinsicAttributes intersection display target
 
