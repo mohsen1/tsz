@@ -8,7 +8,7 @@
 use crate::TypeDatabase;
 use crate::types::{
     CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo,
-    TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
+    TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
@@ -632,6 +632,71 @@ pub(crate) fn extract_param_type_at_for_call(
     extract_param_type_at_inner(db, params, index, Some(arg_count))
 }
 
+/// Extract the contextual type for a **rest** callback parameter at position `index`.
+///
+/// Unlike `extract_param_type_at` which returns the individual element type at that position,
+/// this collects all remaining parameter types from the contextual function into a tuple.
+///
+/// ## Examples:
+/// - Contextual `(...values: [A, B, C]) => void`, index 0 → `[A, B, C]`
+/// - Contextual `(a: A, b: B, c: C) => void`, index 0 → `[A, B, C]`
+/// - Contextual `(a: A, b: B, c: C) => void`, index 1 → `[B, C]`
+/// - Contextual `(a: A, ...rest: B[]) => void`, index 1 → `B[]` (the rest type)
+pub(crate) fn extract_rest_param_type_at(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    index: usize,
+) -> Option<TypeId> {
+    let rest_param = params.last().filter(|p| p.rest);
+    let rest_start = if rest_param.is_some() {
+        params.len().saturating_sub(1)
+    } else {
+        params.len()
+    };
+
+    if index >= rest_start {
+        // The callback rest param aligns with the contextual function's rest param.
+        // Return the rest param's type directly (it's already a tuple or array type).
+        if let Some(rp) = rest_param {
+            return Some(rp.type_id);
+        }
+        // Past the end with no rest param — no contextual type.
+        return None;
+    }
+
+    // The callback rest param starts before the contextual function's rest param.
+    // Collect remaining fixed params + rest param into a tuple.
+    let remaining_fixed: Vec<TupleElement> = params[index..rest_start]
+        .iter()
+        .map(|p| TupleElement {
+            type_id: p.type_id,
+            name: p.name,
+            optional: p.optional,
+            rest: false,
+        })
+        .collect();
+
+    if let Some(rp) = rest_param {
+        // Has a rest param — build tuple with fixed elements + spread of rest type.
+        let mut elements = remaining_fixed;
+        elements.push(TupleElement {
+            type_id: rp.type_id,
+            name: rp.name,
+            optional: false,
+            rest: true,
+        });
+        Some(db.tuple(elements))
+    } else {
+        // No rest param — just build a tuple from the remaining fixed params.
+        if remaining_fixed.is_empty() {
+            // Empty tuple
+            Some(db.tuple(vec![]))
+        } else {
+            Some(db.tuple(remaining_fixed))
+        }
+    }
+}
+
 /// Check if `index` falls at a rest parameter position in the given parameter list.
 pub(crate) fn is_rest_position(params: &[ParamInfo], index: usize) -> bool {
     let has_rest = params.last().is_some_and(|p| p.rest);
@@ -904,6 +969,80 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         let members = self.db.type_list(TypeListId(list_id));
         for &member in members.iter() {
             let mut extractor = ParameterExtractor::new(self.db, self.index, self.no_implicit_any);
+            if let Some(ty) = extractor.extract(member) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to extract the **rest parameter type** from callable types.
+///
+/// Unlike `ParameterExtractor` which returns the individual element type at a position,
+/// this returns the full tuple/array type for a rest callback parameter.
+pub(crate) struct RestParameterExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+}
+
+impl<'a> RestParameterExtractor<'a> {
+    pub(crate) fn new(db: &'a dyn TypeDatabase, index: usize) -> Self {
+        Self { db, index }
+    }
+
+    pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for RestParameterExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        extract_rest_param_type_at(self.db, &shape.params, self.index)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        // Use the first call signature that provides a rest type
+        for sig in &shape.call_signatures {
+            if let Some(ty) = extract_rest_param_type_at(self.db, &sig.params, self.index) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor = RestParameterExtractor::new(self.db, self.index);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let mut extractor = RestParameterExtractor::new(self.db, self.index);
             if let Some(ty) = extractor.extract(member) {
                 return Some(ty);
             }

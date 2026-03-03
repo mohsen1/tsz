@@ -355,7 +355,13 @@ impl<'a> CheckerState<'a> {
 
                 let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
-                    helper.get_parameter_type(contextual_index)
+                    if param.dot_dot_dot_token {
+                        // Rest parameter: get the full tuple/array type from context,
+                        // not just the element at this position.
+                        helper.get_rest_parameter_type(contextual_index)
+                    } else {
+                        helper.get_parameter_type(contextual_index)
+                    }
                 } else {
                     None
                 };

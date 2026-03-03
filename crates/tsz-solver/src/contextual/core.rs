@@ -5,8 +5,8 @@
 use crate::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
-    PropertyExtractor, RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor,
-    ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
+    PropertyExtractor, RestParameterExtractor, RestPositionCheckExtractor, ReturnTypeExtractor,
+    ThisTypeExtractor, ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -231,6 +231,26 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Use visitor for Function/Callable types
         let mut extractor = ParameterExtractor::new(self.interner, index, self.no_implicit_any);
+        extractor.extract(expected)
+    }
+
+    /// Get the contextual type for a **rest** callback parameter at position `index`.
+    ///
+    /// Unlike `get_parameter_type` which returns the element type at a specific position,
+    /// this returns the full tuple/array type that a rest parameter should receive.
+    ///
+    /// Example: contextual type `(a: string, b: number, c: boolean) => void`
+    /// - `get_parameter_type(0)` → `string` (for non-rest param `a`)
+    /// - `get_rest_parameter_type(0)` → `[string, number, boolean]` (for rest param `...x`)
+    pub fn get_rest_parameter_type(&self, index: usize) -> Option<TypeId> {
+        let expected = self.expected?;
+
+        if self.is_function_boxed_or_intrinsic(expected) {
+            return Some(TypeId::ANY);
+        }
+
+        // Use visitor for Function/Callable types
+        let mut extractor = RestParameterExtractor::new(self.interner, index);
         extractor.extract(expected)
     }
 
