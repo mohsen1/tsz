@@ -481,12 +481,61 @@ impl<'a> CheckerState<'a> {
         // tsc preserves literals during inference and only widens at assignment sites.
         let prev_preserve_literals = self.ctx.preserve_literal_types;
         let prev_callable_type = self.ctx.current_callable_type;
+        let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
         self.ctx.current_callable_type = Some(callee_type_for_context);
         if is_generic_call {
             self.ctx.preserve_literal_types = true;
         }
         let arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
+                // Pre-compute which parameter positions should skip excess property
+                // checking because the original parameter type contains a type parameter.
+                // For generic calls like `parrot<T extends Named>({name, sayHello(){}})`,
+                // the instantiated type is the constraint `Named`, but tsc skips excess
+                // property checks because `T` captures the full object type.
+                //
+                // Use the raw FunctionShape parameter types (which preserve type parameters)
+                // rather than ctx_helper.get_parameter_type_for_call (which may resolve
+                // through Lazy/Application types and lose type parameter information).
+                let excess_skip: Vec<bool> = {
+                    let arg_count = args.len();
+                    (0..arg_count)
+                        .map(|i| {
+                            // Check both the raw shape parameter type and the contextual
+                            // parameter type. Rest parameters use the last param, and the
+                            // contextual helper handles that mapping.
+                            let from_shape = if i < shape.params.len() {
+                                tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    shape.params[i].type_id,
+                                )
+                            } else if let Some(last) = shape.params.last() {
+                                // Rest parameter: check the rest param's type
+                                last.rest
+                                    && tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        last.type_id,
+                                    )
+                            } else {
+                                false
+                            };
+                            let from_ctx = ctx_helper
+                                .get_parameter_type_for_call(i, arg_count)
+                                .is_some_and(|param_type| {
+                                    tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        param_type,
+                                    )
+                                });
+                            from_shape || from_ctx
+                        })
+                        .collect()
+                };
+                let has_any_excess_skip = excess_skip.iter().any(|&s| s);
+                if has_any_excess_skip {
+                    self.ctx.generic_excess_skip = Some(excess_skip);
+                }
+
                 // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.
                 let sensitive_args: Vec<bool> = args
                     .iter()
@@ -753,6 +802,7 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.current_callable_type = prev_callable_type;
+        self.ctx.generic_excess_skip = prev_generic_excess_skip;
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 

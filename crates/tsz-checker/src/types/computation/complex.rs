@@ -504,9 +504,46 @@ impl<'a> CheckerState<'a> {
             )
         };
         let check_excess_properties = true;
+        let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
 
         let arg_types = if is_generic_new {
             if let Some(shape) = constructor_shape {
+                // Pre-compute which parameter positions should skip excess property
+                // checking because the original parameter type contains a type parameter.
+                let excess_skip: Vec<bool> = {
+                    let arg_count = args.len();
+                    (0..arg_count)
+                        .map(|i| {
+                            let from_shape = if i < shape.params.len() {
+                                tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    shape.params[i].type_id,
+                                )
+                            } else if let Some(last) = shape.params.last() {
+                                last.rest
+                                    && tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        last.type_id,
+                                    )
+                            } else {
+                                false
+                            };
+                            let from_ctx = ctx_helper
+                                .get_parameter_type_for_call(i, arg_count)
+                                .is_some_and(|param_type| {
+                                    tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        param_type,
+                                    )
+                                });
+                            from_shape || from_ctx
+                        })
+                        .collect()
+                };
+                if excess_skip.iter().any(|&s| s) {
+                    self.ctx.generic_excess_skip = Some(excess_skip);
+                }
+
                 // Two-pass inference for generic constructors (same as call expressions)
                 let sensitive_args: Vec<bool> = args
                     .iter()
@@ -636,6 +673,7 @@ impl<'a> CheckerState<'a> {
                 None,
             )
         };
+        self.ctx.generic_excess_skip = prev_generic_excess_skip;
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
