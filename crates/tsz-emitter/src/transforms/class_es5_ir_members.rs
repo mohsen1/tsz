@@ -149,6 +149,9 @@ impl<'a> ES5ClassTransformer<'a> {
                             None
                         };
 
+                        // Extract leading comment from the first accessor (getter or setter)
+                        let leading_comment = self.extract_leading_comment(member_node);
+
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::prop(
                                 IRNode::id(&self.class_name),
@@ -162,6 +165,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 configurable: true,
                                 trailing_comment: None,
                             },
+                            leading_comment,
                         });
 
                         let has_explicit_semicolon_member = class_data
@@ -218,6 +222,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
 
                 let property_name = self.get_method_name_ir(prop_data.name);
+                let leading_comment = self.extract_leading_comment(member_node);
                 body.push(IRNode::DefineProperty {
                     target: Box::new(IRNode::prop(IRNode::id(&self.class_name), "prototype")),
                     property_name,
@@ -232,6 +237,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         configurable: true,
                         trailing_comment: self.extract_trailing_comment_for_node(member_node),
                     },
+                    leading_comment,
                 });
             } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
                 body.push(IRNode::EmptyStatement);
@@ -618,6 +624,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             None
                         };
 
+                        let leading_comment = self.extract_leading_comment(member_node);
+
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::id(&self.class_name)),
                             property_name: self.get_method_name_ir(accessor_data.name),
@@ -628,6 +636,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 configurable: true,
                                 trailing_comment: None,
                             },
+                            leading_comment,
                         });
 
                         emitted_static_accessors.insert(accessor_name);

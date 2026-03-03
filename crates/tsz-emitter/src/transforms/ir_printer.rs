@@ -909,6 +909,7 @@ impl<'a> IRPrinter<'a> {
                 target,
                 property_name,
                 descriptor,
+                leading_comment,
             } => {
                 self.write("Object.defineProperty(");
                 self.emit_node(target);
@@ -929,6 +930,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(", {");
                 self.write_line();
                 self.increase_indent();
+
+                // Emit leading comment inside the descriptor (before get/set)
+                if let Some(comment) = leading_comment {
+                    self.write_indent();
+                    self.emit_multiline_comment(comment);
+                    self.write_line();
+                }
 
                 if let Some(get) = &descriptor.get {
                     self.write_indent();
