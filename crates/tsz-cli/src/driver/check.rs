@@ -808,7 +808,9 @@ pub(super) fn collect_diagnostics(
         c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
-    diagnostics.extend(detect_missing_tslib_helper_diagnostics(program, options));
+    diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+        program, options, base_dir,
+    ));
 
     diagnostics
 }
