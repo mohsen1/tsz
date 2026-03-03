@@ -118,6 +118,21 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.push(this_type);
         }
 
+        // Pre-scan: collect ALL method names from the object literal so that
+        // the synthetic `this` type includes placeholders for all methods,
+        // enabling mutually-recursive methods to resolve `this.otherMethod`.
+        let obj_all_method_names: rustc_hash::FxHashSet<Atom> = obj
+            .elements
+            .nodes
+            .iter()
+            .filter_map(|&elem_idx| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+                let method = self.ctx.arena.get_method_decl(elem_node)?;
+                let name = self.get_property_name(method.name)?;
+                Some(self.ctx.types.intern_string(&name))
+            })
+            .collect();
+
         // Pre-scan: collect getter property names so setter TS7006 checks can
         // detect paired getters regardless of declaration order.
         let obj_getter_names: rustc_hash::FxHashSet<String> = obj
@@ -657,38 +672,46 @@ impl<'a> CheckerState<'a> {
                             // For non-contextual object literals, model `this` as the
                             // object-under-construction so assignments like `this.a = ...`
                             // in method `a()` validate against the method property type.
+                            // Include placeholders for ALL methods (not just the current
+                            // one) so mutually-recursive methods can resolve `this.other()`.
                             let mut this_props: Vec<PropertyInfo> =
                                 properties.values().cloned().collect();
-                            let name_atom = self.ctx.types.intern_string(&name);
-                            if !this_props.iter().any(|p| p.name == name_atom) {
-                                let placeholder_method_type =
-                                    self.ctx.types.factory().callable(CallableShape {
-                                        call_signatures: vec![CallSignature {
-                                            type_params: Vec::new(),
-                                            params: Vec::new(),
-                                            this_type: None,
-                                            return_type: TypeId::VOID,
-                                            type_predicate: None,
-                                            is_method: true,
-                                        }],
-                                        construct_signatures: Vec::new(),
-                                        properties: Vec::new(),
-                                        string_index: None,
-                                        number_index: None,
-                                        symbol: None,
-                                        is_abstract: false,
+                            for &method_name_atom in &obj_all_method_names {
+                                if !this_props.iter().any(|p| p.name == method_name_atom) {
+                                    let placeholder_method_type =
+                                        self.ctx.types.factory().callable(CallableShape {
+                                            call_signatures: vec![CallSignature {
+                                                type_params: Vec::new(),
+                                                params: vec![tsz_solver::ParamInfo {
+                                                    name: None,
+                                                    type_id: TypeId::ANY,
+                                                    optional: false,
+                                                    rest: true,
+                                                }],
+                                                this_type: None,
+                                                return_type: TypeId::ANY,
+                                                type_predicate: None,
+                                                is_method: true,
+                                            }],
+                                            construct_signatures: Vec::new(),
+                                            properties: Vec::new(),
+                                            string_index: None,
+                                            number_index: None,
+                                            symbol: None,
+                                            is_abstract: false,
+                                        });
+                                    this_props.push(PropertyInfo {
+                                        name: method_name_atom,
+                                        type_id: placeholder_method_type,
+                                        write_type: placeholder_method_type,
+                                        optional: false,
+                                        readonly: false,
+                                        is_method: true,
+                                        visibility: Visibility::Public,
+                                        parent_id: None,
+                                        declaration_order: 0,
                                     });
-                                this_props.push(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: placeholder_method_type,
-                                    write_type: placeholder_method_type,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: true,
-                                    visibility: Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                });
+                                }
                             }
                             self.ctx
                                 .this_type_stack

@@ -563,6 +563,13 @@ impl<'a> CheckerState<'a> {
             ) => {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
+                trace!(
+                    derived_call_sigs = derived_shape.call_signatures.len(),
+                    derived_construct_sigs = derived_shape.construct_signatures.len(),
+                    base_call_sigs = base_shape.call_signatures.len(),
+                    base_construct_sigs = base_shape.construct_signatures.len(),
+                    "Callable+Callable merge signature counts"
+                );
                 let mut call_signatures = derived_shape.call_signatures.clone();
                 call_signatures.extend(base_shape.call_signatures.iter().cloned());
                 let mut construct_signatures = derived_shape.construct_signatures.clone();
@@ -746,8 +753,11 @@ impl<'a> CheckerState<'a> {
                     symbol: derived_shape.symbol,
                 })
             }
+            // When one side is an intersection (e.g., from global augmentation merging
+            // an interface with additional properties), decompose it and merge the
+            // callable/object parts properly so that construct signatures are preserved.
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
-                factory.intersection(vec![derived, base])
+                self.merge_with_intersection(derived, derived_kind, base, base_kind)
             }
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
@@ -768,6 +778,81 @@ impl<'a> CheckerState<'a> {
             }
         }
         type_id
+    }
+
+    /// Merge an interface type with an intersection base/derived.
+    ///
+    /// When a lib interface is augmented (e.g., `ErrorConstructor` gets `captureStackTrace`
+    /// from user code), the resolved type is an intersection like
+    /// `Callable(call_sigs, construct_sigs, props) & Object(captureStackTrace)`.
+    ///
+    /// When a derived interface (e.g., `RangeErrorConstructor extends ErrorConstructor`)
+    /// needs to merge with this intersection base, we must decompose the intersection,
+    /// find the callable member, merge it properly with the derived callable (preserving
+    /// construct signatures), and then re-wrap with the remaining intersection members.
+    fn merge_with_intersection(
+        &mut self,
+        derived: TypeId,
+        _derived_kind: tsz_solver::type_queries::InterfaceMergeKind,
+        base: TypeId,
+        base_kind: tsz_solver::type_queries::InterfaceMergeKind,
+    ) -> TypeId {
+        use tsz_solver::type_queries::{
+            InterfaceMergeKind, classify_for_interface_merge, get_intersection_members,
+        };
+
+        let factory = self.ctx.types.factory();
+
+        // Determine which side is the intersection and which is the "other" type
+        let (intersection_id, other_id, other_is_derived) =
+            if matches!(base_kind, InterfaceMergeKind::Intersection) {
+                (base, derived, true)
+            } else {
+                (derived, base, false)
+            };
+
+        // Get the intersection members
+        let Some(members) = get_intersection_members(self.ctx.types, intersection_id) else {
+            return factory.intersection(vec![derived, base]);
+        };
+
+        // Find the callable member in the intersection (if any)
+        let mut callable_member = None;
+        let mut other_members = Vec::new();
+
+        for &member in &members {
+            let kind = classify_for_interface_merge(self.ctx.types, member);
+            if callable_member.is_none() && matches!(kind, InterfaceMergeKind::Callable(_)) {
+                callable_member = Some(member);
+            } else {
+                other_members.push(member);
+            }
+        }
+
+        // If we found a callable in the intersection, merge it with the other side
+        if let Some(callable_id) = callable_member {
+            let (merge_derived, merge_base) = if other_is_derived {
+                (other_id, callable_id)
+            } else {
+                (callable_id, other_id)
+            };
+
+            // Recursively merge the callable parts (this will hit Callable+Callable
+            // or Callable+Object paths instead of the Intersection path)
+            let merged = self.merge_interface_types(merge_derived, merge_base);
+
+            // Re-wrap with the remaining intersection members
+            if other_members.is_empty() {
+                merged
+            } else {
+                let mut all = vec![merged];
+                all.extend(other_members);
+                factory.intersection(all)
+            }
+        } else {
+            // No callable found in intersection - fall back to plain intersection
+            factory.intersection(vec![derived, base])
+        }
     }
 
     /// Merge derived and base interface properties.

@@ -172,7 +172,7 @@ pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> 
 /// This enum provides a structured way to handle interface type merging,
 /// abstracting away the internal `TypeData` representation. Used for merging
 /// derived and base interface types.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum InterfaceMergeKind {
     /// Callable type with call/construct signatures and properties
     Callable(crate::types::CallableShapeId),
