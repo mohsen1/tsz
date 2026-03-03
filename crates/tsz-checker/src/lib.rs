@@ -273,6 +273,9 @@ mod jsdoc_readonly_tests;
 #[path = "../tests/jsdoc_satisfies_tests.rs"]
 mod jsdoc_satisfies_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_template_class_tests.rs"]
+mod jsdoc_template_class_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]

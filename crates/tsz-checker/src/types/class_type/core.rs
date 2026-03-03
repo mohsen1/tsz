@@ -12,7 +12,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeSubstitution, Visibility, instantiate_type,
+    TypeParamInfo, TypeSubstitution, Visibility, instantiate_type,
 };
 
 #[inline]
@@ -167,8 +167,19 @@ impl<'a> CheckerState<'a> {
 
         // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
         // Keep class type parameters in scope while constructing the instance type.
-        let (_class_type_params, class_type_param_updates) =
+        let (_class_type_params, mut class_type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
+
+        // In JS files, classes don't have syntax-level type parameters.
+        // JSDoc `@template T` tags serve the same purpose. If no syntax type params
+        // were found, check for JSDoc @template tags on the class declaration.
+        if _class_type_params.is_empty() {
+            let (jsdoc_params, jsdoc_updates) =
+                self.push_jsdoc_class_template_type_params(class_idx);
+            if !jsdoc_params.is_empty() {
+                class_type_param_updates.extend(jsdoc_updates);
+            }
+        }
 
         struct MethodAggregate {
             overload_signatures: Vec<CallSignature>,
@@ -1041,6 +1052,61 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+
+    /// For JS classes without syntax-level type parameters, check the leading
+    /// JSDoc for `@template` tags and create type parameters from them.
+    ///
+    /// Returns `(type_params, scope_updates)` — identical shape to `push_type_parameters`.
+    /// The caller must pass `scope_updates` to `pop_type_parameters` when done.
+    #[allow(clippy::type_complexity)]
+    pub(in crate::types_domain) fn push_jsdoc_class_template_type_params(
+        &mut self,
+        class_idx: NodeIndex,
+    ) -> (Vec<TypeParamInfo>, Vec<(String, Option<TypeId>, bool)>) {
+        if !self.is_js_file() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let jsdoc = {
+            let sf = match self.ctx.arena.source_files.first() {
+                Some(sf) => sf,
+                None => return (Vec::new(), Vec::new()),
+            };
+            let source_text: &str = &sf.text;
+            let comments = &sf.comments;
+            match self.try_leading_jsdoc(
+                comments,
+                self.ctx.arena.get(class_idx).map_or(0, |n| n.pos),
+                source_text,
+            ) {
+                Some(j) => j,
+                None => return (Vec::new(), Vec::new()),
+            }
+        };
+
+        let template_names = Self::jsdoc_template_type_params(&jsdoc);
+        if template_names.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let mut type_params = Vec::with_capacity(template_names.len());
+        let mut scope_updates = Vec::with_capacity(template_names.len());
+        let factory = self.ctx.types.factory();
+        for name in template_names {
+            let atom = self.ctx.types.intern_string(&name);
+            let info = TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            };
+            let ty = factory.type_param(info.clone());
+            type_params.push(info);
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+            scope_updates.push((name, previous, false));
+        }
+        (type_params, scope_updates)
     }
 
     /// Scan a constructor body for `this.prop = value` assignments and add
