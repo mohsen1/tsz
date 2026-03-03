@@ -318,10 +318,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let union_keys = self.get_literal_key_union_from_type(index_type);
         if result_type.is_none()
             && literal_index.is_none()
-            && let Some((string_keys, number_keys)) =
-                self.get_literal_key_union_from_type(index_type)
+            && let Some((string_keys, number_keys)) = union_keys
         {
             let total_keys = string_keys.len() + number_keys.len();
             // Non-integer numeric literals (e.g., 1.1, -1) should be resolved as
@@ -362,7 +362,13 @@ impl<'a> CheckerState<'a> {
                 if report_no_index {
                     result_type = Some(TypeId::ANY);
                 } else if !types.is_empty() {
-                    result_type = Some(tsz_solver::utils::union_or_single(self.ctx.types, types));
+                    // In write context, intersect the results from string and number
+                    // keys — the assigned value must satisfy all possible key types.
+                    result_type = Some(if self.ctx.skip_flow_narrowing {
+                        tsz_solver::utils::intersection_or_single(self.ctx.types, types)
+                    } else {
+                        tsz_solver::utils::union_or_single(self.ctx.types, types)
+                    });
                 }
             }
         }

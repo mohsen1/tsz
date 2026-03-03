@@ -787,6 +787,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // When skip_flow_narrowing is true, we're computing the type of an assignment
+        // target. For union-keyed index access (e.g., obj[k] where k: 'a' | 'b'),
+        // the write type is the intersection of property types — the assigned value
+        // must be compatible with whichever key is used at runtime.
+        let is_write_context = self.ctx.skip_flow_narrowing;
+
         // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
         let resolved_type = self.resolve_type_for_property_access(object_type);
         if resolved_type == TypeId::ANY {
@@ -809,7 +815,19 @@ impl<'a> CheckerState<'a> {
             }
 
             match self.ctx.types.property_access_type(resolved_type, &name) {
-                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
+                    // In write context (assignment target), use the write/setter type.
+                    let effective = if is_write_context {
+                        write_type.unwrap_or(type_id)
+                    } else {
+                        type_id
+                    };
+                    types.push(effective);
+                }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     types.push(property_type.unwrap_or(TypeId::UNKNOWN));
                 }
@@ -821,7 +839,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
+        // In write context, the value must be assignable to ALL possible property types
+        // (intersection), since we don't know which key will be used at runtime.
+        // In read context, the result is ANY of the property types (union).
+        if is_write_context {
+            Some(tsz_solver::utils::intersection_or_single(
+                self.ctx.types,
+                types,
+            ))
+        } else {
+            Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
+        }
     }
 
     /// Get element access type for literal number keys.
@@ -855,6 +883,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let is_write_context = self.ctx.skip_flow_narrowing;
         let mut types = Vec::with_capacity(keys.len());
         for &value in keys {
             if let Some(index) = self.get_numeric_index_from_number(value) {
@@ -864,7 +893,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
+        // In write context, intersect (value must satisfy all possible indices).
+        if is_write_context {
+            Some(tsz_solver::utils::intersection_or_single(
+                self.ctx.types,
+                types,
+            ))
+        } else {
+            Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
+        }
     }
 
     /// Check if a type is array-like (supports numeric indexing).

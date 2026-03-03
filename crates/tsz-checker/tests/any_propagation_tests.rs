@@ -269,14 +269,14 @@ let a: any = u;  // Should pass
 
 #[test]
 fn test_any_not_assignable_to_never() {
-    // any should NOT be assignable to never
-    // Actually, in TypeScript, 'any' IS assignable to 'never'
-    // This is a special case
-    test_no_errors(
+    // In TypeScript, any is NOT assignable to never.
+    // tsc: "Type 'any' is not assignable to type 'never'." (TS2322)
+    test_expect_error(
         r#"
 let a: any = 42;
-let n: never = a;  // Should pass (special case: any -> never)
+let n: never = a;  // Error: any is not assignable to never
 "#,
+        "is not assignable to type 'never'",
     );
 }
 
@@ -306,12 +306,14 @@ let u2: any | string = 42;  // Should infer as any
 
 #[test]
 fn test_any_in_intersection_types() {
-    // any in intersections should behave correctly
-    test_no_errors(
+    // string & number reduces to never, and any is not assignable to never.
+    // tsc: "Type 'any' is not assignable to type 'never'." (TS2322)
+    test_expect_error(
         r#"
 let a: any = 42;
-let i: string & number = a;  // Should pass (any makes intersection impossible)
+let i: string & number = a;  // Error: string & number = never, any → never fails
 "#,
+        "is not assignable to type 'never'",
     );
 }
 

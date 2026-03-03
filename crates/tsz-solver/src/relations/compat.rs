@@ -1036,6 +1036,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if source == target {
                 return Some(true);
             }
+            // tsc: any is NOT assignable to never (the bottom type).
+            // `isSimpleTypeRelatedTo`: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never);`
+            if source == TypeId::ANY && target == TypeId::NEVER {
+                return Some(false);
+            }
             // If legacy suppression is allowed, we still return true here.
             if self.lawyer.allow_any_suppression {
                 return Some(true);

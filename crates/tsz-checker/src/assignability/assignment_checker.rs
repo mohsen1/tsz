@@ -1309,6 +1309,53 @@ mod tests {
     }
 
     #[test]
+    fn union_keyed_index_write_type_is_intersection() {
+        // When writing to obj[k] where k is a union key, the write type is the
+        // intersection of all property types. For `{ a: string, b: number }` with
+        // key `'a' | 'b'`, write type = string & number = never.
+        // tsc emits TS2322: Type 'any' is not assignable to type 'never'.
+        let source = r#"
+            const x1 = { a: 'foo', b: 42 };
+            declare let k: 'a' | 'b';
+            x1[k] = 'bar' as any;
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322_count,
+            1,
+            "expected 1 TS2322 for assigning any to never (intersection of string & number), got {ts2322_count}. Diagnostics: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn any_not_assignable_to_never() {
+        // tsc: Type 'any' is not assignable to type 'never'. (TS2322)
+        // `any` bypasses most type checks but cannot be assigned to `never`.
+        let source = r#"
+            declare let x: never;
+            x = 'bar' as any;
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322_count,
+            1,
+            "expected 1 TS2322 for assigning any to never, got {ts2322_count}. Diagnostics: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn generic_conditional_type_alias_stays_deferred() {
         // Generic type aliases should NOT be eagerly evaluated — they stay deferred
         // until instantiated. This ensures we don't break generic conditional types.
