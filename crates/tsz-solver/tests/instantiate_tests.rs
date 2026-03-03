@@ -1674,3 +1674,183 @@ fn test_distributive_conditional_over_union_with_lazy_members() {
         }
     }
 }
+
+// =============================================================================
+// Mapped Type over Tuple Preservation Tests
+// =============================================================================
+
+/// When a mapped type `{ [K in keyof T]: Template }` is instantiated with
+/// T = [string, number], the result should be a tuple, not an object with
+/// array method keys. This tests the fix that preserves KeyOf(tuple) form
+/// during instantiation so `evaluate_mapped` can detect the tuple source.
+#[test]
+fn test_instantiate_mapped_over_tuple_preserves_tuple() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // Create type parameter T
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    // Create mapped type: { [K in keyof T]: T[K] }
+    // constraint = keyof T
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    // template = T[K] (index access)
+    let template = interner.index_access(t_type, k_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = [string, number]
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, tuple_type);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+
+    // Evaluate the instantiated mapped type
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should be a tuple [string, number], not an object type
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(tuple_id)) => {
+            let elements = interner.tuple_list(tuple_id);
+            assert_eq!(elements.len(), 2, "Expected 2 tuple elements");
+            assert_eq!(elements[0].type_id, TypeId::STRING);
+            assert_eq!(elements[1].type_id, TypeId::NUMBER);
+        }
+        other => {
+            panic!(
+                "Expected tuple type, got {other:?}. The mapped type over tuple \
+                 should produce a tuple, not an object."
+            );
+        }
+    }
+}
+
+/// Same as above but with a non-identity template (wrapper type).
+/// `{ [K in keyof T]: { value: T[K] } }` instantiated with T = [string, number]
+/// should produce a tuple `[{ value: string }, { value: number }]`.
+#[test]
+fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+
+    // template = { value: T[K] }
+    let index_access = interner.index_access(t_type, k_type);
+    let template = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        index_access,
+    )]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = [string, number]
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, tuple_type);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should be a tuple, not an object
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(tuple_id)) => {
+            let elements = interner.tuple_list(tuple_id);
+            assert_eq!(elements.len(), 2, "Expected 2 tuple elements");
+            // Each element should be an object { value: T }
+            for (i, elem) in elements.iter().enumerate() {
+                match interner.lookup(elem.type_id) {
+                    Some(TypeData::Object(shape_id)) => {
+                        let shape = interner.object_shape(shape_id);
+                        assert!(
+                            !shape.properties.is_empty(),
+                            "Tuple element {i} should have properties"
+                        );
+                    }
+                    other => {
+                        panic!("Tuple element {i} should be object, got {other:?}");
+                    }
+                }
+            }
+        }
+        other => {
+            panic!("Expected tuple type from mapped wrapper over tuple, got {other:?}");
+        }
+    }
+}

@@ -1360,6 +1360,7 @@ FAIL TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts
 FAIL TypeScript/tests/cases/compiler/uniqueSymbolAllowsIndexInObjectWithIndexSignature.ts
 FAIL TypeScript/tests/cases/compiler/uniqueSymbolAssignmentOnGlobalAugmentationSuceeds.ts
 FAIL TypeScript/tests/cases/compiler/uniqueSymbolJs2.ts
+FAIL TypeScript/tests/cases/compiler/unknownLikeUnionObjectFlagsNotPropagated.ts
 FAIL TypeScript/tests/cases/compiler/unknownSymbolOffContextualType1.ts
 FAIL TypeScript/tests/cases/compiler/unmetTypeConstraintInImportCall.ts
 FAIL TypeScript/tests/cases/compiler/unmetTypeConstraintInJSDocImportCall.ts
@@ -1423,7 +1424,6 @@ FAIL TypeScript/tests/cases/conformance/async/es6/asyncArrowFunction/asyncArrowF
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncDeclare_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncImportedPromise_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncQualifiedReturnType_es6.ts
-FAIL TypeScript/tests/cases/conformance/asyncGenerators/asyncGeneratorPromiseNextType.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractClinterfaceAssignability.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractConstructor.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractCrashedOnce.ts
@@ -1712,6 +1712,7 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of33.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of34.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of35.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts
@@ -2527,6 +2528,7 @@ FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeInferenceErrors.t
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeProperties.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
+FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypesGenericTuples2.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeWithAny.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts
 FAIL TypeScript/tests/cases/conformance/types/members/duplicateNumericIndexers.ts
@@ -2601,7 +2603,6 @@ FAIL TypeScript/tests/cases/conformance/types/thisType/unionThisTypeInFunctions.
 FAIL TypeScript/tests/cases/conformance/types/tuple/arityAndOrderCompatibility01.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/contextualTypeTupleEnd.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/contextualTypeWithTuple.ts
-FAIL TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/optionalTupleElements1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/readonlyArraysAndTuples.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/restTupleElements1.ts
@@ -2622,7 +2623,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/t
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/wrappedAndRecursiveConstraints4.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiers.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReturnsAndYields.ts
-FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReverseMappedTypes.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersWithIntersection.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotationsWithCircularlyReferencesError.ts
@@ -7624,7 +7624,6 @@ PASS TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction2.ts
 PASS TypeScript/tests/cases/compiler/unionWithIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/uniqueSymbolJs.ts
 PASS TypeScript/tests/cases/compiler/uniqueSymbolPropertyDeclarationEmit.ts
-PASS TypeScript/tests/cases/compiler/unknownLikeUnionObjectFlagsNotPropagated.ts
 PASS TypeScript/tests/cases/compiler/unknownPropertiesAreAssignableToObjectUnion.ts
 PASS TypeScript/tests/cases/compiler/unknownSymbolInGenericReturnType.ts
 PASS TypeScript/tests/cases/compiler/unknownSymbols1.ts
@@ -8036,6 +8035,7 @@ PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunc
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncOrYieldAsBindingIdentifier1.ts
 PASS TypeScript/tests/cases/conformance/asyncGenerators/asyncGeneratorGenericNonWrappedReturn.ts
 PASS TypeScript/tests/cases/conformance/asyncGenerators/asyncGeneratorParameterEvaluation.ts
+PASS TypeScript/tests/cases/conformance/asyncGenerators/asyncGeneratorPromiseNextType.ts
 PASS TypeScript/tests/cases/conformance/classes/awaitAndYieldInProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractAccessor.ts
 PASS TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractAsIdentifier.ts
@@ -8997,7 +8997,6 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of36.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of37.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of38.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of4.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of40.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of42.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
@@ -11891,7 +11890,6 @@ PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes5.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypesAndObjects.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypesArraysTuples.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypesGenericTuples.ts
-PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypesGenericTuples2.ts
 PASS TypeScript/tests/cases/conformance/types/members/augmentedTypeAssignmentCompatIndexSignature.ts
 PASS TypeScript/tests/cases/conformance/types/members/augmentedTypeBracketAccessIndexSignature.ts
 PASS TypeScript/tests/cases/conformance/types/members/classWithPrivateProperty.ts
@@ -12118,6 +12116,7 @@ PASS TypeScript/tests/cases/conformance/types/tuple/emptyTuples/emptyTuplesTypeA
 PASS TypeScript/tests/cases/conformance/types/tuple/indexerWithTuple.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/named/namedTupleMembers.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/named/namedTupleMembersErrors.ts
+PASS TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples2.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples3.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/readonlyArraysAndTuples2.ts
@@ -12172,6 +12171,7 @@ PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/propertyAccessOnTypeParameterWithConstraints5.ts
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/propertyAccessOnTypeParameterWithoutConstraints.ts
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/staticMembersUsingClassTypeParameter.ts
+PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReverseMappedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterDirectlyConstrainedToItself.ts
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterIndirectlyConstrainedToItself.ts
 PASS TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParametersAvailableInNestedScope.ts
