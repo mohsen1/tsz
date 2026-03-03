@@ -726,8 +726,8 @@ impl<'a> Printer<'a> {
         let mut computed_property_side_effects: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering
-        // (name, initializer_idx, member_node_end) — end position for trailing comment emission
-        let mut field_inits: Vec<(String, NodeIndex, u32)> = Vec::new();
+        // (name, initializer_idx, init_end, trailing_comments) — comments filled during class body iteration
+        let mut field_inits: Vec<(String, NodeIndex, u32, Vec<String>)> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
@@ -764,13 +764,13 @@ impl<'a> Printer<'a> {
                             Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
-                        // Use initializer expression's end position for trailing comment
-                        // emission (not member_node.end which may extend past the newline)
+                        // init_end for synthesized constructors; trailing comments
+                        // filled during class body iteration for existing constructors
                         let init_end = self
                             .arena
                             .get(prop.initializer)
                             .map_or(member_node.end, |n| n.end);
-                        field_inits.push((name, prop.initializer, init_end));
+                        field_inits.push((name, prop.initializer, init_end, Vec::new()));
                     }
                 }
             }
@@ -816,7 +816,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
-            for (name, init_idx, member_end) in &field_inits {
+            for (name, init_idx, init_end, _trailing) in &field_inits {
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
                     self.emit_string_literal_text(name);
@@ -840,8 +840,9 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit_expression(*init_idx);
                     self.write(";");
-                    // Emit trailing same-line comments from the original class field
-                    self.emit_trailing_comments(*member_end);
+                    // Synthesized constructor: member loop hasn't run yet,
+                    // so comments are still available via position-based lookup
+                    self.emit_trailing_comments(*init_end);
                 }
                 self.write_line();
             }
@@ -904,6 +905,7 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(node.end);
 
+        let mut field_init_comment_idx = 0usize;
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip property declarations that were lowered
             if needs_class_field_lowering
@@ -964,9 +966,11 @@ impl<'a> Printer<'a> {
                     } else {
                         actual_end
                     };
-                    // For static fields, collect trailing comments on the same line
-                    // (e.g. `static x = 1; // ok`) before advancing past them.
-                    if is_static && let Some(text) = self.source_text {
+                    // Collect trailing comments on the same line for both static and
+                    // non-static fields. Static comments are stored on static_field_inits;
+                    // non-static comments are stored on field_inits for replay in the
+                    // constructor prologue.
+                    if let Some(text) = self.source_text {
                         let mut trailing = Vec::new();
                         let mut idx = self.comment_emit_idx;
                         while idx < self.all_comments.len() {
@@ -981,12 +985,29 @@ impl<'a> Printer<'a> {
                             }
                             idx += 1;
                         }
-                        if let Some(entry) = static_field_inits
-                            .iter_mut()
-                            .find(|e| e.2 == member_node.pos)
-                        {
-                            entry.4 = trailing;
+                        if is_static {
+                            if let Some(entry) = static_field_inits
+                                .iter_mut()
+                                .find(|e| e.2 == member_node.pos)
+                            {
+                                entry.4 = trailing;
+                            }
+                        } else if !trailing.is_empty() {
+                            if let Some(entry) = field_inits.get_mut(field_init_comment_idx) {
+                                entry.3 = trailing.clone();
+                            }
+                            // Also update pending_class_field_inits so existing constructors
+                            // that read from it during the member loop get the comments
+                            if let Some(entry) = self
+                                .pending_class_field_inits
+                                .get_mut(field_init_comment_idx)
+                            {
+                                entry.3 = trailing;
+                            }
                         }
+                    }
+                    if !is_static {
+                        field_init_comment_idx += 1;
                     }
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c = &self.all_comments[self.comment_emit_idx];
