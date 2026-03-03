@@ -314,53 +314,86 @@ pub struct HelpersNeeded {
     pub dispose_resources: bool,
 }
 
-/// Generate helper code for the needed helpers
+/// Generate helper code for the needed helpers.
+///
+/// Ordering follows TypeScript's `compareEmitHelpers` priority system.
+/// Helpers with a defined priority come first (lower number = earlier).
+/// Helpers with no priority (undefined in tsc) come last.
+///
+/// Priority mapping (from TypeScript's factory/emitHelpers.ts):
+///   0: extends, makeTemplateObject
+///   1: assign, createBinding
+///   2: decorate, esDecorate, runInitializers, importStar, exportStar
+///   3: metadata
+///   4: param
+///   5: awaiter
+///   6: generator
+///  no priority (last): rest, read, spreadArray, values, asyncValues,
+///                      importDefault, classPrivateField*, disposable helpers
 pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     let mut output = String::new();
 
-    // Order matters - some helpers depend on others
-    if helpers.create_binding {
-        output.push_str(CREATE_BINDING_HELPER);
-        output.push('\n');
-    }
+    // Priority 0: extends, makeTemplateObject
     if helpers.extends {
         output.push_str(EXTENDS_HELPER);
         output.push('\n');
     }
+    if helpers.make_template_object {
+        output.push_str(MAKE_TEMPLATE_OBJECT_HELPER);
+        output.push('\n');
+    }
+    // Priority 1: assign, createBinding
     if helpers.assign {
         output.push_str(ASSIGN_HELPER);
         output.push('\n');
     }
-    if helpers.rest {
-        output.push_str(REST_HELPER);
+    if helpers.create_binding {
+        output.push_str(CREATE_BINDING_HELPER);
         output.push('\n');
     }
+    // Priority 2: decorate, importStar (with setModuleDefault), exportStar
     if helpers.decorate {
         output.push_str(DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.param {
-        output.push_str(PARAM_HELPER);
+    if helpers.import_star {
+        output.push_str(SET_MODULE_DEFAULT_HELPER);
+        output.push('\n');
+        output.push_str(IMPORT_STAR_HELPER);
         output.push('\n');
     }
+    if helpers.export_star {
+        output.push_str(EXPORT_STAR_HELPER);
+        output.push('\n');
+    }
+    // Priority 3: metadata
     if helpers.metadata {
         output.push_str(METADATA_HELPER);
         output.push('\n');
     }
+    // Priority 4: param
+    if helpers.param {
+        output.push_str(PARAM_HELPER);
+        output.push('\n');
+    }
+    // Priority 5: awaiter
     if helpers.awaiter {
         output.push_str(AWAITER_HELPER);
         output.push('\n');
     }
+    // Priority 6: generator
     if helpers.generator {
         output.push_str(GENERATOR_HELPER);
         output.push('\n');
     }
-    if helpers.values {
-        output.push_str(VALUES_HELPER);
+    // No priority (come last in tsc order): rest, values, read, spreadArray,
+    // asyncValues, importDefault, classPrivateField*, disposable helpers
+    if helpers.rest {
+        output.push_str(REST_HELPER);
         output.push('\n');
     }
-    if helpers.async_values {
-        output.push_str(ASYNC_VALUES_HELPER);
+    if helpers.values {
+        output.push_str(VALUES_HELPER);
         output.push('\n');
     }
     if helpers.read {
@@ -371,22 +404,12 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(SPREAD_ARRAY_HELPER);
         output.push('\n');
     }
-    if helpers.import_star {
-        output.push_str(SET_MODULE_DEFAULT_HELPER);
-        output.push('\n');
-        output.push_str(IMPORT_STAR_HELPER);
+    if helpers.async_values {
+        output.push_str(ASYNC_VALUES_HELPER);
         output.push('\n');
     }
     if helpers.import_default {
         output.push_str(IMPORT_DEFAULT_HELPER);
-        output.push('\n');
-    }
-    if helpers.export_star {
-        output.push_str(EXPORT_STAR_HELPER);
-        output.push('\n');
-    }
-    if helpers.make_template_object {
-        output.push_str(MAKE_TEMPLATE_OBJECT_HELPER);
         output.push('\n');
     }
     if helpers.class_private_field_get {
