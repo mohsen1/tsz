@@ -1,7 +1,59 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9826/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9831/12570 (78.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-03d — JSDoc @implements tag checking for JS files
+
+### Fixed: JSDoc @implements tag completely ignored in JS files
+
+**Area**: jsdoc (62.2% → 63.9%, 94 → 90 failures)
+
+**Root cause**: `check_implements_clauses()` in `class_implements_checker.rs` only processes syntactic
+`implements` heritage clauses from the AST. In JS files, class-interface relationships are declared via
+JSDoc `@implements {InterfaceName}` tags, which were completely ignored — no code extracted or checked them.
+
+**Fix** (checker, `class_implements_checker.rs`, ~250 lines):
+1. `extract_jsdoc_implements_names()` — parses JSDoc comments for `@implements {TypeName}` and
+   `@implements TypeName` patterns, returning a Vec of names.
+2. `check_jsdoc_implements_clauses()` — resolves each name to a symbol, determines if it's a class
+   or interface, builds member lists from object shapes, and checks for:
+   - TS2420: missing members (interface target)
+   - TS2416: incompatible member types (interface target)
+   - TS2720: implementing a class instead of extending it
+
+**Key technical insight**: `get_type_of_symbol()` returns the **constructor type** for class symbols,
+which has no object shape properties. Must use `get_class_instance_type()` to get the instance type
+with actual property/method members for comparison. This caused a silent failure in initial implementation
+where `get_object_shape()` returned `None`.
+
+**Call sites**: Added `self.check_jsdoc_implements_clauses(stmt_idx, class)` in `class.rs` after
+`self.check_implements_clauses()` in both class declaration and class expression paths. Only runs
+for JS files (`is_js_file()` guard).
+
+**Tests**: 4 unit tests in `jsdoc_implements_tests.rs`:
+- Missing member from class target → TS2720
+- `@implements A` (no braces) syntax → TS2720
+- Multiple `@implements` tags → TS2720 for missing member from second target
+- `.ts` file → no JSDoc checking (TS2720 NOT emitted)
+
+**Conformance delta**: +7 tests (9824 → 9831):
+- `jsdocImplements_interface.ts` — PASS
+- `jsdocImplements_interface_multiple.ts` — PASS
+- `jsdocImplements_properties.ts` — PASS
+- `jsdocImplements_signatures.ts` — PASS
+- Plus 3 other tests fixed by the implementation
+
+**Not fixed (deferred)**:
+- `jsdocImplements_class.ts`: fingerprint mismatch — extra TS2416 for B.method (pre-existing JS method
+  type inference issue, not caused by this fix)
+- `jsdocImplements_missingType.ts`: needs TS1003 parser-level fix
+- `importTag23.ts`: needs qualified name resolution (`NS.I`) for `@implements` tags
+
+**Files changed**: `crates/tsz-checker/src/classes/class_implements_checker.rs`,
+`crates/tsz-checker/src/state/state_checking/class.rs`,
+`crates/tsz-checker/tests/jsdoc_implements_tests.rs`,
+`crates/tsz-checker/Cargo.toml`
 
 ## Session 2026-03-03c — Object intrinsic intersection reduction + TS2349 suppression
 
