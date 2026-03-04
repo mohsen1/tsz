@@ -3,6 +3,35 @@
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: **~9995/12570 (79.5%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
+## Session 2026-03-04u — Import type TS2307 for unresolved modules (+3 conf)
+
+### Fixed: TS2307 emission for import type expressions with unresolved modules
+
+**Area**: types/import (66.7% → 91.7% pass rate)
+
+**Root cause**: Import type expressions (`import("./module")` in type positions) are parsed as
+`TYPE_REFERENCE` nodes where `type_name` is a `CALL_EXPRESSION` with `ImportKeyword` as callee.
+The checker's `get_type_from_type_reference()` only handled identifier and qualified-name type names,
+silently returning `TypeId::ERROR` for `CALL_EXPRESSION` type names — so no TS2307 was ever emitted
+for unresolved import types.
+
+**Fix (2 files, +2 tests)**:
+- **`core.rs` (type_resolution)**: Added import type detection in `get_type_from_type_reference()` before
+  the qualified name/identifier checks. Three helper methods: `find_leftmost_import_call()` walks left
+  chain of qualified names to find root import call; `get_import_type_module_specifier()` extracts the
+  module specifier string; `check_import_type_and_resolve()` checks resolution and emits TS2307.
+  Conservative approach: only emits TS2307 when there's positive evidence of failure (resolution error
+  from driver, or non-relative specifier not found in declared/ambient modules). Relative specifiers
+  without resolution data return ERROR silently to avoid false positives in multi-file tests.
+- **Tests**: 2 unit tests in `module_resolution_guard_tests.rs` covering TS2307 emission for unresolved
+  non-relative modules and suppression for declared modules.
+
+**Conformance tests fixed**: `importTypeAmbientMissing` (+1), `metadataImportType` (+1),
+`declarationEmitForGlobalishSpecifierSymlink2` (+1)
+
+### Remaining types/import failures (1 test)
+- **importTypeLocalMissing**: Missing TS2307 + TS2694 (relative path, needs driver resolution data)
+
 ## Session 2026-03-04t — Generator union return types + TS2505 void annotation (+2 conf)
 
 ### Fixed: Generator type arg extraction from union/alias return types
