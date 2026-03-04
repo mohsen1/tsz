@@ -1292,12 +1292,13 @@ impl<'a> CheckerState<'a> {
         aliases
     }
 
-    /// Extract a `this.propName = rhs` or `alias.propName = rhs` pattern
+    /// Extract a `this.propName = rhs`, `alias.propName = rhs`,
+    /// `this[computed] = rhs`, or `alias[computed] = rhs` pattern
     /// from an expression statement. The `this_aliases` parameter contains
     /// names of variables known to alias `this` (e.g., `var self = this`).
     /// Returns `(property_name, rhs_node_index, is_private)` if matched.
     fn extract_this_property_assignment(
-        &self,
+        &mut self,
         stmt_idx: NodeIndex,
         this_aliases: &[String],
     ) -> Option<(String, NodeIndex, bool)> {
@@ -1315,9 +1316,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Check LHS is this.propName or alias.propName
+        // Check LHS is this.propName, alias.propName, this[key], or alias[key]
         let lhs_node = self.ctx.arena.get(binary.left)?;
-        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+        let is_element_access = lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && !is_element_access {
             return None;
         }
         let access = self.ctx.arena.get_access_expr(lhs_node)?;
@@ -1340,10 +1342,28 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        let ident = self.ctx.arena.get_identifier(name_node)?;
-        let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
-        Some((ident.escaped_text.clone(), binary.right, is_private))
+        if is_element_access {
+            // For element access (this[key] = value), evaluate the key expression's
+            // type to get a property name. Handles Symbol keys, string literal keys,
+            // and const variable references.
+            let arg_idx = access.name_or_argument;
+            let prev = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let key_type = self.get_type_of_node(arg_idx);
+            self.ctx.preserve_literal_types = prev;
+            let prop_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            Some((prop_name, binary.right, false))
+        } else {
+            let name_node = self.ctx.arena.get(access.name_or_argument)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
+            Some((ident.escaped_text.clone(), binary.right, is_private))
+        }
     }
 }
 
