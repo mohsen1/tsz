@@ -1125,7 +1125,6 @@ impl ParserState {
             );
         }
 
-        let should_add = !*seen_extends;
         *seen_extends = true;
         self.next_token();
 
@@ -1139,6 +1138,7 @@ impl ParserState {
         }
 
         let type_ref = self.parse_heritage_type_reference();
+        let mut type_refs = vec![type_ref];
 
         while self.is_token(SyntaxKind::CommaToken) {
             let comma_pos = self.token_pos();
@@ -1161,11 +1161,7 @@ impl ParserState {
                 "Classes can only extend a single class.",
                 diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
             );
-            let _ = self.parse_heritage_type_reference();
-        }
-
-        if !should_add {
-            return None;
+            type_refs.push(self.parse_heritage_type_reference());
         }
 
         let end_pos = self.token_end();
@@ -1175,7 +1171,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::HeritageData {
                 token: SyntaxKind::ExtendsKeyword as u16,
-                types: self.make_node_list(vec![type_ref]),
+                types: self.make_node_list(type_refs),
             },
         ))
     }
@@ -1194,7 +1190,6 @@ impl ParserState {
             );
         }
 
-        let should_add = !*seen_implements;
         *seen_implements = true;
         self.next_token();
 
@@ -1230,10 +1225,6 @@ impl ParserState {
             } else {
                 break;
             }
-        }
-
-        if !should_add {
-            return None;
         }
 
         let end_pos = self.token_end();

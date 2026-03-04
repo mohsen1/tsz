@@ -680,11 +680,15 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                if let Some(&extends_type) = heritage.types.nodes.first() {
+                if !heritage.types.nodes.is_empty() {
                     self.write(" extends ");
-                    self.emit_heritage_expression(extends_type);
+                    for (i, &extends_type) in heritage.types.nodes.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.emit_heritage_expression(extends_type);
+                    }
                 }
-                break;
             }
         }
 
