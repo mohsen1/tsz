@@ -10190,3 +10190,97 @@ fn test_call_optional_param_rejects_wrong_type_with_undefined() {
         }
     }
 }
+
+/// Test that type parameters inside intersection parameter types are inferred correctly.
+///
+/// Reproduces the bug from intersectionTypeInference1.ts:
+///   <OwnProps>(f: (p: {dispatch: number} & `OwnProps`) => void) => (o: `OwnProps`) => `OwnProps`
+/// Called with (props: {store: string}) => void should infer `OwnProps` = {store: string}.
+#[test]
+fn test_call_generic_intersection_param_inference() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // Type parameter OwnProps (unconstrained)
+    let own_props_param = TypeParamInfo {
+        name: interner.intern_string("OwnProps"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let own_props_type = interner.intern(TypeData::TypeParameter(own_props_param.clone()));
+
+    // {dispatch: number}
+    let dispatch_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("dispatch"),
+        TypeId::NUMBER,
+    )]);
+
+    // {dispatch: number} & OwnProps
+    let intersection_param = interner.intersection(vec![dispatch_obj, own_props_type]);
+
+    // (p: {dispatch: number} & OwnProps) => void
+    let inner_fn_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("p")),
+            type_id: intersection_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Generic function: <OwnProps>(f: inner_fn_type) => OwnProps
+    let generic_func = interner.function(FunctionShape {
+        type_params: vec![own_props_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("f")),
+            type_id: inner_fn_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: own_props_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Argument: (props: {store: string}) => void
+    let store_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("store"),
+        TypeId::STRING,
+    )]);
+    let arg_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("props")),
+            type_id: store_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call generic_func(arg_fn) — should succeed (OwnProps inferred as {store: string})
+    let result = evaluator.resolve_call(generic_func, &[arg_fn]);
+    match result {
+        CallResult::Success(_ret) => {
+            // OwnProps should be inferred as {store: string}, and the call should succeed
+        }
+        other => panic!(
+            "Expected success for intersection param inference, got {other:?}. \
+             OwnProps should be inferred from the intersection decomposition."
+        ),
+    }
+}

@@ -342,6 +342,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.constrain_types(ctx, var_map, source, member, priority);
                 }
             }
+            // Source is an intersection: decompose and constrain each member against
+            // the target. This handles contravariant positions where the intersection
+            // type parameter ends up as the source after argument swapping.
+            // Example: source = {dispatch: number} & OwnProps, target = {store: string}
+            //   → constrain {dispatch: number} against {store: string} (no-op)
+            //   → constrain OwnProps against {store: string} (adds upper bound)
+            (Some(TypeData::Intersection(s_members)), _) => {
+                let s_members = self.interner.type_list(s_members);
+                for &member in s_members.iter() {
+                    self.constrain_types(ctx, var_map, member, target, priority);
+                }
+            }
             (_, Some(TypeData::Union(t_members))) => {
                 let t_members = self.interner.type_list(t_members);
                 let mut non_nullable = None;
