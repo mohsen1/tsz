@@ -174,3 +174,24 @@ let f: Foo = { a: 1, b: 2 }
         "Expected interface name 'Foo' in error message, got: {diags:?}"
     );
 }
+
+// --- Intersection with index signatures ---
+
+#[test]
+fn intersection_with_index_signatures_nested_excess_property() {
+    // When target is an intersection of types with string index signatures,
+    // the outer property names are all valid (covered by index sig), but
+    // the nested property values must be checked against the intersection
+    // of index signature value types.
+    //
+    let source = r#"
+let x: { [x: string]: { a: 0 } } & { [x: string]: { b: 0 } };
+x = { y: { a: 0, b: 0, c: 0 } };
+"#;
+    let diags = get_diagnostics(source);
+    let relevant: Vec<_> = diags.iter().filter(|d| d.0 != 2318).collect();
+    assert!(
+        relevant.iter().any(|d| d.0 == 2353),
+        "Expected TS2353 for excess property 'c' against {{a: 0}} & {{b: 0}}, got: {relevant:?}"
+    );
+}

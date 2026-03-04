@@ -194,12 +194,18 @@ impl<'a> CheckerState<'a> {
         // Handle intersection targets
         if let Some(members) = query::intersection_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
+            let mut has_index_signature = false;
+            let mut index_value_types: Vec<TypeId> = Vec::new();
 
             for &member in members.iter() {
                 let resolved_member = self.resolve_type_for_property_access(member);
                 if let Some(shape) = query::object_shape(self.ctx.types, resolved_member) {
-                    if shape.string_index.is_some() || shape.number_index.is_some() {
-                        return;
+                    if let Some(ref idx_sig) = shape.string_index {
+                        has_index_signature = true;
+                        index_value_types.push(idx_sig.value_type);
+                    }
+                    if shape.number_index.is_some() {
+                        has_index_signature = true;
                     }
                     target_shapes.push(shape.clone());
                 } else {
@@ -228,34 +234,46 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // For intersections, property exists if it's in ANY member's shape
-                let mut found = false;
+                // For intersections, property exists if it's in ANY member's named
+                // properties OR covered by an index signature.
+                let mut found_in_named = false;
                 let mut nested_target_types = Vec::new();
 
                 for shape in &target_shapes {
                     if let Some(prop) = shape.properties.iter().find(|p| p.name == source_prop.name)
                     {
-                        found = true;
+                        found_in_named = true;
                         nested_target_types.push(prop.type_id);
                     }
                 }
 
-                if !found {
+                let is_known = found_in_named || has_index_signature;
+
+                if !is_known {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
                     self.error_excess_property_at(&prop_name, target, report_idx);
                 } else {
-                    let nested_target = tsz_solver::utils::intersection_or_single(
-                        self.ctx.types,
-                        nested_target_types,
-                    );
-                    self.check_nested_object_literal_excess_properties(
-                        source_prop.name,
-                        Some(nested_target),
-                        idx,
-                    );
+                    // Combine named property types with index signature value types
+                    // for the nested excess check. This ensures that for intersections
+                    // like `{ [k: string]: { a: 0 } } & { [k: string]: { b: 0 } }`,
+                    // the nested target is `{ a: 0 } & { b: 0 }`.
+                    let all_nested: Vec<TypeId> = nested_target_types
+                        .into_iter()
+                        .chain(index_value_types.iter().copied())
+                        .collect();
+
+                    if !all_nested.is_empty() {
+                        let nested_target =
+                            tsz_solver::utils::intersection_or_single(self.ctx.types, all_nested);
+                        self.check_nested_object_literal_excess_properties(
+                            source_prop.name,
+                            Some(nested_target),
+                            idx,
+                        );
+                    }
                 }
             }
             return;
@@ -265,6 +283,39 @@ impl<'a> CheckerState<'a> {
         if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
             let target_props = target_shape.properties.as_slice();
 
+            // When the target has a string index signature, outer property names are
+            // all valid (any string key is accepted). But we still need to check
+            // nested object literals against the index signature VALUE type for excess
+            // properties. E.g., for target `{ [k: string]: { a: 0 } & { b: 0 } }`,
+            // a nested `{ a: 0, b: 0, c: 0 }` should flag `c` as excess.
+            if let Some(ref idx_sig) = target_shape.string_index {
+                let idx_value_type = idx_sig.value_type;
+                for source_prop in source_props {
+                    if explicit_property_names.is_some()
+                        && !explicit_property_names
+                            .as_ref()
+                            .is_some_and(|names| names.contains(&source_prop.name))
+                    {
+                        continue;
+                    }
+                    // Combine with any named property type (if the property also exists explicitly)
+                    let mut nested_types = vec![idx_value_type];
+                    if let Some(target_prop) =
+                        target_props.iter().find(|p| p.name == source_prop.name)
+                    {
+                        nested_types.push(target_prop.type_id);
+                    }
+                    let nested_target =
+                        tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
+                    self.check_nested_object_literal_excess_properties(
+                        source_prop.name,
+                        Some(nested_target),
+                        idx,
+                    );
+                }
+                return;
+            }
+
             // Empty object {} accepts any properties - no excess property check needed.
             // This is a key TypeScript behavior: {} means "any non-nullish value".
             // See https://github.com/microsoft/TypeScript/issues/60582
@@ -272,7 +323,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+            if target_shape.number_index.is_some() {
                 return;
             }
 
