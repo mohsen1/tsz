@@ -540,10 +540,26 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if optional or has initializer
-                // In JS files, parameters without type annotations are implicitly optional
-                let optional = param.question_token
-                    || param.initializer.is_some()
-                    || (self.is_js_file() && param.type_annotation.is_none());
+                // In JS files, parameters without type annotations are implicitly optional,
+                // UNLESS the function has a JSDoc @param tag for this parameter. The
+                // existence of @param (even without a type) makes the param required in tsc.
+                // Note: We use find_jsdoc_for_function (bypasses check_js guard) rather
+                // than func_jsdoc because allowJs without checkJs still respects @param
+                // tags for parameter optionality in cross-file contexts.
+                let js_implicit_optional = self.is_js_file()
+                    && param.type_annotation.is_none()
+                    && !{
+                        let jsdoc_for_opt = func_jsdoc
+                            .as_ref()
+                            .cloned()
+                            .or_else(|| self.find_jsdoc_for_function(idx));
+                        jsdoc_for_opt.is_some_and(|jsdoc| {
+                            let pname = self.parameter_name_for_error(param.name);
+                            Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
+                        })
+                    };
+                let optional =
+                    param.question_token || param.initializer.is_some() || js_implicit_optional;
                 let rest = param.dot_dot_dot_token;
 
                 // Under strictNullChecks, optional parameters (with `?`) get
