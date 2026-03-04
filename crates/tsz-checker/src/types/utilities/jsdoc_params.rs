@@ -183,7 +183,7 @@ impl<'a> CheckerState<'a> {
     /// Get the byte position of the JSDoc comment for a function node.
     ///
     /// Returns `Some(pos)` where pos is the byte offset of `/**` in the source.
-    fn get_jsdoc_comment_pos_for_function(&self, func_idx: NodeIndex) -> Option<u32> {
+    pub(crate) fn get_jsdoc_comment_pos_for_function(&self, func_idx: NodeIndex) -> Option<u32> {
         use tsz_common::comments::is_jsdoc_comment;
 
         let sf = self.ctx.arena.source_files.first()?;
@@ -453,27 +453,23 @@ impl<'a> CheckerState<'a> {
     /// Returns the type expression (e.g., "Object.<string, boolean>") for the given
     /// parameter name, or None if no matching `@param` tag is found.
     pub(crate) fn extract_jsdoc_param_type_string(jsdoc: &str, param_name: &str) -> Option<String> {
-        // JSDoc @param may span multiple lines. Collect all text after each @param
-        // and process them. We also need to handle nested braces in types like
-        // @param {{ x: T, y: T}} obj
         let mut in_param = false;
         let mut param_text = String::new();
+        for chunk in jsdoc.split_inclusive('\n') {
+            let trimmed = chunk
+                .trim_end_matches('\n')
+                .trim()
+                .trim_start_matches('*')
+                .trim();
 
-        for line in jsdoc.lines() {
-            let trimmed = line.trim().trim_start_matches('*').trim();
-
-            // Skip backtick-quoted sections to find real @-tags.
-            // Lines like `` `@param` @param {string} z `` have a real @param after backticks.
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            // Check if this line starts a new @tag
             if effective.starts_with('@') {
-                // Process any accumulated @param text
                 if in_param {
-                    if let Some(type_expr) =
-                        Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+                    if let Some((type_expr, _)) =
+                        Self::extract_jsdoc_param_type_expr_from_param_tag(&param_text, param_name)
                     {
-                        return Some(type_expr.to_string());
+                        return Some(type_expr);
                     }
                     param_text.clear();
                 }
@@ -489,12 +485,14 @@ impl<'a> CheckerState<'a> {
                 param_text.push_str(trimmed);
             }
         }
-        // Process the last @param if any
+
         if in_param
-            && let Some(type_expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+            && let Some((type_expr, _)) =
+                Self::extract_jsdoc_param_type_expr_from_param_tag(&param_text, param_name)
         {
-            return Some(type_expr.to_string());
+            return Some(type_expr);
         }
+
         None
     }
 
@@ -513,18 +511,50 @@ impl<'a> CheckerState<'a> {
     /// - `@param {object[]} arr` + `@param {string} arr[].x` → `{ x: string }[]`
     ///
     /// Returns `None` if no matching `@param` tag exists or the type can't be resolved.
+    #[allow(dead_code)]
     pub(crate) fn resolve_jsdoc_param_type(
         &mut self,
         jsdoc: &str,
         param_name: &str,
     ) -> Option<tsz_solver::TypeId> {
-        let type_expr = Self::extract_jsdoc_param_type_string(jsdoc, param_name)?;
+        self.resolve_jsdoc_param_type_with_pos(jsdoc, param_name, None)
+    }
+
+    pub(crate) fn resolve_jsdoc_param_type_with_pos(
+        &mut self,
+        jsdoc: &str,
+        param_name: &str,
+        jsdoc_comment_start: Option<u32>,
+    ) -> Option<tsz_solver::TypeId> {
+        let (type_expr, type_expr_offset) =
+            Self::extract_jsdoc_param_type_expr_with_span(jsdoc, param_name)?;
         // Handle {Type=} suffix which means optional (Type | undefined)
-        let (effective_type_expr, is_optional_type) = if type_expr.ends_with('=') {
-            (type_expr[..type_expr.len() - 1].to_string(), true)
+        let is_optional_type = type_expr.ends_with('=');
+        let effective_type_expr = if is_optional_type {
+            let mut expr = type_expr;
+            expr.pop();
+            expr
         } else {
-            (type_expr, false)
+            type_expr
         };
+
+        // Generic JSDoc type references like {C} should emit TS2314 when C
+        // requires type arguments and none were provided.
+        let base_type_expr = effective_type_expr.as_str();
+        if let Some(comment_start) = jsdoc_comment_start
+            && let Some((display_name, required_count)) =
+                self.required_generic_count_for_jsdoc_type_name(base_type_expr)
+        {
+            let diag_start = comment_start + type_expr_offset as u32 + 4;
+            self.error_generic_type_requires_type_arguments_at_span(
+                &display_name,
+                required_count,
+                diag_start,
+                base_type_expr.len() as u32,
+            );
+            return Some(tsz_solver::TypeId::ERROR);
+        }
+
         let mut base_type = self.jsdoc_type_from_expression(&effective_type_expr)?;
 
         // Handle JSDoc destructured parameter type literals.
@@ -605,6 +635,55 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(base_type)
         }
+    }
+
+    fn required_generic_count_for_jsdoc_type_name(
+        &mut self,
+        type_expr: &str,
+    ) -> Option<(String, usize)> {
+        use tsz_binder::symbol_flags;
+
+        if !Self::is_plain_jsdoc_type_name(type_expr) {
+            return None;
+        }
+
+        let sym_id = self.ctx.binder.file_locals.get(type_expr)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM)
+            == 0
+        {
+            return None;
+        }
+
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+        if required_count == 0 {
+            return None;
+        }
+
+        Some((
+            Self::format_generic_display_name_with_interner(
+                type_expr,
+                &type_params,
+                self.ctx.types,
+            ),
+            required_count,
+        ))
+    }
+
+    fn is_plain_jsdoc_type_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '$' || first == '_' || first.is_ascii_alphabetic()) {
+            return false;
+        }
+        chars.all(|ch| ch == '$' || ch == '_' || ch.is_ascii_alphanumeric())
     }
 
     /// Extract nested `@param` properties for a destructured parameter.
@@ -831,8 +910,75 @@ impl<'a> CheckerState<'a> {
     /// Helper to extract a @param type expression (inside {}) if it matches a parameter name.
     /// Handles nested braces in type expressions like `{{ x: T, y: T}}`.
     /// Also handles alternate `@param name {type}` syntax (name before type).
-    fn extract_jsdoc_param_type_expr<'b>(text: &'b str, param_name: &str) -> Option<&'b str> {
+    #[allow(dead_code)]
+    fn extract_jsdoc_param_type_expr(text: &str, param_name: &str) -> Option<String> {
+        Self::extract_jsdoc_param_type_expr_from_param_tag(text, param_name).map(|(expr, _)| expr)
+    }
+
+    /// Like `extract_jsdoc_param_type_expr`, but returns the matching type expression
+    /// and its byte offset within a full JSDoc block.
+    fn extract_jsdoc_param_type_expr_with_span(
+        jsdoc: &str,
+        param_name: &str,
+    ) -> Option<(String, usize)> {
+        let mut in_param = false;
+        let mut param_text = String::new();
+        let mut text_offset = 0usize;
+        let mut line_start = 0usize;
+
+        for chunk in jsdoc.split_inclusive('\n') {
+            let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
+            let trimmed = raw_line.trim().trim_start_matches('*').trim();
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            if effective.starts_with('@') {
+                if in_param {
+                    if let Some((expr, local_offset)) =
+                        Self::extract_jsdoc_param_type_expr_from_param_tag(&param_text, param_name)
+                    {
+                        return Some((expr, text_offset + local_offset));
+                    }
+                    param_text.clear();
+                }
+                if let Some(rest) = effective.strip_prefix("@param") {
+                    in_param = true;
+                    param_text = rest.to_string();
+                    let at_pos = raw_line
+                        .find("@param")
+                        .unwrap_or_else(|| effective.find("@param").unwrap_or(0));
+                    text_offset = line_start + at_pos + "@param".len();
+                } else {
+                    in_param = false;
+                }
+            } else if in_param {
+                param_text.push(' ');
+                param_text.push_str(trimmed);
+            }
+
+            line_start += chunk.len();
+        }
+        if in_param
+            && let Some((expr, local_offset)) =
+                Self::extract_jsdoc_param_type_expr_from_param_tag(&param_text, param_name)
+        {
+            return Some((expr, text_offset + local_offset));
+        }
+        None
+    }
+
+    /// Like `extract_jsdoc_param_type_expr`, but returns the matching type expression
+    /// and its byte offset within a JSDoc tag body.
+    fn extract_jsdoc_param_type_expr_from_param_tag(
+        text: &str,
+        param_name: &str,
+    ) -> Option<(String, usize)> {
         let rest = text.trim();
+        if rest.is_empty() {
+            return None;
+        }
+        let text_ptr = text.as_ptr() as usize;
+        let rest_ptr = rest.as_ptr() as usize;
+        let rest_offset = rest_ptr.saturating_sub(text_ptr);
 
         // Handle alternate syntax: @param `name` {type} or @param name {type}
         if !rest.starts_with('{') {
@@ -842,7 +988,16 @@ impl<'a> CheckerState<'a> {
             if decoded == param_name {
                 let after_name = rest[name_part.len()..].trim();
                 if let Some((type_expr, _)) = Self::parse_jsdoc_curly_type_expr(after_name) {
-                    return Some(type_expr.trim());
+                    let type_expr = type_expr.trim();
+                    let type_expr_start_offset = type_expr.len() - type_expr.trim_start().len();
+                    let type_expr_ptr = type_expr.as_ptr() as usize;
+                    let offset = if type_expr.is_empty() {
+                        0
+                    } else {
+                        let raw_offset = type_expr_ptr.saturating_sub(rest_ptr);
+                        raw_offset + type_expr_start_offset + rest_offset
+                    };
+                    return Some((type_expr.to_string(), offset));
                 }
             }
             return None;
@@ -857,7 +1012,16 @@ impl<'a> CheckerState<'a> {
             let name = name.trim_matches('`');
             let decoded = Self::decode_unicode_escapes(name);
             if decoded == param_name {
-                return Some(type_expr.trim());
+                let type_expr = type_expr.trim();
+                let type_expr_start_offset = type_expr.len() - type_expr.trim_start().len();
+                let type_expr_ptr = type_expr.as_ptr() as usize;
+                let offset = if type_expr.is_empty() {
+                    0
+                } else {
+                    let raw_offset = type_expr_ptr.saturating_sub(rest_ptr);
+                    raw_offset + type_expr_start_offset + rest_offset
+                };
+                return Some((type_expr.to_string(), offset));
             }
         }
         None
@@ -1207,5 +1371,43 @@ mod tests {
         let result = CheckerState::extract_jsdoc_nested_param_properties(jsdoc, "opts1");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "x");
+    }
+
+    #[test]
+    fn extract_jsdoc_param_type_expr_with_span() {
+        let (expr, offset) =
+            CheckerState::extract_jsdoc_param_type_expr_with_span("@param {C} p", "p").unwrap();
+        assert_eq!(expr, "C");
+        assert_eq!(offset, 8);
+    }
+
+    #[test]
+    fn jsdoc_class_template_emits_ts2314_without_type_args() {
+        let diags = crate::test_utils::check_js_source_diagnostics(
+            r#"/**
+ * @template T
+ */
+class C {}
+
+/**
+ * @param {C} p
+ */
+function f(p) {}
+"#,
+        );
+        assert!(
+            diags.iter().any(|d| d.code == 2314),
+            "Expected TS2314 for generic JSDoc class template without type arguments: codes={:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn is_plain_jsdoc_type_name_checks_identifier_shape() {
+        assert!(CheckerState::is_plain_jsdoc_type_name("C"));
+        assert!(CheckerState::is_plain_jsdoc_type_name("_Value2"));
+        assert!(!CheckerState::is_plain_jsdoc_type_name("foo.bar"));
+        assert!(!CheckerState::is_plain_jsdoc_type_name("Promise<T>"));
+        assert!(!CheckerState::is_plain_jsdoc_type_name("C<T>[]"));
     }
 }

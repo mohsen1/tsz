@@ -406,9 +406,17 @@ impl<'a> CheckerState<'a> {
                     // This is how tsc handles JS files: @param types are the primary
                     // source of parameter type information.
                     let jsdoc_param_type = if is_js_file {
-                        if let Some(ref jsdoc) = func_jsdoc {
-                            let pname = self.parameter_name_for_error(param.name);
-                            self.resolve_jsdoc_param_type(jsdoc, &pname)
+                        if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(idx) {
+                            if let Some(ref jsdoc) = func_jsdoc {
+                                let pname = self.parameter_name_for_error(param.name);
+                                self.resolve_jsdoc_param_type_with_pos(
+                                    jsdoc,
+                                    &pname,
+                                    Some(comment_start),
+                                )
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
@@ -703,8 +711,9 @@ impl<'a> CheckerState<'a> {
             // Push contextual yield type EARLY (before infer_return_type_from_body)
             // so yield expressions get contextual typing during inference.
             // Also extract return and next types from contextual Generator<Y, R, N>.
-            if is_generator && !has_type_annotation {
-                if let Some(gen_types) = ctx_helper.as_ref().and_then(|helper| {
+            if is_generator
+                && !has_type_annotation
+                && let Some(gen_types) = ctx_helper.as_ref().and_then(|helper| {
                     let ret_type = helper.get_return_type()?;
                     let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ret_type);
                     Some((
@@ -712,11 +721,11 @@ impl<'a> CheckerState<'a> {
                         ret_ctx.get_generator_return_type(),
                         ret_ctx.get_generator_next_type(),
                     ))
-                }) {
-                    early_yield_type = gen_types.0;
-                    early_gen_return_type = gen_types.1;
-                    early_gen_next_type = gen_types.2;
-                }
+                })
+            {
+                early_yield_type = gen_types.0;
+                early_gen_return_type = gen_types.1;
+                early_gen_next_type = gen_types.2;
             }
             if early_yield_type.is_some() {
                 self.ctx.push_yield_type(early_yield_type);

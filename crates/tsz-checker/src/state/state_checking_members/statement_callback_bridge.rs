@@ -226,9 +226,26 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check function body if present
         let has_type_annotation = func.type_annotation.is_some();
+        // For JS files without explicit type annotations, check for JSDoc @type
+        // providing a function type. If found, extract its return type so that
+        // return statements are checked against it (TS2322/TS2355).
+        let jsdoc_return_type = if !has_type_annotation && !is_closure && self.is_js_file() {
+            self.jsdoc_type_annotation_for_node(func_idx)
+                .and_then(|jsdoc_func_type| {
+                    crate::query_boundaries::assignability::get_function_return_type(
+                        self.ctx.types,
+                        jsdoc_func_type,
+                    )
+                })
+        } else {
+            None
+        };
+        let has_jsdoc_return_type = jsdoc_return_type.is_some();
         if func.body.is_some() {
             let mut return_type = if has_type_annotation {
                 self.get_type_from_type_node(func.type_annotation)
+            } else if let Some(jsdoc_ret) = jsdoc_return_type {
+                jsdoc_ret
             } else {
                 // Use UNKNOWN to enforce strict checking
                 TypeId::UNKNOWN
@@ -281,7 +298,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // e.g., function f({ show: x = v => v }: Show) — validate x's default
             self.check_parameter_binding_pattern_defaults(&func.parameters.nodes);
 
-            if !has_type_annotation {
+            if !has_type_annotation && !has_jsdoc_return_type {
                 // Suppress definite assignment errors during return type inference.
                 // The function body will be checked again below, and that's when
                 // we want to emit TS2454 errors to avoid duplicates.
@@ -359,6 +376,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // return statements should be checked against TReturn (R), not the full Generator type.
             // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
             let is_generator = func.asterisk_token;
+            let has_declared_return = has_type_annotation || has_jsdoc_return_type;
             let body_return_type = if is_generator && has_type_annotation {
                 // Ensure the annotated return type is actually compatible with the Generator protocol.
                 let generator_base = if func.is_async {
@@ -392,7 +410,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // Unwrap Promise<T> to T for async function return type checking.
                 // The function body returns T, which gets auto-wrapped in a Promise.
                 self.unwrap_promise_type(return_type).unwrap_or(return_type)
-            } else if has_type_annotation {
+            } else if has_declared_return {
                 return_type
             } else {
                 // When the return type was purely inferred from the body (no
@@ -508,7 +526,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             {
                 check_return_type = TypeId::VOID;
             }
-            let check_explicit_return_paths = has_type_annotation;
+            let check_explicit_return_paths = has_declared_return;
             let requires_return = if check_explicit_return_paths {
                 self.requires_return_value(check_return_type)
             } else {
@@ -527,10 +545,22 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             };
 
             if check_explicit_return_paths && requires_return && falls_through {
+                // For JSDoc @type, the error node is the function name/node
+                // (there's no separate type annotation node in the AST).
+                let error_node = if has_type_annotation {
+                    func.type_annotation
+                } else {
+                    // JSDoc: use function name if available, otherwise function itself
+                    if func.name.is_some() {
+                        func.name
+                    } else {
+                        func_idx
+                    }
+                };
                 if !has_return {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
-                        func.type_annotation,
+                        error_node,
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
@@ -538,7 +568,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     // TS2366: Only emit with strictNullChecks
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
-                        func.type_annotation,
+                        error_node,
                         diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
@@ -547,7 +577,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 && has_return
                 && falls_through
                 && !self
-                    .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
+                    .should_skip_no_implicit_return_check(check_return_type, has_declared_return)
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

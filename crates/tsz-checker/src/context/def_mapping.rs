@@ -159,7 +159,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up the `SymbolId` for a `DefId`, with fallback to the shared
-    /// `DefinitionStore` for cross-context DefIds.
+    /// `DefinitionStore` for cross-context `DefIds`.
     ///
     /// Use this when the DefId may have been created in a different checker
     /// context (e.g., cross-file type references where `get_or_create_def_id`

@@ -754,7 +754,17 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = checker.push_type_parameters(&class.type_parameters);
                 checker.pop_type_parameters(updates);
-                return Some(params);
+                if !params.is_empty() {
+                    return Some(params);
+                }
+
+                if let Some(class_jsdoc_params) =
+                    Self::jsdoc_template_type_params_for_decl(checker, decl_idx, sym_escaped_name)
+                {
+                    return Some(class_jsdoc_params);
+                }
+
+                return Some(Vec::new());
             }
             if flags & symbol_flags::INTERFACE != 0
                 && let Some(iface) = checker.ctx.arena.get_interface(node)
@@ -774,6 +784,45 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn jsdoc_template_type_params_for_decl(
+        checker: &mut CheckerState,
+        decl_idx: NodeIndex,
+        _sym_escaped_name: &str,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let sf = checker.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let jsdoc = checker.try_leading_jsdoc(
+            comments,
+            checker.ctx.arena.get(decl_idx)?.pos,
+            source_text,
+        )?;
+
+        let names = Self::jsdoc_template_type_params(&jsdoc);
+        if names.is_empty() {
+            return None;
+        }
+
+        let mut params = Vec::with_capacity(names.len());
+        for name in names {
+            if name.is_empty() {
+                continue;
+            }
+            params.push(tsz_solver::TypeParamInfo {
+                name: checker.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
+        }
+
+        if params.is_empty() {
+            None
+        } else {
+            Some(params)
+        }
     }
 
     pub(crate) fn get_type_params_for_symbol(

@@ -1185,4 +1185,54 @@ mod tests {
             "ElementAttributesProperty with multiple members should emit TS2608, got: {diagnostics:?}"
         );
     }
+
+    /// TS2786 should NOT fire for generic class components whose construct
+    /// signature return type contains unresolved type parameters.
+    /// TSC resolves signatures before checking; we skip the check when
+    /// type parameters remain unresolved.
+    #[test]
+    fn jsx_generic_class_component_no_false_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render(): any; }
+                interface IntrinsicElements { }
+            }
+            declare class Component<P> {
+                constructor(props: P);
+                props: P;
+                render(): JSX.Element;
+            }
+            class MyGenericComp<T> extends Component<T> {
+                render() { return <div /> as any as JSX.Element; }
+            }
+            <MyGenericComp />;
+            "#,
+        );
+        assert!(
+            !diagnostics.contains(&2786),
+            "Generic class component should not emit false TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2786 SHOULD still fire for generic SFCs (call signatures) that
+    /// return an incompatible type, even when generic params are present.
+    #[test]
+    fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { type: 'element'; }
+                interface IntrinsicElements { }
+            }
+            declare function BadGenericComp<T>(props: T): { type: T };
+            <BadGenericComp />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2786),
+            "Generic SFC with incompatible return should emit TS2786, got: {diagnostics:?}"
+        );
+    }
 }
