@@ -378,34 +378,50 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let is_generator = func.asterisk_token;
             let has_declared_return = has_type_annotation || has_jsdoc_return_type;
             let body_return_type = if is_generator && has_type_annotation {
-                // Ensure the annotated return type is actually compatible with the Generator protocol.
-                let generator_base = if func.is_async {
-                    self.resolve_lib_type_by_name("AsyncGenerator")
-                        .unwrap_or(TypeId::ERROR)
+                // TS2505: A generator cannot have a 'void' type annotation.
+                // When void is used, emit this specific error and skip the generator
+                // protocol check to avoid cascading TS2322 errors.
+                if return_type == TypeId::VOID {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        func.type_annotation,
+                        "A generator cannot have a 'void' type annotation.",
+                        diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
+                    );
+                    TypeId::ANY // Use ANY to suppress return statement checks
                 } else {
-                    self.resolve_lib_type_by_name("Generator")
-                        .unwrap_or(TypeId::ERROR)
-                };
-                if generator_base != TypeId::ERROR {
-                    let any_gen = self
-                        .ctx
-                        .types
-                        .factory()
-                        .application(generator_base, vec![TypeId::ANY, TypeId::ANY, TypeId::ANY]);
+                    // Ensure the annotated return type is actually compatible with the Generator protocol.
+                    let generator_base = if func.is_async {
+                        self.resolve_lib_type_by_name("AsyncGenerator")
+                            .unwrap_or(TypeId::ERROR)
+                    } else {
+                        self.resolve_lib_type_by_name("Generator")
+                            .unwrap_or(TypeId::ERROR)
+                    };
+                    if generator_base != TypeId::ERROR {
+                        let any_gen = self.ctx.types.factory().application(
+                            generator_base,
+                            vec![TypeId::ANY, TypeId::ANY, TypeId::ANY],
+                        );
 
-                    // Fast path: if the return type is already recognized as a valid generator type,
-                    // we don't need to do the complex structural subtyping check that fails due to overloads.
-                    // If it is not (e.g. `number`), we run the check to emit the TS2322 assignability error.
-                    if self
-                        .get_generator_return_type_argument(return_type)
-                        .is_none()
-                    {
-                        self.check_assignable_or_report(any_gen, return_type, func.type_annotation);
+                        // Fast path: if the return type is already recognized as a valid generator type,
+                        // we don't need to do the complex structural subtyping check that fails due to overloads.
+                        // If it is not (e.g. `number`), we run the check to emit the TS2322 assignability error.
+                        if self
+                            .get_generator_return_type_argument(return_type)
+                            .is_none()
+                        {
+                            self.check_assignable_or_report(
+                                any_gen,
+                                return_type,
+                                func.type_annotation,
+                            );
+                        }
                     }
-                }
 
-                self.get_generator_return_type_argument(return_type)
-                    .unwrap_or(return_type)
+                    self.get_generator_return_type_argument(return_type)
+                        .unwrap_or(return_type)
+                }
             } else if func.is_async && has_type_annotation {
                 // Unwrap Promise<T> to T for async function return type checking.
                 // The function body returns T, which gets auto-wrapped in a Promise.

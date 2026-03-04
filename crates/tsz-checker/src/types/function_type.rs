@@ -1044,13 +1044,24 @@ impl<'a> CheckerState<'a> {
             // For async functions with return type Promise<T>, return statements should be checked
             // against T, not Promise<T>. The function body returns T, which gets auto-wrapped.
             let body_return_type = if is_generator && has_type_annotation {
-                // Use the pre-expansion annotated return type because
-                // evaluate_application_type() may have expanded Generator<Y,R,N>
-                // into its structural object form, which get_generator_return_type_argument
-                // can't recognise (it needs an Application type).
                 let original_type = annotated_return_type.unwrap_or(return_type);
-                self.get_generator_return_type_argument(original_type)
-                    .unwrap_or(return_type)
+                // TS2505: A generator cannot have a 'void' type annotation.
+                if original_type == TypeId::VOID || return_type == TypeId::VOID {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        type_annotation,
+                        "A generator cannot have a 'void' type annotation.",
+                        diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
+                    );
+                    TypeId::ANY // Use ANY to suppress return statement checks
+                } else {
+                    // Use the pre-expansion annotated return type because
+                    // evaluate_application_type() may have expanded Generator<Y,R,N>
+                    // into its structural object form, which get_generator_return_type_argument
+                    // can't recognise (it needs an Application type).
+                    self.get_generator_return_type_argument(original_type)
+                        .unwrap_or(return_type)
+                }
             } else if is_async_for_context && has_type_annotation {
                 // Unwrap Promise<T> to T for async function return type checking.
                 // Use the pre-expansion annotated return type because
