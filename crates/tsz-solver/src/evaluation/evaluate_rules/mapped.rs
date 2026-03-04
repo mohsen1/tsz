@@ -239,7 +239,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let order: Vec<Atom> = match self.interner().lookup(resolved) {
                     Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                         let shape = self.interner().object_shape(shape_id);
-                        shape.properties.iter().map(|p| p.name).collect()
+                        // Properties are stored sorted by Atom for hashing, but we
+                        // need declaration order. Sort by declaration_order to
+                        // restore the original source order.
+                        let mut props: Vec<&PropertyInfo> =
+                            shape.properties.iter().collect();
+                        props.sort_by_key(|p| p.declaration_order);
+                        props.iter().map(|p| p.name).collect()
                     }
                     _ => Vec::new(),
                 };
