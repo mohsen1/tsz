@@ -162,6 +162,17 @@ impl<'a> Printer<'a> {
     ) {
         let name = self.get_identifier_text_idx(module.name);
 
+        // Capture and consume the CJS export fold flag at the TOP of the IIFE,
+        // not in the tail. Without this, nested namespace IIFEs inside the body
+        // would consume the flag before the outer namespace reaches its tail.
+        let cjs_export_fold = if parent_name.is_none() {
+            let v = self.pending_cjs_namespace_export_fold;
+            self.pending_cjs_namespace_export_fold = false;
+            v
+        } else {
+            false
+        };
+
         // Determine if we should emit a variable declaration for this namespace.
         // Skip if name already declared by class/function/enum (both at top level and
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
@@ -240,9 +251,8 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write(&name);
             self.write(" = {}));");
-        } else if self.pending_cjs_namespace_export_fold {
+        } else if cjs_export_fold {
             // CJS export fold: (N || (exports.N = N = {}))
-            self.pending_cjs_namespace_export_fold = false;
             self.write(&name);
             self.write(" || (exports.");
             self.write(&name);

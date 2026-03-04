@@ -459,7 +459,6 @@ impl<'a> Printer<'a> {
                         }
                         self.write(emit_text);
                     } else if !export.is_default_export
-                        && !self.ctx.module_state.has_export_assignment
                         && let Some(enum_decl) = self.arena.get_enum(clause_node)
                         && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
                     {
@@ -467,6 +466,8 @@ impl<'a> Printer<'a> {
                         // the IIFE tail: (E || (exports.E = E = {}))
                         // This matches tsc's compact form instead of a separate
                         // exports.E = E; statement.
+                        // Note: fold applies even with has_export_assignment — `export =`
+                        // and named exports are orthogonal in CJS.
                         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
                         enum_emitter.set_indent_level(self.writer.indent_level());
                         enum_emitter
@@ -503,10 +504,13 @@ impl<'a> Printer<'a> {
                 }
                 // export namespace N {}
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if !export.is_default_export && !self.ctx.module_state.has_export_assignment {
+                    if !export.is_default_export {
                         // Fold exports.Name into the IIFE tail:
                         // (N || (exports.N = N = {})) instead of separate
                         // `exports.N = N;` after the IIFE.
+                        // Note: fold is used even when has_export_assignment is true —
+                        // `export = X` sets module.exports but named exports like
+                        // `export enum E` still get their own exports.E binding.
                         self.pending_cjs_namespace_export_fold = true;
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
@@ -515,19 +519,6 @@ impl<'a> Printer<'a> {
                         self.pending_cjs_namespace_export_fold = false;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
-                        self.write_line();
-
-                        if !self.ctx.module_state.has_export_assignment
-                            && let Some(module_decl) = self.arena.get_module(clause_node)
-                            && let Some(name) = self.get_module_root_name(module_decl.name)
-                        {
-                            self.write("exports.");
-                            self.write(&name);
-                            self.write(" = ");
-                            self.write(&name);
-                            self.write(";");
-                            self.write_line();
-                        }
                     }
                 }
                 // export { x, y } - local re-export without module specifier
