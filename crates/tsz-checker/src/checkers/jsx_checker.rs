@@ -22,21 +22,14 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ANY;
         };
-
-        // Get JSX opening data (works for both JSX_OPENING_ELEMENT and JSX_SELF_CLOSING_ELEMENT)
         let Some(jsx_opening) = self.ctx.arena.get_jsx_opening(node) else {
             return TypeId::ANY;
         };
-
-        // Get the tag name
         let tag_name_idx = jsx_opening.tag_name;
         let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
             return TypeId::ANY;
         };
-
-        // Get tag name text and determine if intrinsic.
-        // Namespaced tags (e.g., `svg:path`) are always intrinsic — TSC looks up
-        // `JSX.IntrinsicElements["svg:path"]` using the full `namespace:name` string.
+        // Namespaced tags (e.g., `svg:path`) are always intrinsic.
         let (tag_name, namespaced_tag_owned, is_intrinsic) =
             if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 let name = self
@@ -340,18 +333,12 @@ impl<'a> CheckerState<'a> {
     /// tsc resolves the JSX namespace from the factory's parent entity (e.g., `X.JSX`)
     /// before falling back to the global JSX namespace.
     pub(crate) fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
-        // When a custom jsxFactory is set, try to resolve JSX namespace from the
-        // factory's parent entity. For `X.jsx`, look for `X.JSX`.
         if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
             return Some(jsx_sym);
         }
-
-        // First try file_locals (includes user-defined globals and merged lib symbols)
         if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             return Some(sym_id);
         }
-
-        // Then try using get_global_type to check lib binders
         let lib_binders = self.get_lib_binders();
         if let Some(sym_id) = self
             .ctx
@@ -368,23 +355,14 @@ impl<'a> CheckerState<'a> {
 
     /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
     pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
-        // Get the JSX namespace symbol
         let jsx_sym_id = self.get_jsx_namespace_type()?;
-
-        // Get lib binders for cross-arena symbol lookup
         let lib_binders = self.get_lib_binders();
-
-        // Get the JSX namespace symbol data
         let symbol = self
             .ctx
             .binder
             .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-
-        // Look up IntrinsicElements in the JSX namespace exports
         let exports = symbol.exports.as_ref()?;
         let intrinsic_elements_sym_id = exports.get("IntrinsicElements")?;
-
-        // Return the type reference for IntrinsicElements
         Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
     }
 
@@ -612,23 +590,34 @@ impl<'a> CheckerState<'a> {
                 let return_type = self.evaluate_type_with_env(shape.return_type);
                 if !is_unresolved(return_type) && !is_valid_null_like_return(return_type) {
                     any_checked = true;
-                    if let Some(element_type) = jsx_element_type
-                        && !self.is_assignable_to(return_type, element_type)
-                    {
-                        all_valid = false;
+                    if let Some(element_type) = jsx_element_type {
+                        // TSC allows null/undefined in SFC return types
+                        // (e.g., `() => Element | null` is valid).
+                        // Strip null/undefined before checking against JSX.Element.
+                        let non_null_return =
+                            tsz_solver::remove_nullish(self.ctx.types, return_type);
+                        if non_null_return == TypeId::NEVER
+                            || !self.is_assignable_to(non_null_return, element_type)
+                        {
+                            all_valid = false;
+                        }
                     }
                 }
             }
 
             // Check call/construct signatures against JSX.Element/ElementClass
-            for (get_sigs_fn, target) in [
+            // is_call_sig tracks whether we're checking call sigs (SFC-like) vs
+            // construct sigs (class component) — call sig return types allow null.
+            for (get_sigs_fn, target, is_call_sig) in [
                 (
                     tsz_solver::type_queries::get_call_signatures as fn(_, _) -> _,
                     jsx_element_type,
+                    true,
                 ),
                 (
                     tsz_solver::type_queries::get_construct_signatures,
                     jsx_element_class_type,
+                    false,
                 ),
             ] {
                 if !is_sfc
@@ -642,7 +631,19 @@ impl<'a> CheckerState<'a> {
                             return true;
                         }
                         any_concrete = true;
-                        target.is_none_or(|t| self.is_assignable_to(ret, t))
+                        target.is_none_or(|t| {
+                            // Call signatures (SFC-like): allow null/undefined return
+                            let check_ret = if is_call_sig {
+                                let stripped = tsz_solver::remove_nullish(self.ctx.types, ret);
+                                if stripped == TypeId::NEVER {
+                                    return true;
+                                }
+                                stripped
+                            } else {
+                                ret
+                            };
+                            self.is_assignable_to(check_ret, t)
+                        })
                     });
                     if any_concrete {
                         any_checked = true;

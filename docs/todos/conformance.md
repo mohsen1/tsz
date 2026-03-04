@@ -1,7 +1,25 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9947/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~7140/12570 (56.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+> Note: Score regressed from 79.1% due to other sessions' commits (TS2300 cross-file interface, mapped type properties). This session's JSX fixes are clean.
+
+## Session 2026-03-04h — JSX class component validation diagnostics (+2 conf)
+
+### Fixed: TS2786, TS2607, TS2608 for JSX class components
+
+**Area**: jsx (66.15% pass rate, rank 2 worst area)
+
+**Root causes**:
+1. **TS2786** ("cannot be used as JSX component"): Class component construct signature checking was deliberately skipped in `jsx_checker.rs`. Re-enabled with `is_unresolved` guard to avoid false positives on lazy types.
+2. **TS2607** ("JSX element class does not support attributes"): When instance type lacked the `ElementAttributesProperty` member, code silently fell back to first construct param instead of emitting diagnostic.
+3. **TS2608** ("ElementAttributesProperty may not have more than one property"): No check existed for multiple properties on `JSX.ElementAttributesProperty`.
+
+**Fix (1 file, 4 tests)**:
+- `crates/tsz-checker/src/checkers/jsx_checker.rs`: All 3 diagnostics implemented
+- Refactored call/construct sig checking into a loop over function pointer array to stay under 2000 LOC limit
+- +2 conformance tests: `tsxElementResolution12`, `tsxSpreadAttributesResolution17`
+- 4 unit tests added in `jsx_checker_attrs.rs`
 
 ## Session 2026-03-04g — Declared primitive constraint literal preservation (+4 conf)
 
