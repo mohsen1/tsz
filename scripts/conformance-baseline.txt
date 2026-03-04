@@ -439,6 +439,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1494,7 +1495,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/typeGuardsAsAssertions.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceDeclarationEmit.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceNoLibBundle.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts
-FAIL TypeScript/tests/cases/conformance/decorators/class/constructableDecoratorOnClass01.ts
 FAIL TypeScript/tests/cases/conformance/decorators/class/constructor/parameter/decoratorOnClassConstructorParameter4.ts
 FAIL TypeScript/tests/cases/conformance/decorators/class/method/decoratorOnClassMethod16.ts
 FAIL TypeScript/tests/cases/conformance/decorators/class/method/decoratorOnClassMethod18.ts
@@ -4980,7 +4980,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
@@ -8348,6 +8347,7 @@ PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnCla
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor6.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor7.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor8.ts
+PASS TypeScript/tests/cases/conformance/decorators/class/constructableDecoratorOnClass01.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/constructor/decoratorOnClassConstructor1.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/constructor/decoratorOnClassConstructor2.ts
 PASS TypeScript/tests/cases/conformance/decorators/class/constructor/decoratorOnClassConstructor3.ts
