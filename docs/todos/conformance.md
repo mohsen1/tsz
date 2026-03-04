@@ -1,7 +1,35 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9936/12570 (79.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9937/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04b — Intersection type signature resolution (+2 conf)
+
+### Fixed: Call/construct signatures not collected from intersection type members
+
+**Area**: types/intersection (62.5% → improved), also classes/members
+
+**Root cause**: `get_call_signatures()` and `get_construct_signatures()` in `crates/tsz-solver/src/type_queries/data.rs` only checked direct `TypeData::Callable` types. For intersection types like `T & Constructor<MyMixin>`, they returned `None`, causing:
+1. TS2315 "Type is not generic" when applying type args to intersection constructor types
+2. TS2554 "Expected 0 arguments" when constructing classes extending mixin intersections
+3. TS2349 "Not callable" for intersection callable types
+
+**Fix (3 layers)**:
+1. **Solver** (`type_queries/data.rs`): `get_construct_signatures` and `get_call_signatures` now iterate intersection members and collect signatures from all `Callable` members.
+2. **Checker** (`constructors.rs`): `apply_type_arguments_to_constructor_type` decomposes intersection types, applies type args to each member, and rebuilds the intersection.
+3. **Checker** (`heritage.rs`): TS2315 guard now uses `has_generic_construct_signatures()` helper that recursively checks intersection members.
+
+**Tests added**: 6 solver unit tests in `data.rs` + 3 checker integration tests in `intersection_signatures.rs`
+
+**Tests fixed**: privateNamesConstructorChain-1, privateNamesConstructorChain-2
+
+### Remaining intersection issues
+
+1. **exportClassExtendingIntersection**: Still fails in multi-file mode. The TS2349 errors appear to be module-resolution related — the mixin function's return type doesn't resolve correctly across module boundaries. Single-file equivalent works correctly. Root cause: likely in module symbol resolution or cross-file type export/import.
+
+2. **Fingerprint-only failures** (7 tests): `commonTypeIntersection`, `intersectionAndUnionTypes`, `intersectionAsWeakTypeSource`, `intersectionNarrowing`, `intersectionTypeAssignment`, `intersectionWithIndexSignatures`, `intersectionWithUnionConstraint` — all have matching error codes but differ in message text or diagnostic location.
+
+3. **intersectionTypeInference** (extra TS2403): False TS2403 "Subsequent variable declarations must have the same type" — unrelated to signature resolution, likely type widening issue.
 
 ## Session 2026-03-04a — TS18016/TS18013/TS2339 private identifier diagnostics (+4 conf)
 
