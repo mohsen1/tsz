@@ -142,6 +142,12 @@ export function parseBaseline(content: string): BaselineContent {
       if (lastAuxIndex >= i) {
         continue;
       }
+      // TypeScript source files (.ts/.tsx/.mts/.cts) are never output files,
+      // so a duplicate TS name is still in the source section (multi-dir test
+      // with no aux boundary, e.g. two different dirs both have "index.ts").
+      if (isTsSourceLike(name)) {
+        continue;
+      }
       outputStart = Math.min(outputStart, i);
       break;
     }
@@ -198,18 +204,16 @@ export function parseBaseline(content: string): BaselineContent {
     }
 
     if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
-      // Some baselines include zero-length or placeholder source segments.
-      // Ignore these to avoid injecting empty generated files into emitter input.
-      if (fileContent.length > 0) {
-        // Deduplicate: for multi-directory tests with same filename
-        // (e.g., subfolder/index.js and root/index.js both as [index.js]),
-        // keep only the last occurrence.
-        const existingIdx = sourceLikeFiles.findIndex(f => f.name === name);
-        if (existingIdx >= 0) {
-          sourceLikeFiles[existingIdx] = { name, content: fileContent };
-        } else {
-          sourceLikeFiles.push({ name, content: fileContent });
-        }
+      // Deduplicate: for multi-directory tests with same filename
+      // (e.g., subfolder/index.js and root/index.js both as [index.js]),
+      // keep only the last occurrence.
+      // Include empty source files so the CLI receives them as input
+      // (they still produce output like "use strict"; in CJS mode).
+      const existingIdx = sourceLikeFiles.findIndex(f => f.name === name);
+      if (existingIdx >= 0) {
+        sourceLikeFiles[existingIdx] = { name, content: fileContent };
+      } else {
+        sourceLikeFiles.push({ name, content: fileContent });
       }
       sourceFileNames.add(name);
     } else if (segIndex >= outputStart) {
@@ -243,9 +247,6 @@ export function parseBaseline(content: string): BaselineContent {
     }
 
     if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
-      if (fileContent.length === 0) {
-        continue;
-      }
       // Deduplicate: same logic as sourceLikeFiles above.
       const existingResIdx = result.sourceFiles.findIndex(f => f.name === name);
       if (existingResIdx >= 0) {
@@ -253,8 +254,8 @@ export function parseBaseline(content: string): BaselineContent {
       } else {
         result.sourceFiles.push({ name, content: fileContent });
       }
-      if (!result.source && !name.endsWith('.d.ts') && !isAuxiliaryFile(name)) {
-        // Keep the first non-declaration source file as entry-point.
+      if (!result.source && fileContent.length > 0 && !name.endsWith('.d.ts') && !isAuxiliaryFile(name)) {
+        // Keep the first non-empty, non-declaration source file as entry-point.
         result.source = fileContent;
         result.sourceFileName = name;
       }
