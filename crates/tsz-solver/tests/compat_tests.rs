@@ -3074,6 +3074,57 @@ fn test_weak_union_with_non_weak_member_not_weak() {
     );
 }
 
+#[test]
+fn test_global_object_type_exempt_from_weak_type_check() {
+    // The global Object type (with its standard properties like constructor,
+    // toString, hasOwnProperty, etc.) should be exempt from weak type checks.
+    // This matches TypeScript behavior: Object is treated like {} for weak type
+    // purposes. See TypeScript PR #16047.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create Object-like type with the standard 7 properties
+    let constructor = interner.intern_string("constructor");
+    let to_string = interner.intern_string("toString");
+    let to_locale_string = interner.intern_string("toLocaleString");
+    let value_of = interner.intern_string("valueOf");
+    let has_own_property = interner.intern_string("hasOwnProperty");
+    let is_prototype_of = interner.intern_string("isPrototypeOf");
+    let property_is_enumerable = interner.intern_string("propertyIsEnumerable");
+
+    let object_type = interner.object(vec![
+        PropertyInfo::new(constructor, TypeId::ANY),
+        PropertyInfo::new(to_string, TypeId::ANY),
+        PropertyInfo::new(to_locale_string, TypeId::ANY),
+        PropertyInfo::new(value_of, TypeId::ANY),
+        PropertyInfo::new(has_own_property, TypeId::ANY),
+        PropertyInfo::new(is_prototype_of, TypeId::ANY),
+        PropertyInfo::new(property_is_enumerable, TypeId::ANY),
+    ]);
+
+    // Weak target (all optional properties, no overlap with Object)
+    let wings = interner.intern_string("wings");
+    let legs = interner.intern_string("legs");
+    let weak_target = interner.object(vec![
+        PropertyInfo::opt(wings, TypeId::BOOLEAN),
+        PropertyInfo::opt(legs, TypeId::NUMBER),
+    ]);
+
+    // Object should be assignable to weak type (exempt from weak type check)
+    assert!(
+        checker.is_assignable(object_type, weak_target),
+        "Global Object type should be exempt from weak type check"
+    );
+
+    // But a non-Object source with no overlap should still be rejected
+    let name = interner.intern_string("name");
+    let non_object = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    assert!(
+        !checker.is_assignable(non_object, weak_target),
+        "Non-Object source with no common properties should be rejected"
+    );
+}
+
 // =============================================================================
 // exact_optional_property_types Tests (Catalog Rule #14)
 // =============================================================================
