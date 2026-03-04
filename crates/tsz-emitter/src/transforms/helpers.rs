@@ -369,7 +369,7 @@ pub struct HelpersNeeded {
 
 impl HelpersNeeded {
     /// Returns true if any helper is needed.
-    pub fn any_needed(&self) -> bool {
+    pub const fn any_needed(&self) -> bool {
         self.extends
             || self.assign
             || self.rest

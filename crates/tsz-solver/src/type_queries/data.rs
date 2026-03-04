@@ -658,24 +658,58 @@ pub fn get_callable_shape(
     }
 }
 
-/// Get call signatures from a callable type.
+/// Get call signatures from a type.
 ///
-/// Returns None if the type is not callable.
+/// For `Callable` types, returns their call signatures directly.
+/// For intersection types, collects call signatures from all callable members.
+/// Returns None if no call signatures are found.
 pub fn get_call_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<Vec<crate::CallSignature>> {
-    get_callable_shape(db, type_id).map(|shape| shape.call_signatures.clone())
+    if let Some(shape) = get_callable_shape(db, type_id) {
+        return Some(shape.call_signatures.clone());
+    }
+    // For intersection types, collect call signatures from all members
+    if let Some(members) = get_intersection_members(db, type_id) {
+        let mut all_sigs = Vec::new();
+        for member in &members {
+            if let Some(shape) = get_callable_shape(db, *member) {
+                all_sigs.extend(shape.call_signatures.iter().cloned());
+            }
+        }
+        if !all_sigs.is_empty() {
+            return Some(all_sigs);
+        }
+    }
+    None
 }
 
-/// Get construct signatures from a callable type.
+/// Get construct signatures from a type.
 ///
-/// Returns None if the type is not callable.
+/// For `Callable` types, returns their construct signatures directly.
+/// For intersection types, collects construct signatures from all callable members.
+/// Returns None if no construct signatures are found.
 pub fn get_construct_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<Vec<crate::CallSignature>> {
-    get_callable_shape(db, type_id).map(|shape| shape.construct_signatures.clone())
+    if let Some(shape) = get_callable_shape(db, type_id) {
+        return Some(shape.construct_signatures.clone());
+    }
+    // For intersection types, collect construct signatures from all members
+    if let Some(members) = get_intersection_members(db, type_id) {
+        let mut all_sigs = Vec::new();
+        for member in &members {
+            if let Some(shape) = get_callable_shape(db, *member) {
+                all_sigs.extend(shape.construct_signatures.iter().cloned());
+            }
+        }
+        if !all_sigs.is_empty() {
+            return Some(all_sigs);
+        }
+    }
+    None
 }
 
 /// Get the union of all construct signature return types from a callable shape.
@@ -964,5 +998,138 @@ pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     match db.lookup(type_id) {
         Some(TypeData::Enum(def_id, _)) => Some(def_id),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::types::{CallSignature, CallableShape, ParamInfo, TypeParamInfo};
+
+    fn make_callable_with_construct_sig(
+        interner: &TypeInterner,
+        return_type: TypeId,
+        type_params: Vec<TypeParamInfo>,
+    ) -> TypeId {
+        let shape = CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params,
+                params: vec![ParamInfo {
+                    name: None,
+                    type_id: TypeId::STRING,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        };
+        interner.callable(shape)
+    }
+
+    fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> TypeId {
+        let shape = CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo {
+                    name: None,
+                    type_id: TypeId::NUMBER,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        };
+        interner.callable(shape)
+    }
+
+    #[test]
+    fn get_construct_signatures_direct_callable() {
+        let interner = TypeInterner::new();
+        let callable = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
+        let sigs = get_construct_signatures(&interner, callable);
+        assert!(sigs.is_some());
+        assert_eq!(sigs.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn get_construct_signatures_intersection_collects_from_members() {
+        let interner = TypeInterner::new();
+        // Create two callables with construct signatures
+        let ctor1 = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
+        let ctor2 = make_callable_with_construct_sig(&interner, TypeId::NUMBER, vec![]);
+        // Create intersection: ctor1 & ctor2
+        let intersection = interner.intersection(vec![ctor1, ctor2]);
+        let sigs = get_construct_signatures(&interner, intersection);
+        assert!(sigs.is_some());
+        let sigs = sigs.unwrap();
+        assert_eq!(
+            sigs.len(),
+            2,
+            "Should collect construct sigs from both members"
+        );
+    }
+
+    #[test]
+    fn get_construct_signatures_intersection_with_non_callable_member() {
+        let interner = TypeInterner::new();
+        // Create intersection: Constructor & { prop: string }
+        let ctor = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
+        let obj = interner.object(vec![]); // plain object, no construct sigs
+        let intersection = interner.intersection(vec![ctor, obj]);
+        let sigs = get_construct_signatures(&interner, intersection);
+        assert!(sigs.is_some());
+        assert_eq!(
+            sigs.unwrap().len(),
+            1,
+            "Should find construct sig from callable member"
+        );
+    }
+
+    #[test]
+    fn get_construct_signatures_intersection_no_construct_sigs() {
+        let interner = TypeInterner::new();
+        // Intersection of non-callable types
+        let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+        let sigs = get_construct_signatures(&interner, intersection);
+        assert!(sigs.is_none());
+    }
+
+    #[test]
+    fn get_call_signatures_intersection_collects_from_members() {
+        let interner = TypeInterner::new();
+        let fn1 = make_callable_with_call_sig(&interner, TypeId::STRING);
+        let fn2 = make_callable_with_call_sig(&interner, TypeId::NUMBER);
+        let intersection = interner.intersection(vec![fn1, fn2]);
+        let sigs = get_call_signatures(&interner, intersection);
+        assert!(sigs.is_some());
+        let sigs = sigs.unwrap();
+        assert_eq!(sigs.len(), 2, "Should collect call sigs from both members");
+    }
+
+    #[test]
+    fn get_call_signatures_intersection_no_call_sigs() {
+        let interner = TypeInterner::new();
+        let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+        let sigs = get_call_signatures(&interner, intersection);
+        assert!(sigs.is_none());
     }
 }
