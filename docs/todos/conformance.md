@@ -1,7 +1,50 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9960/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9961/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04l — Object type exempt from weak type check (+1 conf)
+
+### Fixed: Global Object type falsely triggering weak type check (TS2559/TS2345)
+
+**Area**: expressions/typeGuards (66.7% pass rate)
+
+**Root cause**: TypeScript's weak type detection (TS2559) special-cases the global `Object` type
+to bypass the check, per TS PR #16047. The rationale: developers treat `Object` as equivalent to
+`{}`, even though `Object` declares 7 properties (constructor, toString, etc.). Our solver's
+`violates_weak_type_with_target_props` and `source_lacks_union_common_property` didn't have this
+exemption, so passing `Object`-typed values to functions with all-optional parameter types falsely
+triggered TS2345/TS2559.
+
+**Fix (1 file, +1 test)**:
+- **`crates/tsz-solver/src/relations/compat.rs`**: Add early return in `violates_weak_type_with_target_props`
+  and `source_lacks_union_common_property` when `is_global_object_interface_target(source)` is true.
+
+**Test**: `test_global_object_type_exempt_from_weak_type_check` in `compat_tests.rs`
+
+**Conformance test fixed**: `typeGuardIntersectionTypes` — `beastFoo(beast: Object)` calling
+`hasWings(x: Beast)` where Beast has all-optional properties.
+
+### Remaining expressions/typeGuards gaps (8 error-code, 21 fingerprint failures)
+
+1. **Missing TS2339** (3 tests: typeGuardsInIfStatement, typeGuardsInRightOperandOfOrOrOperator,
+   typeGuardsWithInstanceOf): Complex CFA behavior where variable assignment in one branch
+   widens types across all branches, causing narrowing to `never` that we don't detect.
+   Deep solver/binder-level CFA fix needed.
+
+2. **Extra TS2322** (2 tests: typeGuardNarrowByUntypedField, typeGuardNarrowByMutableUntypedField):
+   Intersection property resolution — `(ArrayLike<any> | Iterable<any>) & { readonly length: unknown }`
+   should resolve `.length` to `number & unknown = number`, but we return just `unknown`.
+
+3. **Extra TS2322/TS2339/TS2366/TS7053** (1 test: typeGuardNarrowsIndexedAccessOfKnownProperty1):
+   Discriminated union narrowing via bracket notation (`s['dash-ok']` switch) not working.
+
+4. **Parser differences** (2 tests: typeGuardFunctionErrors, typePredicateOnVariableDeclaration02):
+   Different error codes from parser.
+
+5. **Fingerprint-only (21 tests)**: Common patterns:
+   - Wrong TS2454 locations (we emit at variable ref inside guarded block, tsc emits at condition)
+   - Union type display shows object literal shape instead of type alias name in error messages
 
 ## Session 2026-03-04k — JSDoc rest params and nested @property (+2 conf)
 
