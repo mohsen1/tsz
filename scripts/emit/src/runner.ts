@@ -282,7 +282,8 @@ function parseSourceDirectives(source: string): Record<string, unknown> {
     const trimmed = line.trim();
     const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
     if (optionMatch) {
-      const [, key, value] = optionMatch;
+      const [, key, rawValue] = optionMatch;
+      const value = rawValue.trim();
       const lowKey = key.toLowerCase();
       if (value.toLowerCase() === 'true') options[lowKey] = true;
       else if (value.toLowerCase() === 'false') options[lowKey] = false;
