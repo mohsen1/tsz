@@ -700,6 +700,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // For deferred generic types (Application/Conditional containing
+                // type parameters), skip the array-like check. These can't be fully
+                // resolved at declaration time and tsc defers the check. Examples:
+                //   ...args: ConstructorParameters<Ctor>
+                //   ...args: ArgMap[K]
+                let resolved = self.evaluate_type_with_resolution(declared_type);
+                if tsz_solver::visitor::contains_type_parameters(self.ctx.types, resolved) {
+                    continue;
+                }
+
                 // Use is_array_like_type first — it properly resolves type parameter
                 // constraints (e.g., `T extends any[]` is recognized as array-like).
                 // Fall back to assignability for custom array subclasses (e.g.,
