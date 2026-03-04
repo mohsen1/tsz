@@ -106,6 +106,20 @@ export function parseBaseline(content: string): BaselineContent {
   const dtsOutputCandidates: Set<string> = new Set();
   const dtsSourceFiles: Array<{ name: string; content: string }> = [];
 
+  // Pre-pass: find the last auxiliary file (package.json, tsconfig.json).
+  // In multi-file baselines with duplicate filenames (e.g., multiple index.js
+  // from different subdirectories), auxiliary files serve as a reliable boundary
+  // between source and output sections. tsc baselines strip directory paths
+  // from filenames, so duplicate code filenames can appear in the source section.
+  let lastAuxIndex = -1;
+  for (let i = 0; i < segments.length; i++) {
+    const name = segments[i].name.trim();
+    if (name.startsWith('tests/cases/')) continue;
+    if (isAuxiliaryFile(name)) {
+      lastAuxIndex = i;
+    }
+  }
+
   let outputStart = segments.length;
   const seenNames = new Set<string>();
   const seenTsSources: string[] = [];
@@ -118,7 +132,16 @@ export function parseBaseline(content: string): BaselineContent {
       outputStart = Math.min(outputStart, i);
       break;
     }
+    // Auxiliary files never mark output start — they can repeat in multi-dir tests.
+    if (isAuxiliaryFile(name)) {
+      continue;
+    }
     if (seenNames.has(name)) {
+      // When auxiliary files exist after this index, the duplicate is still
+      // in the source section (multi-directory test with same-named files).
+      if (lastAuxIndex >= i) {
+        continue;
+      }
       outputStart = Math.min(outputStart, i);
       break;
     }
@@ -139,6 +162,9 @@ export function parseBaseline(content: string): BaselineContent {
         return isJsLikeOutput(seen) && toJsOutputBase(seen) === nameBase && seen !== name;
       });
       if (isTsOutput || isJsSourceOutput) {
+        if (lastAuxIndex >= i) {
+          continue;
+        }
         outputStart = Math.min(outputStart, i);
         break;
       }
@@ -148,6 +174,9 @@ export function parseBaseline(content: string): BaselineContent {
         return name === `${base}.d.ts`;
       });
       if (isDtsOutput) {
+        if (lastAuxIndex >= i) {
+          continue;
+        }
         outputStart = Math.min(outputStart, i);
         break;
       }
@@ -172,7 +201,15 @@ export function parseBaseline(content: string): BaselineContent {
       // Some baselines include zero-length or placeholder source segments.
       // Ignore these to avoid injecting empty generated files into emitter input.
       if (fileContent.length > 0) {
-        sourceLikeFiles.push({ name, content: fileContent });
+        // Deduplicate: for multi-directory tests with same filename
+        // (e.g., subfolder/index.js and root/index.js both as [index.js]),
+        // keep only the last occurrence.
+        const existingIdx = sourceLikeFiles.findIndex(f => f.name === name);
+        if (existingIdx >= 0) {
+          sourceLikeFiles[existingIdx] = { name, content: fileContent };
+        } else {
+          sourceLikeFiles.push({ name, content: fileContent });
+        }
       }
       sourceFileNames.add(name);
     } else if (segIndex >= outputStart) {
@@ -209,7 +246,13 @@ export function parseBaseline(content: string): BaselineContent {
       if (fileContent.length === 0) {
         continue;
       }
-      result.sourceFiles.push({ name, content: fileContent });
+      // Deduplicate: same logic as sourceLikeFiles above.
+      const existingResIdx = result.sourceFiles.findIndex(f => f.name === name);
+      if (existingResIdx >= 0) {
+        result.sourceFiles[existingResIdx] = { name, content: fileContent };
+      } else {
+        result.sourceFiles.push({ name, content: fileContent });
+      }
       if (!result.source && !name.endsWith('.d.ts') && !isAuxiliaryFile(name)) {
         // Keep the first non-declaration source file as entry-point.
         result.source = fileContent;
