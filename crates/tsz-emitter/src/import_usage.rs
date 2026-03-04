@@ -293,10 +293,12 @@ fn strip_type_annotations_safe(line: &str) -> String {
                 i += 1;
                 i = skip_type_annotation(bytes, i);
             }
-            // On const/let/var lines, `:` before the first `=` is a type annotation
+            // On const/let/var lines, `:` before the first `=` is a type annotation.
+            // Use `skip_var_type_annotation` which stops at bare `=` so the value
+            // initializer is preserved (e.g. `const x: T = val;` → `const x = val;`).
             b':' if is_var_line && is_var_type_annotation_colon(line, i) => {
                 i += 1;
-                i = skip_type_annotation(bytes, i);
+                i = skip_var_type_annotation(bytes, i);
             }
             _ => {
                 result.push(bytes[i] as char);
@@ -426,6 +428,41 @@ fn skip_angle_bracket_block(bytes: &[u8], start: usize) -> usize {
 
 /// Skip past a type annotation in source text, stopping at `{`, `=>`, `,`,
 /// `)`, or end of meaningful content. Handles nested `<>` for generics.
+/// Like [`skip_type_annotation`] but also stops at a bare `=` (assignment).
+/// Used for variable declaration type annotations where `const x: T = val;`
+/// should strip only `: T`, preserving `= val`.
+fn skip_var_type_annotation(bytes: &[u8], mut i: usize) -> usize {
+    let len = bytes.len();
+    let mut angle_depth = 0u32;
+    let mut paren_depth = 0u32;
+    while i < len {
+        match bytes[i] {
+            // `=` that is not `==`, `===`, or `=>` → assignment, stop here
+            b'=' if angle_depth == 0 && paren_depth == 0 => {
+                if i + 1 < len && (bytes[i + 1] == b'=' || bytes[i + 1] == b'>') {
+                    // `==`, `===`, `=>` — skip (part of type expression)
+                    i += 2;
+                    if i < len && bytes[i] == b'=' {
+                        i += 1; // ===
+                    }
+                    continue;
+                }
+                return i;
+            }
+            b'{' | b',' | b')' | b';' if angle_depth == 0 && paren_depth == 0 => {
+                return i;
+            }
+            b'<' => angle_depth += 1,
+            b'>' if angle_depth > 0 => angle_depth -= 1,
+            b'(' => paren_depth += 1,
+            b')' if paren_depth > 0 => paren_depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    i
+}
+
 fn skip_type_annotation(bytes: &[u8], mut i: usize) -> usize {
     let len = bytes.len();
     let mut angle_depth = 0u32;
