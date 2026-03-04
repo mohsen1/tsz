@@ -1,7 +1,55 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9940/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9943/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04f — JS constructor function instance type synthesis (+1 conf)
+
+### Fixed: `new Foo()` on plain JS function declarations now returns synthesized instance type
+
+**Area**: salsa (65.8% → 66.3%)
+
+**Root cause**: When `new Foo()` was called on a plain function declaration (not a class) in JS/checkJs mode,
+`get_type_of_new_expression()` always returned `TypeId::ANY` via the `VoidFunctionCalledWithNew` path.
+This meant no type checking occurred on instances — `c.x = undefined` wouldn't trigger TS2322 even when
+`x` was declared as `number` via JSDoc `@param`.
+
+**Fix (2 files)**:
+1. **`types/computation/complex.rs`**: Added `synthesize_js_constructor_instance_type()` method that:
+   - Resolves the function symbol from the `new` expression target
+   - Collects `this.prop = value` assignments from the constructor body (reusing existing
+     `collect_js_constructor_this_properties`)
+   - Collects `Foo.prototype.method = function() { ... }` bindings as instance method properties
+   - Collects `this.prop = value` from prototype method bodies (typed as `T | undefined`)
+   - Builds and returns an object type with all collected properties
+2. **`types/class_type/core.rs`**: Made `collect_js_constructor_this_properties` `pub(crate)`
+   for reuse from the new expression handler.
+
+**Tests added**: 3 unit tests in `js_constructor_property_tests.rs`:
+- `test_plain_function_constructor_this_prop_inference` — TS2322 for number → string mismatch
+- `test_plain_function_constructor_prototype_method_accessible` — no TS2339 for prototype methods
+- `test_plain_function_constructor_prototype_this_prop_has_undefined` — prototype `this.prop` is `T | undefined`
+
+**Tests fixed** (conformance): constructorFunctionsStrict
+
+### Remaining constructor function issues
+
+1. **Constructor function `this.prop` inference with generics** (typeFromJSConstructor, typeFromJSInitializer, etc.):
+   JSDoc `@template T` and `@param {T} t` patterns on constructor functions need generic type parameter
+   propagation through the instance type synthesis. Currently only supports concrete types.
+
+2. **`Foo.prototype = { ... }` object literal assignment** (propertiesOfGenericConstructorFunctions,
+   thisTypeOfConstructorFunctions): When the entire prototype is assigned as an object literal
+   (not individual `Foo.prototype.m = function` assignments), the instance type doesn't include
+   those methods. Need to detect `Foo.prototype = { m1() {...}, m2() {...} }` and extract methods.
+
+3. **Cross-file constructor function inference** (lateBoundAssignmentDeclarationSupport1-6, etc.):
+   Multi-file tests where constructor functions are defined in one file and used in another via
+   `require()`. These need project-level type resolution.
+
+4. **`FuncName.property = value` static property assignment** (constructorFunctions3 passes but
+   `StaticToo.property` assignment is not checked): Static expando properties on constructor
+   functions need separate handling from prototype methods.
 
 ## Session 2026-03-04e — Union inference structural matching preference (+2 conf)
 
