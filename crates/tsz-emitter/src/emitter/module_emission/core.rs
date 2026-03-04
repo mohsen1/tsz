@@ -693,7 +693,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Check if the file contains an export assignment (export =)
+    /// Check if the file contains an export assignment (export =) with a runtime value.
     pub(in crate::emitter) fn has_export_assignment(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx)

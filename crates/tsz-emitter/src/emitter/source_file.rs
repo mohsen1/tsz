@@ -76,14 +76,14 @@ impl<'a> Printer<'a> {
         // This ensures variables declared throughout the file are tracked for renaming.
         self.ctx.block_scope_state.enter_function_scope();
 
-        // Extract comments. Triple-slash references (/// <reference ...>) are
-        // preserved in output — tsc keeps them in JS emit for most cases.
+        // Extract comments. Triple-slash reference directives (/// <reference ...>)
+        // are preserved as regular comments in CJS/ESM JS output (tsc behavior).
+        // In AMD/UMD/System modes, reference directives are stripped from the
+        // wrapper body since they don't belong inside `define()` / `System.register()`.
         // `/// <amd-dependency .../>` directives are emitted before define() via
         // extract_amd_dependencies() and must not appear in all_comments to avoid
         // duplication. However, `/// <amd-module name="..."/>` directives MUST
         // be kept so they appear inside the AMD wrapper body (matching tsc behavior).
-        // When inside a module wrapper (AMD/UMD/System), `/// <reference` directives
-        // are also stripped because they were already emitted before the wrapper.
         // Store on self so nested blocks can also distribute comments.
         let inside_module_wrapper = self.ctx.original_module_kind.is_some();
         self.all_comments = if !self.ctx.options.remove_comments {
@@ -96,11 +96,10 @@ impl<'a> Printer<'a> {
                         // - Suppress amd-dependency directives (already emitted before
                         //   define()). Keep amd-module so it appears inside the wrapper
                         //   body matching tsc behavior.
-                        // - Strip reference directives (already emitted before wrapper).
-                        // In CommonJS/ESM mode, both amd-dependency and reference
-                        // directives pass through as-is and appear inline in the output.
-                        // (tsc keeps them inline in CJS/ESM — see ambientShorthand.js and
-                        // ambientRequireFunction.js baselines).
+                        // - Strip reference directives (they don't belong inside the
+                        //   wrapper body; tsc doesn't emit them in AMD/UMD/System JS).
+                        // In CJS/ESM mode, reference directives pass through as regular
+                        // comments (tsc preserves them in CJS/ESM JS output).
                         if inside_module_wrapper {
                             if content.contains("<amd-dependency") {
                                 return false;
@@ -746,26 +745,30 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                && self.export_assignment_identifier_is_type_only(stmt_node, &source.statements)
-            {
-                self.skip_comments_for_erased_node(stmt_node);
-                last_erased_stmt_end = None;
-                last_erased_was_shorthand_module = false;
-                continue;
-            }
+            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                let is_type_only =
+                    self.export_assignment_identifier_is_type_only(stmt_node, &source.statements);
 
-            if self.ctx.is_commonjs()
-                && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                && self
+                // Type-only export= (e.g. `export = SomeInterface`) is erased entirely.
+                if is_type_only {
+                    self.skip_comments_for_erased_node(stmt_node);
+                    last_erased_stmt_end = None;
+                    last_erased_was_shorthand_module = false;
+                    continue;
+                }
+
+                let is_export_equals = self
                     .arena
                     .get_export_assignment(stmt_node)
-                    .is_some_and(|ea| ea.is_export_equals)
-            {
-                deferred_commonjs_export_equals.push(stmt_idx);
-                last_erased_stmt_end = None;
-                last_erased_was_shorthand_module = false;
-                continue;
+                    .is_some_and(|ea| ea.is_export_equals);
+
+                // In CJS mode, value `export = X` is deferred for `module.exports = X` emission.
+                if self.ctx.is_commonjs() && is_export_equals {
+                    deferred_commonjs_export_equals.push(stmt_idx);
+                    last_erased_stmt_end = None;
+                    last_erased_was_shorthand_module = false;
+                    continue;
+                }
             }
 
             // Defer `export {}` (empty named exports, no module specifier) to end
@@ -998,9 +1001,10 @@ impl<'a> Printer<'a> {
 
         // TypeScript emits CommonJS `export =` assignments after declaration output,
         // even when they appear earlier in source.
-        for stmt_idx in deferred_commonjs_export_equals {
+        // tsc only emits the FIRST `export =` when multiple exist (duplicates are errors).
+        if let Some(&first_export_eq) = deferred_commonjs_export_equals.first() {
             let before_len = self.writer.len();
-            self.emit(stmt_idx);
+            self.emit(first_export_eq);
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
             }
