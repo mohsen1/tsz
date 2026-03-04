@@ -452,7 +452,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1791,7 +1791,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInObjectLite
 FAIL TypeScript/tests/cases/conformance/expressions/typeAssertions/constAssertions.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeAssertions/typeAssertions.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionErrors.ts
-FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardIntersectionTypes.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNesting.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormInstanceOf.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormInstanceOfOnInterface.ts
@@ -5009,7 +5008,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -9793,6 +9792,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunction
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThis.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThisErrors.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardInClass.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardIntersectionTypes.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsPrimitiveIntersection.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsToLiteralType.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsToLiteralTypeUnion.ts
