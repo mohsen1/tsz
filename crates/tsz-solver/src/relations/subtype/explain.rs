@@ -594,8 +594,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
         missing_with_order.sort_by_key(|&(_, order)| order);
-        let missing_props: Vec<tsz_common::interner::Atom> =
-            missing_with_order.into_iter().map(|(name, _)| name).collect();
+        let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
 
         if missing_props.len() > 1 {
             return Some(SubtypeFailureReason::MissingProperties {
