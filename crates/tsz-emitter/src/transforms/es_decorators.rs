@@ -55,7 +55,7 @@ pub struct TC39DecoratorEmitter<'a> {
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             source_text: None,
@@ -63,11 +63,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    pub fn set_source_text(&mut self, text: &'a str) {
+    pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
     }
 
-    pub fn set_indent_level(&mut self, level: usize) {
+    pub const fn set_indent_level(&mut self, level: usize) {
         self.indent = level;
     }
 
@@ -163,10 +163,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         // --- Class expression ---
         out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
-        if has_extends {
-            if let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!(" extends {extends_text}"));
-            }
+        if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
+            out.push_str(&format!(" extends {extends_text}"));
         }
         out.push_str(" {\n");
 
@@ -250,6 +248,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
     /// The key trick: ALL decorator assignment expressions are collected and placed
     /// inside the last computed member's name brackets as a comma expression.
     /// If no computed member exists, a synthetic `[(...)]() { }` is added.
+    #[allow(clippy::too_many_arguments)]
     fn emit_class_body(
         &self,
         class_node: &tsz_parser::parser::node::Node,
@@ -273,13 +272,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
         // Add computed key assignments
         for (member_i, var_name) in computed_key_vars {
-            if let Some(member) = decorated_members.get(*member_i) {
-                if let MemberName::Computed(expr_idx) = &member.name {
-                    assignment_parts.push(format!(
-                        "{var_name} = __propKey({})",
-                        self.node_text(*expr_idx)
-                    ));
-                }
+            if let Some(member) = decorated_members.get(*member_i)
+                && let MemberName::Computed(expr_idx) = &member.name
+            {
+                assignment_parts.push(format!(
+                    "{var_name} = __propKey({})",
+                    self.node_text(*expr_idx)
+                ));
             }
         }
 
@@ -393,8 +392,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         if clean_start < source.len() && raw_end <= source.len() && clean_start < raw_end {
             let text = source[clean_start..raw_end].trim();
-            if text.ends_with("{}") {
-                format!("{}{{ }}", &text[..text.len() - 2])
+            if let Some(stripped) = text.strip_suffix("{}") {
+                format!("{stripped}{{ }}")
             } else {
                 text.to_string()
             }
@@ -468,10 +467,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         // All modifiers are decorators/TS-only.
         // Use the name node position as the reliable anchor.
-        if let Some(idx) = name_idx {
-            if let Some(name_node) = self.arena.get(idx) {
-                return name_node.pos as usize;
-            }
+        if let Some(idx) = name_idx
+            && let Some(name_node) = self.arena.get(idx)
+        {
+            return name_node.pos as usize;
         }
 
         member_node.pos as usize
@@ -513,10 +512,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let Some(node) = self.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::DECORATOR {
-                if let Some(dec) = self.arena.get_decorator(node) {
-                    result.push(self.node_text(dec.expression));
-                }
+            if node.kind == syntax_kind_ext::DECORATOR
+                && let Some(dec) = self.arena.get_decorator(node)
+            {
+                result.push(self.node_text(dec.expression));
             }
         }
         result
@@ -573,10 +572,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let Some(mod_node) = self.arena.get(mod_idx) else {
                         continue;
                     };
-                    if mod_node.kind == syntax_kind_ext::DECORATOR {
-                        if let Some(dec) = self.arena.get_decorator(mod_node) {
-                            decorator_exprs.push(self.node_text(dec.expression));
-                        }
+                    if mod_node.kind == syntax_kind_ext::DECORATOR
+                        && let Some(dec) = self.arena.get_decorator(mod_node)
+                    {
+                        decorator_exprs.push(self.node_text(dec.expression));
                     }
                 }
             }
@@ -629,12 +628,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     return (MemberName::Identifier(String::new()), false);
                 };
                 // Check if computed expression is a string literal
-                if let Some(expr_node) = self.arena.get(computed.expression) {
-                    if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-                        if let Some(lit) = self.arena.get_literal(expr_node) {
-                            return (MemberName::StringLiteral(lit.text.clone()), false);
-                        }
-                    }
+                if let Some(expr_node) = self.arena.get(computed.expression)
+                    && expr_node.kind == SyntaxKind::StringLiteral as u16
+                    && let Some(lit) = self.arena.get_literal(expr_node)
+                {
+                    return (MemberName::StringLiteral(lit.text.clone()), false);
                 }
                 (MemberName::Computed(computed.expression), false)
             }
@@ -650,10 +648,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let Some(clause_node) = self.arena.get(clause_idx) else {
                 continue;
             };
-            if let Some(h) = self.arena.get_heritage_clause(clause_node) {
-                if h.token == SyntaxKind::ExtendsKeyword as u16 {
-                    return true;
-                }
+            if let Some(h) = self.arena.get_heritage_clause(clause_node)
+                && h.token == SyntaxKind::ExtendsKeyword as u16
+            {
+                return true;
             }
         }
         false
@@ -796,9 +794,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         member_index: usize,
     ) -> String {
         match &member.name {
-            MemberName::Identifier(name) => format!("\"{}\"", name),
-            MemberName::StringLiteral(name) => format!("\"{}\"", name),
-            MemberName::Private(name) => format!("\"{}\"", name),
+            MemberName::Identifier(name)
+            | MemberName::StringLiteral(name)
+            | MemberName::Private(name) => format!("\"{name}\""),
             MemberName::Computed(_) => computed_key_vars
                 .iter()
                 .find(|(i, _)| *i == member_index)
@@ -814,8 +812,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         member_index: usize,
     ) -> String {
         let key_expr = match &member.name {
-            MemberName::Identifier(name) => format!("\"{}\"", name),
-            MemberName::StringLiteral(name) => format!("\"{}\"", name),
+            MemberName::Identifier(name) | MemberName::StringLiteral(name) => {
+                format!("\"{name}\"")
+            }
             MemberName::Private(name) => name.clone(),
             MemberName::Computed(_) => computed_key_vars
                 .iter()
@@ -827,15 +826,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let is_simple_ident = matches!(member.name, MemberName::Identifier(_));
         let prop_access = if is_simple_ident {
             if let MemberName::Identifier(name) = &member.name {
-                format!("obj.{}", name)
+                format!("obj.{name}")
             } else {
                 unreachable!()
             }
         } else {
-            format!("obj[{}]", key_expr)
+            format!("obj[{key_expr}]")
         };
 
-        let has_in = format!("{} in obj", key_expr);
+        let has_in = format!("{key_expr} in obj");
 
         match member.kind {
             MemberKind::Method | MemberKind::Getter => {

@@ -13,6 +13,30 @@ fn test_private_brands(source: &str, expected_errors: usize) {
     test_private_brands_with_codes(source, expected_errors, &[2322])
 }
 
+fn has_error_code(source: &str, code: u32) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Check both parser and checker diagnostics
+    let in_parser = parser.get_diagnostics().iter().any(|d| d.code == code);
+    let in_checker = checker.ctx.diagnostics.iter().any(|d| d.code == code);
+    in_parser || in_checker
+}
+
 fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_codes: &[u32]) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -193,5 +217,72 @@ fn test_same_class_compatibility() {
         let a2: A = a1;
         ",
         0,
+    );
+}
+
+// ============================================================
+// TS18016: Private identifiers not allowed outside class bodies
+// ============================================================
+
+/// TS18016 should be emitted for private identifiers in type literal property signatures.
+#[test]
+fn test_ts18016_private_id_in_type_literal() {
+    assert!(
+        has_error_code(r"type A = { #foo: string; };", 18016,),
+        "Should emit TS18016 for private identifier in type literal"
+    );
+}
+
+/// TS18016 should be emitted for private identifiers in interface property signatures.
+#[test]
+fn test_ts18016_private_id_in_interface() {
+    assert!(
+        has_error_code(r"interface B { #bar: number; }", 18016,),
+        "Should emit TS18016 for private identifier in interface"
+    );
+}
+
+/// Private identifier on `any` type outside class body → TS18016.
+#[test]
+fn test_ts18016_private_id_on_any_outside_class() {
+    assert!(
+        has_error_code(
+            r"
+            declare var x: any;
+            x.#nope;
+            ",
+            18016,
+        ),
+        "Should emit TS18016 for undeclared private name on any outside class"
+    );
+}
+
+/// Private identifier on `any` type INSIDE class body (but undeclared) → TS2339.
+#[test]
+fn test_ts2339_private_id_on_any_inside_class() {
+    assert!(
+        has_error_code(
+            r"
+            class C {
+                #foo = 1;
+                m(x: any) { x.#unknown; }
+            }
+            ",
+            2339,
+        ),
+        "Should emit TS2339 for undeclared private name on any inside class"
+    );
+    // Should NOT emit TS18013 for this case
+    assert!(
+        !has_error_code(
+            r"
+            class C {
+                #foo = 1;
+                m(x: any) { x.#unknown; }
+            }
+            ",
+            18013,
+        ),
+        "Should NOT emit TS18013 for undeclared private name on any inside class"
     );
 }

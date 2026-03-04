@@ -687,7 +687,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Get the property name text from a binding element (for __rest exclude list).
-    /// Returns a tuple of (name, is_computed) where is_computed means the name
+    /// Returns a tuple of (name, `is_computed`) where `is_computed` means the name
     /// came from a computed property like `['b']`.
     fn get_binding_element_property_name_info(&self, elem_idx: NodeIndex) -> (String, bool) {
         let Some(elem_node) = self.arena.get(elem_idx) else {
@@ -707,20 +707,19 @@ impl<'a> Printer<'a> {
                     return (lit.text.clone(), false);
                 }
                 // Handle computed property name: [expr]
-                if prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    if let Some(computed) = self.arena.get_computed_property(prop_node) {
-                        if let Some(expr_node) = self.arena.get(computed.expression) {
-                            // Static string literal: ['b'] → "b"
-                            if let Some(lit) = self.arena.get_literal(expr_node) {
-                                return (lit.text.clone(), true);
-                            }
-                            // Static numeric literal: [0] → "0"
-                            if expr_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16 {
-                                if let Some(lit) = self.arena.get_literal(expr_node) {
-                                    return (lit.text.clone(), true);
-                                }
-                            }
-                        }
+                if prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    && let Some(computed) = self.arena.get_computed_property(prop_node)
+                    && let Some(expr_node) = self.arena.get(computed.expression)
+                {
+                    // Static string literal: ['b'] → "b"
+                    if let Some(lit) = self.arena.get_literal(expr_node) {
+                        return (lit.text.clone(), true);
+                    }
+                    // Static numeric literal: [0] → "0"
+                    if expr_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                        && let Some(lit) = self.arena.get_literal(expr_node)
+                    {
+                        return (lit.text.clone(), true);
                     }
                 }
             }
@@ -765,10 +764,10 @@ impl<'a> Printer<'a> {
         let Some(prop_node) = self.arena.get(elem.property_name) else {
             return;
         };
-        if prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(prop_node) {
-                self.emit_expression(computed.expression);
-            }
+        if prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(prop_node)
+        {
+            self.emit_expression(computed.expression);
         }
     }
 
@@ -813,17 +812,14 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a function parameter that has object rest, replacing the pattern
-    /// with a temp variable. Returns (temp_name, pattern_idx) for body preamble.
+    /// with a temp variable. Returns (`temp_name`, `pattern_idx`) for body preamble.
+    #[allow(dead_code)]
     pub(super) fn emit_param_with_object_rest_replaced(
         &mut self,
         param_idx: NodeIndex,
     ) -> Option<(String, NodeIndex, NodeIndex)> {
-        let Some(param_node) = self.arena.get(param_idx) else {
-            return None;
-        };
-        let Some(param) = self.arena.get_parameter(param_node) else {
-            return None;
-        };
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
 
         if !self.pattern_has_object_rest(param.name) {
             return None;
@@ -843,6 +839,7 @@ impl<'a> Printer<'a> {
 
     /// Emit the body preamble for a function whose parameters had object rest lowered.
     /// This emits `var { a } = _a, rest = __rest(_a, ["a"]);` at the start of the body.
+    #[allow(dead_code)]
     pub(super) fn emit_object_rest_body_preamble(
         &mut self,
         params: &[(String, NodeIndex, NodeIndex)],

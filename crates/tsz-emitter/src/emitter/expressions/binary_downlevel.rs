@@ -37,7 +37,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Unwrap `ParenthesizedExpression` wrapping type assertions for Math.pow() args.
+    /// Unwrap `ParenthesizedExpression` wrapping type assertions for `Math.pow()` args.
     ///
     /// When `(<number>--temp) ** 3` is lowered to `Math.pow(...)`, the type assertion
     /// `<number>` is stripped, and the remaining `(--temp)` parens are unnecessary
@@ -67,7 +67,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Unwrap chains of TypeAssertion / AsExpression / SatisfiesExpression
+    /// Unwrap chains of `TypeAssertion` / `AsExpression` / `SatisfiesExpression`
     /// to find the underlying runtime expression.
     fn unwrap_type_assertions(&self, mut idx: NodeIndex) -> NodeIndex {
         while let Some(node) = self.arena.get(idx) {
@@ -76,11 +76,10 @@ impl<'a> Printer<'a> {
                 syntax_kind_ext::TYPE_ASSERTION
                     | syntax_kind_ext::AS_EXPRESSION
                     | syntax_kind_ext::SATISFIES_EXPRESSION
-            ) {
-                if let Some(ta) = self.arena.get_type_assertion(node) {
-                    idx = ta.expression;
-                    continue;
-                }
+            ) && let Some(ta) = self.arena.get_type_assertion(node)
+            {
+                idx = ta.expression;
+                continue;
             }
             break;
         }
@@ -614,7 +613,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a token is a compound assignment operator (+=, -=, etc.)
-    pub(in crate::emitter) fn is_compound_assignment(&self, token: u16) -> bool {
+    pub(in crate::emitter) const fn is_compound_assignment(&self, token: u16) -> bool {
         token == SyntaxKind::PlusEqualsToken as u16
             || token == SyntaxKind::MinusEqualsToken as u16
             || token == SyntaxKind::AsteriskEqualsToken as u16

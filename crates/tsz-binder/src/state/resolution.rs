@@ -198,10 +198,8 @@ impl BinderState {
                         .symbols
                         .get(member_id)
                         .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
-                    if !is_enum_member {
-                        if let Some(found) = consider(member_id) {
-                            return Some(found);
-                        }
+                    if !is_enum_member && let Some(found) = consider(member_id) {
+                        return Some(found);
                     }
                 }
 
@@ -308,10 +306,8 @@ impl BinderState {
                 .symbols
                 .get(member_id)
                 .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
-            if !is_enum_member {
-                if let Some(found) = consider(member_id) {
-                    return Some(found);
-                }
+            if !is_enum_member && let Some(found) = consider(member_id) {
+                return Some(found);
             }
         }
 

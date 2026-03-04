@@ -898,11 +898,12 @@ impl<'a> Printer<'a> {
         };
 
         // Check if the for-of initializer has object rest that needs ES2018 lowering.
-        if self.ctx.needs_es2018_lowering && !self.ctx.target_es5 {
-            if let Some(rest_info) = self.for_of_has_object_rest(for_in_of.initializer) {
-                self.emit_for_of_with_rest_lowering(node, for_in_of, rest_info);
-                return;
-            }
+        if self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
+            && let Some(rest_info) = self.for_of_has_object_rest(for_in_of.initializer)
+        {
+            self.emit_for_of_with_rest_lowering(node, for_in_of, rest_info);
+            return;
         }
 
         self.write("for ");
@@ -1112,40 +1113,40 @@ impl<'a> Printer<'a> {
                 && !self.ctx.target_es5
                 && self.catch_var_has_object_rest(catch.variable_declaration);
 
-            if needs_rest_lowering {
-                if let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration) {
-                    let temp = self.get_temp_var_name();
-                    self.write(" ");
-                    self.map_token_after(node.pos, node.end, b'(');
-                    self.write("(");
-                    self.write(&temp);
-                    self.write(")");
+            if needs_rest_lowering
+                && let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration)
+            {
+                let temp = self.get_temp_var_name();
+                self.write(" ");
+                self.map_token_after(node.pos, node.end, b'(');
+                self.write("(");
+                self.write(&temp);
+                self.write(")");
 
-                    // Emit the block with preamble injected
-                    self.write(" {");
-                    self.write_line();
-                    self.increase_indent();
+                // Emit the block with preamble injected
+                self.write(" {");
+                self.write_line();
+                self.increase_indent();
 
-                    // Emit rest preamble
-                    self.write("var ");
-                    self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
-                    self.write(";");
-                    self.write_line();
+                // Emit rest preamble
+                self.write("var ");
+                self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
+                self.write(";");
+                self.write_line();
 
-                    // Emit the original block body
-                    if let Some(block_node) = self.arena.get(catch.block) {
-                        if let Some(block) = self.arena.get_block(block_node) {
-                            for &stmt in &block.statements.nodes {
-                                self.emit(stmt);
-                                self.write_line();
-                            }
-                        }
+                // Emit the original block body
+                if let Some(block_node) = self.arena.get(catch.block)
+                    && let Some(block) = self.arena.get_block(block_node)
+                {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        self.write_line();
                     }
-
-                    self.decrease_indent();
-                    self.write("}");
-                    return;
                 }
+
+                self.decrease_indent();
+                self.write("}");
+                return;
             }
 
             self.write(" ");

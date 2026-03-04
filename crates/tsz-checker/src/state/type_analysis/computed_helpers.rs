@@ -354,55 +354,89 @@ impl<'a> CheckerState<'a> {
         // Therefore, this access is invalid, regardless of whether the object type actually has the property.
         if symbols.is_empty() {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
-            let mut found = false;
+            let is_any_like = resolved_type == TypeId::ANY
+                || resolved_type == TypeId::UNKNOWN
+                || resolved_type == TypeId::ERROR;
 
-            use tsz_solver::operations::property::PropertyAccessResult;
-            match self
-                .ctx
-                .types
-                .property_access_type(resolved_type, &property_name)
-            {
-                PropertyAccessResult::Success { .. } => {
-                    found = true;
+            if is_any_like {
+                // TSC special case: for any-like types, private names can't be looked up
+                // dynamically. If we're outside any class body, emit TS18016. If inside a class
+                // body (but the private name isn't declared there), emit TS2339.
+                if !saw_class_scope {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        name_idx,
+                        "Private identifiers are not allowed outside class bodies.",
+                        diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                    );
+                } else {
+                    // For private identifiers on any-like types inside a class, tsc emits
+                    // TS2339 directly (unlike regular properties which are suppressed on `any`).
+                    // Private names are nominally scoped, so `any` doesn't satisfy them.
+                    let type_str = if resolved_type == TypeId::ANY {
+                        "any"
+                    } else if resolved_type == TypeId::UNKNOWN {
+                        "unknown"
+                    } else {
+                        "error"
+                    };
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        name_idx,
+                        &format!(
+                            "Property '{property_name}' does not exist on type '{type_str}'.",
+                        ),
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
                 }
-                _ => {
-                    if let Some(shape) =
-                        crate::query_boundaries::state::type_analysis::callable_shape_for_type(
-                            self.ctx.types,
-                            resolved_type,
-                        )
-                    {
-                        let prop_atom = self.ctx.types.intern_string(&property_name);
-                        for prop in &shape.properties {
-                            if prop.name == prop_atom {
-                                found = true;
-                                break;
+            } else {
+                // For concrete types, check if the property actually exists on the type.
+                // If found: TS18013 (property exists but not accessible from outside its class).
+                // If not found: TS2339 (property does not exist on type).
+                let mut found = false;
+
+                use tsz_solver::operations::property::PropertyAccessResult;
+                match self
+                    .ctx
+                    .types
+                    .property_access_type(resolved_type, &property_name)
+                {
+                    PropertyAccessResult::Success { .. } => {
+                        found = true;
+                    }
+                    _ => {
+                        if let Some(shape) =
+                            crate::query_boundaries::state::type_analysis::callable_shape_for_type(
+                                self.ctx.types,
+                                resolved_type,
+                            )
+                        {
+                            let prop_atom = self.ctx.types.intern_string(&property_name);
+                            for prop in &shape.properties {
+                                if prop.name == prop_atom {
+                                    found = true;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if found {
-                // Property exists, but we are not in the declaring scope (TS18013)
-                self.report_private_identifier_outside_class(
-                    name_idx,
-                    &property_name,
-                    original_object_type,
-                );
-            } else if !saw_class_scope
-                && (resolved_type == TypeId::ANY || resolved_type == TypeId::UNKNOWN)
-            {
-                // TS18016: Private identifiers are not allowed outside class bodies.
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    name_idx,
-                    "Private identifiers are not allowed outside class bodies.",
-                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
-                );
-            } else {
-                // TS2339: Property does not exist
-                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+                if found {
+                    // Property exists, but we are not in the declaring scope (TS18013)
+                    self.report_private_identifier_outside_class(
+                        name_idx,
+                        &property_name,
+                        original_object_type,
+                    );
+                } else {
+                    // TS2339: Property does not exist
+                    self.error_property_not_exist_at(
+                        &property_name,
+                        original_object_type,
+                        name_idx,
+                    );
+                }
             }
             return TypeId::ERROR;
         }
