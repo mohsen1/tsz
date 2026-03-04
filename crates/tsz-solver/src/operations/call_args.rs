@@ -63,6 +63,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
 
+            // When the parameter is optional (`?`), its effective type includes `undefined`.
+            // The fast-path above handles the exact `undefined` case; here we strip
+            // `undefined` from the arg type so that `string | undefined` is checked as
+            // `string` against the raw param type `string`.  This preserves error
+            // reporting paths (TS2322 property-level errors) that would break if we
+            // instead widened param_type to a union.
+            let arg_type_for_check =
+                if let Some(param_info) = self.param_info_for_arg_index(params, i) {
+                    if param_info.optional {
+                        crate::narrowing::utils::remove_undefined(self.interner, *arg_type)
+                    } else {
+                        *arg_type
+                    }
+                } else {
+                    *arg_type
+                };
+
             // Expand TypeParameters to their constraints for assignability checking when the
             // *parameter* expects a concrete type (e.g. `object`) but the argument is an outer
             // type parameter with a compatible constraint.
@@ -72,8 +89,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // compare `object` (expanded) against `T` and fail, even though inference would (and
             // tsc does) infer the inner `T` to the outer `T`.
             let expanded_arg_type = match self.interner.lookup(param_type) {
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => *arg_type,
-                _ => self.expand_type_param(*arg_type),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => arg_type_for_check,
+                _ => self.expand_type_param(arg_type_for_check),
             };
 
             if expanded_arg_type == param_type {

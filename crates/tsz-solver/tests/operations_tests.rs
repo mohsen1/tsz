@@ -10006,3 +10006,74 @@ fn test_extract_iterator_result_single_object() {
         "single object return should be ANY"
     );
 }
+
+#[test]
+fn test_call_optional_param_accepts_union_with_undefined() {
+    // Regression test: calling `f(message?: string)` with arg `string | undefined`
+    // should succeed — the optional param implicitly accepts `undefined`.
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // function(message?: string): never
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("message")),
+            type_id: TypeId::STRING,
+            optional: true,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NEVER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Arg: string | undefined
+    let string_or_undef = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+
+    let result = evaluator.resolve_call(func, &[string_or_undef]);
+    match result {
+        CallResult::Success(ret) => assert_eq!(ret, TypeId::NEVER),
+        other => {
+            panic!("Expected Success for optional param with string | undefined arg, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn test_call_optional_param_rejects_wrong_type_with_undefined() {
+    // Calling `f(x?: string)` with `number | undefined` should still fail —
+    // only `undefined` is stripped, leaving `number` which is not assignable to `string`.
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: true,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Arg: number | undefined
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+
+    let result = evaluator.resolve_call(func, &[num_or_undef]);
+    match result {
+        CallResult::ArgumentTypeMismatch { .. } => {} // expected
+        other => {
+            panic!("Expected ArgumentTypeMismatch for number|undefined -> string?, got {other:?}")
+        }
+    }
+}
