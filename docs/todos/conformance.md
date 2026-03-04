@@ -1,7 +1,44 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9971/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9973/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04r — Decompose intersection types during generic call inference (+2 conf)
+
+### Fixed: Type parameters inside intersections not inferred in generic calls
+
+**Area**: types/intersection, compiler
+
+**Root cause**: When a generic function has a parameter like `(p: {dispatch: number} & OwnProps) => void`,
+the constraint system (in `constraints.rs`) processes function parameters contravariantly by swapping
+source and target. This means the intersection `{dispatch: number} & OwnProps` ends up as the **source**
+in `constrain_types_impl`. The code had a `(_, Intersection)` arm for target intersections but **no**
+`(Intersection, _)` arm for source intersections. The source intersection fell through to the catch-all
+and no inference occurred, so `OwnProps` defaulted to `unknown`.
+
+**Important discovery**: The solver has two parallel inference code paths:
+1. `inference/infer_matching.rs` (`infer_from_types`) — used by `InferenceContext` directly
+2. `operations/constraints.rs` (`constrain_types_impl`) — used by the generic call pipeline
+
+Both needed the same fix, but the **generic call pipeline uses `constrain_types_impl`**, which is why
+the initial fix in `infer_matching.rs` alone had no effect.
+
+**Fix (2 files, +1 test)**:
+- **`operations/constraints.rs`**: Added `(Intersection, _)` arm to decompose source intersections
+  and constrain each member against the target individually.
+- **`inference/infer_matching.rs`**: Added `(_, Intersection)` and `(Intersection, _)` arms for
+  the parallel inference path.
+- **Test**: `test_call_generic_intersection_param_inference` in `operations_tests.rs`
+
+**Conformance tests fixed**: `intersectionTypeInference1`, `intersectionTypeInference3`
+
+### Remaining types/intersection failures (12 error-code failures)
+- **intersectionPropertyCheck**: fingerprint-only failure (correct error codes, wrong locations/messages)
+- **intersectionsAndOptionalProperties**: fingerprint-only failure
+- **intersectionsOfLargeUnions/2**: Missing TS2536 (index type constraints on large unions)
+- **intersectionWithConflictingPrivates**: Missing TS2339, extra TS2345
+- **commonTypeIntersection/intersectionAndUnionTypes/intersectionAsWeakTypeSource**: fingerprint-only
+- **intersectionNarrowing/intersectionTypeAssignment/intersectionWithIndexSignatures/intersectionWithUnionConstraint**: fingerprint-only
 
 ## Session 2026-03-04q — Fix generic rest param excess arg detection (+4 conf)
 
