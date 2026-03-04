@@ -257,10 +257,56 @@ impl<'a> Printer<'a> {
                 } else {
                     false
                 };
-            self.write("export default ");
-            self.emit(export.export_clause);
-            if !clause_is_func_or_class {
-                self.write_semicolon();
+
+            // When the clause is a class with legacy (experimental) class-level decorators,
+            // tsc separates the export: `let C = class C {}; C = __decorate(...); export default C;`
+            // The class emitter handles this internally, so skip the `export default` prefix here.
+            let class_has_legacy_class_decorators = self.ctx.options.legacy_decorators
+                && if let Some(clause_node) = self.arena.get(export.export_clause) {
+                    clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && if let Some(class) = self.arena.get_class(clause_node) {
+                            !self.collect_class_decorators(&class.modifiers).is_empty()
+                        } else {
+                            false
+                        }
+                } else {
+                    false
+                };
+
+            if class_has_legacy_class_decorators {
+                // Emit the class (it handles the `let C = class C {};` + `__decorate` internally).
+                // Then emit `export default C;` afterward.
+                let class_name = if let Some(clause_node) = self.arena.get(export.export_clause)
+                    && let Some(class) = self.arena.get_class(clause_node)
+                {
+                    if class.name.is_none() {
+                        "default_1".to_string()
+                    } else {
+                        self.get_identifier_text_idx(class.name)
+                    }
+                } else {
+                    String::new()
+                };
+                // For anonymous classes, set the override name so the class emitter
+                // uses "default_1" as the binding name.
+                let prev_name = self.anonymous_default_export_name.take();
+                if class_name == "default_1" {
+                    self.anonymous_default_export_name = Some("default_1".to_string());
+                }
+                self.emit(export.export_clause);
+                self.anonymous_default_export_name = prev_name;
+                if !class_name.is_empty() {
+                    self.write_line();
+                    self.write("export default ");
+                    self.write(&class_name);
+                    self.write(";");
+                }
+            } else {
+                self.write("export default ");
+                self.emit(export.export_clause);
+                if !clause_is_func_or_class {
+                    self.write_semicolon();
+                }
             }
             return;
         }
