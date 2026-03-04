@@ -382,8 +382,9 @@ pub fn collect_export_names_categorized(
         }
     }
 
-    // TypeScript emits void 0 initialization in reverse declaration order
-    other_exports.reverse();
+    // TypeScript emits void 0 initialization in source order, chunked into
+    // groups of 50, with each chunk reversed (via reduceLeft in tsc).
+    // We keep source order here and let the emit code handle chunking+reversal.
 
     (func_exports, other_exports, default_func_export)
 }
@@ -401,14 +402,17 @@ pub fn emit_exports_init(
         return Ok(());
     }
 
-    // Build: exports.a = exports.b = ... = void 0;
-    for (i, name) in exports.iter().enumerate() {
-        if i > 0 {
-            write!(writer, " = ")?;
+    // tsc chunks exports into groups of 50 and reverses each chunk
+    // (reduceLeft builds the assignment chain right-to-left within each chunk).
+    for chunk in exports.chunks(50) {
+        for (i, name) in chunk.iter().rev().enumerate() {
+            if i > 0 {
+                write!(writer, " = ")?;
+            }
+            write!(writer, "exports.{name}")?;
         }
-        write!(writer, "exports.{name}")?;
+        writeln!(writer, " = void 0;")?;
     }
-    writeln!(writer, " = void 0;")?;
 
     Ok(())
 }
