@@ -226,7 +226,8 @@ impl<'a> CheckerState<'a> {
                     let left_type = self.get_type_of_node(left_idx);
                     // Right operand: use left type (minus nullish) as contextual type
                     let prev_context = self.ctx.contextual_type;
-                    let non_nullish = self.ctx.types.remove_nullish(left_type);
+                    let evaluated_left = self.evaluate_type_with_env(left_type);
+                    let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
                     if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
                         self.ctx.contextual_type = Some(non_nullish);
                     }

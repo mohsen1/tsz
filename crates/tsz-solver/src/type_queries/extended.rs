@@ -675,6 +675,18 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
             has_string: true,
             has_number: false,
         },
+        // Deferred conditional types: check branches for indexability.
+        // e.g., `T extends (infer U)[] ? U[] : never` — the true branch is an array.
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.conditional_type(cond_id);
+            if cond.false_type == TypeId::NEVER {
+                classify_element_indexable(db, cond.true_type)
+            } else if cond.true_type == TypeId::NEVER {
+                classify_element_indexable(db, cond.false_type)
+            } else {
+                ElementIndexableKind::Union(vec![cond.true_type, cond.false_type])
+            }
+        }
         _ => ElementIndexableKind::Other,
     }
 }

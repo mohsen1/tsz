@@ -1574,8 +1574,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // Get the operand type (strip the ! assertion — removes null/undefined)
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
                     let operand_type = self.checker.get_type_of_node(unary.expression);
+                    let evaluated_operand = self.checker.evaluate_type_with_env(operand_type);
                     let db = self.checker.ctx.types.as_type_database();
-                    let result = tsz_solver::remove_nullish(db, operand_type);
+                    let result = tsz_solver::remove_nullish(db, evaluated_operand);
                     // When the flow-narrowed type is purely nullish (e.g. after `x = undefined`),
                     // remove_nullish produces `never`. In tsc, `x!` in this scenario uses
                     // the declared type of the variable minus nullish instead of the
