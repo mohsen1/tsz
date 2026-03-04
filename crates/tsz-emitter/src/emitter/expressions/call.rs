@@ -132,6 +132,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // CJS exported variable indirect call: `foo()` → `(0, exports.foo)()`
+        // The `(0, ...)` wrapper prevents `this` binding to `exports`.
+        if self.ctx.is_commonjs()
+            && !self.suppress_ns_qualification
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && self
+                .commonjs_exported_var_names
+                .contains(ident.escaped_text.as_str())
+        {
+            self.write("(0, exports.");
+            self.write_identifier(&ident.escaped_text);
+            self.write(")");
+            self.emit_call_arguments(node, call.arguments.as_ref());
+            return;
+        }
+
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
         self.paren_in_access_position = true;
