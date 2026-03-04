@@ -1723,9 +1723,10 @@ impl<'a> CheckerState<'a> {
 
         // 1. Driver-resolved modules (from import/export declarations)
         if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(&module_name) {
-                return TypeId::ERROR; // Module exists — return ERROR (lowering can't resolve it yet)
-            }
+            && resolved.contains(&module_name)
+        {
+            return TypeId::ERROR; // Module exists — return ERROR (lowering can't resolve it yet)
+        }
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
