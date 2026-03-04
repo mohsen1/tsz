@@ -686,14 +686,13 @@ impl<'a> CheckerState<'a> {
                 // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
                 // a=number, b=string (tuple), not a=string|number (array).
                 let prev_contextual = checker.ctx.contextual_type;
-                if is_destructuring {
-                    if let Some(ctx_type) =
+                if is_destructuring
+                    && let Some(ctx_type) =
                         checker.build_contextual_type_from_pattern(var_decl.name)
                     {
                         checker.ctx.contextual_type = Some(ctx_type);
                         checker.clear_type_cache_recursive(var_decl.initializer);
                     }
-                }
                 let mut init_type = checker.get_type_of_node(var_decl.initializer);
                 checker.ctx.contextual_type = prev_contextual;
 

@@ -490,7 +490,7 @@ impl<'a> CheckerState<'a> {
         //
         // Only apply this resolution for static members; for instance members the Lazy
         // resolves to the instance type which is correct.
-        let member_is_static = self.ctx.binder.get_symbol(symbols[0]).map_or(false, |sym| {
+        let member_is_static = self.ctx.binder.get_symbol(symbols[0]).is_some_and(|sym| {
             sym.declarations
                 .iter()
                 .any(|&decl_idx| self.class_member_is_static(decl_idx))
