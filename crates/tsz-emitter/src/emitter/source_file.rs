@@ -539,9 +539,10 @@ impl<'a> Printer<'a> {
         // CJS require() is emitted after __esModule below)
         let jsx_import_text = self.jsx_auto_import_text();
         if !self.ctx.is_commonjs()
-            && let Some(ref jsx_import) = jsx_import_text {
-                self.write(jsx_import);
-            }
+            && let Some(ref jsx_import) = jsx_import_text
+        {
+            self.write(jsx_import);
+        }
 
         // Emit runtime helpers (must come BEFORE __esModule marker)
         // Order: "use strict" → jsx-import(ESM) → helpers → __esModule → jsx-import(CJS) → exports init
