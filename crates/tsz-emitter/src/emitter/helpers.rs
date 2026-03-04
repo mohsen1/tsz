@@ -113,6 +113,11 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Check whether the output buffer's last non-whitespace character is a semicolon.
+    pub(super) fn output_ends_with_semicolon(&self) -> bool {
+        self.writer.last_non_whitespace_byte() == Some(b';')
+    }
+
     /// Increase indentation.
     pub(super) const fn increase_indent(&mut self) {
         self.writer.increase_indent();

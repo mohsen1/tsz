@@ -349,6 +349,12 @@ pub struct Printer<'a> {
     /// Pending `WeakMap` initializations to emit after the class body.
     /// Each entry is `_ClassName_fieldName = new WeakMap()`.
     pub(crate) pending_weakmap_inits: Vec<String>,
+
+    /// When true, class emitter defers static block IIFEs.
+    pub(crate) defer_class_static_blocks: bool,
+
+    /// Deferred static block IIFEs.
+    pub(crate) deferred_class_static_blocks: Vec<(NodeIndex, usize)>,
 }
 
 impl<'a> Printer<'a> {
@@ -475,6 +481,8 @@ impl<'a> Printer<'a> {
             const_enum_values: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
+            defer_class_static_blocks: false,
+            deferred_class_static_blocks: Vec::new(),
         }
     }
 

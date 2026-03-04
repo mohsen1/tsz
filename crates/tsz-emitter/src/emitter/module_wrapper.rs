@@ -1023,14 +1023,24 @@ impl<'a> Printer<'a> {
             }
             self.write(&class_name);
             self.write(" = ");
+            // Defer static block IIFEs so we can emit exports_1 before them
+            self.defer_class_static_blocks = true;
+            self.deferred_class_static_blocks.clear();
             self.emit_class_es6(clause_node, export_decl.export_clause);
-            self.write(";");
+            self.defer_class_static_blocks = false;
+            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+            if !self.output_ends_with_semicolon() {
+                self.write(";");
+            }
             self.write_line();
             self.write("exports_1(\"");
             self.write(&class_name);
             self.write("\", ");
             self.write(&class_name);
             self.write(");");
+            if !deferred.is_empty() {
+                self.emit_static_block_iifes(deferred);
+            }
             return true;
         }
 
