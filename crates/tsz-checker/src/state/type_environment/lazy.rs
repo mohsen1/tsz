@@ -545,7 +545,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
-        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             if symbol.flags & symbol_flags::CLASS != 0 {
                 // Keep class references in type position as instance types to avoid

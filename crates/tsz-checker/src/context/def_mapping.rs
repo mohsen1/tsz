@@ -158,6 +158,20 @@ impl<'a> CheckerContext<'a> {
         self.def_to_symbol.borrow().get(&def_id).copied()
     }
 
+    /// Look up the `SymbolId` for a `DefId`, with fallback to the shared
+    /// `DefinitionStore` for cross-context DefIds.
+    ///
+    /// Use this when the DefId may have been created in a different checker
+    /// context (e.g., cross-file type references where `get_or_create_def_id`
+    /// invalidated the per-context mapping but the Lazy(DefId) type is still
+    /// alive in the type graph).
+    pub fn def_to_symbol_id_with_fallback(&self, def_id: DefId) -> Option<SymbolId> {
+        self.def_to_symbol_id(def_id).or_else(|| {
+            let info = self.definition_store.get(def_id)?;
+            info.symbol_id.map(SymbolId)
+        })
+    }
+
     /// Insert type parameters for a `DefId` (Phase 4.2.1: generic type alias support).
     ///
     /// This enables the Solver to expand Application(Lazy(DefId), Args) by providing
