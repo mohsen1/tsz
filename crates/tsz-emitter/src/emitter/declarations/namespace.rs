@@ -95,6 +95,14 @@ impl<'a> Printer<'a> {
             es5_emitter.set_target_es5(self.ctx.target_es5);
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
+                // Cross-block export sharing for ES5 path
+                let block_exports = es5_emitter.collect_exported_var_names(idx);
+                let entry = self
+                    .namespace_prior_exports
+                    .entry(ns_name.clone())
+                    .or_default();
+                entry.extend(block_exports);
+                es5_emitter.set_prior_exported_vars(entry.clone());
                 self.declared_namespace_names.insert(ns_name);
             }
 
@@ -436,6 +444,48 @@ impl<'a> Printer<'a> {
         names
     }
 
+    /// Collect non-exported variable names declared in a namespace body.
+    /// These shadow any same-named exports from prior blocks.
+    fn collect_namespace_local_var_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // Only collect non-exported variable declarations
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_data) = self.arena.get_variable(stmt_node) {
+                    for &decl_list_idx in &var_data.declarations.nodes {
+                        if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                            && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                        {
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                if let Some(decl_node) = self.arena.get(decl_idx)
+                                    && let Some(decl) =
+                                        self.arena.get_variable_declaration(decl_node)
+                                    && let Some(name_node) = self.arena.get(decl.name)
+                                    && let Some(ident) = self.arena.get_identifier(name_node)
+                                {
+                                    names.insert(ident.escaped_text.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        names
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -453,7 +503,26 @@ impl<'a> Printer<'a> {
             let body_close_pos = self.find_token_end_before_trivia(body_node.pos, body_node.end);
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
-            self.namespace_exported_names = self.collect_namespace_exported_names(module);
+            let mut local_exports = self.collect_namespace_exported_names(module);
+            // Merge in exports from prior blocks of the same namespace (cross-block sharing)
+            {
+                let root_name = self.get_identifier_text_idx(module.name);
+                if !root_name.is_empty() {
+                    let entry = self.namespace_prior_exports.entry(root_name).or_default();
+                    // Add this block's exports to the accumulated map
+                    entry.extend(local_exports.iter().cloned());
+                    // Merge prior exports into local set for qualification
+                    for name in entry.iter() {
+                        local_exports.insert(name.clone());
+                    }
+                }
+            }
+            // Remove locally-declared non-exported names — they shadow prior exports
+            let local_names = self.collect_namespace_local_var_names(body_node);
+            for name in &local_names {
+                local_exports.remove(name);
+            }
+            self.namespace_exported_names = local_exports;
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;

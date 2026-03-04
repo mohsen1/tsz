@@ -60,7 +60,7 @@ pub struct NamespaceES5Emitter<'a> {
 }
 
 impl<'a> NamespaceES5Emitter<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         NamespaceES5Emitter {
             arena,
             source_text: None,
@@ -72,7 +72,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// Create a namespace emitter with `CommonJS` mode
-    pub const fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         NamespaceES5Emitter {
             arena,
             source_text: None,
@@ -98,6 +98,19 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// Mark this emitter as targeting ES5 (disables `let` in namespace IIFE bodies).
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
+    }
+
+    /// Set exported variable names from prior blocks of the same namespace.
+    pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
+        self.transformer.set_prior_exported_vars(vars);
+    }
+
+    /// Collect exported variable names from a namespace declaration without emitting.
+    pub fn collect_exported_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> std::collections::HashSet<String> {
+        self.transformer.collect_exported_var_names(ns_idx)
     }
 
     /// Emit a namespace declaration

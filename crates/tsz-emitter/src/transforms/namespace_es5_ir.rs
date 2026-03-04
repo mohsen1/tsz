@@ -89,26 +89,32 @@ pub struct NamespaceES5Transformer<'a> {
     is_commonjs: bool,
     source_text: Option<&'a str>,
     comment_ranges: Vec<tsz_common::comments::CommentRange>,
+    /// Exported variable names from prior blocks of the same namespace.
+    /// Used for cross-block export substitution (e.g., `x` → `M.x` in block 2
+    /// when `export var x` was declared in block 1).
+    prior_exported_vars: std::collections::HashSet<String>,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
     /// Create a new namespace transformer
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             is_commonjs: false,
             source_text: None,
             comment_ranges: Vec::new(),
+            prior_exported_vars: std::collections::HashSet::new(),
         }
     }
 
     /// Create a namespace transformer with `CommonJS` mode enabled
-    pub const fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         Self {
             arena,
             is_commonjs,
             source_text: None,
             comment_ranges: Vec::new(),
+            prior_exported_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -121,6 +127,24 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set `CommonJS` mode
     pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    /// Set exported variable names from prior blocks of the same namespace.
+    /// These will be merged with locally-collected exports for rewriting references.
+    pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
+        self.prior_exported_vars = vars;
+    }
+
+    /// Collect exported variable names from a namespace declaration without emitting.
+    /// Used by the Printer to accumulate cross-block exports.
+    pub fn collect_exported_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> std::collections::HashSet<String> {
+        let Some((_parts, innermost_body)) = self.collect_all_namespace_parts(ns_idx) else {
+            return std::collections::HashSet::new();
+        };
+        collect_runtime_exported_var_names(self.arena, innermost_body)
     }
 
     /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
@@ -497,7 +521,18 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Transform namespace body into IR nodes
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
         let mut result = Vec::new();
-        let runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
+        let mut runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
+        // Merge in exported vars from prior blocks of the same namespace.
+        // This enables cross-block substitution: `x` → `M.x` when `export var x`
+        // was declared in a prior block.
+        if !self.prior_exported_vars.is_empty() {
+            runtime_exported_vars.extend(self.prior_exported_vars.iter().cloned());
+            // Remove locally-declared non-exported names — they shadow prior exports
+            let local_names = collect_local_var_names(self.arena, body_idx);
+            for name in &local_names {
+                runtime_exported_vars.remove(name);
+            }
+        }
 
         // The innermost namespace name (last part) is used for member exports
         let ns_name = name_parts.last().map_or("", |s| s.as_str());

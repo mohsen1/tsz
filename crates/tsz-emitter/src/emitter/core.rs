@@ -248,6 +248,12 @@ pub struct Printer<'a> {
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
 
+    /// Accumulated exported variable names per namespace name, used for cross-block
+    /// export substitution in namespace IIFEs. When a second `namespace M { ... }` block
+    /// references `x` exported by the first block, this map provides the prior exports
+    /// so the transformer can rewrite `x` → `M.x`.
+    pub(crate) namespace_prior_exports: FxHashMap<String, std::collections::HashSet<String>>,
+
     /// Exported variable/function/class names in the current namespace IIFE.
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(crate) namespace_exported_names: FxHashSet<String>,
@@ -464,6 +470,7 @@ impl<'a> Printer<'a> {
             pending_cjs_namespace_export_fold: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
+            namespace_prior_exports: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
