@@ -227,7 +227,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2538: Type cannot be used as an index type
-        if let Some(invalid_member) = self.type_get_invalid_index_type_member(index_type) {
+        // Resolve Lazy types (interfaces, classes, type aliases) before checking
+        // indexability. Lazy types remain as TypeData::Lazy(DefId) in the solver's
+        // type interner, but they may resolve to object types which are invalid
+        // index types. Without resolution, `obj[x]` where `x: SomeInterface`
+        // would silently skip the TS2538 check.
+        let resolved_index = self.resolve_lazy_type(index_type);
+        if let Some(invalid_member) = self.type_get_invalid_index_type_member(resolved_index) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let index_type_str = self.format_type(invalid_member);
             let message = format_message(

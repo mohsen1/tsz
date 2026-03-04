@@ -1389,6 +1389,9 @@ impl ParserState {
     /// Parse type arguments: <T, U, V>
     /// Handles compound `<<` by splitting into two `<` tokens.
     pub(crate) fn parse_type_arguments(&mut self) -> NodeList {
+        // Save the `<` position before consuming it so TS1099 points at `<`, not `>`
+        let less_than_start = self.u32_from_usize(self.scanner.get_token_start());
+        let less_than_end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_expected_less_than();
 
         let mut args = Vec::new();
@@ -1397,7 +1400,9 @@ impl ParserState {
         // TypeScript reports TS1099: "Type argument list cannot be empty"
         if self.is_greater_than_or_compound() {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
+            self.parse_error_at(
+                less_than_start,
+                less_than_end - less_than_start,
                 "Type argument list cannot be empty.",
                 diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY,
             );
@@ -1426,6 +1431,10 @@ impl ParserState {
         let saved_arena_len = self.arena.nodes.len();
         let saved_diagnostics_len = self.parse_diagnostics.len();
 
+        // Save the `<` position before consuming it so TS1099 points at `<`, not `>`
+        let less_than_start = self.u32_from_usize(self.scanner.get_token_start());
+        let less_than_end = self.u32_from_usize(self.scanner.get_token_end());
+
         // Consume `<` (handles `<<` by splitting into two `<` tokens)
         self.parse_expected_less_than();
 
@@ -1433,7 +1442,9 @@ impl ParserState {
         // TypeScript reports TS1099: "Type argument list cannot be empty"
         if self.is_greater_than_or_compound() {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
+            self.parse_error_at(
+                less_than_start,
+                less_than_end - less_than_start,
                 "Type argument list cannot be empty.",
                 diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY,
             );

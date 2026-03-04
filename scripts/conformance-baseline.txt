@@ -308,11 +308,8 @@ FAIL TypeScript/tests/cases/compiler/emitDecoratorMetadata_isolatedModules.ts
 FAIL TypeScript/tests/cases/compiler/emitHelpersWithLocalCollisions.ts
 FAIL TypeScript/tests/cases/compiler/emitMemberAccessExpression.ts
 FAIL TypeScript/tests/cases/compiler/emitSkipsThisWithRestParameter.ts
-FAIL TypeScript/tests/cases/compiler/emptyGenericParamList.ts
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts
-FAIL TypeScript/tests/cases/compiler/emptyTypeArgumentList.ts
-FAIL TypeScript/tests/cases/compiler/emptyTypeArgumentListWithNew.ts
 FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat.ts
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat2.ts
@@ -452,7 +449,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -4408,12 +4405,15 @@ PASS TypeScript/tests/cases/compiler/emptyExpr.ts
 PASS TypeScript/tests/cases/compiler/emptyFile-declaration.ts
 PASS TypeScript/tests/cases/compiler/emptyFile-souremap.ts
 PASS TypeScript/tests/cases/compiler/emptyFile.ts
+PASS TypeScript/tests/cases/compiler/emptyGenericParamList.ts
 PASS TypeScript/tests/cases/compiler/emptyIndexer.ts
 PASS TypeScript/tests/cases/compiler/emptyMemberAccess.ts
 PASS TypeScript/tests/cases/compiler/emptyModuleName.ts
 PASS TypeScript/tests/cases/compiler/emptyOptionalBindingPatternInDeclarationSignature.ts
 PASS TypeScript/tests/cases/compiler/emptyThenWarning.ts
 PASS TypeScript/tests/cases/compiler/emptyThenWithoutWarning.ts
+PASS TypeScript/tests/cases/compiler/emptyTypeArgumentList.ts
+PASS TypeScript/tests/cases/compiler/emptyTypeArgumentListWithNew.ts
 PASS TypeScript/tests/cases/compiler/enumAssignmentCompat4.ts
 PASS TypeScript/tests/cases/compiler/enumAssignmentCompat7.ts
 PASS TypeScript/tests/cases/compiler/enumBasics1.ts
@@ -5008,7 +5008,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
