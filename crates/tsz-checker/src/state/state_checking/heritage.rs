@@ -446,10 +446,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let expr_type = self.get_type_of_node(expr_idx);
                         let has_generic_construct_sig =
-                            class_query::construct_signatures_for_type(self.ctx.types, expr_type)
-                                .is_some_and(|sigs| {
-                                    sigs.iter().any(|sig| !sig.type_params.is_empty())
-                                });
+                            self.has_generic_construct_signatures(expr_type);
                         if !class_query::is_generic_type(self.ctx.types, expr_type)
                             && !has_generic_construct_sig
                             && expr_type != TypeId::ERROR
@@ -959,5 +956,26 @@ impl<'a> CheckerState<'a> {
         };
         let message = format_message(msg_template, &[&name]);
         self.error_at_node(usage_idx, &message, code);
+    }
+
+    /// Check if a type (including intersection members) has generic construct signatures.
+    ///
+    /// For intersection types like `T & Constructor<MyMixin>`, checks each member
+    /// for generic construct signatures. This is needed because `construct_signatures_for_type`
+    /// only works on direct `Callable` types, not intersections.
+    fn has_generic_construct_signatures(&self, type_id: TypeId) -> bool {
+        if let Some(sigs) = class_query::construct_signatures_for_type(self.ctx.types, type_id)
+            && sigs.iter().any(|sig| !sig.type_params.is_empty()) {
+                return true;
+            }
+        // For intersection types, check each member
+        if let Some(members) = class_query::intersection_members(self.ctx.types, type_id) {
+            for member in &members {
+                if self.has_generic_construct_signatures(*member) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

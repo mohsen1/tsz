@@ -44,6 +44,27 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         }
 
+        // Handle intersection types: for `T & Constructor<MyMixin>`, decompose
+        // the intersection, apply type args to members with generic construct
+        // signatures, and rebuild the intersection.
+        if let Some(members) = query::intersection_members(self.ctx.types, ctor_type) {
+            let factory = self.ctx.types.factory();
+            let mut new_members = Vec::with_capacity(members.len());
+            let mut any_applied = false;
+            for member in &members {
+                let applied =
+                    self.apply_type_arguments_to_constructor_type(*member, Some(type_arguments));
+                if applied != *member {
+                    any_applied = true;
+                }
+                new_members.push(applied);
+            }
+            if any_applied {
+                return factory.intersection(new_members);
+            }
+            return ctor_type;
+        }
+
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };

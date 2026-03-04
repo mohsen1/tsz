@@ -264,6 +264,9 @@ mod generic_inference_manual;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "../tests/intersection_signatures.rs"]
+mod intersection_signatures;
+#[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
 #[cfg(test)]
