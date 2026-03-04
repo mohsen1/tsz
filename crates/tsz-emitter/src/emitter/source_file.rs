@@ -96,8 +96,9 @@ impl<'a> Printer<'a> {
                         // - Suppress amd-dependency directives (already emitted before
                         //   define()). Keep amd-module so it appears inside the wrapper
                         //   body matching tsc behavior.
-                        // - Strip reference directives (they don't belong inside the
-                        //   wrapper body; tsc doesn't emit them in AMD/UMD/System JS).
+                        // - Suppress reference directives — they will be extracted and
+                        //   emitted BEFORE the wrapper call (tsc puts them outside the
+                        //   define() body, not inside it).
                         // In CJS/ESM mode, reference directives pass through as regular
                         // comments (tsc preserves them in CJS/ESM JS output).
                         if inside_module_wrapper {

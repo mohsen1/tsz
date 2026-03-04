@@ -103,7 +103,42 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        let mut start = if let Some(module_node) = self.arena.get(import_data.module_specifier) {
+        let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+    }
+
+    /// Check if an import alias name is referenced anywhere in the remaining
+    /// source — including type positions.  Used for namespace-scoped import
+    /// alias elision where tsc elides only truly unreferenced aliases.
+    fn import_alias_is_referenced_after_node(
+        &self,
+        node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let name = self.get_identifier_text_idx(import_data.import_clause);
+        if name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
+        // Strip only full type-declaration lines (interface, type, declare,
+        // other imports) but NOT inline type annotations — any reference
+        // (value or type position) counts as "referenced" for alias elision.
+        let stripped = crate::import_usage::strip_type_declaration_lines(haystack);
+        crate::import_usage::contains_identifier_occurrence(&stripped, &name)
+    }
+
+    /// Get the source text after an import node (skipping to the next line).
+    fn source_after_import<'b>(
+        source_text: &'b str,
+        node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        arena: &tsz_parser::parser::node::NodeArena,
+    ) -> &'b str {
+        let mut start = if let Some(module_node) = arena.get(import_data.module_specifier) {
             module_node.end as usize
         } else {
             node.end as usize
@@ -127,9 +162,7 @@ impl<'a> Printer<'a> {
                 _ => start += 1,
             }
         }
-        let haystack = &source_text[start..];
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
-        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+        &source_text[start..]
     }
 
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
@@ -520,6 +553,22 @@ impl<'a> Printer<'a> {
         let Some(module_node) = self.arena.get(import.module_specifier) else {
             return;
         };
+
+        // Inside namespace IIFEs, elide namespace aliases (`import X = Y;`)
+        // when X is never referenced in the remaining source.  tsc uses the
+        // checker's symbol reference tracking; we use a text-based heuristic.
+        //
+        // This is restricted to namespace scope because top-level import
+        // aliases in scripts create global variables that may be consumed
+        // externally, and tsc preserves those even when unreferenced locally.
+        let is_namespace_alias = module_node.kind == SyntaxKind::Identifier as u16
+            || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
+        if is_namespace_alias
+            && self.in_namespace_iife
+            && !self.import_alias_is_referenced_after_node(node, import)
+        {
+            return;
+        }
 
         // Parser recovery can produce missing/invalid module references for
         // malformed `import x = ...;` declarations. TSC skips JS alias emission

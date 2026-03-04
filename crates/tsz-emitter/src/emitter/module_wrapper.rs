@@ -85,6 +85,44 @@ impl<'a> Printer<'a> {
         last_name
     }
 
+    /// Extract `/// <reference .../>` directives from the source file header
+    /// that tsc preserves before the AMD/UMD/System wrapper.
+    ///
+    /// tsc strips reference directives pointing to local `.d.ts` files that are
+    /// part of the same compilation (they're consumed during type checking).
+    /// References with absolute paths (like `/.lib/react.d.ts`) are preserved.
+    /// We use path shape as a heuristic: only emit references with absolute paths.
+    fn extract_reference_directives(&self) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let mut refs = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("///") {
+                if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                    break;
+                }
+                continue;
+            }
+            let comment = trimmed.trim_start_matches('/').trim();
+            if comment.starts_with("<reference") {
+                // Only emit references with absolute paths — relative paths
+                // typically resolve to files in the same compilation and tsc
+                // strips those from JS output.
+                if let Some(path) = Self::extract_directive_attr(comment, "path") {
+                    if path.starts_with('/') {
+                        refs.push(trimmed.to_string());
+                    }
+                } else {
+                    // Non-path references (e.g., `/// <reference lib="dom" />`)
+                    refs.push(trimmed.to_string());
+                }
+            }
+        }
+        refs
+    }
+
     /// Extract `/// <amd-dependency path='...' name='...'/>` directives.
     /// Returns (path, `optional_name`, `original_line`) tuples.
     fn extract_amd_dependencies(&self) -> Vec<(String, Option<String>, String)> {
@@ -127,6 +165,12 @@ impl<'a> Printer<'a> {
         let (value_deps, side_effect_deps, dep_vars) =
             self.collect_amd_dependency_groups(dependencies, source);
 
+        // Emit `/// <reference .../>` directives before `define()` — tsc places
+        // these at file top level, outside the AMD wrapper body.
+        for directive in &self.extract_reference_directives() {
+            self.write(directive);
+            self.write_line();
+        }
         // Emit `/// <amd-dependency .../>` comments before `define()`.
         for (_, _, original_line) in &amd_deps {
             self.write(original_line);
@@ -210,6 +254,11 @@ impl<'a> Printer<'a> {
         source_idx: NodeIndex,
     ) {
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
+        // Emit `/// <reference .../>` directives before the UMD wrapper.
+        for directive in &self.extract_reference_directives() {
+            self.write(directive);
+            self.write_line();
+        }
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -1072,7 +1121,9 @@ mod tests {
     /// `/// <reference .../>` directives should be stripped from JS output.
     /// tsc never emits these in JS — they are only preserved in .d.ts files.
     #[test]
-    fn amd_reference_directive_stripped_from_output() {
+    fn amd_reference_directive_absolute_path_preserved() {
+        // References with absolute paths (like JSX lib references) should be
+        // emitted before the AMD wrapper, matching tsc behavior.
         let source = r#"/// <reference path="/.lib/react.d.ts" />
 import * as React from "react";
 export const Foo = () => null;
@@ -1090,8 +1141,37 @@ export const Foo = () => null;
         let output = printer.get_output().to_string();
 
         assert!(
+            output.starts_with("/// <reference path=\"/.lib/react.d.ts\" />"),
+            "Absolute-path reference should be emitted before AMD wrapper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("define("),
+            "Output should still contain the AMD define() call.\nOutput:\n{output}"
+        );
+    }
+
+    /// AMD wrappers should strip relative-path `/// <reference>` directives.
+    #[test]
+    fn amd_reference_directive_relative_path_stripped() {
+        let source = r#"/// <reference path="file1.d.ts" />
+import { x } from "mod";
+export const y = x;
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
             !output.contains("/// <reference"),
-            "Reference directives should be stripped from JS output.\nOutput:\n{output}"
+            "Relative-path reference should be stripped from AMD output.\nOutput:\n{output}"
         );
         assert!(
             output.contains("define("),

@@ -117,6 +117,71 @@ pub fn strip_type_only_content(source: &str) -> String {
     result
 }
 
+/// Strip only purely type-level declaration lines from source text.
+///
+/// Unlike [`strip_type_only_content`], this does NOT strip inline type
+/// annotations (`: Type`, generics, `as`, `satisfies`, etc.), and it keeps
+/// `import X = Y;` / `export import X = Y;` lines because those reference
+/// identifiers that may be namespace aliases.  Use this to detect whether
+/// an identifier is *referenced at all* (in any position), rather than
+/// whether it is used specifically as a value.
+///
+/// Strips:
+/// - `declare` (ambient declarations)
+/// - `import type` / `export type` (type-only imports/exports)
+/// - `interface` / `type` (type declarations)
+/// - `export declare` / `export interface`
+pub fn strip_type_declaration_lines(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut type_brace_depth: u32 = 0;
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if type_brace_depth > 0 {
+            for ch in trimmed.chars() {
+                match ch {
+                    '{' => type_brace_depth += 1,
+                    '}' => type_brace_depth -= 1,
+                    _ => {}
+                }
+                if type_brace_depth == 0 {
+                    break;
+                }
+            }
+            result.push('\n');
+            continue;
+        }
+
+        let is_type_only_start = trimmed.starts_with("declare ")
+            || trimmed.starts_with("import type ")
+            || trimmed.starts_with("import type{")
+            || trimmed.starts_with("export type ")
+            || trimmed.starts_with("export type{")
+            || trimmed.starts_with("export interface ")
+            || trimmed.starts_with("export declare ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("interface ");
+
+        if is_type_only_start {
+            for ch in trimmed.chars() {
+                match ch {
+                    '{' => type_brace_depth += 1,
+                    '}' => {
+                        type_brace_depth = type_brace_depth.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+            }
+            result.push('\n');
+            continue;
+        }
+        // Keep the line as-is (no annotation stripping)
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
+}
+
 /// Strip type annotations from a line of code while preserving value positions.
 ///
 /// Strips:
