@@ -235,6 +235,33 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Type-level fallback for `has_named_export_via_export_equals`.
+    ///
+    /// When the `export =` target is a typed value (e.g., `const x: T` where
+    /// `T = { [P in 'NotFound']: unknown }`), `NotFound` is invisible to symbol-table
+    /// lookups but accessible via type-level property access.
+    fn has_named_export_via_export_equals_type(
+        &mut self,
+        exports_table: &tsz_binder::SymbolTable,
+        import_name: &str,
+    ) -> bool {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let Some(export_equals_sym) = exports_table.get("export=") else {
+            return false;
+        };
+
+        let export_type = self.get_type_of_symbol(export_equals_sym);
+        if export_type == tsz_solver::TypeId::ERROR || export_type == tsz_solver::TypeId::ANY {
+            return false;
+        }
+
+        matches!(
+            self.resolve_property_access_with_env(export_type, import_name),
+            PropertyAccessResult::Success { .. }
+        )
+    }
+
     /// Check if an import resolves to a `.ts`/`.tsx` source file (not a `.d.ts` declaration).
     /// For source files, TS1192 always fires regardless of `allowSyntheticDefaultImports`,
     /// because the developer controls the module and should add `export default`.
@@ -620,16 +647,27 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         } else if exports_table.has("default") || exports_table.has("export=") {
-                            // TS2614: Symbol doesn't exist but a default export does
-                            let message = format_message(
-                                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                &[&quoted_module, import_name],
-                            );
-                            self.error_at_node(
-                                specifier.name,
-                                &message,
-                                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                            );
+                            // Before emitting TS2614, try a type-level resolution for
+                            // `export =` modules where the member may be a key of a
+                            // mapped type stored as the type of the `export =` target.
+                            let found_via_type = exports_table.has("export=")
+                                && self.has_named_export_via_export_equals_type(
+                                    &exports_table,
+                                    import_name,
+                                );
+
+                            if !found_via_type {
+                                // TS2614: Symbol doesn't exist but a default export does
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                    &[&quoted_module, import_name],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                );
+                            }
                         } else {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(

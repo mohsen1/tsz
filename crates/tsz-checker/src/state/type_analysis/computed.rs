@@ -1625,8 +1625,18 @@ impl<'a> CheckerState<'a> {
                         // TS1192: Module '{0}' has no default export.
                         self.emit_no_default_export_error(module_name, value_decl, false);
                     } else {
-                        // TS2305: Module '{0}' has no exported member '{1}'.
+                        // TS2305/TS2614: Module has no exported member.
+                        // Before emitting, try a type-level resolution for `export =`
+                        // modules where the member may be a key of a mapped type.
                         if export_name != "*" {
+                            let found_via_export_equals_type =
+                                self.try_resolve_named_export_via_export_equals_type(
+                                    module_name,
+                                    export_name,
+                                );
+                            if let Some(prop_type) = found_via_export_equals_type {
+                                return (prop_type, Vec::new());
+                            }
                             self.emit_no_exported_member_error(
                                 module_name,
                                 export_name,
@@ -1685,6 +1695,35 @@ impl<'a> CheckerState<'a> {
             Some(self.compute_for_in_variable_type(expr_type))
         } else {
             None
+        }
+    }
+
+    /// Try to resolve a named export via the type of the `export =` value symbol.
+    ///
+    /// When an `export =` module exports a value of a mapped type (e.g.,
+    /// `const x: { [P in 'NotFound']: unknown }`), the key `NotFound` is invisible
+    /// to symbol-table lookups but accessible via type-level property access.
+    ///
+    /// Returns `Some(TypeId)` if the property is found on the `export =` type,
+    /// `None` otherwise.
+    fn try_resolve_named_export_via_export_equals_type(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+    ) -> Option<tsz_solver::TypeId> {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let exports_table = self.resolve_effective_module_exports(module_name)?;
+        let export_equals_sym = exports_table.get("export=")?;
+
+        let export_type = self.get_type_of_symbol(export_equals_sym);
+        if export_type == tsz_solver::TypeId::ERROR || export_type == tsz_solver::TypeId::ANY {
+            return None;
+        }
+
+        match self.resolve_property_access_with_env(export_type, export_name) {
+            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            _ => None,
         }
     }
 
