@@ -1,7 +1,42 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9968/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9969/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04p — Suppress false TS1479/TS2882 in node/allowJs area (+1 conf)
+
+### Fixed: False TS1479 in .cjs files with relative imports
+
+**Area**: node/allowJs
+
+**Root cause**: Our checker emitted TS1479 for ALL CommonJS files importing ESM targets, but TSC only
+emits TS1479 for .cjs files with **non-relative** (package) imports. Relative imports in .cjs files
+are handled by tsc's output processing, not Node's runtime loader, so they don't need TS1479.
+
+**Fix**: Added suppression in `check_import_declaration` — when file is `.cjs` and import specifier
+starts with `./` or `../`, skip TS1479 emission.
+
+### Fixed: False TS2882 for Node.js built-in modules
+
+**Area**: node/allowJs
+
+**Root cause**: `import "fs"` in a side-effect import triggered TS2882 because our checker can't
+resolve Node.js built-in modules (TSC has `@types/node`). The resolution error was populated by
+the CLI driver and then picked up by the checker's resolution error handler, which emitted TS2882
+since `noUncheckedSideEffectImports` defaults to `true` in TSC 6.0.
+
+**Fix**: Added `is_node_builtin_module()` function with comprehensive list of Node.js core modules.
+Both the resolution error handler and the fallback error path now check `is_node_builtin` and
+suppress TS2307/TS2882 for known builtins when using Node module resolution.
+
+**Key lesson**: The TS2882 emission had TWO code paths in `declaration.rs` — an early one in the
+resolution error handler and a late fallback. Both needed the suppression.
+
+### Remaining node/allowJs failures (5)
+- nodeAllowJsPackageSelfName: missing TS2835 (relative import extension checks)
+- nodeModulesAllowJsConditionalPackageExports: missing TS1479/TS2307/TS2835, extra TS1254
+- nodeModulesAllowJsPackageExports: missing TS1479/TS2307/TS2835
+- nodeModulesAllowJsImportHelpersCollisions1/2: missing TS2343 (import helpers)
 
 ## Session 2026-03-04o — Identifier type guard refs + IndexAccess/KeyOf narrowing (+3 conf)
 
