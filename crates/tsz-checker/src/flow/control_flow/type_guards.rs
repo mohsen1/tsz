@@ -715,11 +715,12 @@ impl<'a> FlowAnalyzer<'a> {
         // Skip parentheses and comma expressions to get the actual reference
         let node = self.skip_parenthesized(node);
         if let Some(node_data) = self.arena.get(node) {
-            matches!(
-                node_data.kind,
-                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            )
+            node_data.kind == SyntaxKind::Identifier as u16
+                || matches!(
+                    node_data.kind,
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
         } else {
             false
         }

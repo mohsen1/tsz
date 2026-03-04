@@ -395,7 +395,53 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            // 4. Handle NoInfer<T> — transparent wrapper, unwrap to inner type
+            // 4. Handle KeyOf types (keyof T)
+            // Resolve the inner type so that `keyof Lazy(A)` becomes `keyof Object(A)`,
+            // allowing subsequent evaluation to produce concrete key types.
+            if let Some(TypeData::KeyOf(inner)) = self.db.lookup(type_id) {
+                let resolved_inner = self.resolve_type(inner);
+                if resolved_inner != inner {
+                    let new_keyof = self.db.keyof(resolved_inner);
+                    let evaluated = self.db.evaluate_type(new_keyof);
+                    type_id = evaluated;
+                    continue;
+                }
+                break;
+            }
+
+            // 5. Handle IndexAccess types (T[K])
+            // Evaluate indexed access types so they can be properly narrowed.
+            // Without this, `A[K]` (e.g., `number | null`) stays opaque and
+            // narrowing operations like `!== null` have no effect.
+            // First resolve the object and index components (which may be Lazy),
+            // then evaluate. If the index is a TypeParameter, substitute its
+            // constraint (e.g., K extends keyof A → use `keyof A`) so that
+            // `A[K]` can be resolved to the union of property types.
+            if let Some(TypeData::IndexAccess(obj, idx)) = self.db.lookup(type_id) {
+                let resolved_obj = self.resolve_type(obj);
+                // If the index is a type parameter, use its constraint for evaluation.
+                // This allows A[K] where K extends keyof A to resolve to A[keyof A].
+                let resolved_idx = if let Some(info) = type_param_info(self.db, idx) {
+                    info.constraint.map(|c| self.resolve_type(c)).unwrap_or(idx)
+                } else {
+                    self.resolve_type(idx)
+                };
+                if resolved_obj != obj || resolved_idx != idx {
+                    let evaluated = self.db.evaluate_index_access(resolved_obj, resolved_idx);
+                    if !matches!(self.db.lookup(evaluated), Some(TypeData::IndexAccess(_, _))) {
+                        type_id = evaluated;
+                        continue;
+                    }
+                }
+                let evaluated = self.db.evaluate_type(type_id);
+                if evaluated != type_id {
+                    type_id = evaluated;
+                    continue;
+                }
+                break;
+            }
+
+            // 6. Handle NoInfer<T> — transparent wrapper, unwrap to inner type
             if let Some(TypeData::NoInfer(inner)) = self.db.lookup(type_id) {
                 type_id = inner;
                 continue;
@@ -652,6 +698,12 @@ impl<'a> NarrowingContext<'a> {
         if source_type == TypeId::ANY {
             return TypeId::ANY;
         }
+
+        // Note: IndexAccess resolution is handled in narrow_type() before
+        // dispatching here, not inside narrow_excluding_type. Resolving here
+        // would re-introduce excluded types from nested IndexAccess resolution
+        // (e.g., `null | MappedType[K]` after excluding null would resolve
+        // `MappedType[K]` to `null | {x: string}`, re-introducing null).
 
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
@@ -1242,6 +1294,17 @@ impl<'a> NarrowingContext<'a> {
     /// // Result should exclude null and undefined
     /// ```
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
+        // Resolve IndexAccess types (e.g., `A[K]`) to their concrete form before
+        // narrowing, so that opaque generic index access types can be decomposed
+        // for guard-based narrowing (e.g., excluding null from `number | null`).
+        let source_type = if matches!(
+            self.db.lookup(source_type),
+            Some(TypeData::IndexAccess(_, _))
+        ) {
+            self.resolve_type(source_type)
+        } else {
+            source_type
+        };
         match guard {
             TypeGuard::Typeof(typeof_kind) => {
                 let type_name = typeof_kind.as_str();
