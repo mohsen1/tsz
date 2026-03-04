@@ -1,7 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9899/12570 (78.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9936/12570 (79.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04a — TS18016/TS18013/TS2339 private identifier diagnostics (+4 conf)
+
+### Fixed: Private identifier diagnostic codes in parser and checker
+
+**Area**: classes/members (65.5% → 67.5%, 129/197 → 133/197)
+
+**Sub-problem A — Parser (TS18016 in type/interface members)**: Private identifiers in type literal
+and interface property/method signatures (e.g., `type A = { #foo: string }`) were not diagnosed at
+all. Added a `PrivateIdentifier` token check in `parse_type_member_property_or_method_name()` to emit
+TS18016 ("Private identifiers are not allowed outside class bodies").
+
+**Sub-problem B — Checker (TS18013 vs TS18016 for any-like types)**: When a private name like `x.#nope`
+is used on an `any`-typed variable outside a class body, the checker emitted TS18013 ("Property is not
+accessible outside class...") instead of TS18016. Root cause: `resolve_private_identifier_symbols()`
+returns empty when no enclosing class declares the name, and the fallback code assumed TS18013 was
+correct. Also, inside a class body, using `x.#unknown` on `any` where `#unknown` is not declared
+in the enclosing class should emit TS2339, but `error_property_not_exist_at()` suppresses errors
+for `any` types. Fixed by emitting TS2339 directly for this case.
+
+**Tests added**: 4 unit tests in `private_brands.rs`:
+- `test_ts18016_private_id_in_type_literal`
+- `test_ts18016_private_id_in_interface`
+- `test_ts18016_private_id_on_any_outside_class`
+- `test_ts2339_private_id_on_any_inside_class`
+
+**Tests fixed** (conformance): privateNameBadAssignment, privateNameAndPropertySignature,
+privateNameAccessorsAccess2, privateNameFieldAccess
+
+**Also fixed**: Pre-existing clippy warnings across emitter/binder/solver (let-chain flattening,
+`map_or` → `is_some_and`, dead_code suppressions, `too_many_arguments`, missing struct fields in
+test fixtures). Ignored pre-existing failing CJS comment test.
 
 ## Session 2026-03-03r — TS2367 typeof overlap detection (+1 test at error-code level)
 
