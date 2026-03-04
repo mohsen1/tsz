@@ -1156,33 +1156,36 @@ impl<'a> CheckerState<'a> {
         // If the constructor function has @template type params, instantiate the
         // instance type by inferring type arguments from the actual call arguments.
         if let Some(ref shape) = func_shape
-            && !shape.type_params.is_empty() && !arg_types.is_empty() {
-                let mut type_args = Vec::with_capacity(shape.type_params.len());
-                for tp in &shape.type_params {
-                    let tp_id = self.ctx.types.factory().type_param(tp.clone());
-                    let mut inferred = None;
-                    for (i, param) in shape.params.iter().enumerate() {
-                        if param.type_id == tp_id
-                            && let Some(&arg_ty) = arg_types.get(i) {
-                                // Widen literal types (e.g., 1 → number)
-                                // since non-const type params don't preserve literals
-                                inferred = Some(tsz_solver::operations::widening::widen_type(
-                                    self.ctx.types,
-                                    arg_ty,
-                                ));
-                                break;
-                            }
+            && !shape.type_params.is_empty()
+            && !arg_types.is_empty()
+        {
+            let mut type_args = Vec::with_capacity(shape.type_params.len());
+            for tp in &shape.type_params {
+                let tp_id = self.ctx.types.factory().type_param(tp.clone());
+                let mut inferred = None;
+                for (i, param) in shape.params.iter().enumerate() {
+                    if param.type_id == tp_id
+                        && let Some(&arg_ty) = arg_types.get(i)
+                    {
+                        // Widen literal types (e.g., 1 → number)
+                        // since non-const type params don't preserve literals
+                        inferred = Some(tsz_solver::operations::widening::widen_type(
+                            self.ctx.types,
+                            arg_ty,
+                        ));
+                        break;
                     }
-                    type_args.push(inferred.unwrap_or(TypeId::UNKNOWN));
                 }
-                let instantiated = tsz_solver::instantiate_generic(
-                    self.ctx.types,
-                    instance_type,
-                    &shape.type_params,
-                    &type_args,
-                );
-                return Some(instantiated);
+                type_args.push(inferred.unwrap_or(TypeId::UNKNOWN));
             }
+            let instantiated = tsz_solver::instantiate_generic(
+                self.ctx.types,
+                instance_type,
+                &shape.type_params,
+                &type_args,
+            );
+            return Some(instantiated);
+        }
 
         Some(instance_type)
     }
@@ -1240,48 +1243,49 @@ impl<'a> CheckerState<'a> {
                         binary.right,
                         param_type_map,
                         stmt_idx,
-                    ) {
-                        let name_atom = self.ctx.types.intern_string(&prop_name);
-                        properties.entry(name_atom).or_insert(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: rhs_type,
-                                    write_type: rhs_type,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: parent_sym,
-                                    declaration_order: 0,
-                                });
-                    }
+                    )
+                {
+                    let name_atom = self.ctx.types.intern_string(&prop_name);
+                    properties.entry(name_atom).or_insert(PropertyInfo {
+                        name: name_atom,
+                        type_id: rhs_type,
+                        write_type: rhs_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: parent_sym,
+                        declaration_order: 0,
+                    });
+                }
                 continue;
             }
 
             // Case 2: bare `this.prop` with `/** @type {T} */` annotation
             if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-                    && let Some(obj_node) = self.ctx.arena.get(access.expression)
-                    && obj_node.kind == SyntaxKind::ThisKeyword as u16
-                    && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    let prop_name = ident.escaped_text.clone();
-                    // Check for @type annotation on the expression statement
-                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
-                        let name_atom = self.ctx.types.intern_string(&prop_name);
-                        properties.entry(name_atom).or_insert(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: jsdoc_type,
-                                    write_type: jsdoc_type,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: parent_sym,
-                                    declaration_order: 0,
-                                });
-                    }
+                && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                && obj_node.kind == SyntaxKind::ThisKeyword as u16
+                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let prop_name = ident.escaped_text.clone();
+                // Check for @type annotation on the expression statement
+                if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                    let name_atom = self.ctx.types.intern_string(&prop_name);
+                    properties.entry(name_atom).or_insert(PropertyInfo {
+                        name: name_atom,
+                        type_id: jsdoc_type,
+                        write_type: jsdoc_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: parent_sym,
+                        declaration_order: 0,
+                    });
                 }
+            }
         }
     }
 
