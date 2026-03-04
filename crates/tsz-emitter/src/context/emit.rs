@@ -125,6 +125,12 @@ pub struct ModuleTransformState {
     /// (e.g., `(A || (exports.A = A = {}))`). Used to suppress duplicate
     /// `exports.A = A;` emission in `export { A }` re-export handling.
     pub iife_exported_names: FxHashSet<String>,
+
+    /// Exports whose variable declaration was inlined as `exports.x = val;`
+    /// (no local `const/let/var x` exists in output). Used to determine
+    /// whether `export default x` should emit `exports.default = exports.x;`
+    /// (inlined) or `exports.default = x;` (local declaration exists).
+    pub inlined_var_exports: FxHashSet<String>,
 }
 
 impl ModuleTransformState {

@@ -201,9 +201,16 @@ impl<'a> Printer<'a> {
                         if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
                         {
                             for (name, init_idx) in &inline_decls {
+                                // Track that this variable was inlined (no local declaration).
+                                self.ctx
+                                    .module_state
+                                    .inlined_var_exports
+                                    .insert(name.clone());
                                 self.write("exports.");
                                 self.write(name);
                                 self.write(" = ");
+                                // When the initializer is an identifier that was also
+                                // inlined, use exports.ident (no local exists).
                                 if let Some(init_node) = self.arena.get(*init_idx)
                                     && init_node.kind == SyntaxKind::Identifier as u16
                                 {
@@ -588,13 +595,14 @@ impl<'a> Printer<'a> {
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");
+                                // When the local name was inlined (no local var exists),
+                                // use exports.local_name. Otherwise use local name.
                                 if export_name != local_name
                                     && self
                                         .ctx
                                         .module_state
-                                        .pending_exports
-                                        .iter()
-                                        .any(|n| n == &local_name)
+                                        .inlined_var_exports
+                                        .contains(&local_name)
                                 {
                                     self.write("exports.");
                                 }
@@ -610,18 +618,15 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {}
                 // export default <expression> - emit as exports.default = expr;
                 _ => {
-                    // This is likely an expression-based default export: export default 42;
+                    // `export default X` — use `exports.X` only when the variable
+                    // was inlined (`exports.x = val;` with no local declaration),
+                    // otherwise use the local name (class/function/enum have local
+                    // declarations).
                     if let Some(expr_node) = self.arena.get(export.export_clause)
                         && expr_node.kind == SyntaxKind::Identifier as u16
                     {
                         let ident = self.get_identifier_text_idx(export.export_clause);
-                        if self
-                            .ctx
-                            .module_state
-                            .pending_exports
-                            .iter()
-                            .any(|n| n == &ident)
-                        {
+                        if self.ctx.module_state.inlined_var_exports.contains(&ident) {
                             self.write("exports.default = exports.");
                             self.write(&ident);
                             self.write(";");
@@ -629,7 +634,6 @@ impl<'a> Printer<'a> {
                             return;
                         }
                     }
-
                     self.write("exports.default = ");
                     self.emit(export.export_clause);
                     self.write_semicolon();

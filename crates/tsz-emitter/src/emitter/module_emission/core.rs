@@ -449,21 +449,13 @@ impl<'a> Printer<'a> {
             if export_assign.is_export_equals {
                 self.write("module.exports = ");
             } else {
-                // Preserve live binding when the default export expression is an
-                // identifier that is also exported as a named value:
-                //   export const x = 1; export default x;
-                // -> exports.default = exports.x;
+                // `export default expr` — use `exports.X` when the identifier was
+                // inlined (`exports.x = val;`), local name otherwise.
                 if let Some(expr_node) = self.arena.get(export_assign.expression)
                     && expr_node.kind == SyntaxKind::Identifier as u16
                 {
                     let ident = self.get_identifier_text_idx(export_assign.expression);
-                    if self
-                        .ctx
-                        .module_state
-                        .pending_exports
-                        .iter()
-                        .any(|n| n == &ident)
-                    {
+                    if self.ctx.module_state.inlined_var_exports.contains(&ident) {
                         self.write("exports.default = exports.");
                         self.write(&ident);
                         self.write(";");
@@ -471,7 +463,6 @@ impl<'a> Printer<'a> {
                         return;
                     }
                 }
-
                 self.write("exports.default = ");
             }
             self.emit_expression(export_assign.expression);
