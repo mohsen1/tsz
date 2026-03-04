@@ -1,7 +1,38 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9965/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9968/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04o — Identifier type guard refs + IndexAccess/KeyOf narrowing (+3 conf)
+
+### Fixed: Narrowing through generic index-access types (e.g. `A[K]`)
+
+**Area**: controlFlow, compiler
+
+**Root cause (two issues)**:
+
+1. **Checker**: `is_simple_reference()` in `type_guards.rs` only recognized `PropertyAccessExpression`
+   and `ElementAccessExpression`, not plain `Identifier` nodes. This meant comparison-based type guards
+   like `value !== null` were silently skipped when `value` was a simple identifier — `get_comparison_target()`
+   returned None, preventing `extract_type_guard()` from producing any guard for the condition.
+
+2. **Solver**: `resolve_type()` in `narrowing/core.rs` couldn't decompose `IndexAccess(Object, KeyOf(Lazy(T)))`.
+   The KeyOf type contained a Lazy reference that was never resolved, so `evaluate_index_access` couldn't
+   look up the concrete property type. Without resolution, `A[K]` stayed opaque and narrowing couldn't
+   exclude `null` from its resolved form `number | null`.
+
+**Fix (2 files)**:
+- `type_guards.rs`: Added `Identifier` to `is_simple_reference()` so plain identifiers are recognized
+  as valid comparison targets for type guard extraction.
+- `narrowing/core.rs`: Added KeyOf handling (resolve inner Lazy, then evaluate keyof) and IndexAccess
+  handling (resolve object + index with constraint, then evaluate) to `resolve_type()`. IndexAccess
+  resolution is applied once at `narrow_type()` entry — not inside `narrow_excluding_type()` — to
+  prevent re-introducing excluded types from nested IndexAccess resolution.
+
+**Tests fixed** (conformance):
+- `discriminantPropertyCheck.ts`
+- `controlFlowComputedPropertyNames.ts`
+- `genericCallInferenceConditionalType1.ts`
 
 ## Session 2026-03-04n — Optional param undefined stripping (+2 conf)
 
