@@ -603,9 +603,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // parent enum and member enum), but the structural members (0|1|2) ARE
             // each assignable to one of the target member enums.
             if let Some((_s_def_id, s_members)) = enum_components(self.interner, source)
-                && self.check_subtype(s_members, target).is_true() {
-                    return SubtypeResult::True;
-                }
+                && self.check_subtype(s_members, target).is_true()
+            {
+                return SubtypeResult::True;
+            }
 
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
