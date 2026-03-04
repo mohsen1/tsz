@@ -705,9 +705,17 @@ impl<'a> CheckerState<'a> {
         let exports_table = self.resolve_effective_module_exports(module_name);
 
         if let Some(exports_table) = exports_table {
+            // Get export= type if this is a CommonJS module
+            let export_equals_type = exports_table
+                .get("export=")
+                .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+
             // Create an object type with all module exports
             let mut props: Vec<PropertyInfo> = Vec::new();
             for (name, &export_sym_id) in exports_table.iter() {
+                if name == "export=" {
+                    continue;
+                }
                 let prop_type = self.get_type_of_symbol(export_sym_id);
                 let name_atom = self.ctx.types.intern_string(name);
                 props.push(PropertyInfo {
@@ -762,6 +770,28 @@ impl<'a> CheckerState<'a> {
                             declaration_order: 0,
                         });
                     }
+                }
+            }
+
+            // When esModuleInterop / allowSyntheticDefaultImports is enabled
+            // and the module uses `export =`, synthesize a `default` property
+            // so that `import("./foo").then(f => f.default)` works.
+            if let Some(eq_type) = export_equals_type
+                && self.ctx.allow_synthetic_default_imports()
+            {
+                let default_atom = self.ctx.types.intern_string("default");
+                if !props.iter().any(|p| p.name == default_atom) {
+                    props.push(PropertyInfo {
+                        name: default_atom,
+                        type_id: eq_type,
+                        write_type: eq_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                    });
                 }
             }
 

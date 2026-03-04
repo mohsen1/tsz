@@ -710,9 +710,14 @@ impl<'a> CheckerState<'a> {
             // TS7053 — it treats this as a valid JS-style property expansion.
             // We detect write context via `skip_flow_narrowing` which is set by
             // `get_type_of_assignment_target`.
-            let is_expando_function_write = self.ctx.skip_flow_narrowing
-                && tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access);
-            if !is_expando_function_write {
+            let is_expando_write = self.ctx.skip_flow_narrowing
+                && (tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
+                    || (self.ctx.is_js_file()
+                        && tsz_solver::visitor::is_object_like_type(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )));
+            if !is_expando_write {
                 self.error_no_index_signature_at(index_type, object_type, access.name_or_argument);
             }
         }
