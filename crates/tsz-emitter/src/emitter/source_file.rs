@@ -785,31 +785,36 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            // Track whether any non-erased module-indicating statement exists
-            // (needed for `export {};` insertion at end of file)
-            if !is_erased {
+            // Detect whether this statement is a module-indicating statement
+            // (import/export). We track this BEFORE emit but only confirm it as
+            // "runtime module syntax" AFTER emit, because the emit step may decide
+            // to erase it (e.g., text heuristic determines all imported names are
+            // type-only and drops the import).
+            let is_module_indicating_stmt = if !is_erased {
                 let k = stmt_node.kind;
                 if k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                 {
-                    has_runtime_module_syntax = true;
-                    has_non_empty_runtime_export = true;
+                    true
                 } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                     // Only external module imports (`import x = require("mod")`)
                     // count as runtime module syntax. Namespace aliases
                     // (`import x = M.A`) are erased and should not suppress
                     // deferred `export {};` emission.
-                    if let Some(import_data) = self.arena.get_import_decl(stmt_node)
-                        && let Some(spec_node) = self.arena.get(import_data.module_specifier)
-                        && (spec_node.kind == SyntaxKind::StringLiteral as u16
-                            || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE)
-                    {
-                        has_runtime_module_syntax = true;
-                        has_non_empty_runtime_export = true;
-                    }
+                    self.arena
+                        .get_import_decl(stmt_node)
+                        .and_then(|import_data| self.arena.get(import_data.module_specifier))
+                        .is_some_and(|spec_node| {
+                            spec_node.kind == SyntaxKind::StringLiteral as u16
+                                || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                        })
+                } else {
+                    false
                 }
-            }
+            } else {
+                false
+            };
 
             // Find the actual start of the statement's first token by
             // scanning forward from node.pos past ALL trivia (whitespace AND
@@ -921,8 +926,19 @@ impl<'a> Printer<'a> {
 
             let before_len = self.writer.len();
             self.emit(stmt_idx);
+            let emitted_output = self.writer.len() > before_len;
+
+            // Track runtime module syntax AFTER emission: if a module-indicating
+            // statement actually produced output, it contributes runtime module
+            // syntax. If the emit erased it (e.g., text heuristic determined all
+            // imported names are type-only), it should not prevent `export {};`.
+            if is_module_indicating_stmt && emitted_output {
+                has_runtime_module_syntax = true;
+                has_non_empty_runtime_export = true;
+            }
+
             // Only add newline if something was actually emitted
-            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+            if emitted_output && !self.writer.is_at_line_start() {
                 // Emit trailing comments on the same line as the statement.
                 // Use the next statement's pos as upper bound to avoid scanning
                 // into the next statement's trivia (same pattern as emit_block_body).
