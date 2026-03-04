@@ -57,7 +57,7 @@ export function parseBaseline(content: string): BaselineContent {
   };
 
   // Split by file markers: //// [filename]
-  const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\](?:\s*[\/]{4})?/gm;
+  const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\](?:[^\S\n\r]*[\/]{4})?/gm;
   const segments: { name: string; markerStart: number; start: number; end: number }[] = [];
 
   let match: RegExpExecArray | null;
