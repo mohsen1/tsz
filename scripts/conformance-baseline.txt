@@ -188,7 +188,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitDestructuringObjectLiteralPa
 FAIL TypeScript/tests/cases/compiler/declarationEmitEnumReferenceViaImportEquals.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends4.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionWithNonlocalPrivateUniqueSymbol.ts
-FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitForModuleImportingModuleAugmentationRetainsImport.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitHigherOrderRetainedGenerics.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts
@@ -766,7 +765,6 @@ FAIL TypeScript/tests/cases/compiler/mergeMultipleInterfacesReexported.ts
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportedTypeAliasInstantiation.ts
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts
 FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts
-FAIL TypeScript/tests/cases/compiler/metadataImportType.ts
 FAIL TypeScript/tests/cases/compiler/methodChainError.ts
 FAIL TypeScript/tests/cases/compiler/mismatchedExplicitTypeParameterAndArgumentType.ts
 FAIL TypeScript/tests/cases/compiler/mismatchedGenericArguments1.ts
@@ -2331,7 +2329,6 @@ FAIL TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotated
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.1.ts
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.2.ts
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.3.ts
-FAIL TypeScript/tests/cases/conformance/types/import/importTypeAmbientMissing.ts
 FAIL TypeScript/tests/cases/conformance/types/import/importTypeInJSDoc.ts
 FAIL TypeScript/tests/cases/conformance/types/import/importTypeLocalMissing.ts
 FAIL TypeScript/tests/cases/conformance/types/import/importWithTypeArguments.ts
@@ -3873,6 +3870,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitFBoundedTypeParams.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitFirstTypeArgumentGenericFunctionType.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitForDefaultExportClassExtendingExpression01.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitForTypesWhichNeedImportTypes.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitFunctionDuplicateNamespace.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitFunctionKeywordProp.ts
@@ -5869,6 +5867,7 @@ PASS TypeScript/tests/cases/compiler/mergedModuleDeclarationCodeGen5.ts
 PASS TypeScript/tests/cases/compiler/mergedModuleDeclarationWithSharedExportedVar.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedNamespace.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedType.ts
+PASS TypeScript/tests/cases/compiler/metadataImportType.ts
 PASS TypeScript/tests/cases/compiler/metadataOfClassFromAlias.ts
 PASS TypeScript/tests/cases/compiler/metadataOfClassFromAlias2.ts
 PASS TypeScript/tests/cases/compiler/metadataOfClassFromModule.ts
@@ -11803,6 +11802,7 @@ PASS TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionInferenceError.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionWitoutTypeParameter.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbient.ts
+PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbientMissing.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmdBundleRewrite.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeGeneric.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeGenericTypes.ts
