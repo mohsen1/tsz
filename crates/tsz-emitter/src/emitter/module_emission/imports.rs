@@ -509,7 +509,6 @@ impl<'a> Printer<'a> {
         }
 
         let mut has_value_binding = clause.name.is_some();
-        let mut named_bindings_all_type_only = false;
         if clause.named_bindings.is_some()
             && let Some(bindings_node) = self.arena.get(clause.named_bindings)
         {
@@ -520,9 +519,6 @@ impl<'a> Printer<'a> {
                     let value_specs = self.collect_value_specifiers(&named_imports.elements);
                     if !value_specs.is_empty() {
                         has_value_binding = true;
-                    } else if !named_imports.elements.nodes.is_empty() {
-                        // `import { type Foo } from "x"` has no runtime impact in CommonJS.
-                        named_bindings_all_type_only = true;
                     }
                 }
             } else {

@@ -298,11 +298,13 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                let mut ns_name_for_exports = String::new();
                 if let Some(ns_node) = self.arena.get(namespace_node)
                     && let Some(ns_data) = self.arena.get_module(ns_node)
                 {
                     let ns_name = self.get_identifier_text_idx(ns_data.name);
                     if !ns_name.is_empty() {
+                        ns_name_for_exports = ns_name.clone();
                         self.declared_namespace_names.insert(ns_name);
                     }
                 }
@@ -311,6 +313,16 @@ impl<'a> Printer<'a> {
                     self.pending_cjs_namespace_export_fold = false;
                 }
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                // Collect this block's exported vars and accumulate for cross-block sharing
+                if !ns_name_for_exports.is_empty() {
+                    let block_exports = ns_emitter.collect_exported_var_names(namespace_node);
+                    let entry = self
+                        .namespace_prior_exports
+                        .entry(ns_name_for_exports.clone())
+                        .or_default();
+                    entry.extend(block_exports);
+                    ns_emitter.set_prior_exported_vars(entry.clone());
+                }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 if let Some(text) = self.source_text_for_map() {
@@ -388,6 +400,19 @@ impl<'a> Printer<'a> {
                             // ES5: use the IR-based ES5 namespace emitter (only emits var)
                             let mut ns_emitter =
                                 NamespaceES5Emitter::with_commonjs(self.arena, true);
+                            // Cross-block export sharing
+                            if let Some(module_decl) = self.arena.get_module(node) {
+                                let ns_name = self.get_identifier_text_idx(module_decl.name);
+                                if !ns_name.is_empty() {
+                                    let block_exports = ns_emitter.collect_exported_var_names(idx);
+                                    let entry = self
+                                        .namespace_prior_exports
+                                        .entry(ns_name.clone())
+                                        .or_default();
+                                    entry.extend(block_exports);
+                                    ns_emitter.set_prior_exported_vars(entry.clone());
+                                }
+                            }
                             ns_emitter.set_indent_level(self.writer.indent_level());
                             ns_emitter.set_target_es5(true);
                             if let Some(text) = self.source_text_for_map() {
@@ -872,16 +897,28 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                let mut ns_name_for_exports = String::new();
                 if let Some(ns_node) = self.arena.get(*namespace_node)
                     && let Some(ns_data) = self.arena.get_module(ns_node)
                 {
                     let ns_name = self.get_identifier_text_idx(ns_data.name);
                     if !ns_name.is_empty() {
+                        ns_name_for_exports = ns_name.clone();
                         self.declared_namespace_names.insert(ns_name);
                     }
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                // Collect this block's exported vars and accumulate for cross-block sharing
+                if !ns_name_for_exports.is_empty() {
+                    let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
+                    let entry = self
+                        .namespace_prior_exports
+                        .entry(ns_name_for_exports.clone())
+                        .or_default();
+                    entry.extend(block_exports);
+                    ns_emitter.set_prior_exported_vars(entry.clone());
+                }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 if let Some(text) = self.source_text_for_map() {
@@ -1040,16 +1077,28 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                let mut ns_name_for_exports = String::new();
                 if let Some(ns_node) = self.arena.get(*namespace_node)
                     && let Some(ns_data) = self.arena.get_module(ns_node)
                 {
                     let ns_name = self.get_identifier_text_idx(ns_data.name);
                     if !ns_name.is_empty() {
+                        ns_name_for_exports = ns_name.clone();
                         self.declared_namespace_names.insert(ns_name);
                     }
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                // Collect this block's exported vars and accumulate for cross-block sharing
+                if !ns_name_for_exports.is_empty() {
+                    let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
+                    let entry = self
+                        .namespace_prior_exports
+                        .entry(ns_name_for_exports.clone())
+                        .or_default();
+                    entry.extend(block_exports);
+                    ns_emitter.set_prior_exported_vars(entry.clone());
+                }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 if let Some(text) = self.source_text_for_map() {
@@ -1105,6 +1154,19 @@ impl<'a> Printer<'a> {
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    // Cross-block export sharing
+                    if let Some(module_decl) = self.arena.get_module(node) {
+                        let ns_name = self.get_identifier_text_idx(module_decl.name);
+                        if !ns_name.is_empty() {
+                            let block_exports = ns_emitter.collect_exported_var_names(idx);
+                            let entry = self
+                                .namespace_prior_exports
+                                .entry(ns_name.clone())
+                                .or_default();
+                            entry.extend(block_exports);
+                            ns_emitter.set_prior_exported_vars(entry.clone());
+                        }
+                    }
                     ns_emitter.set_indent_level(self.writer.indent_level());
                     ns_emitter.set_target_es5(self.ctx.target_es5);
                     if let Some(text) = self.source_text_for_map() {

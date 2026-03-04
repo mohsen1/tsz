@@ -222,6 +222,52 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
     }
 }
 
+/// Collect non-exported variable names declared in a namespace body.
+/// These shadow any same-named exports from prior blocks.
+pub(super) fn collect_local_var_names(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+
+    let Some(body_node) = arena.get(body_idx) else {
+        return names;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return names;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return names;
+    };
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        // Only collect non-exported variable statements
+        if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            if let Some(var_data) = arena.get_variable(stmt_node) {
+                for &decl_list_idx in &var_data.declarations.nodes {
+                    if let Some(decl_list_node) = arena.get(decl_list_idx)
+                        && let Some(decl_list) = arena.get_variable(decl_list_node)
+                    {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = arena.get(decl_idx)
+                                && let Some(decl) = arena.get_variable_declaration(decl_node)
+                                && let Some(name_node) = arena.get(decl.name)
+                                && let Some(ident) = arena.get_identifier(name_node)
+                            {
+                                names.insert(ident.escaped_text.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Convert exported variable declarations directly to namespace property assignments.
 /// Instead of `var X = init; NS.X = X;`, emits `NS.X = init;` (matching tsc).
 pub(super) fn convert_exported_variable_declarations(
