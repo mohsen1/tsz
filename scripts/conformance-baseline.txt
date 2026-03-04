@@ -2282,7 +2282,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/chainedPrototypeAssignment.ts
 FAIL TypeScript/tests/cases/conformance/salsa/checkSpecialPropertyAssignments.ts
 FAIL TypeScript/tests/cases/conformance/salsa/classCanExtendConstructorFunction.ts
 FAIL TypeScript/tests/cases/conformance/salsa/constructorFunctionMergeWithClass.ts
-FAIL TypeScript/tests/cases/conformance/salsa/constructorFunctionsStrict.ts
 FAIL TypeScript/tests/cases/conformance/salsa/contextualTypedSpecialAssignment.ts
 FAIL TypeScript/tests/cases/conformance/salsa/enumMergeWithExpando.ts
 FAIL TypeScript/tests/cases/conformance/salsa/globalMergeWithCommonJSAssignmentDeclaration.ts
@@ -11446,6 +11445,7 @@ PASS TypeScript/tests/cases/conformance/salsa/constructorFunctionMethodTypeParam
 PASS TypeScript/tests/cases/conformance/salsa/constructorFunctions.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorFunctions2.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorFunctions3.ts
+PASS TypeScript/tests/cases/conformance/salsa/constructorFunctionsStrict.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorNameInAccessor.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorNameInGenerator.ts
 PASS TypeScript/tests/cases/conformance/salsa/constructorNameInObjectLiteralAccessor.ts

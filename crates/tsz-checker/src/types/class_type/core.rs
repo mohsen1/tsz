@@ -1175,7 +1175,7 @@ impl<'a> CheckerState<'a> {
     /// Only top-level expression statements in the body are scanned.
     /// Properties that already exist (from explicit declarations or parameter
     /// properties) are skipped — explicit declarations take precedence.
-    fn collect_js_constructor_this_properties(
+    pub(crate) fn collect_js_constructor_this_properties(
         &mut self,
         body_idx: NodeIndex,
         properties: &mut FxHashMap<Atom, PropertyInfo>,
