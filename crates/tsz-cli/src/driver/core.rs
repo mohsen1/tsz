@@ -1756,6 +1756,8 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.import_helpers {
         options.import_helpers = true;
+        // importHelpers means "import from tslib" — suppress inline helper emission
+        options.printer.no_emit_helpers = true;
     }
     if args.strict {
         options.checker.strict = true;
@@ -1902,6 +1904,11 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         }
     }
     if args.preserve_const_enums {
+        options.printer.preserve_const_enums = true;
+    }
+    // isolatedModules implies preserveConstEnums: const enums cannot be
+    // inlined across file boundaries, so they must be emitted as regular enums.
+    if args.isolated_modules {
         options.printer.preserve_const_enums = true;
     }
     if let Some(jsx) = args.jsx {
