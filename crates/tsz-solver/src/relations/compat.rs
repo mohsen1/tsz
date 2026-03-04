@@ -1332,6 +1332,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 .all(|member| self.violates_weak_type_with_target_props(*member, target_props));
         }
 
+        // The global Object type is exempt from weak type checks.
+        // People treat Object as equivalent to {}, even though it declares
+        // properties (constructor, toString, etc.). See TypeScript PR #16047.
+        if self.is_global_object_interface_target(source) {
+            return false;
+        }
+
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
@@ -1361,6 +1368,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return members
                 .iter()
                 .all(|member| self.source_lacks_union_common_property(*member, target_members));
+        }
+
+        // The global Object type is exempt from weak type checks (same as violates_weak_type).
+        if self.is_global_object_interface_target(source) {
+            return false;
         }
 
         // Handle TypeParameter explicitly
