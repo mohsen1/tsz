@@ -1427,8 +1427,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
@@ -1906,7 +1904,6 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/inval
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocOptionalParamOrder.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag11.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag14.ts
@@ -1946,7 +1943,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/importTag15.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/importTag23.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/importTag4.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_nameMismatch.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocAugmentsMissingType.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocCatchClauseWithTypeAnnotation.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocDisallowedInTypescript.ts
@@ -1959,7 +1955,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocImportType2.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocOuterTypeParameters3.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocOverrideTag1.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocParamTag2.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocParseBackquotedParamName.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocParseDotDotDotInJSDocFunction.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPostfixEqualsAddsOptionality.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocPrefixPostfixParsing.ts
@@ -8171,6 +8166,8 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInterfaceExtendingClass.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesNotAllowedAsParameters.ts
@@ -10225,6 +10222,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/callbackTagVariadicType.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/callOfPropertylessConstructorFunction.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocOnEndOfFile.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocOptionalParamOrder.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocParamOnVariableDeclaredFunctionExpression.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocParamTag1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/checkJsdocReturnTag1.ts
@@ -10363,6 +10361,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/instantiateTemplateTagTypeParamete
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAccessibilityTags.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAccessibilityTagsDeclarations.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_errorInExtendsExpression.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_nameMismatch.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_noExtends.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_notAClass.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocAugments_qualifiedName.ts
@@ -10393,6 +10392,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/jsdocNeverUndefinedNull.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocOuterTypeParameters1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocOuterTypeParameters2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParamTagTypeLiteral.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseBackquotedParamName.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseErrorsInTypescript.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseHigherOrderFunction.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocParseMatchingBackticks.ts

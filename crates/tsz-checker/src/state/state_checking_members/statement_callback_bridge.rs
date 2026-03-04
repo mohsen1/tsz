@@ -139,7 +139,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         }
 
         // Check for required parameters following optional parameters (TS1016)
-        self.check_parameter_ordering(&func.parameters);
+        self.check_parameter_ordering(&func.parameters, Some(func_idx));
         self.check_binding_pattern_optionality(&func.parameters.nodes, func.body.is_some());
 
         // Check that rest parameters have array types (TS2370)

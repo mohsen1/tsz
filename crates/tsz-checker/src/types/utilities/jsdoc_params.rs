@@ -944,7 +944,7 @@ impl<'a> CheckerState<'a> {
     /// Lines like `` `@param` @param {string} z `` contain backtick-quoted text
     /// before the real `@param` tag. This function strips those leading quoted
     /// sections so the real tag can be detected.
-    fn skip_backtick_quoted(s: &str) -> &str {
+    pub(crate) fn skip_backtick_quoted(s: &str) -> &str {
         let mut rest = s;
         loop {
             rest = rest.trim_start();
@@ -1324,6 +1324,67 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+// =============================================================================
+// TS8033: Duplicate @type in @typedef
+// =============================================================================
+
+impl<'a> CheckerState<'a> {
+    /// TS8033: Check all JSDoc comments for `@typedef` with multiple `@type` tags.
+    ///
+    /// A `@typedef` JSDoc comment should have at most one `@type` tag.
+    /// If multiple `@type` tags are found, emit TS8033 at the second occurrence.
+    pub(crate) fn check_typedef_duplicate_type_tags(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        for comment in comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let comment_text = comment.get_text(source_text);
+
+            // Check if this comment contains @typedef
+            if !comment_text.contains("@typedef") {
+                continue;
+            }
+
+            // Count @type tags (not @typedef or @typeParam etc.)
+            let mut type_tag_count = 0u32;
+            for (match_pos, _) in comment_text.match_indices("@type") {
+                let after = match_pos + "@type".len();
+                // Ensure @type is not a prefix of @typedef, @typeParam, etc.
+                if after < comment_text.len() {
+                    let next_ch = comment_text[after..].chars().next().unwrap();
+                    if next_ch.is_ascii_alphanumeric() || next_ch == 'P' {
+                        // Likely @typedef or @typeParam — skip
+                        continue;
+                    }
+                }
+                type_tag_count += 1;
+                if type_tag_count >= 2 {
+                    // Emit TS8033 at this @type tag position
+                    let error_pos = comment.pos + match_pos as u32;
+                    let error_len = "@type".len() as u32;
+                    self.ctx.error(
+                        error_pos,
+                        error_len,
+                        diagnostic_messages::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS
+                            .to_string(),
+                        diagnostic_codes::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS,
+                    );
+                }
+            }
+        }
     }
 }
 

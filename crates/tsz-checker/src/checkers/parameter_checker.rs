@@ -295,12 +295,24 @@ impl<'a> CheckerState<'a> {
     /// ## Parameter Ordering Rules:
     /// - Required parameters must come before optional parameters
     /// - A parameter is optional if it has `?` or an initializer
+    /// - In JS files, JSDoc `@param {Type} [name]` or `@param {Type=} name` also marks optional
     /// - Rest parameters end the check (don't count as optional/required)
     ///
     /// ## Error TS1016:
     /// "A required parameter cannot follow an optional parameter."
-    pub(crate) fn check_parameter_ordering(&mut self, parameters: &tsz_parser::parser::NodeList) {
+    pub(crate) fn check_parameter_ordering(
+        &mut self,
+        parameters: &tsz_parser::parser::NodeList,
+        func_idx: Option<tsz_parser::parser::NodeIndex>,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // In JS files, get JSDoc to detect optional params via bracket/type= syntax
+        let jsdoc = if self.is_js_file() {
+            func_idx.and_then(|idx| self.get_jsdoc_for_function(idx))
+        } else {
+            None
+        };
 
         let mut seen_optional = false;
 
@@ -317,9 +329,17 @@ impl<'a> CheckerState<'a> {
                 break;
             }
 
-            // Only `?` token marks a parameter as "optional" for the seen_optional flag.
-            // Parameters with initializers don't set seen_optional.
-            if param.question_token {
+            // Check if this parameter is optional via `?` token or JSDoc annotations
+            let is_optional = param.question_token
+                || (jsdoc.is_some() && {
+                    if let Some(name) = self.get_parameter_name(param.name) {
+                        Self::is_jsdoc_param_optional(jsdoc.as_deref().unwrap(), &name)
+                    } else {
+                        false
+                    }
+                });
+
+            if is_optional {
                 seen_optional = true;
             } else if seen_optional {
                 // A parameter is "required" only if it has neither `?` nor an initializer.
@@ -335,6 +355,67 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if a JSDoc `@param` tag marks a parameter as optional.
+    ///
+    /// A parameter is JSDoc-optional if:
+    /// - `@param {Type} [name]` — bracket syntax
+    /// - `@param {Type} [name=default]` — bracket with default
+    /// - `@param {Type=} name` — equals suffix on type expression
+    ///
+    /// Also handles backtick-quoted param names and name-first format.
+    fn is_jsdoc_param_optional(jsdoc: &str, param_name: &str) -> bool {
+        for chunk in jsdoc.split_inclusive('\n') {
+            let trimmed = chunk
+                .trim_end_matches('\n')
+                .trim()
+                .trim_start_matches('*')
+                .trim();
+
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            if let Some(rest) = effective.strip_prefix("@param") {
+                let rest = rest.trim();
+                if rest.starts_with('{') {
+                    // Format: @param {type} name
+                    if let Some(close) = rest.find('}') {
+                        let type_expr = &rest[1..close];
+                        let after = rest[close + 1..].trim();
+                        let name_token = after.split_whitespace().next().unwrap_or("");
+                        // Strip backticks from name
+                        let name_token = name_token.trim_matches('`');
+                        // [name] or [name=default] means optional
+                        let is_bracket_optional = name_token.starts_with('[');
+                        let bare_name = name_token.trim_start_matches('[');
+                        let bare_name = bare_name.split('=').next().unwrap_or(bare_name);
+                        let bare_name = bare_name.trim_end_matches(']');
+                        // {Type=} means optional
+                        let is_type_optional = type_expr.ends_with('=');
+                        if bare_name == param_name && (is_bracket_optional || is_type_optional) {
+                            return true;
+                        }
+                    }
+                } else {
+                    // Format: @param name {type} or @param `name` {type}
+                    let name_token = rest.split_whitespace().next().unwrap_or("");
+                    let bare_name = name_token.trim_matches('`');
+                    if bare_name == param_name {
+                        // Check if there's a type with = suffix after the name
+                        let after_name = rest[name_token.len()..].trim();
+                        if after_name.starts_with('{')
+                            && let Some(close) = after_name.find('}')
+                        {
+                            let type_expr = &after_name[1..close];
+                            if type_expr.ends_with('=') {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub(crate) fn check_binding_pattern_optionality(
@@ -854,6 +935,97 @@ mod binding_pattern_defaults_tests {
         assert!(
             !codes.contains(&2322),
             "Should not emit TS2322 for matching nested default: {codes:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod jsdoc_optional_param_tests {
+    use crate::state::CheckerState;
+
+    // Note: is_jsdoc_param_optional processes raw JSDoc comment text which
+    // includes the `/** */` delimiters. Lines are split by '\n' and each line
+    // is trimmed then stripped of leading '*'. For single-line JSDoc like
+    // `/** @param ... */`, the leading `/**` starts with `/` so the `*` strip
+    // doesn't reach the content. Use multiline format in tests to match real usage.
+
+    #[test]
+    fn bracket_syntax_marks_optional() {
+        let jsdoc = "/**\n * @param {number} [x]\n */";
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn bracket_with_default_marks_optional() {
+        let jsdoc = "/**\n * @param {number} [x=0]\n */";
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn type_equals_suffix_marks_optional() {
+        let jsdoc = "/**\n * @param {number=} x\n */";
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn plain_param_not_optional() {
+        let jsdoc = "/**\n * @param {number} x\n */";
+        assert!(!CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn backtick_quoted_name_with_type_equals() {
+        let jsdoc = "/**\n * @param {number=} `x`\n */";
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn name_first_format_with_type_equals() {
+        let jsdoc = "/**\n * @param x {number=}\n */";
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn wrong_name_not_matched() {
+        let jsdoc = "/**\n * @param {number} [y]\n */";
+        assert!(!CheckerState::is_jsdoc_param_optional(jsdoc, "x"));
+    }
+
+    #[test]
+    fn multiline_jsdoc_finds_correct_param() {
+        let jsdoc = "/**\n * @param {number} a\n * @param {string} [b]\n */";
+        assert!(!CheckerState::is_jsdoc_param_optional(jsdoc, "a"));
+        assert!(CheckerState::is_jsdoc_param_optional(jsdoc, "b"));
+    }
+}
+
+#[cfg(test)]
+mod jsdoc_diagnostic_integration_tests {
+    use crate::test_utils::check_js_source_diagnostics;
+
+    /// TS1016: required param after JSDoc optional bracket param.
+    #[test]
+    fn ts1016_jsdoc_optional_bracket_then_required() {
+        let diags = check_js_source_diagnostics(
+            "/**\n * @param {number} [x]\n * @param {number} y\n */\nfunction f(x, y) {}",
+        );
+        // y is required after optional x — should NOT emit TS1016 since y is also required
+        // Actually, x is optional (bracket), y is required after optional → TS1016 on y
+        assert!(
+            diags.iter().any(|d| d.code == 1016),
+            "Expected TS1016 for required param after JSDoc optional: {diags:?}"
+        );
+    }
+
+    /// No TS1016 when all params are required.
+    #[test]
+    fn no_ts1016_when_all_required() {
+        let diags = check_js_source_diagnostics(
+            "/**\n * @param {number} x\n * @param {number} y\n */\nfunction f(x, y) {}",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 1016),
+            "Should not emit TS1016 when all params are required: {diags:?}"
         );
     }
 }

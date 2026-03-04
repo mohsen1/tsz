@@ -335,6 +335,9 @@ impl<'a> CheckerState<'a> {
                 // TS8022: Check for orphaned @extends/@augments tags not attached to a class
                 self.check_orphaned_extends_tags(&sf.statements.nodes);
 
+                // TS8033: Check for @typedef comments with multiple @type tags
+                self.check_typedef_duplicate_type_tags();
+
                 tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
 
