@@ -1629,8 +1629,8 @@ impl<'a> CheckerState<'a> {
                         // Before emitting, try a type-level resolution for `export =`
                         // modules where the member may be a key of a mapped type.
                         if export_name != "*" {
-                            let found_via_export_equals_type =
-                                self.try_resolve_named_export_via_export_equals_type(
+                            let found_via_export_equals_type = self
+                                .try_resolve_named_export_via_export_equals_type(
                                     module_name,
                                     export_name,
                                 );

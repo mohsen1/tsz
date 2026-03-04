@@ -196,10 +196,10 @@ impl TypeInterner {
         let has_non_union = flat
             .iter()
             .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
-        if has_non_union
-            && let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
-                return distributed;
-            }
+        if has_non_union && let Some(distributed) = self.distribute_intersection_over_unions(&flat)
+        {
+            return distributed;
+        }
 
         if flat.is_empty() {
             return TypeId::UNKNOWN;
