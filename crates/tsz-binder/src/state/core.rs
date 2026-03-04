@@ -697,6 +697,12 @@ impl BinderState {
                 self.top_level_flow.insert(stmt_idx.0, self.current_flow);
             }
 
+            // Re-process `export = X` statements that may have failed on the first
+            // pass due to forward-reference ordering (e.g., `export = React` appears
+            // before `declare namespace React { ... }`). All declarations are bound
+            // now, so the target name is resolvable in current_scope.
+            self.resolve_deferred_export_assignment(arena, &sf.statements.nodes);
+
             // Populate module_exports for cross-file import resolution
             // This enables type-only import elision and proper import validation
             let file_name = sf.file_name.clone();
@@ -820,6 +826,64 @@ impl BinderState {
         if !file_exports.is_empty() {
             self.module_exports
                 .insert(file_name.to_string(), file_exports);
+        }
+    }
+
+    /// Retry `export = X` binding for forward-reference cases.
+    ///
+    /// When a `.d.ts` file writes `export = React` before `declare namespace React { ... }`,
+    /// the first-pass binding of the `export =` node fails to resolve `React` (because it
+    /// hasn't been declared yet) and leaves `file_locals["export="]` unset. This method is
+    /// called after ALL statements have been bound so every top-level declaration is in
+    /// `current_scope`. If `file_locals["export="]` is still missing, we scan for the first
+    /// `export = <Identifier>` statement and resolve it now.
+    fn resolve_deferred_export_assignment(&mut self, arena: &NodeArena, statements: &[NodeIndex]) {
+        // Fast path: already resolved during the main binding pass.
+        if self.file_locals.has("export=") {
+            return;
+        }
+
+        for &stmt_idx in statements {
+            let Some(node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                continue;
+            }
+            let Some(assign) = arena.get_export_assignment(node) else {
+                continue;
+            };
+            if !assign.is_export_equals {
+                continue; // skip `export default X`
+            }
+            let Some(name) = Self::get_identifier_name(arena, assign.expression) else {
+                continue;
+            };
+            let Some(sym_id) = self
+                .current_scope
+                .get(name)
+                .or_else(|| self.file_locals.get(name))
+            else {
+                continue;
+            };
+
+            self.file_locals.set("export=".to_string(), sym_id);
+
+            // Also expose the namespace's own exports at file level so that
+            // named imports like `import { Component } from 'react'` work.
+            if let Some(symbol) = self.symbols.get(sym_id)
+                && let Some(ref exports) = symbol.exports.clone()
+            {
+                let entries: Vec<(String, SymbolId)> =
+                    exports.iter().map(|(k, &v)| (k.clone(), v)).collect();
+                for (export_name, export_sym_id) in entries {
+                    if self.file_locals.get(&export_name).is_none() {
+                        self.file_locals.set(export_name, export_sym_id);
+                    }
+                }
+            }
+
+            break; // Only process the first `export =` statement.
         }
     }
 
