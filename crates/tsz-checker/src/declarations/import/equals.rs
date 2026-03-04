@@ -1162,7 +1162,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn get_leftmost_identifier_name(&self, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn get_leftmost_identifier_name(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             let ident = self.ctx.arena.get_identifier(node)?;

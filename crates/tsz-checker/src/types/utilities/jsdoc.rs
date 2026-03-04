@@ -1982,7 +1982,6 @@ impl<'a> CheckerState<'a> {
 
         results
     }
-
-    // JSDoc param tag validation, comment finding, and text parsing utilities
-    // have been moved to jsdoc_params.rs
+    // JSDoc param tag validation, comment finding, text parsing utilities,
+    // and TS8033 duplicate @type tag checking have been moved to jsdoc_params.rs
 }

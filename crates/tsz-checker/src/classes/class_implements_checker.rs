@@ -1229,6 +1229,151 @@ impl<'a> CheckerState<'a> {
     }
 
     // ============================================================================
+    // JSDoc @extends/@augments name mismatch checking (TS8023)
+    // ============================================================================
+
+    /// Check that JSDoc `@extends`/`@augments` tag argument matches the actual `extends` clause.
+    ///
+    /// In JS files, if a class has both `@extends {Foo}` and `extends Bar`,
+    /// TSC emits TS8023: "JSDoc '@extends Foo' does not match the 'extends Bar' clause."
+    pub(crate) fn check_jsdoc_extends_name_mismatch(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if !self.ctx.is_js_file() {
+            return;
+        }
+
+        // Get the actual extends clause base class name
+        let actual_extends_name = self.get_extends_clause_name(class_data);
+        let Some(actual_name) = actual_extends_name else {
+            return; // No extends clause, nothing to check
+        };
+
+        // Get the JSDoc comment range and search the raw source text
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return;
+        };
+
+        // Find the leading JSDoc comment range
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let Some(comment) = leading.last() else {
+            return;
+        };
+        if !is_jsdoc_comment(comment, source_text) {
+            return;
+        }
+
+        let comment_text = comment.get_text(source_text);
+
+        // Search for @extends or @augments in the raw comment text
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    continue;
+                }
+                let next_ch = comment_text[after..].chars().next().unwrap();
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                let rest = comment_text[after..].trim_start();
+                if rest.is_empty() {
+                    continue;
+                }
+
+                // Extract type name from {TypeName<...>} or TypeName
+                let (jsdoc_type_name, type_name_in_rest) = if rest.starts_with('{') {
+                    if let Some(close) = rest.find('}') {
+                        let name = rest[1..close].trim();
+                        (name, &rest[1..close])
+                    } else {
+                        continue;
+                    }
+                } else {
+                    let end = rest
+                        .find(|c: char| c.is_whitespace() || c == '*')
+                        .unwrap_or(rest.len());
+                    let name = rest[..end].trim();
+                    (name, &rest[..end])
+                };
+
+                if jsdoc_type_name.is_empty() {
+                    continue;
+                }
+
+                // Strip type arguments: "Foo<Bar>" → "Foo"
+                let jsdoc_base_name = jsdoc_type_name
+                    .find('<')
+                    .map_or(jsdoc_type_name, |i| &jsdoc_type_name[..i]);
+
+                if jsdoc_base_name != actual_name {
+                    let message = format_message(
+                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                        &[tag, jsdoc_type_name, &actual_name],
+                    );
+                    // Anchor at the type name argument in the JSDoc (matches TSC behavior)
+                    let type_name_offset =
+                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
+                    let error_pos = comment.pos + type_name_offset as u32;
+                    let error_len = jsdoc_type_name.len() as u32;
+                    self.ctx.error(
+                        error_pos,
+                        error_len,
+                        message,
+                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                    );
+                }
+                return; // Only check first @extends/@augments tag
+            }
+        }
+    }
+
+    /// Get the base class name from the `extends` clause of a class declaration.
+    fn get_extends_clause_name(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let heritage = class_data.heritage_clauses.as_ref()?;
+        for &clause_idx in &heritage.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            if clause_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
+                continue;
+            }
+            let clause = self.ctx.arena.get_heritage_clause(clause_node)?;
+            // Check if this is an extends clause (not implements)
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            // Get the first type in the extends clause
+            let first_type_idx = clause.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(*first_type_idx)?;
+            // ExpressionWithTypeArguments — get the expression part
+            if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                && let Some(ewta) = self.ctx.arena.get_expr_type_args(type_node)
+            {
+                return self.get_leftmost_identifier_name(ewta.expression);
+            }
+            // Direct identifier
+            return self.get_leftmost_identifier_name(*first_type_idx);
+        }
+        None
+    }
+
+    // ============================================================================
     // JSDoc @implements checking
     // ============================================================================
 
