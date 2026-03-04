@@ -410,7 +410,10 @@ impl<'a> CheckerState<'a> {
                     e.type_id
                 } else {
                     let has_rest_tail = elems.last().is_some_and(|element| element.rest);
-                    if !has_rest_tail {
+                    // When a binding element has a default value (e.g., `[a, b = a] = [1]`),
+                    // accessing beyond the tuple length is allowed — the default covers
+                    // the missing element. tsc does not emit TS2493 in this case.
+                    if !has_rest_tail && element_data.initializer.is_none() {
                         let tuple_type_str = self.format_type(array_like);
                         self.error_at_node(
                             element_data.name,

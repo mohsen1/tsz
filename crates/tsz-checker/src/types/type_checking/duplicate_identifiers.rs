@@ -1332,14 +1332,39 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get(sig.name)
                             .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
-                        // For method signatures, skip type resolution — methods may have
-                        // their own type parameters (e.g., foo<W>(): W) that are not in
-                        // scope during interface-level type parameter resolution. We only
-                        // need the method's name and kind for property-vs-method detection.
-                        let property_type = if is_method || sig.type_annotation.is_none() {
-                            TypeId::ANY
-                        } else {
+                        let property_type = if is_method {
+                            // Build a function type from the method signature so we can
+                            // compare against a property with the same name (TS2717).
+                            let (type_params, tp_updates) =
+                                self.push_type_parameters(&sig.type_parameters);
+                            let (params, _this_type) = if let Some(ref param_list) = sig.parameters
+                            {
+                                self.extract_params_from_parameter_list(param_list)
+                            } else {
+                                (Vec::new(), None)
+                            };
+                            let return_type = if sig.type_annotation.is_some() {
+                                self.get_type_from_type_node(sig.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            self.pop_type_parameters(tp_updates);
+                            self.ctx
+                                .types
+                                .factory()
+                                .function(tsz_solver::FunctionShape {
+                                    type_params,
+                                    params,
+                                    this_type: None,
+                                    return_type,
+                                    type_predicate: None,
+                                    is_constructor: false,
+                                    is_method: true,
+                                })
+                        } else if sig.type_annotation.is_some() {
                             self.get_type_from_type_node(sig.type_annotation)
+                        } else {
+                            TypeId::ANY
                         };
                         local_properties.push((
                             name,
@@ -1412,10 +1437,26 @@ impl<'a> CheckerState<'a> {
                                     &message,
                                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                                 );
+                            } else {
+                                // Property after method: TS2717 comparing property type
+                                // against the method's function type.
+                                if !self.type_contains_error(*property_type)
+                                    && !self.type_contains_error(existing_type)
+                                {
+                                    let compatible_both_ways = self
+                                        .is_assignable_to(existing_type, *property_type)
+                                        && self.is_assignable_to(*property_type, existing_type);
+                                    if !compatible_both_ways {
+                                        let existing_type_str = self.format_type(existing_type);
+                                        let property_type_str = self.format_type(*property_type);
+                                        self.error_at_node_msg(
+                                            *name_idx,
+                                            diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                            &[name, &existing_type_str, &property_type_str],
+                                        );
+                                    }
+                                }
                             }
-                            // Property after method: tsc emits TS2717 comparing against the
-                            // method's full callable type. Skipped for now — requires computing
-                            // the method's function type, which is handled separately.
                             continue;
                         }
 
