@@ -1030,6 +1030,10 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.options.module_detection_force {
             return true;
         }
+        // Node16/NodeNext resolved to ESM: file is definitively a module
+        if self.ctx.options.resolved_node_module_to_esm {
+            return true;
+        }
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {

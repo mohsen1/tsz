@@ -90,11 +90,12 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
             // .mts/.mjs -> ESM, .cts/.cjs -> CJS, .ts/.js -> depends on package.json
             if printer_options.module.is_node_module() {
                 let mode = implied_resolution_mode_for_file(&input_path, context.base_dir);
-                printer_options.module = if mode == "import" {
-                    ModuleKind::ESNext
+                if mode == "import" {
+                    printer_options.module = ModuleKind::ESNext;
+                    printer_options.resolved_node_module_to_esm = true;
                 } else {
-                    ModuleKind::CommonJS
-                };
+                    printer_options.module = ModuleKind::CommonJS;
+                }
             }
 
             // Run the lowering pass to generate transform directives
