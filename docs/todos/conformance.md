@@ -1,7 +1,55 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9937/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9940/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04c — Nested excess property checking with index signature intersection targets (+2 conf)
+
+### Fixed: Excess property check skipped for targets with string index signatures
+
+**Area**: types/intersection (62.5% → 62.5% fingerprint, error-code improved), also classes/members
+
+**Root cause**: In `check_object_literal_excess_properties()` (property.rs), the object handler returned
+early when the resolved target had a string index signature (`target_shape.string_index.is_some()`).
+For intersection types like `{ [k: string]: {a: 0} } & { [k: string]: {b: 0} }`, the intersection is
+resolved by `resolve_type_for_property_access` into a single object type with a combined string index
+signature (value type = `{a: 0} & {b: 0}`). The early return skipped nested excess property checking,
+so `{a: 0, b: 0, c: 0}` against `{a: 0} & {b: 0}` never flagged `c` as excess.
+
+**Fix (2 locations in property.rs)**:
+1. **Object handler** (primary fix): When the target has a string index signature, instead of returning
+   early, iterate source properties and check nested object literals against the index signature value
+   type. If the source property also matches a named target property, the nested target combines both.
+2. **Intersection handler** (defense-in-depth): When intersection members have index signatures, no
+   longer return early. Instead, track index value types and combine them with named property types
+   for nested excess checking.
+
+**Tests added**: 1 unit test in `ts2353_tests.rs`:
+- `intersection_with_index_signatures_nested_excess_property`
+
+**Tests fixed**: privateNamesConstructorChain-1, privateNamesConstructorChain-2
+
+**Error-code improvements** (fingerprint still differs):
+- `excessPropertyCheckIntersectionWithIndexSignature`: now emits correct `[TS2322, TS2353]`
+  (fingerprint differs: intersection member ordering in TS2353 message, TS2322 column offset)
+
+### Remaining intersection issues
+
+1. **excessPropertyCheckIntersectionWithRecursiveType**: Still failing — recursive conditional types
+   with nested excess properties. The fix helps simple index sig intersections but not deeply nested
+   recursive Schema types. Root cause: the recursive type evaluation doesn't propagate freshness
+   or excess checking context deep enough.
+
+2. **contextualTypeFunctionObjectPropertyIntersection**: Missing TS2353 for mapped/computed
+   intersection properties. The excess check works for index-signature intersections but not for
+   `{ [K in TEvent["type"]]?: ... } & { "*"?: ... }` mapped type intersections.
+
+3. **Fingerprint-only failures** (7 tests): commonTypeIntersection, intersectionAndUnionTypes,
+   intersectionAsWeakTypeSource, intersectionNarrowing, intersectionTypeAssignment,
+   intersectionWithIndexSignatures, intersectionWithUnionConstraint — error codes match but
+   message text or diagnostic location differs.
+
+4. **intersectionsOfLargeUnions/2**: Missing TS2536 (index access on large union intersections).
 
 ## Session 2026-03-04b — Intersection type signature resolution (+2 conf)
 
