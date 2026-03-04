@@ -142,10 +142,10 @@ export function parseBaseline(content: string): BaselineContent {
       if (lastAuxIndex >= i) {
         continue;
       }
-      // TypeScript source files (.ts/.tsx/.mts/.cts) are never output files,
-      // so a duplicate TS name is still in the source section (multi-dir test
-      // with no aux boundary, e.g. two different dirs both have "index.ts").
-      if (isTsSourceLike(name)) {
+      // TypeScript source files (.ts/.tsx/.mts/.cts) and declaration files (.d.ts)
+      // are never output files, so duplicates are still in the source section
+      // (multi-package tests with same-named files across directories).
+      if (isTsSourceLike(name) || name.endsWith('.d.ts')) {
         continue;
       }
       outputStart = Math.min(outputStart, i);
@@ -153,7 +153,12 @@ export function parseBaseline(content: string): BaselineContent {
     }
     if (isJsLikeOutput(name)) {
       const nameBase = toJsOutputBase(name);
+      // A .js file is output only if a non-declaration TS source (.ts/.tsx)
+      // exists with the same base name. If the matching source is a .d.ts,
+      // the JS file is the library's runtime (e.g., tslib.d.ts + tslib.js
+      // in node_modules), not compiler output.
       const isTsOutput = seenTsSources.some(src => {
+        if (src.endsWith('.d.ts')) return false;
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return (
           name === `${base}.js` ||
@@ -176,6 +181,7 @@ export function parseBaseline(content: string): BaselineContent {
       }
     } else if (name.endsWith('.d.ts')) {
       const isDtsOutput = seenTsSources.some(src => {
+        if (src.endsWith('.d.ts')) return false;
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return name === `${base}.d.ts`;
       });
@@ -205,13 +211,20 @@ export function parseBaseline(content: string): BaselineContent {
 
     if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
       // Deduplicate: for multi-directory tests with same filename
-      // (e.g., subfolder/index.js and root/index.js both as [index.js]),
-      // keep only the last occurrence.
+      // (e.g., subfolder/index.js and root/index.js both as [index.js]).
+      // For code files, keep the first occurrence — the expected output
+      // section corresponds to the first source file's compilation result.
+      // For auxiliary files (package.json, tsconfig.json), keep the last
+      // occurrence — in nodeModules tests, the subdirectory package.json
+      // with "type": "commonjs" appears last and controls the output format.
       // Include empty source files so the CLI receives them as input
       // (they still produce output like "use strict"; in CJS mode).
       const existingIdx = sourceLikeFiles.findIndex(f => f.name === name);
       if (existingIdx >= 0) {
-        sourceLikeFiles[existingIdx] = { name, content: fileContent };
+        if (isAuxiliaryFile(name)) {
+          sourceLikeFiles[existingIdx] = { name, content: fileContent };
+        }
+        // For code files, skip — keep the first occurrence.
       } else {
         sourceLikeFiles.push({ name, content: fileContent });
       }
@@ -247,10 +260,12 @@ export function parseBaseline(content: string): BaselineContent {
     }
 
     if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
-      // Deduplicate: same logic as sourceLikeFiles above.
+      // Deduplicate: first occurrence for code files, last for auxiliary files.
       const existingResIdx = result.sourceFiles.findIndex(f => f.name === name);
       if (existingResIdx >= 0) {
-        result.sourceFiles[existingResIdx] = { name, content: fileContent };
+        if (isAuxiliaryFile(name)) {
+          result.sourceFiles[existingResIdx] = { name, content: fileContent };
+        }
       } else {
         result.sourceFiles.push({ name, content: fileContent });
       }
