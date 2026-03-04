@@ -617,12 +617,21 @@ impl<'a> CheckerState<'a> {
                         if !params_inner.is_empty() {
                             for p in params_inner.split(',') {
                                 let p = p.trim();
-                                if let Some(p_type) = self.jsdoc_type_from_expression(p) {
+                                // Handle rest params: function(...Type):void
+                                let is_rest = p.starts_with("...");
+                                let effective_p = if is_rest { &p[3..] } else { p };
+                                if let Some(p_type) = self.jsdoc_type_from_expression(effective_p) {
+                                    let type_id = if is_rest {
+                                        let factory = self.ctx.types.factory();
+                                        factory.array(p_type)
+                                    } else {
+                                        p_type
+                                    };
                                     params.push(ParamInfo {
                                         name: None,
-                                        type_id: p_type,
+                                        type_id,
                                         optional: false,
-                                        rest: false,
+                                        rest: is_rest,
                                     });
                                 } else {
                                     ok = false;
@@ -1236,15 +1245,28 @@ impl<'a> CheckerState<'a> {
         if let Some(cb) = info.callback {
             let mut params = Vec::with_capacity(cb.params.len());
             for (name, type_expr) in &cb.params {
-                let type_id = self
-                    .jsdoc_type_from_expression(type_expr)
+                // Handle rest parameter syntax: @param {...Type} name
+                let is_rest = type_expr.starts_with("...");
+                let effective_expr = if is_rest {
+                    &type_expr[3..]
+                } else {
+                    type_expr.as_str()
+                };
+                let base_type = self
+                    .jsdoc_type_from_expression(effective_expr)
                     .unwrap_or(TypeId::ANY);
+                let type_id = if is_rest {
+                    let factory = self.ctx.types.factory();
+                    factory.array(base_type)
+                } else {
+                    base_type
+                };
                 let name_atom = self.ctx.types.intern_string(name);
                 params.push(ParamInfo {
                     name: Some(name_atom),
                     type_id,
                     optional: false,
-                    rest: false,
+                    rest: is_rest,
                 });
             }
 
@@ -1312,14 +1334,62 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        let mut prop_infos = Vec::with_capacity(info.properties.len());
+        // Group properties: dotted names like "icons.image32" become nested object
+        // properties on the parent property "icons".
+        // First pass: collect nested properties by parent name.
+        let mut top_level: Vec<(String, String)> = Vec::new();
+        let mut nested: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            std::collections::BTreeMap::new();
         for (name, prop_type_expr) in info.properties {
-            let prop_type = if prop_type_expr.trim().is_empty() {
+            if let Some(dot_pos) = name.find('.') {
+                let parent = name[..dot_pos].to_string();
+                let child = name[dot_pos + 1..].to_string();
+                nested
+                    .entry(parent)
+                    .or_default()
+                    .push((child, prop_type_expr));
+            } else {
+                top_level.push((name, prop_type_expr));
+            }
+        }
+
+        let mut prop_infos = Vec::with_capacity(top_level.len());
+        for (name, prop_type_expr) in top_level {
+            let mut prop_type = if prop_type_expr.trim().is_empty() {
                 TypeId::ANY
             } else {
                 self.jsdoc_type_from_expression(&prop_type_expr)
                     .unwrap_or(TypeId::ANY)
             };
+
+            // If this property has nested children (e.g., @property {Object} icons
+            // followed by @property {string} icons.image32), build a nested object.
+            if let Some(children) = nested.remove(&name) {
+                let mut child_props = Vec::with_capacity(children.len());
+                for (child_name, child_type_expr) in children {
+                    let child_type = if child_type_expr.trim().is_empty() {
+                        TypeId::ANY
+                    } else {
+                        self.jsdoc_type_from_expression(&child_type_expr)
+                            .unwrap_or(TypeId::ANY)
+                    };
+                    let child_atom = self.ctx.types.intern_string(&child_name);
+                    child_props.push(PropertyInfo {
+                        name: child_atom,
+                        type_id: child_type,
+                        write_type: child_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                    });
+                }
+                let factory = self.ctx.types.factory();
+                prop_type = factory.object(child_props);
+            }
+
             let name_atom = self.ctx.types.intern_string(&name);
             prop_infos.push(PropertyInfo {
                 name: name_atom,
