@@ -762,10 +762,7 @@ fn collect_import_local_names(
 fn is_path_relative(specifier: &str) -> bool {
     matches!(
         specifier.as_bytes(),
-        [b'.']
-            | [b'.', b'.']
-            | [b'.', b'/' | b'\\', ..]
-            | [b'.', b'.', b'/' | b'\\', ..]
+        [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
     )
 }
 
