@@ -658,6 +658,47 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
+            // Text-based check: even if the import has value bindings, if
+            // none of them are used at the value level, the import should
+            // not appear in AMD deps (tsc uses checker info to elide these).
+            // Skip this check for JSX factory imports which are implicitly
+            // referenced by JSX elements.
+            let is_jsx_factory_import = matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ) && {
+                let factory_root = self
+                    .ctx
+                    .options
+                    .jsx_factory
+                    .as_deref()
+                    .and_then(|f| f.split('.').next())
+                    .unwrap_or("React");
+                let mut is_factory = false;
+                // Check default import name
+                if clause.name.is_some() {
+                    let name = self.get_identifier_text_idx(clause.name);
+                    if name == factory_root {
+                        is_factory = true;
+                    }
+                }
+                // Check namespace import name (`import * as React`)
+                if !is_factory {
+                    if let Some(ns) = &namespace_name {
+                        if ns == factory_root {
+                            is_factory = true;
+                        }
+                    }
+                }
+                is_factory
+            };
+
+            if !is_jsx_factory_import && !self.import_has_value_usage_after_node(stmt_node, clause)
+            {
+                rejected_deps.insert(module_spec);
+                continue;
+            }
+
             if seen_value.insert(module_spec.clone()) {
                 value_deps.push(module_spec.clone());
             }
