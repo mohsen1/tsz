@@ -644,30 +644,36 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if is_shorthand && self.ctx.target_es5 {
-            self.emit(prop.name);
+            self.emit_decl_name(prop.name);
             self.write(": ");
             self.emit_expression(prop.initializer);
             return;
         }
 
         // For ES6+ target, preserve shorthand as-is — UNLESS the identifier
-        // will be import-substituted (e.g., `foo` → `foo_1.foo`), which breaks
-        // shorthand syntax. In that case, expand to `name: substituted_value`.
+        // will be import/export-substituted (e.g., `foo` → `foo_1.foo` or
+        // `test` → `exports.test`), which breaks shorthand syntax. In that
+        // case, expand to `name: substituted_value`.
         if is_shorthand {
             if let Some(ident) = self
                 .arena
                 .get_identifier(self.arena.get(prop.name).unwrap())
-                && self.ctx.is_commonjs()
-                && !self.suppress_commonjs_named_import_substitution
-                && self
-                    .commonjs_named_import_substitutions
-                    .contains_key(&ident.escaped_text)
             {
-                // Emit name without substitution, then `: substituted_value`
-                self.write_identifier(&ident.escaped_text);
-                self.write(": ");
-                self.emit(prop.initializer);
-                return;
+                let has_import_subst = !self.suppress_commonjs_named_import_substitution
+                    && self
+                        .commonjs_named_import_substitutions
+                        .contains_key(&ident.escaped_text);
+                let has_export_var = !self.suppress_ns_qualification
+                    && self
+                        .commonjs_exported_var_names
+                        .contains(ident.escaped_text.as_str());
+                if has_import_subst || has_export_var {
+                    // Emit name without substitution, then `: substituted_value`
+                    self.write_identifier(&ident.escaped_text);
+                    self.write(": ");
+                    self.emit(prop.initializer);
+                    return;
+                }
             }
             self.emit(prop.name);
             return;
@@ -691,7 +697,7 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if self.ctx.target_es5 {
-            self.emit(shorthand.name);
+            self.emit_decl_name(shorthand.name);
             self.write(": ");
             self.emit(shorthand.name);
             if shorthand.equals_token {
@@ -701,21 +707,28 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For ES6+ target, emit shorthand as-is — UNLESS import substitution
-        // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }`).
+        // For ES6+ target, emit shorthand as-is — UNLESS import/export substitution
+        // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }` or `{ exports.test }`).
+        // Check both import substitutions and exported variable names.
+        // Note: don't check is_commonjs() — module kind is temporarily None inside export bodies.
         if let Some(ident) = self
             .arena
             .get_identifier(self.arena.get(shorthand.name).unwrap())
-            && self.ctx.is_commonjs()
-            && !self.suppress_commonjs_named_import_substitution
-            && self
-                .commonjs_named_import_substitutions
-                .contains_key(&ident.escaped_text)
         {
-            self.write_identifier(&ident.escaped_text);
-            self.write(": ");
-            self.emit(shorthand.name);
-            return;
+            let has_import_subst = !self.suppress_commonjs_named_import_substitution
+                && self
+                    .commonjs_named_import_substitutions
+                    .contains_key(&ident.escaped_text);
+            let has_export_var = !self.suppress_ns_qualification
+                && self
+                    .commonjs_exported_var_names
+                    .contains(ident.escaped_text.as_str());
+            if has_import_subst || has_export_var {
+                self.write_identifier(&ident.escaped_text);
+                self.write(": ");
+                self.emit(shorthand.name);
+                return;
+            }
         }
         self.emit(shorthand.name);
         if shorthand.equals_token {
