@@ -837,12 +837,15 @@ impl<'a> InferenceContext<'a> {
 
     /// Add an inference candidate for a variable.
     pub fn add_candidate(&mut self, var: InferenceVar, ty: TypeId, priority: InferencePriority) {
-        self.add_candidate_with_context(var, ty, priority, false, None, None);
+        self.add_candidate_with_context(var, ty, priority, false, None, None, false);
     }
 
     /// Add an inference candidate for a variable that originates from an object property.
     /// `object_property_index` captures the source property order and enables deterministic
     /// tie-breaking when repeated property candidates collapse to a union.
+    /// `source_is_fresh` indicates whether the source object is a fresh literal (from an
+    /// object literal expression). When true, literal property types will be widened during
+    /// inference resolution (matching TSC's `RequiresWidening` behavior).
     pub fn add_property_candidate_with_index(
         &mut self,
         var: InferenceVar,
@@ -850,6 +853,7 @@ impl<'a> InferenceContext<'a> {
         priority: InferencePriority,
         object_property_index: u32,
         object_property_name: Option<Atom>,
+        source_is_fresh: bool,
     ) {
         self.add_candidate_with_context(
             var,
@@ -858,6 +862,7 @@ impl<'a> InferenceContext<'a> {
             true,
             Some(object_property_index),
             object_property_name,
+            source_is_fresh,
         );
     }
 
@@ -869,12 +874,21 @@ impl<'a> InferenceContext<'a> {
         from_object_property: bool,
         object_property_index: Option<u32>,
         object_property_name: Option<Atom>,
+        source_is_fresh: bool,
     ) {
         let root = self.table.find(var);
+        // A candidate is a "fresh literal" (eligible for widening) when:
+        // - It's a literal type AND
+        // - Either it's NOT from an object property (direct arg like identity("hello")),
+        //   OR the source object is a fresh literal (from object literal expression).
+        // This matches TSC's RequiresWidening flag: literals from type annotations
+        // (non-fresh sources) are NOT widened, but literals from object literal
+        // expressions ARE widened.
         let candidate = InferenceCandidate {
             type_id: ty,
             priority,
-            is_fresh_literal: !from_object_property && is_literal_type(self.interner, ty),
+            is_fresh_literal: (!from_object_property || source_is_fresh)
+                && is_literal_type(self.interner, ty),
             from_object_property,
             object_property_index,
             object_property_name,
