@@ -2111,22 +2111,54 @@ fn resolve_exports_subpath(
 }
 
 fn resolve_exports_target(target: &serde_json::Value, conditions: &[&str]) -> Option<String> {
+    resolve_exports_target_versioned(
+        target,
+        conditions,
+        default_types_versions_compiler_version(),
+    )
+}
+
+fn resolve_exports_target_versioned(
+    target: &serde_json::Value,
+    conditions: &[&str],
+    compiler_version: SemVer,
+) -> Option<String> {
     match target {
         serde_json::Value::String(value) => Some(value.clone()),
         serde_json::Value::Array(list) => {
             for entry in list {
-                if let Some(resolved) = resolve_exports_target(entry, conditions) {
+                if let Some(resolved) =
+                    resolve_exports_target_versioned(entry, conditions, compiler_version)
+                {
                     return Some(resolved);
                 }
             }
             None
         }
         serde_json::Value::Object(map) => {
-            for condition in conditions {
-                if let Some(value) = map.get(*condition)
-                    && let Some(resolved) = resolve_exports_target(value, conditions)
-                {
-                    return Some(resolved);
+            // Process keys in insertion order (Node.js spec). For each key:
+            // 1. Check if it's a plain condition match
+            // 2. Check if it's a versioned condition like "types@>=1"
+            for (key, value) in map {
+                // Check for versioned condition (e.g., "types@>=1")
+                if let Some(at_pos) = key.find('@') {
+                    let base_condition = &key[..at_pos];
+                    let version_range = &key[at_pos + 1..];
+                    if conditions.contains(&base_condition)
+                        && match_types_versions_range(version_range, compiler_version).is_some()
+                    {
+                        if let Some(resolved) =
+                            resolve_exports_target_versioned(value, conditions, compiler_version)
+                        {
+                            return Some(resolved);
+                        }
+                    }
+                } else if conditions.contains(&key.as_str()) {
+                    if let Some(resolved) =
+                        resolve_exports_target_versioned(value, conditions, compiler_version)
+                    {
+                        return Some(resolved);
+                    }
                 }
             }
             None

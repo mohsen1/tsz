@@ -86,5 +86,13 @@ path = "tests/js_constructor_property_tests.rs"
 name = "jsdoc_type_tag_tests"
 path = "tests/jsdoc_type_tag_tests.rs"
 
+[[test]]
+name = "ts1203_node_esm_tests"
+path = "tests/ts1203_node_esm_tests.rs"
+
+[[test]]
+name = "ts1254_ambient_const_tests"
+path = "tests/ts1254_ambient_const_tests.rs"
+
 [lints]
 workspace = true

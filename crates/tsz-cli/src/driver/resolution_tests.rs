@@ -513,3 +513,83 @@ fn test_exports_directory_slash_pattern_resolves() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_exports_versioned_types_condition_resolves() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_exports_versioned_types_condition");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    // Package has versioned types conditions in exports:
+    // - types@>=10000 → future types (should NOT match, version too high)
+    // - types@>=1 → new types (SHOULD match, our version >= 1)
+    // - types → old types (fallback, should NOT be reached)
+    fs::write(
+        dir.join("node_modules/inner/package.json"),
+        r#"{
+            "name": "inner",
+            "exports": {
+                ".": {
+                    "types@>=10000": "./future-types.d.ts",
+                    "types@>=1": "./new-types.d.ts",
+                    "types": "./old-types.d.ts",
+                    "import": "./index.mjs",
+                    "node": "./index.js"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/old-types.d.ts"),
+        "export const noVersionApplied = true;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/new-types.d.ts"),
+        "export const correctVersionApplied = true;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/future-types.d.ts"),
+        "export const futureVersionApplied = true;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import * as mod from 'inner';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    let resolved_path = resolved.expect("should resolve 'inner' via versioned types condition");
+    assert!(
+        resolved_path.ends_with("new-types.d.ts"),
+        "should resolve to new-types.d.ts (types@>=1), got: {resolved_path:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -439,7 +439,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2081,7 +2081,6 @@ FAIL TypeScript/tests/cases/conformance/node/legacyNodeModulesExportsSpecifierGe
 FAIL TypeScript/tests/cases/conformance/node/nodeModules1.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesConditionalPackageExports.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitWithPackageExports.ts
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportAssignments.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSourceTs.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationDirectory.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesImportAttributesModeDeclarationEmit1.ts
@@ -2099,7 +2098,6 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesNoDirectoryModule.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackageExports.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackageImportsRootWildcardNode16.ts
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts
-FAIL TypeScript/tests/cases/conformance/node/nodeModulesTypesVersionPackageExports.ts
 FAIL TypeScript/tests/cases/conformance/node/nodePackageSelfName.ts
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
@@ -4980,7 +4978,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -10668,6 +10666,7 @@ PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM3_modul
 PASS TypeScript/tests/cases/conformance/node/nodeModulesCJSResolvingToESM4_noPackageJson.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitDynamicImportWithPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesDynamicImport.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesExportAssignments.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksSpecifierResolution.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsBlocksTypesVersions.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesExportsDoubleAsterisk.ts
@@ -10705,6 +10704,7 @@ PASS TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceMode
 PASS TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeOverride5.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeOverrideModeError.ts
 PASS TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeOverrideOldResolutionError.ts
+PASS TypeScript/tests/cases/conformance/node/nodeModulesTypesVersionPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/nodePackageSelfNameScoped.ts
 PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForJsonImport.ts
 PASS TypeScript/tests/cases/conformance/override/override_js1.ts

@@ -1065,7 +1065,9 @@ impl<'a> CheckerState<'a> {
             k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
                 || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16 =>
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16
+                || k == tsz_scanner::SyntaxKind::TrueKeyword as u16
+                || k == tsz_scanner::SyntaxKind::FalseKeyword as u16 =>
             {
                 true
             }
