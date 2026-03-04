@@ -386,14 +386,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // during resolution when no candidates are found.
                     self.constrain_types(ctx, var_map, source, member, priority);
                 } else if placeholder_count > 1 {
-                    // Multiple placeholder-containing members: constrain against each.
-                    // For example, when source is `number` and target is
-                    // `TResult | PromiseLike<TResult>`, we should try constraining
-                    // against both members so TResult gets `number` as a candidate.
+                    // Multiple placeholder-containing members: prefer structural matches.
+                    // For example, when source is `Foo<U>` and target is `V | Foo<V>`,
+                    // constrain only against `Foo<V>` (structural match), not `V` (naked
+                    // type param). This prevents `Foo<U>` from being added as a candidate
+                    // for `V` when a better structural decomposition exists.
                     let t_members_copy = t_members.to_vec();
-                    for member in t_members_copy {
-                        member_visited.clear();
-                        if self.type_contains_placeholder(member, var_map, &mut member_visited) {
+                    let placeholder_members: Vec<TypeId> = {
+                        let mut result = Vec::new();
+                        for &member in &t_members_copy {
+                            member_visited.clear();
+                            if self.type_contains_placeholder(member, var_map, &mut member_visited)
+                            {
+                                result.push(member);
+                            }
+                        }
+                        result
+                    };
+
+                    // Check if any placeholder member structurally matches the source
+                    let structural_matches: Vec<TypeId> = placeholder_members
+                        .iter()
+                        .filter(|&&member| {
+                            self.types_share_outer_structure_for_constraint(source, member)
+                        })
+                        .copied()
+                        .collect();
+
+                    if !structural_matches.is_empty() {
+                        // Prefer structural matches over naked type params
+                        for member in structural_matches {
+                            self.constrain_types(ctx, var_map, source, member, priority);
+                        }
+                    } else {
+                        // No structural match — constrain against all placeholder members
+                        for member in placeholder_members {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     }
@@ -1593,6 +1620,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For any other template shape (conditional types, etc.),
         // we can't safely reverse.
         None
+    }
+
+    /// Check if two types share the same outer structure for constraint matching.
+    ///
+    /// Used to prefer structural matches over naked type params when constraining
+    /// against union targets with multiple placeholder members.
+    fn types_share_outer_structure_for_constraint(&self, source: TypeId, target: TypeId) -> bool {
+        let (Some(s_key), Some(t_key)) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        else {
+            return false;
+        };
+        match (s_key, t_key) {
+            (TypeData::Application(s_app_id), TypeData::Application(t_app_id)) => {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                s_app.base == t_app.base
+            }
+            (TypeData::Object(_), TypeData::Object(_))
+            | (TypeData::Callable(_), TypeData::Callable(_))
+            | (TypeData::Function(_), TypeData::Function(_))
+            | (TypeData::Tuple(_), TypeData::Tuple(_))
+            | (TypeData::Array(_), TypeData::Array(_)) => true,
+            _ => false,
+        }
     }
 
     fn constrain_properties(
