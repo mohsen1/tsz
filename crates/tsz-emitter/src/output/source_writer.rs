@@ -240,6 +240,37 @@ impl SourceWriter {
         self.at_line_start = true;
     }
 
+    /// Undo the last `write_line()` call, removing the trailing newline from
+    /// the output buffer and restoring line/column state. Returns `true` if
+    /// a newline was successfully removed.
+    ///
+    /// This is used by the statement loop to backtrack a premature newline so
+    /// that trailing comments can be appended to the correct output line.
+    pub fn undo_last_write_line(&mut self) -> bool {
+        if !self.at_line_start || self.line == 0 {
+            return false;
+        }
+        let nl_len = self.new_line.len();
+        if self.output.len() < nl_len {
+            return false;
+        }
+        // Verify the output ends with the newline string
+        if !self.output.ends_with(&self.new_line) {
+            return false;
+        }
+        self.output.truncate(self.output.len() - nl_len);
+        self.line -= 1;
+        self.at_line_start = false;
+        // Restore column: count bytes from last newline to end of output
+        let col = if let Some(last_nl) = self.output.rfind(&self.new_line) {
+            (self.output.len() - last_nl - nl_len) as u32
+        } else {
+            self.output.len() as u32
+        };
+        self.column = col;
+        true
+    }
+
     /// Write a space
     pub fn write_space(&mut self) {
         self.write(" ");

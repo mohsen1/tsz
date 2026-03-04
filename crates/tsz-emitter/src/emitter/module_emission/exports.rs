@@ -200,7 +200,8 @@ impl<'a> Printer<'a> {
                         // TSC emits this for simple single-binding declarations.
                         if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
                         {
-                            for (name, init_idx) in &inline_decls {
+                            let decl_count = inline_decls.len();
+                            for (i, (name, init_idx)) in inline_decls.iter().enumerate() {
                                 // Track that this variable was inlined (no local declaration).
                                 self.ctx
                                     .module_state
@@ -213,7 +214,11 @@ impl<'a> Printer<'a> {
                                 // for inline-exported variable names automatically.
                                 self.emit(*init_idx);
                                 self.write(";");
-                                self.write_line();
+                                // Skip write_line() on the last declaration so the
+                                // caller can emit trailing comments before the newline.
+                                if i < decl_count - 1 {
+                                    self.write_line();
+                                }
                             }
                         } else {
                             // Complex case (destructuring): emit declaration then exports

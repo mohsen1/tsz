@@ -24,6 +24,44 @@ impl<'a> Printer<'a> {
         self.emit_trailing_comments_impl(end_pos, max_pos);
     }
 
+    /// Check if there is at least one unconsumed trailing comment on the same
+    /// source line as `end_pos`, without advancing `comment_emit_idx`.
+    pub(in crate::emitter) fn has_trailing_comment_on_same_line(
+        &self,
+        end_pos: u32,
+        max_pos: u32,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let c_pos = self.all_comments[idx].pos;
+            if c_pos < end_pos {
+                let gap_end = std::cmp::min(end_pos as usize, bytes.len());
+                if bytes[c_pos as usize..gap_end]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    return false;
+                }
+                idx += 1;
+                continue;
+            }
+            if c_pos >= max_pos {
+                return false;
+            }
+            let gap_start = end_pos as usize;
+            let gap_end = std::cmp::min(c_pos as usize, bytes.len());
+            let has_line_break = bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r');
+            return !has_line_break;
+        }
+        false
+    }
+
     fn emit_trailing_comments_impl(&mut self, end_pos: u32, max_pos: u32) {
         if self.ctx.options.remove_comments {
             return;

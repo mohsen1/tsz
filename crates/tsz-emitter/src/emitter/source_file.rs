@@ -959,14 +959,35 @@ impl<'a> Printer<'a> {
             }
 
             // Only add newline if something was actually emitted
-            if emitted_output && !self.writer.is_at_line_start() {
+            if emitted_output {
                 // Emit trailing comments on the same line as the statement.
                 // Use the next statement's pos as upper bound to avoid scanning
                 // into the next statement's trivia (same pattern as emit_block_body).
-                let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
-                let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
-                self.emit_trailing_comments_before(token_end, upper_bound);
-                self.write_line();
+                if self.writer.is_at_line_start() {
+                    // The emission already wrote a final newline (e.g., CJS inline
+                    // export, transform dispatch). Undo it so trailing comments
+                    // can be appended to the last output line, then re-add the
+                    // newline after.
+                    if !self.ctx.options.remove_comments {
+                        let saved_idx = self.comment_emit_idx;
+                        let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
+                        let token_end =
+                            self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
+                        // Peek: check if there are trailing comments to emit.
+                        // Only backtrack if there actually are comments to add.
+                        if self.has_trailing_comment_on_same_line(token_end, upper_bound) {
+                            self.comment_emit_idx = saved_idx;
+                            self.writer.undo_last_write_line();
+                            self.emit_trailing_comments_before(token_end, upper_bound);
+                            self.write_line();
+                        }
+                    }
+                } else {
+                    let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
+                    self.emit_trailing_comments_before(token_end, upper_bound);
+                    self.write_line();
+                }
             }
 
             // Note: We do NOT skip inner comments here. The "emit comments before
