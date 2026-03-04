@@ -650,8 +650,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For ES6+ target, preserve shorthand as-is
+        // For ES6+ target, preserve shorthand as-is — UNLESS the identifier
+        // will be import-substituted (e.g., `foo` → `foo_1.foo`), which breaks
+        // shorthand syntax. In that case, expand to `name: substituted_value`.
         if is_shorthand {
+            if let Some(ident) = self
+                .arena
+                .get_identifier(self.arena.get(prop.name).unwrap())
+                && self.ctx.is_commonjs()
+                && !self.suppress_commonjs_named_import_substitution
+                && self
+                    .commonjs_named_import_substitutions
+                    .contains_key(&ident.escaped_text)
+            {
+                // Emit name without substitution, then `: substituted_value`
+                self.write_identifier(&ident.escaped_text);
+                self.write(": ");
+                self.emit(prop.initializer);
+                return;
+            }
             self.emit(prop.name);
             return;
         }
@@ -684,7 +701,22 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For ES6+ target, emit shorthand as-is
+        // For ES6+ target, emit shorthand as-is — UNLESS import substitution
+        // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }`).
+        if let Some(ident) = self
+            .arena
+            .get_identifier(self.arena.get(shorthand.name).unwrap())
+            && self.ctx.is_commonjs()
+            && !self.suppress_commonjs_named_import_substitution
+            && self
+                .commonjs_named_import_substitutions
+                .contains_key(&ident.escaped_text)
+        {
+            self.write_identifier(&ident.escaped_text);
+            self.write(": ");
+            self.emit(shorthand.name);
+            return;
+        }
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");
