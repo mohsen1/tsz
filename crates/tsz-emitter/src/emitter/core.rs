@@ -258,6 +258,10 @@ pub struct Printer<'a> {
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(crate) namespace_exported_names: FxHashSet<String>,
 
+    /// Names of variables exported from the current CJS module.
+    /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
+    pub(crate) commonjs_exported_var_names: FxHashSet<String>,
+
     /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
@@ -472,6 +476,7 @@ impl<'a> Printer<'a> {
             declared_namespace_names: FxHashSet::default(),
             namespace_prior_exports: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
+            commonjs_exported_var_names: FxHashSet::default(),
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
