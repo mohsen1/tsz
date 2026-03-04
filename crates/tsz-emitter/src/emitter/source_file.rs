@@ -380,6 +380,58 @@ impl<'a> Printer<'a> {
         let will_emit_helpers = !self.ctx.options.no_emit_helpers
             && self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed();
+
+        // Pre-compute the detached comment boundary for erased first statements.
+        // tsc's algorithm: scan header comment ranges, find the FIRST blank-line
+        // gap between consecutive ranges. Ranges before the gap are "detached"
+        // (file-level, preserved). Ranges after are "attached" to the erased
+        // declaration and should be stripped.
+        let erased_detach_boundary: u32 = if first_erased_stmt_pos.is_some() {
+            if let Some(text) = self.source_text {
+                let mut idx = self.comment_emit_idx;
+                let mut ranges: Vec<(u32, u32)> = Vec::new();
+                while idx < self.all_comments.len() {
+                    let c = &self.all_comments[idx];
+                    if c.end <= first_stmt_pos {
+                        ranges.push((c.pos, c.end));
+                        idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let mut detach_after: Option<usize> = None;
+                for i in 0..ranges.len() {
+                    let range_end = ranges[i].1;
+                    let next_start = if i + 1 < ranges.len() {
+                        ranges[i + 1].0
+                    } else {
+                        first_stmt_pos
+                    };
+                    let between = &text[range_end as usize..next_start as usize];
+                    if between.contains("\n\n") || between.contains("\r\n\r\n") {
+                        detach_after = Some(i);
+                        break;
+                    }
+                }
+                if let Some(last_detached_idx) = detach_after {
+                    if last_detached_idx + 1 < ranges.len() {
+                        ranges[last_detached_idx + 1].0
+                    } else {
+                        first_stmt_pos
+                    }
+                } else if ranges.is_empty() {
+                    first_stmt_pos
+                } else {
+                    // No blank-line gap found — all comments are attached
+                    ranges[0].0
+                }
+            } else {
+                first_stmt_pos
+            }
+        } else {
+            u32::MAX
+        };
+
         if let Some(text) = self.source_text {
             while self.comment_emit_idx < self.all_comments.len() {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
@@ -404,19 +456,22 @@ impl<'a> Printer<'a> {
                         break;
                     }
 
-                    // Skip comments that are directly attached to an erased first
-                    // statement (no blank line between comment and declaration).
-                    // Detached comments (separated by blank line) are preserved.
+                    // Skip comments that are attached to an erased first statement.
+                    // The boundary was pre-computed above: comments at or after
+                    // `erased_detach_boundary` are attached and should be stripped.
                     // Exception: `/// <reference` directives are always preserved
                     // (they are file-level directives, not attached to any declaration).
-                    if let Some(erased_pos) = first_erased_stmt_pos {
-                        let between = &text[c_end as usize..erased_pos as usize];
-                        let has_blank_line =
-                            between.contains("\n\n") || between.contains("\r\n\r\n");
-                        if !has_blank_line && !is_triple_slash_reference {
+                    if first_erased_stmt_pos.is_some()
+                        && c_pos >= erased_detach_boundary
+                        && !is_triple_slash_reference
+                    {
+                        // Skip all remaining header comments (they're all attached)
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= first_stmt_pos
+                        {
                             self.comment_emit_idx += 1;
-                            continue;
                         }
+                        break;
                     }
 
                     // Note: `// @option` comments are NOT stripped here.
