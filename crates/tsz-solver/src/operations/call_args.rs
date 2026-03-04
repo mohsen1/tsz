@@ -97,29 +97,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
+            // When the parameter is optional, implicitly include `undefined`
+            // in the parameter type. This ensures `SomeType | undefined` can be
+            // passed to an optional parameter of type `SomeType | null`, since
+            // `SomeType | undefined <: SomeType | null | undefined`.
+            let effective_param_type = {
+                let param_info = self.param_info_for_arg_index(params, i);
+                if param_info.is_some_and(|p| p.optional) {
+                    self.interner.union2(param_type, TypeId::UNDEFINED)
+                } else {
+                    param_type
+                }
+            };
+
             let use_bivariant_callbacks = (allow_bivariant_callbacks
                 || self.force_bivariant_callbacks)
                 && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
-                && crate::type_queries::is_callable_type(self.interner, param_type);
+                && crate::type_queries::is_callable_type(self.interner, effective_param_type);
 
             let assignable = if use_bivariant_callbacks {
                 self.checker
-                    .is_assignable_to_bivariant_callback(expanded_arg_type, param_type)
+                    .is_assignable_to_bivariant_callback(expanded_arg_type, effective_param_type)
             } else if strict {
                 let result = self
                     .checker
-                    .is_assignable_to_strict(expanded_arg_type, param_type);
+                    .is_assignable_to_strict(expanded_arg_type, effective_param_type);
                 if !result {
                     tracing::debug!(
                         "Strict assignability failed at index {}: {:?} <: {:?}",
                         i,
                         self.interner.lookup(expanded_arg_type),
-                        self.interner.lookup(param_type)
+                        self.interner.lookup(effective_param_type)
                     );
                 }
                 result
             } else {
-                self.checker.is_assignable_to(expanded_arg_type, param_type)
+                self.checker
+                    .is_assignable_to(expanded_arg_type, effective_param_type)
             };
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
