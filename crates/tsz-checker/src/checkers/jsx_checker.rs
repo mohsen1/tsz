@@ -209,14 +209,14 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
 
-            // TS2786: Check that the component's return/instance type is a valid JSX element.
-            // This fires even for generic components where we skip attribute checking.
+            // TS2786: component return type must be valid JSX element
             self.check_jsx_component_return_type(evaluated, tag_name_idx);
 
             // Extract props type from the component and check attributes.
+            // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) =
-                self.get_jsx_props_type_for_component(evaluated)
+                self.get_jsx_props_type_for_component(evaluated, Some(idx))
             {
                 let display_target = self.build_jsx_display_target(props_type, Some(evaluated));
                 self.check_jsx_attributes_against_props(
@@ -443,6 +443,7 @@ impl<'a> CheckerState<'a> {
     fn get_jsx_props_type_for_component(
         &mut self,
         component_type: TypeId,
+        element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -470,7 +471,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try class component: get construct signatures → instance type → props
-        if let Some(props) = self.get_class_component_props_type(component_type) {
+        if let Some(props) = self.get_class_component_props_type(component_type, element_idx) {
             return Some((props, false));
         }
 
@@ -548,7 +549,6 @@ impl<'a> CheckerState<'a> {
     /// TS2786: Check that a JSX component's return type is assignable to
     /// `JSX.Element` (SFC) or `JSX.ElementClass` (class component).
     fn check_jsx_component_return_type(&mut self, component_type: TypeId, tag_name_idx: NodeIndex) {
-        // Skip for types that are inherently allowed in JSX position
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
             || component_type == TypeId::UNKNOWN
@@ -556,39 +556,31 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Skip type parameters — they may resolve to callable types
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
-        // Skip if file has parse errors (avoid cascading diagnostics)
         if self.ctx.has_parse_errors {
             return;
         }
 
-        // Get JSX.Element and JSX.ElementClass from the JSX namespace
         let jsx_element_type_raw = self.get_jsx_element_type_for_check();
         let jsx_element_class_type_raw = self.get_jsx_element_class_type();
-
-        // If we can't resolve any JSX types, skip the check
         if jsx_element_type_raw.is_none() && jsx_element_class_type_raw.is_none() {
             return;
         }
 
-        // Evaluate to concrete types and skip if they resolve to any/error/unknown
-        // (incomplete type resolution, e.g., cross-file React types not fully resolved)
+        let is_concrete =
+            |t: TypeId| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN;
         let jsx_element_type = jsx_element_type_raw
             .map(|t| self.evaluate_type_with_env(t))
-            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN);
+            .filter(|&t| is_concrete(t));
         let jsx_element_class_type = jsx_element_class_type_raw
             .map(|t| self.evaluate_type_with_env(t))
-            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN);
-
-        // If both resolve to non-concrete types, skip
+            .filter(|&t| is_concrete(t));
         if jsx_element_type.is_none() && jsx_element_class_type.is_none() {
             return;
         }
 
-        // Expand union types to check each member
         let types_to_check = if let Some(members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
         {
@@ -601,32 +593,16 @@ impl<'a> CheckerState<'a> {
         let mut all_valid = true;
 
         for &member_type in &types_to_check {
-            // Skip any/error/unknown members in unions
-            if member_type == TypeId::ANY
-                || member_type == TypeId::ERROR
-                || member_type == TypeId::UNKNOWN
-            {
+            if !is_concrete(member_type) {
                 continue;
             }
 
-            // Helper: check if a return type is "unresolved" (shouldn't trigger TS2786).
-            // Includes ANY/ERROR/UNKNOWN and also Application types with unresolved Lazy
-            // bases — these come from cross-file generic types (e.g., React.ReactElement<any>)
-            // that couldn't be fully evaluated during type checking.
             let is_unresolved = |t: TypeId| -> bool {
-                t == TypeId::ANY
-                    || t == TypeId::ERROR
-                    || t == TypeId::UNKNOWN
+                !is_concrete(t)
                     || tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, t)
             };
-
-            // Helper: null is a valid SFC return type in JSX.
-            // tsc allows `null` as a JSX component return even under strictNullChecks.
-            // However, `undefined` and `void` are NOT valid under strictNullChecks
-            // (see tsxSfcReturnUndefinedStrictNullChecks).
             let is_valid_null_like_return = |t: TypeId| -> bool { t == TypeId::NULL };
 
-            // Try as function component (SFC): check call signature return type
             let mut is_sfc = false;
             if let Some(shape) =
                 tsz_solver::type_queries::get_function_shape(self.ctx.types, member_type)
@@ -634,8 +610,6 @@ impl<'a> CheckerState<'a> {
             {
                 is_sfc = true;
                 let return_type = self.evaluate_type_with_env(shape.return_type);
-                // Skip check if return type is unresolved (e.g., cross-file type)
-                // or is a valid null-like JSX return (null, undefined, void)
                 if !is_unresolved(return_type) && !is_valid_null_like_return(return_type) {
                     any_checked = true;
                     if let Some(element_type) = jsx_element_type
@@ -646,40 +620,38 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !is_sfc
-                && let Some(sigs) =
-                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, member_type)
-                && !sigs.is_empty()
-            {
-                // Check if ALL call signatures have invalid return types
-                // (if any signature is valid, the component is valid)
-                let mut any_concrete = false;
-                let any_sig_valid = sigs.iter().any(|sig| {
-                    let return_type = self.evaluate_type_with_env(sig.return_type);
-                    if is_unresolved(return_type) || is_valid_null_like_return(return_type) {
-                        return true; // Unresolved or null-like → assume valid
+            // Check call/construct signatures against JSX.Element/ElementClass
+            for (get_sigs_fn, target) in [
+                (
+                    tsz_solver::type_queries::get_call_signatures as fn(_, _) -> _,
+                    jsx_element_type,
+                ),
+                (
+                    tsz_solver::type_queries::get_construct_signatures,
+                    jsx_element_class_type,
+                ),
+            ] {
+                if !is_sfc
+                    && let Some(sigs) = get_sigs_fn(self.ctx.types, member_type)
+                    && !sigs.is_empty()
+                {
+                    let mut any_concrete = false;
+                    let any_valid = sigs.iter().any(|sig| {
+                        let ret = self.evaluate_type_with_env(sig.return_type);
+                        if is_unresolved(ret) || is_valid_null_like_return(ret) {
+                            return true;
+                        }
+                        any_concrete = true;
+                        target.is_none_or(|t| self.is_assignable_to(ret, t))
+                    });
+                    if any_concrete {
+                        any_checked = true;
                     }
-                    any_concrete = true;
-                    if let Some(element_type) = jsx_element_type {
-                        self.is_assignable_to(return_type, element_type)
-                    } else {
-                        true // No JSX.Element to check against
+                    if any_concrete && !any_valid {
+                        all_valid = false;
                     }
-                });
-                if any_concrete {
-                    any_checked = true;
-                }
-                if any_concrete && !any_sig_valid {
-                    all_valid = false;
                 }
             }
-
-            // NOTE: Class component checking (construct signatures vs JSX.ElementClass)
-            // is deliberately skipped. Cross-file React.Component class heritage
-            // resolution is incomplete — construct signature return types are often
-            // partially resolved, causing widespread false TS2786 for valid class
-            // components. This can be re-enabled once class heritage resolution
-            // is more robust (see conformance.md Session 2026-02-27b).
         }
 
         if any_checked && !all_valid {
@@ -862,7 +834,11 @@ impl<'a> CheckerState<'a> {
     ///    property holds the props
     /// 3. If `ElementAttributesProperty` is empty, the instance type IS the props
     /// 4. If it has a member (e.g., `{ props: {} }`), accesses that property
-    fn get_class_component_props_type(&mut self, component_type: TypeId) -> Option<TypeId> {
+    fn get_class_component_props_type(
+        &mut self,
+        component_type: TypeId,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<TypeId> {
         let sigs =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
         if sigs.is_empty() {
@@ -884,7 +860,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Look up ElementAttributesProperty to know which instance property is props
-        let prop_name = self.get_element_attributes_property_name();
+        // Pass element_idx so TS2608 can be emitted if >1 property
+        let prop_name = self.get_element_attributes_property_name_with_check(element_idx);
 
         match prop_name {
             None => {
@@ -906,12 +883,18 @@ impl<'a> CheckerState<'a> {
                         let evaluated = self.evaluate_type_with_env(type_id);
                         Some(evaluated)
                     }
-                    // If we can't resolve the attribute property, fall back to
-                    // first construct param (like SFC) rather than instance type
+                    // Instance type doesn't have the ElementAttributesProperty member.
+                    // Emit TS2607 and skip attribute checking.
                     _ => {
-                        let props = sig.params.first().map(|p| p.type_id)?;
-                        let evaluated = self.evaluate_type_with_env(props);
-                        Some(evaluated)
+                        if let Some(elem_idx) = element_idx {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                elem_idx,
+                                diagnostic_codes::JSX_ELEMENT_CLASS_DOES_NOT_SUPPORT_ATTRIBUTES_BECAUSE_IT_DOES_NOT_HAVE_A_PROPERT,
+                                &[name],
+                            );
+                        }
+                        None
                     }
                 }
             }
@@ -924,7 +907,13 @@ impl<'a> CheckerState<'a> {
     /// - `None` if `ElementAttributesProperty` doesn't exist
     /// - `Some("")` if it exists but has no members (empty interface)
     /// - `Some("props")` if it has a member (e.g., `{ props: {} }`)
-    fn get_element_attributes_property_name(&mut self) -> Option<String> {
+    ///
+    /// When `element_idx` is provided, emits TS2608 if `ElementAttributesProperty`
+    /// has more than one property.
+    fn get_element_attributes_property_name_with_check(
+        &mut self,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<String> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
         let symbol = self
@@ -950,6 +939,18 @@ impl<'a> CheckerState<'a> {
         if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated) {
             if shape.properties.is_empty() {
                 return Some(String::new()); // Empty interface
+            }
+            // TS2608: ElementAttributesProperty may not have more than one property
+            if shape.properties.len() > 1 {
+                if let Some(elem_idx) = element_idx {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        elem_idx,
+                        diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
+                        &["ElementAttributesProperty"],
+                    );
+                }
+                return Some(String::new());
             }
             // Return the name of the first (and typically only) property
             if let Some(first_prop) = shape.properties.first() {
@@ -1099,8 +1100,8 @@ impl<'a> CheckerState<'a> {
             return Some(self.evaluate_type_with_env(props));
         }
 
-        // Try class component
-        if let Some(props) = self.get_class_component_props_type(component_type) {
+        // Try class component (no element_idx — don't emit TS2607 from contextual typing)
+        if let Some(props) = self.get_class_component_props_type(component_type, None) {
             return Some(props);
         }
 
