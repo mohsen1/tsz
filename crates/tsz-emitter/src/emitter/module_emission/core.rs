@@ -1169,29 +1169,26 @@ impl<'a> Printer<'a> {
     /// binder-level `commonJsModuleIndicator`.
     fn has_commonjs_module_indicator(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
-            if let Some(node) = self.arena.get(stmt_idx) {
-                if self.statement_has_cjs_pattern(node) {
+            if let Some(node) = self.arena.get(stmt_idx)
+                && self.statement_has_cjs_pattern(node) {
                     return true;
                 }
-            }
         }
         false
     }
 
     /// Check if a statement contains CJS module patterns.
     /// Looks for:
-    /// - `module.exports = ...` (BinaryExpression with PropertyAccessExpression)
-    /// - `exports.foo = ...` (BinaryExpression with PropertyAccessExpression)
+    /// - `module.exports = ...` (`BinaryExpression` with `PropertyAccessExpression`)
+    /// - `exports.foo = ...` (`BinaryExpression` with `PropertyAccessExpression`)
     /// - Top-level `require("...")` calls
     fn statement_has_cjs_pattern(&self, node: &Node) -> bool {
         // Check expression statements: `module.exports = X;` or `exports.foo = X;`
-        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-            if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
-                if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(expr_stmt) = self.arena.get_expression_statement(node)
+                && let Some(expr_node) = self.arena.get(expr_stmt.expression) {
                     return self.expression_is_cjs_pattern(expr_node);
                 }
-            }
-        }
         false
     }
 
@@ -1205,42 +1202,33 @@ impl<'a> Printer<'a> {
     /// Check if an expression is a CJS module pattern.
     fn expression_is_cjs_pattern(&self, node: &Node) -> bool {
         // Binary expression: `module.exports = X` or `exports.foo = X`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                if let Some(left) = self.arena.get(bin.left) {
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+                && let Some(left) = self.arena.get(bin.left) {
                     // Check for `module.exports` or `exports.foo`
-                    if left.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                        if let Some(access) = self.arena.get_access_expr(left) {
-                            if let Some(expr) = self.arena.get(access.expression) {
+                    if left.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && let Some(access) = self.arena.get_access_expr(left)
+                            && let Some(expr) = self.arena.get(access.expression) {
                                 let expr_text = self.identifier_text_of(expr);
                                 // `module.exports = ...`
-                                if expr_text == Some("module") {
-                                    if let Some(name) = self.arena.get(access.name_or_argument) {
-                                        if self.identifier_text_of(name) == Some("exports") {
+                                if expr_text == Some("module")
+                                    && let Some(name) = self.arena.get(access.name_or_argument)
+                                        && self.identifier_text_of(name) == Some("exports") {
                                             return true;
                                         }
-                                    }
-                                }
                                 // `exports.foo = ...`
                                 if expr_text == Some("exports") {
                                     return true;
                                 }
                             }
-                        }
-                    }
                 }
-            }
-        }
         // Call expression: `require("...")`
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            if let Some(call) = self.arena.get_call_expr(node) {
-                if let Some(callee) = self.arena.get(call.expression) {
-                    if self.identifier_text_of(callee) == Some("require") {
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+                && let Some(callee) = self.arena.get(call.expression)
+                    && self.identifier_text_of(callee) == Some("require") {
                         return true;
                     }
-                }
-            }
-        }
         false
     }
 
