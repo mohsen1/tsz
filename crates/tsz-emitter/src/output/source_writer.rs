@@ -308,6 +308,16 @@ impl SourceWriter {
         self.at_line_start
     }
 
+    /// Return the last non-whitespace byte in the output buffer, if any.
+    pub fn last_non_whitespace_byte(&self) -> Option<u8> {
+        self.output
+            .as_bytes()
+            .iter()
+            .rev()
+            .find(|&&b| !b.is_ascii_whitespace())
+            .copied()
+    }
+
     // =========================================================================
     // Output Access
     // =========================================================================

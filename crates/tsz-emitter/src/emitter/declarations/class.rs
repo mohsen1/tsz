@@ -1612,24 +1612,13 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
 
-        // Emit deferred static blocks as IIFEs after the class body
-        for (static_block_idx, saved_comment_idx) in deferred_static_blocks {
-            self.write_line();
-            self.write("(() => ");
-            // Restore comment_emit_idx so inner comments from the static block
-            // body are available for emit_block to emit inside the IIFE.
-            self.comment_emit_idx = saved_comment_idx;
-            if let Some(static_node) = self.arena.get(static_block_idx) {
-                // Static block uses the same data as a Block node.
-                // Treated like a function body for single-line formatting.
-                let prev = self.emitting_function_body_block;
-                self.emitting_function_body_block = true;
-                self.emit_block(static_node, static_block_idx);
-                self.emitting_function_body_block = prev;
-            } else {
-                self.write("{ }");
-            }
-            self.write(")();");
+        // Emit deferred static blocks as IIFEs after the class body.
+        // When defer_class_static_blocks is true, store for caller to emit later.
+        if self.defer_class_static_blocks {
+            self.deferred_class_static_blocks
+                .extend(deferred_static_blocks);
+        } else {
+            self.emit_static_block_iifes(deferred_static_blocks);
         }
 
         // Restore private field state (for nested classes)
@@ -1644,6 +1633,27 @@ impl<'a> Printer<'a> {
             if !class_name.is_empty() {
                 self.declared_namespace_names.insert(class_name);
             }
+        }
+    }
+
+    /// Emit deferred static block IIFEs as `(() => { ... })();`.
+    pub(in crate::emitter) fn emit_static_block_iifes(
+        &mut self,
+        blocks: Vec<(NodeIndex, usize)>,
+    ) {
+        for (static_block_idx, saved_comment_idx) in blocks {
+            self.write_line();
+            self.write("(() => ");
+            self.comment_emit_idx = saved_comment_idx;
+            if let Some(static_node) = self.arena.get(static_block_idx) {
+                let prev = self.emitting_function_body_block;
+                self.emitting_function_body_block = true;
+                self.emit_block(static_node, static_block_idx);
+                self.emitting_function_body_block = prev;
+            } else {
+                self.write("{ }");
+            }
+            self.write(")();");
         }
     }
 
