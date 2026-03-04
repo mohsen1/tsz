@@ -823,8 +823,8 @@ impl<'a> CheckerState<'a> {
                 .elements
                 .nodes
                 .iter()
-                .enumerate()
-                .map(|(_, &elem_idx)| {
+                
+                .map(|&elem_idx| {
                     // For nested binding patterns, recursively build the contextual type.
                     let elem_type = self
                         .ctx

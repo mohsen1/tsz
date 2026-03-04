@@ -157,6 +157,86 @@ var x: foo.A = foo.bar("hello");
 }
 
 #[test]
+fn import_type_emits_ts2307_for_unresolved_non_relative_module() {
+    // import("fo") where "fo" is a typo for ambient module "foo"
+    let source = r#"
+declare module "foo" {
+    interface Point { x: number; y: number; }
+    export = Point;
+}
+const x: import("fo") = { x: 0, y: 0 };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let has_2307 = checker.ctx.diagnostics.iter().any(|d| d.code == 2307);
+    assert!(
+        has_2307,
+        "Expected TS2307 for import(\"fo\"), got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn import_type_no_ts2307_for_resolved_declared_module() {
+    // import("foo") where "foo" is a declared module — should NOT emit TS2307
+    let source = r#"
+declare module "foo" {
+    interface Point { x: number; y: number; }
+    export = Point;
+}
+const x: import("foo") = { x: 0, y: 0 };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let has_2307 = checker.ctx.diagnostics.iter().any(|d| d.code == 2307);
+    assert!(
+        !has_2307,
+        "Should NOT emit TS2307 for import(\"foo\") — module is declared. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_import_meta_makes_external_module() {
     let source = "
 declare global { interface ImportMeta {foo?: () => void} };
