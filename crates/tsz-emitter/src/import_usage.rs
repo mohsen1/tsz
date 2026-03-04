@@ -60,6 +60,8 @@ pub fn strip_type_only_content(source: &str) -> String {
             || trimmed.starts_with("import type{")
             || trimmed.starts_with("export type ")
             || trimmed.starts_with("export type{")
+            || trimmed.starts_with("export interface ")
+            || trimmed.starts_with("export declare ")
             || trimmed.starts_with("type ")
             || trimmed.starts_with("interface ")
             // Other import statements - identifiers from other
@@ -91,6 +93,8 @@ pub fn strip_type_only_content(source: &str) -> String {
 /// - Optional parameter types: `?: Type`
 /// - Array element types: `]: Type`
 /// - Variable type annotations on const/let/var lines BEFORE `=`
+/// - Parameter type annotations inside `()` (e.g., `(param: Type)`)
+/// - Generic type arguments in call expressions (e.g., `func<Type>(...)`)
 /// - `implements` clauses (always type-only in class declarations)
 ///
 /// Does NOT strip:
@@ -105,8 +109,16 @@ fn strip_type_annotations_safe(line: &str) -> String {
 
     // Check if this is a const/let/var line for variable type annotation stripping
     let trimmed = line.trim();
-    let is_var_line =
-        trimmed.starts_with("const ") || trimmed.starts_with("let ") || trimmed.starts_with("var ");
+    let is_var_line = trimmed.starts_with("const ")
+        || trimmed.starts_with("let ")
+        || trimmed.starts_with("var ")
+        || trimmed.starts_with("export const ")
+        || trimmed.starts_with("export let ")
+        || trimmed.starts_with("export var ");
+
+    // Track nesting depth for parameter type annotation detection
+    let mut paren_depth = 0u32;
+    let mut brace_depth = 0u32;
 
     while i < len {
         match bytes[i] {
@@ -134,11 +146,56 @@ fn strip_type_annotations_safe(line: &str) -> String {
             b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
                 break; // discard rest of line
             }
+            // Track brace depth (to distinguish object literals from parameter lists)
+            b'{' => {
+                brace_depth += 1;
+                result.push('{');
+                i += 1;
+            }
+            b'}' if brace_depth > 0 => {
+                brace_depth -= 1;
+                result.push('}');
+                i += 1;
+            }
+            // Track paren depth for parameter type annotation detection
+            b'(' => {
+                paren_depth += 1;
+                result.push('(');
+                i += 1;
+            }
+            b')' => {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+                result.push(')');
+                i += 1;
+            }
+            // Generic type arguments: `ident<Type>(` — strip `<Type>`
+            b'<' if i > 0
+                && (bytes[i - 1].is_ascii_alphanumeric()
+                    || bytes[i - 1] == b'_'
+                    || bytes[i - 1] == b'$')
+                && is_generic_type_args(bytes, i) =>
+            {
+                // Skip the entire <...> block
+                i = skip_angle_bracket_block(bytes, i);
+            }
             // After `):`, `?:`, or `]:` — this is a type annotation
             b':' if i > 0
                 && (bytes[i - 1] == b')' || bytes[i - 1] == b'?' || bytes[i - 1] == b']') =>
             {
                 // Skip until `{`, `=>`, `,`, `)`, or end of line
+                i += 1;
+                i = skip_type_annotation(bytes, i);
+            }
+            // Inside parentheses (but not braces): `:` after an identifier is a parameter type annotation
+            b':' if paren_depth > 0
+                && brace_depth == 0
+                && i > 0
+                && (bytes[i - 1].is_ascii_alphanumeric()
+                    || bytes[i - 1] == b'_'
+                    || bytes[i - 1] == b'$') =>
+            {
                 i += 1;
                 i = skip_type_annotation(bytes, i);
             }
@@ -217,6 +274,60 @@ fn is_var_type_annotation_colon(line: &str, colon_pos: usize) -> bool {
     // No `=` found — the whole line is a declaration without initializer
     // e.g., `let x: number;` — the `:` IS a type annotation
     true
+}
+
+/// Check if `<` at position `i` starts a generic type argument list.
+/// Heuristic: try to find matching `>` with balanced nesting, followed by `(`.
+/// This distinguishes `f<T>()` (generic call) from `a < b` (comparison).
+fn is_generic_type_args(bytes: &[u8], start: usize) -> bool {
+    let len = bytes.len();
+    let mut depth = 0u32;
+    let mut j = start;
+    while j < len {
+        match bytes[j] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    // Check what follows the closing `>`
+                    let mut k = j + 1;
+                    while k < len && bytes[k] == b' ' {
+                        k += 1;
+                    }
+                    // `>` followed by `(` → generic call, or `)` → end of type arg in param
+                    // `>` followed by `,` → type arg in list, or `>` → nested generic
+                    return k < len && matches!(bytes[k], b'(' | b')' | b',' | b'>' | b';');
+                }
+            }
+            // If we hit something that can't be in a type argument, it's a comparison
+            b'{' | b'}' | b';' | b'=' => return false,
+            _ => {}
+        }
+        j += 1;
+    }
+    false
+}
+
+/// Skip past a balanced `<...>` block, returning the position after `>`.
+fn skip_angle_bracket_block(bytes: &[u8], start: usize) -> usize {
+    let len = bytes.len();
+    let mut depth = 0u32;
+    let mut j = start;
+    while j < len {
+        match bytes[j] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            b'{' | b'}' | b';' => return start + 1, // bail
+            _ => {}
+        }
+        j += 1;
+    }
+    start + 1 // bail
 }
 
 /// Skip past a type annotation in source text, stopping at `{`, `=>`, `,`,
