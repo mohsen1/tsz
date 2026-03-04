@@ -695,8 +695,11 @@ impl<'a> CheckerState<'a> {
                 // are treated as constructor functions (tsc's isJSConstructor). Synthesize
                 // an instance type from the collected this-property assignments.
                 if self.ctx.is_js_file()
-                    && let Some(instance_type) =
-                        self.synthesize_js_constructor_instance_type(new_expr.expression)
+                    && let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                        new_expr.expression,
+                        constructor_type,
+                        &arg_types,
+                    )
                 {
                     return instance_type;
                 }
@@ -1008,7 +1011,12 @@ impl<'a> CheckerState<'a> {
     /// Also scans `Foo.prototype.m = function() { this.y = ... }` patterns for
     /// properties assigned in prototype methods (typed as `T | undefined`).
     /// Returns `None` if the target is not a plain function or has no this-property assignments.
-    fn synthesize_js_constructor_instance_type(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
+    fn synthesize_js_constructor_instance_type(
+        &mut self,
+        expr_idx: NodeIndex,
+        constructor_type: TypeId,
+        arg_types: &[TypeId],
+    ) -> Option<TypeId> {
         use rustc_hash::FxHashMap;
         use tsz_binder::symbol_flags;
         use tsz_solver::PropertyInfo;
@@ -1048,10 +1056,70 @@ impl<'a> CheckerState<'a> {
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|ident| ident.escaped_text.clone());
 
-        // Collect this-property assignments from the constructor body
+        // Check if the constructor function has @template type params
+        let func_shape =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type);
+        let is_generic = func_shape
+            .as_ref()
+            .is_some_and(|s| !s.type_params.is_empty());
+
         let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
             FxHashMap::default();
-        self.collect_js_constructor_this_properties(body_idx, &mut properties, Some(sym_id));
+
+        if is_generic {
+            // For generic constructor functions, we build the instance type using
+            // the function shape's correctly-resolved parameter types (which were
+            // created during get_type_of_function when @template was in scope).
+            // We cannot use collect_js_constructor_this_properties here because
+            // get_type_of_node resolves types in the call site context, not the
+            // function declaration context.
+            let shape = func_shape.as_ref().unwrap();
+
+            // Build param name → type map from the function shape
+            let param_type_map: FxHashMap<String, TypeId> = func
+                .parameters
+                .nodes
+                .iter()
+                .zip(shape.params.iter())
+                .filter_map(|(&param_idx, param_info)| {
+                    let param_node = self.ctx.arena.get(param_idx)?;
+                    let param_data = self.ctx.arena.get_parameter(param_node)?;
+                    let name_node = self.ctx.arena.get(param_data.name)?;
+                    let ident = self.ctx.arena.get_identifier(name_node)?;
+                    Some((ident.escaped_text.clone(), param_info.type_id))
+                })
+                .collect();
+
+            // Push type params into scope for @type resolution
+            let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
+            let factory = self.ctx.types.factory();
+            for tp in &shape.type_params {
+                let name = self.ctx.types.resolve_atom(tp.name);
+                let ty = factory.type_param(tp.clone());
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                scope_restore.push((name, previous));
+            }
+
+            // Scan the constructor body for this-property patterns
+            self.collect_generic_constructor_this_properties(
+                body_idx,
+                &param_type_map,
+                &mut properties,
+                Some(sym_id),
+            );
+
+            // Restore type_parameter_scope
+            for (name, previous) in scope_restore {
+                if let Some(prev) = previous {
+                    self.ctx.type_parameter_scope.insert(name, prev);
+                } else {
+                    self.ctx.type_parameter_scope.remove(&name);
+                }
+            }
+        } else {
+            // Non-generic: use standard property collection
+            self.collect_js_constructor_this_properties(body_idx, &mut properties, Some(sym_id));
+        }
 
         // Also scan Foo.prototype.m = ... patterns for:
         // 1. Method bindings (added directly as instance properties)
@@ -1083,7 +1151,190 @@ impl<'a> CheckerState<'a> {
         // Build an object type from the collected properties
         let props: Vec<PropertyInfo> = properties.into_values().collect();
         let factory = self.ctx.types.factory();
-        Some(factory.object(props))
+        let instance_type = factory.object(props);
+
+        // If the constructor function has @template type params, instantiate the
+        // instance type by inferring type arguments from the actual call arguments.
+        if let Some(ref shape) = func_shape
+            && !shape.type_params.is_empty() && !arg_types.is_empty() {
+                let mut type_args = Vec::with_capacity(shape.type_params.len());
+                for tp in &shape.type_params {
+                    let tp_id = self.ctx.types.factory().type_param(tp.clone());
+                    let mut inferred = None;
+                    for (i, param) in shape.params.iter().enumerate() {
+                        if param.type_id == tp_id
+                            && let Some(&arg_ty) = arg_types.get(i) {
+                                // Widen literal types (e.g., 1 → number)
+                                // since non-const type params don't preserve literals
+                                inferred = Some(tsz_solver::operations::widening::widen_type(
+                                    self.ctx.types,
+                                    arg_ty,
+                                ));
+                                break;
+                            }
+                    }
+                    type_args.push(inferred.unwrap_or(TypeId::UNKNOWN));
+                }
+                let instantiated = tsz_solver::instantiate_generic(
+                    self.ctx.types,
+                    instance_type,
+                    &shape.type_params,
+                    &type_args,
+                );
+                return Some(instantiated);
+            }
+
+        Some(instance_type)
+    }
+
+    /// Collect this-property assignments from a generic JS constructor function body.
+    ///
+    /// Unlike `collect_js_constructor_this_properties`, this uses the function shape's
+    /// parameter types (correctly resolved during function type creation) instead of
+    /// re-evaluating types via `get_type_of_node` (which would resolve in the wrong scope).
+    /// Also handles bare `this.prop` expressions with `@type` JSDoc annotations.
+    fn collect_generic_constructor_this_properties(
+        &mut self,
+        body_idx: NodeIndex,
+        param_type_map: &rustc_hash::FxHashMap<String, TypeId>,
+        properties: &mut rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            tsz_solver::PropertyInfo,
+        >,
+        parent_sym: Option<tsz_binder::SymbolId>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+        use tsz_solver::{PropertyInfo, Visibility};
+
+        let stmts: Vec<NodeIndex> = {
+            let Some(body_node) = self.ctx.arena.get(body_idx) else {
+                return;
+            };
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            block.statements.nodes.clone()
+        };
+
+        for &stmt_idx in &stmts {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+
+            // Case 1: `this.prop = rhs` (binary assignment)
+            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
+                    && binary.operator_token == SyntaxKind::EqualsToken as u16
+                    && let Some((prop_name, rhs_type)) = self.extract_generic_this_assignment(
+                        binary.left,
+                        binary.right,
+                        param_type_map,
+                        stmt_idx,
+                    ) {
+                        let name_atom = self.ctx.types.intern_string(&prop_name);
+                        properties.entry(name_atom).or_insert(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: rhs_type,
+                                    write_type: rhs_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: parent_sym,
+                                    declaration_order: 0,
+                                });
+                    }
+                continue;
+            }
+
+            // Case 2: bare `this.prop` with `/** @type {T} */` annotation
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                    && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                    && obj_node.kind == SyntaxKind::ThisKeyword as u16
+                    && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let prop_name = ident.escaped_text.clone();
+                    // Check for @type annotation on the expression statement
+                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                        let name_atom = self.ctx.types.intern_string(&prop_name);
+                        properties.entry(name_atom).or_insert(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: jsdoc_type,
+                                    write_type: jsdoc_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: parent_sym,
+                                    declaration_order: 0,
+                                });
+                    }
+                }
+        }
+    }
+
+    /// Extract a this-property assignment's name and type for generic constructor context.
+    ///
+    /// For `this.prop = rhs`:
+    /// - If rhs is an identifier matching a parameter name, uses the function shape's type
+    /// - If there's a @type JSDoc annotation, uses that
+    /// - Otherwise falls back to `get_type_of_node` for the rhs
+    fn extract_generic_this_assignment(
+        &mut self,
+        lhs_idx: NodeIndex,
+        rhs_idx: NodeIndex,
+        param_type_map: &rustc_hash::FxHashMap<String, TypeId>,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, TypeId)> {
+        use tsz_scanner::SyntaxKind;
+
+        let lhs_node = self.ctx.arena.get(lhs_idx)?;
+        if lhs_node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(lhs_node)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        if obj_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let prop_name = ident.escaped_text.clone();
+
+        // Determine type: @type annotation > param type > get_type_of_node
+        let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+            jsdoc_type
+        } else {
+            // Check if RHS is a parameter identifier
+            let rhs_node = self.ctx.arena.get(rhs_idx)?;
+            if rhs_node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node) {
+                    if let Some(&param_type) = param_type_map.get(&rhs_ident.escaped_text) {
+                        param_type
+                    } else {
+                        self.get_type_of_node(rhs_idx)
+                    }
+                } else {
+                    self.get_type_of_node(rhs_idx)
+                }
+            } else {
+                self.get_type_of_node(rhs_idx)
+            }
+        };
+
+        Some((prop_name, type_id))
     }
 
     /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
