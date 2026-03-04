@@ -52,10 +52,30 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
 /// - Other `import`/`export` statements (identifiers in other imports are not value usages)
 pub fn strip_type_only_content(source: &str) -> String {
     let mut result = String::with_capacity(source.len());
+    // Track brace depth to skip multi-line type declaration bodies
+    // (interface, type alias, declare blocks)
+    let mut type_brace_depth: u32 = 0;
     for line in source.lines() {
         let trimmed = line.trim();
-        // Skip entirely type-only lines
-        if trimmed.starts_with("declare ")
+
+        // If we're inside a type declaration body, count braces to find the end
+        if type_brace_depth > 0 {
+            for ch in trimmed.chars() {
+                match ch {
+                    '{' => type_brace_depth += 1,
+                    '}' => type_brace_depth -= 1,
+                    _ => {}
+                }
+                if type_brace_depth == 0 {
+                    break;
+                }
+            }
+            result.push('\n');
+            continue;
+        }
+
+        // Check if this line starts a type-only declaration (possibly multi-line)
+        let is_type_only_start = trimmed.starts_with("declare ")
             || trimmed.starts_with("import type ")
             || trimmed.starts_with("import type{")
             || trimmed.starts_with("export type ")
@@ -73,8 +93,21 @@ pub fn strip_type_only_content(source: &str) -> String {
             || trimmed.starts_with("export{")
             || trimmed.starts_with("export {")
             || trimmed.starts_with("export *")
-            || trimmed.starts_with("export import ")
-        {
+            || trimmed.starts_with("export import ");
+
+        if is_type_only_start {
+            // Check if this line opens a brace block (multi-line declaration)
+            for ch in trimmed.chars() {
+                match ch {
+                    '{' => type_brace_depth += 1,
+                    '}' => {
+                        if type_brace_depth > 0 {
+                            type_brace_depth -= 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             result.push('\n');
             continue;
         }
