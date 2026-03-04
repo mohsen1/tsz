@@ -1,7 +1,55 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9958/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9960/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04k — JSDoc rest params and nested @property (+2 conf)
+
+### Fixed: @callback rest parameters and @typedef nested @property
+
+**Area**: jsdoc (66.67% → 67.07%)
+
+**Root causes**:
+1. **@callback rest params**: `@param {...string} args` in `@callback` definitions had `rest: false`
+   hardcoded in ParamInfo and the `...` prefix was never stripped from the type expression.
+   Similarly, Closure-compiler function type syntax `function(boolean, ...*):void` didn't handle
+   `...` prefix on parameter types.
+
+2. **@typedef nested @property**: `@property {Object} icons` followed by `@property {string} icons.image32`
+   created flat properties with dotted names (`"icons.image32": string`) instead of nested objects
+   (`icons: { image32: string }`).
+
+**Fix (1 file, 4 tests)**:
+1. **`types/utilities/jsdoc.rs`**: Three changes:
+   - Callback param builder: detect `...` prefix, strip it, resolve base type, wrap in `factory.array()`,
+     set `rest: true` on ParamInfo
+   - Closure-compiler function type parser: same `...` handling for `function(...Type):void` syntax
+   - Typedef property builder: group dotted property names by parent, build nested objects for
+     children (e.g., `icons.image32` → child of `icons`)
+
+**Tests added**: 4 unit tests in `jsdoc_callback_rest_tests.rs`:
+- `test_jsdoc_callback_rest_param_no_false_arity_error` — `{...string}` callback rest param
+- `test_jsdoc_callback_rest_any_param` — `{...*}` callback rest any param
+- `test_jsdoc_typedef_nested_property` — nested @property with dotted names
+- `test_jsdoc_closure_function_type_rest_param` — `function(boolean, ...*):void`
+
+**Tests fixed** (conformance): callbackTagVariadicType, typedefTagNested
+
+### Remaining JSDoc gaps
+
+1. **TS1016** (2 tests): `@param {type} [name]` bracket syntax doesn't set `seen_optional` in
+   `check_parameter_ordering`. Need to extend parameter ordering check to consider JSDoc optionality.
+
+2. **@typedef scope** (3 tests): `@typedef` inside function bodies creates module-scoped type names
+   instead of function-scoped. `typedefScope1`, `typedefCrossModule3`, `typedefCrossModule4`.
+
+3. **@constructor + prototype patterns** (multiple tests): `Foo.prototype = { ... }` object literal
+   assignment not synthesized into instance type. `jsdocTemplateTag5`, etc.
+
+4. **JSDoc `@type` tag on computed properties** (1 test): `['b' + 'ar1']` computed property with
+   `@type {number}` not recognized. `checkJsdocTypeTagOnObjectProperty1`.
+
+5. **11 fingerprint-only failures**: Error codes match but line/column/message differs. Low priority.
 
 ## Session 2026-03-04j — JS computed property class member recognition (+3 conf)
 
