@@ -582,15 +582,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // First pass: collect all missing required property names.
         // tsc emits TS2739 (multiple missing) or TS2741 (single missing) before
         // checking property type compatibility.
-        let mut missing_props: Vec<tsz_common::interner::Atom> = Vec::new();
+        // Collect with declaration_order so we can sort by source order (tsc lists
+        // missing properties in declaration order, not Atom/hash order).
+        let mut missing_with_order: Vec<(tsz_common::interner::Atom, u32)> = Vec::new();
         for t_prop in target_props {
             if !t_prop.optional {
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
                 if s_prop.is_none() {
-                    missing_props.push(t_prop.name);
+                    missing_with_order.push((t_prop.name, t_prop.declaration_order));
                 }
             }
         }
+        missing_with_order.sort_by_key(|&(_, order)| order);
+        let missing_props: Vec<tsz_common::interner::Atom> =
+            missing_with_order.into_iter().map(|(name, _)| name).collect();
 
         if missing_props.len() > 1 {
             return Some(SubtypeFailureReason::MissingProperties {
