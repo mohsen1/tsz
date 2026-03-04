@@ -1,7 +1,43 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9971/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9995/12570 (79.5%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04t — Generator union return types + TS2505 void annotation (+2 conf)
+
+### Fixed: Generator type arg extraction from union/alias return types
+
+**Area**: generators, es6/yieldExpressions
+
+**Root cause (two issues)**:
+
+1. **Type alias union not unwrapped for generator arg extraction**: When a generator function
+   declares a return type via a type alias that expands to `Generator<Y,R,N> | AsyncGenerator<Y,R,N>`,
+   the `get_generator_return_type_argument` (and yield/next variants) couldn't extract TReturn because
+   the type was an `Application(AliasRef, [Args])` — not a direct `Application(Generator, [Y,R,N])`.
+   The fix adds `shallow_expand_type_alias()` which instantiates the alias body with its args
+   without recursively evaluating Generator/AsyncGenerator into structural forms. Also adds union
+   member iteration to `get_generator_arg_direct()`.
+
+2. **Missing TS2505 for void generator return type**: Generators with `void` as their explicit return
+   type annotation should emit TS2505 "A generator cannot have a 'void' type annotation." instead of
+   confusing structural TS2322 mismatch errors. Added the check in both `statement_callback_bridge.rs`
+   (function declarations) and `function_type.rs` (function expressions).
+
+**Fix (4 files, +5 tests)**:
+- **`promise_checker.rs`**: Added `shallow_expand_type_alias()` for one-level alias expansion, union
+  member iteration in `get_generator_arg_direct()`, and `get_generator_arg_with_eval()` shared helper.
+- **`statement_callback_bridge.rs`**: Added TS2505 check before generator protocol validation.
+- **`function_type.rs`**: Added TS2505 check for function expression generators.
+- **Tests**: 5 unit tests covering union extraction, mismatch detection, and TS2505 emission.
+
+**Conformance tests fixed**: `generatorYieldContextualType` (+1), `generatorTypeCheck9` (+1)
+
+### Remaining generators/ failures (4 tests)
+- **generatorReturnTypeFallback.2**: Missing TS2318 (IterableIterator not available in es5 lib)
+- **generatorAssignability**: Missing TS2763-2766 (generator-specific assignability diagnostics)
+- **generatorReturnContextualType**: Fingerprint-only (Awaited<> in error message)
+- **generatorReturnTypeInferenceNonStrict**: Fingerprint-only (TS7055 message text difference)
 
 ## Session 2026-03-04s — Intersection type diagnostics: parenthesization + distribution preservation (+1 conf)
 
