@@ -1218,7 +1218,10 @@ impl<'a> CheckerState<'a> {
         let is_cross_file = symbol.decl_file_idx != u32::MAX
             && symbol.decl_file_idx != self.ctx.current_file_idx as u32;
 
-        if is_cross_file && (self.ctx.current_file_idx as u32) > symbol.decl_file_idx {
+        // TDZ is a same-file concept — cross-file references always refer to
+        // exports from another file, which are evaluated when that file loads.
+        // No TDZ applies regardless of file ordering.
+        if is_cross_file {
             return false;
         }
 
