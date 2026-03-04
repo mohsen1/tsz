@@ -591,6 +591,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Cross-file interface member conflicts: check local interface members
+            // against remote interface members for property-vs-method conflicts (TS2300).
+            // tsc reports "Duplicate identifier 'X'" when a property signature and method
+            // signature with the same name appear across merged interface declarations
+            // in different files.
+            {
+                let local_interface_decls: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(_, flags, is_local, _)| {
+                        *is_local && (flags & symbol_flags::INTERFACE) != 0
+                    })
+                    .map(|(decl_idx, _, _, _)| *decl_idx)
+                    .collect();
+                let remote_interface_decls: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(_, flags, is_local, _)| {
+                        !*is_local && (flags & symbol_flags::INTERFACE) != 0
+                    })
+                    .map(|(decl_idx, _, _, _)| *decl_idx)
+                    .collect();
+
+                if !local_interface_decls.is_empty() && !remote_interface_decls.is_empty() {
+                    self.check_cross_file_interface_member_conflicts(
+                        sym_id,
+                        &local_interface_decls,
+                        &remote_interface_decls,
+                    );
+                }
+            }
+
             let local_declarations_for_enums: Vec<(NodeIndex, u32)> = declarations
                 .iter()
                 .filter(|&(_, _, is_local, _)| *is_local)
@@ -1507,6 +1537,124 @@ impl<'a> CheckerState<'a> {
                 }
 
                 self.pop_type_parameters(updates);
+            }
+        }
+    }
+
+    /// Check cross-file interface member conflicts (property vs method with same name).
+    ///
+    /// When the same interface is declared across files, and one file uses a property
+    /// signature while the other uses a method signature for the same member name,
+    /// tsc emits TS2300 "Duplicate identifier" on the local declarations.
+    fn check_cross_file_interface_member_conflicts(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        local_interface_decls: &[NodeIndex],
+        remote_interface_decls: &[NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use rustc_hash::FxHashMap;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Collect member names and whether they are methods from remote interfaces.
+        // Maps member name -> is_method
+        let mut remote_members: FxHashMap<String, bool> = FxHashMap::default();
+
+        for &decl_idx in remote_interface_decls {
+            // Look up the remote arena for this declaration
+            let arenas = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx));
+            let remote_arenas: Vec<&tsz_parser::parser::NodeArena> = if let Some(arenas) = arenas {
+                arenas
+                    .iter()
+                    .filter(|a| !std::ptr::eq(&***a, self.ctx.arena))
+                    .map(|a| &**a)
+                    .collect()
+            } else {
+                continue;
+            };
+
+            for remote_arena in remote_arenas {
+                let Some(node) = remote_arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(iface) = remote_arena.get_interface(node) else {
+                    continue;
+                };
+
+                for &member_idx in &iface.members.nodes {
+                    let Some(member_node) = remote_arena.get(member_idx) else {
+                        continue;
+                    };
+
+                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                        || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+                    {
+                        let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
+                        let Some(sig) = remote_arena.get_signature(member_node) else {
+                            continue;
+                        };
+                        let Some(name) =
+                            crate::types_domain::queries::core::get_literal_property_name(
+                                remote_arena,
+                                sig.name,
+                            )
+                        else {
+                            continue;
+                        };
+                        remote_members.insert(name, is_method);
+                    }
+                }
+            }
+        }
+
+        if remote_members.is_empty() {
+            return;
+        }
+
+        // Now check local interface members against remote members
+        for &decl_idx in local_interface_decls {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(iface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+
+            for &member_idx in &iface.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+                {
+                    let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
+                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.get_property_name(sig.name) else {
+                        continue;
+                    };
+
+                    if let Some(&remote_is_method) = remote_members.get(&name) {
+                        if is_method != remote_is_method {
+                            // Property-vs-method conflict across files
+                            let message = format_message(
+                                diagnostic_messages::DUPLICATE_IDENTIFIER,
+                                &[&name],
+                            );
+                            self.error_at_node(
+                                sig.name,
+                                &message,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
