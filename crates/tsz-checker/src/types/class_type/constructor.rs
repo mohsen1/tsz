@@ -442,13 +442,24 @@ impl<'a> CheckerState<'a> {
 
         // Class constructor values always expose an implicit `prototype` property
         // whose type is the class instance type.
+        // For generic classes like `class C<T>`, the prototype is shared across all
+        // instantiations, so `C.prototype` must have type `C<any>` (all type params
+        // substituted with `any`), not the raw `C<T>`.
+        let prototype_type = if !class_type_params.is_empty() {
+            let any_args: Vec<TypeId> = class_type_params.iter().map(|_| TypeId::ANY).collect();
+            let substitution =
+                TypeSubstitution::from_args(self.ctx.types, &class_type_params, &any_args);
+            instantiate_type(self.ctx.types, instance_type, &substitution)
+        } else {
+            instance_type
+        };
         let prototype_name = self.ctx.types.intern_string("prototype");
         properties.insert(
             prototype_name,
             PropertyInfo {
                 name: prototype_name,
-                type_id: instance_type,
-                write_type: instance_type,
+                type_id: prototype_type,
+                write_type: prototype_type,
                 optional: false,
                 readonly: false,
                 is_method: false,
