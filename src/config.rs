@@ -340,6 +340,13 @@ pub struct ResolvedCompilerOptions {
     pub allow_js: bool,
     /// Enable error reporting in type-checked JavaScript files
     pub check_js: bool,
+    /// Whether `checkJs` was explicitly set to `false` in compiler options.
+    /// When `true`, ALL semantic errors are suppressed in JS files — even the
+    /// `plainJSErrors` allowlist (TS2451, TS2492, etc.) that applies in the
+    /// default (no-`checkJs`) mode. Distinct from `check_js == false` because
+    /// that default-false is the same as "not configured", which still permits
+    /// `plainJSErrors`.
+    pub explicit_check_js_false: bool,
     /// Skip type checking of declaration files (.d.ts)
     pub skip_lib_check: bool,
     /// Disable emitting declarations that have '@internal' in their JSDoc comments
@@ -867,6 +874,11 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+        if !check_js {
+            // Record that `checkJs: false` was explicit, not just the default.
+            // This suppresses even the `plainJSErrors` allowlist (TS2451, etc.).
+            resolved.explicit_check_js_false = true;
+        }
     }
     if let Some(skip_lib_check) = options.skip_lib_check {
         resolved.skip_lib_check = skip_lib_check;

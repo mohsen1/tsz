@@ -444,6 +444,7 @@ pub(super) fn collect_diagnostics(
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
         let check_js = options.check_js;
+        let explicit_check_js_false = options.explicit_check_js_false;
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let lib_ctx_for_parallel = lib_contexts.to_vec();
@@ -477,6 +478,7 @@ pub(super) fn collect_diagnostics(
                             file_is_esm_map: &file_is_esm_map,
                             no_check,
                             check_js,
+                            explicit_check_js_false,
                             skip_lib_check,
                         };
                         check_file_for_parallel(context)
@@ -504,6 +506,7 @@ pub(super) fn collect_diagnostics(
                             file_is_esm_map: &file_is_esm_map,
                             no_check,
                             check_js,
+                            explicit_check_js_false,
                             skip_lib_check,
                         };
                         check_file_for_parallel(context)
@@ -533,6 +536,7 @@ pub(super) fn collect_diagnostics(
                     file_is_esm_map: &file_is_esm_map,
                     no_check,
                     check_js,
+                    explicit_check_js_false,
                     skip_lib_check,
                 };
                 check_file_for_parallel(context)
@@ -705,12 +709,17 @@ pub(super) fn collect_diagnostics(
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
                 if should_filter_type_errors {
-                    // Keep syntax/semantic diagnostics (< 2000), JS grammar diagnostics
-                    // (TS8xxx), and specific semantic codes that tsc's plainJSErrors allows.
+                    // Keep syntax/semantic diagnostics (< 2000) and JS grammar diagnostics
+                    // (TS8xxx). When `checkJs` is NOT explicitly false (the default
+                    // no-checkJs mode), also allow the `plainJSErrors` codes that tsc
+                    // surfaces even in unchecked JS files. When `checkJs: false` is
+                    // explicitly set, suppress ALL semantic errors — tsc treats that as
+                    // a full opt-out.
                     checker_diagnostics.retain(|diag| {
                         diag.code < 2000
                             || (8000..9000).contains(&diag.code)
-                            || is_plain_js_allowed_code(diag.code)
+                            || (!options.explicit_check_js_false
+                                && is_plain_js_allowed_code(diag.code))
                     });
                 }
 
@@ -904,6 +913,10 @@ pub(super) struct CheckFileForParallelContext<'a> {
     file_is_esm_map: &'a Arc<FxHashMap<String, bool>>,
     no_check: bool,
     check_js: bool,
+    /// `true` when `checkJs: false` was explicitly specified in compiler options.
+    /// When set, ALL semantic errors are suppressed for JS files, including the
+    /// `plainJSErrors` allowlist that would otherwise survive the filter.
+    explicit_check_js_false: bool,
     skip_lib_check: bool,
 }
 
@@ -931,6 +944,7 @@ pub(super) fn check_file_for_parallel<'a>(
         file_is_esm_map,
         no_check,
         check_js,
+        explicit_check_js_false,
         skip_lib_check,
     } = context;
     let file = &program.files[file_idx];
@@ -1026,9 +1040,16 @@ pub(super) fn check_file_for_parallel<'a>(
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
         if should_filter_type_errors {
-            // Keep syntax/semantic diagnostics and JS grammar diagnostics (TS8xxx).
-            checker_diagnostics
-                .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
+            // Keep syntax/semantic diagnostics (< 2000) and JS grammar diagnostics
+            // (TS8xxx). When `checkJs` is NOT explicitly false (the default no-checkJs
+            // mode), also allow the `plainJSErrors` codes that tsc surfaces even in
+            // unchecked JS files. When `checkJs: false` is explicitly set, suppress
+            // ALL semantic errors — tsc treats that as a full opt-out.
+            checker_diagnostics.retain(|diag| {
+                diag.code < 2000
+                    || (8000..9000).contains(&diag.code)
+                    || (!explicit_check_js_false && is_plain_js_allowed_code(diag.code))
+            });
         }
 
         // Suppress semantic errors that cascade from structural parse failures.
