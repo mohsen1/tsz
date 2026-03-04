@@ -289,3 +289,83 @@ f.nonexistent;
         "Expected no TS2339 for constructor-declared 'x', got: {diagnostics:?}"
     );
 }
+
+// === Plain function constructor tests (non-class) ===
+
+/// Plain function constructor: `new Foo()` should return instance type with this.prop properties
+#[test]
+fn test_plain_function_constructor_this_prop_inference() {
+    let source = r#"
+/** @param {number} x */
+function Foo(x) {
+    this.x = x;
+    this.y = "hello";
+}
+var f = new Foo(42);
+/** @type {string} */
+var s = f.x;
+"#;
+    let diagnostics = check_js(source);
+    // f.x is number, assigning to string should produce TS2322
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for assigning number to string, got: {diagnostics:?}"
+    );
+}
+
+/// Plain function constructor: prototype methods should be accessible on instances
+#[test]
+fn test_plain_function_constructor_prototype_method_accessible() {
+    let source = r#"
+function Bar() {
+    this.x = 1;
+}
+Bar.prototype.greet = function() {
+    return "hi";
+};
+var b = new Bar();
+b.greet();
+b.x;
+"#;
+    let diagnostics = check_js(source);
+    // Neither b.greet nor b.x should trigger TS2339
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for constructor/prototype properties, got: {diagnostics:?}"
+    );
+}
+
+/// Plain function constructor: this.prop in prototype method should be accessible but nullable
+#[test]
+fn test_plain_function_constructor_prototype_this_prop_has_undefined() {
+    let source = r#"
+function Baz() {
+    this.x = 1;
+}
+Baz.prototype.m = function() {
+    this.y = 12;
+};
+var bz = new Baz();
+bz.y = undefined;
+"#;
+    let diagnostics = check_js(source);
+    // bz.y = undefined should NOT error (y is number | undefined from prototype method)
+    let ts2322_for_y: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2322 && msg.contains("undefined"))
+        .collect();
+    assert_eq!(
+        ts2322_for_y.len(),
+        0,
+        "Expected no TS2322 for assigning undefined to prototype-method property, got: {diagnostics:?}"
+    );
+}

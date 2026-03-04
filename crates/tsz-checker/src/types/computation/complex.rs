@@ -691,6 +691,16 @@ impl<'a> CheckerState<'a> {
         match result {
             CallResult::Success(return_type) => return_type,
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
+                // In JS/checkJs files, functions with `this.prop = value` assignments
+                // are treated as constructor functions (tsc's isJSConstructor). Synthesize
+                // an instance type from the collected this-property assignments.
+                if self.ctx.is_js_file()
+                    && let Some(instance_type) =
+                        self.synthesize_js_constructor_instance_type(new_expr.expression)
+                {
+                    return instance_type;
+                }
+
                 // TS7009: 'new' expression whose target lacks a construct signature
                 // implicitly has an 'any' type (only under noImplicitAny).
                 // Suppress in JS files: tsc treats functions that assign to `this`
@@ -990,6 +1000,261 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .is_some_and(|symbol| (symbol.flags & symbol_flags::CLASS) != 0)
+    }
+
+    /// Synthesize an instance type for a JS constructor function.
+    /// Given `function Foo(x) { this.a = x; this.b = "hello"; }`, collects the
+    /// `this.prop = value` assignments and builds an object type `{ a: T, b: string }`.
+    /// Also scans `Foo.prototype.m = function() { this.y = ... }` patterns for
+    /// properties assigned in prototype methods (typed as `T | undefined`).
+    /// Returns `None` if the target is not a plain function or has no this-property assignments.
+    fn synthesize_js_constructor_instance_type(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
+        use rustc_hash::FxHashMap;
+        use tsz_binder::symbol_flags;
+        use tsz_solver::PropertyInfo;
+
+        // Resolve the function symbol from the new expression target
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        // Only handle plain function declarations (not classes)
+        if symbol.flags & symbol_flags::CLASS != 0 {
+            return None;
+        }
+        if symbol.flags & symbol_flags::FUNCTION == 0 {
+            return None;
+        }
+
+        // Find the function body
+        let value_decl = symbol.value_declaration;
+        let node = self.ctx.arena.get(value_decl)?;
+        let func = self.ctx.arena.get_function(node)?;
+        let body_idx = func.body;
+        if body_idx.is_none() {
+            return None;
+        }
+
+        // Get the function name for prototype pattern matching
+        let func_name = func.name;
+        let func_name_str = self
+            .ctx
+            .arena
+            .get(func_name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|ident| ident.escaped_text.clone());
+
+        // Collect this-property assignments from the constructor body
+        let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
+            FxHashMap::default();
+        self.collect_js_constructor_this_properties(body_idx, &mut properties, Some(sym_id));
+
+        // Also scan Foo.prototype.m = ... patterns for:
+        // 1. Method bindings (added directly as instance properties)
+        // 2. this.prop assignments inside prototype methods (typed as T | undefined)
+        if let Some(ref func_name_s) = func_name_str {
+            let (method_bindings, this_props) =
+                self.collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
+
+            // Add prototype methods as instance properties
+            for (name, prop) in method_bindings {
+                properties.entry(name).or_insert(prop);
+            }
+
+            // Add this-properties from prototype methods (with | undefined)
+            for (name, mut prop) in this_props {
+                if let std::collections::hash_map::Entry::Vacant(e) = properties.entry(name) {
+                    let factory = self.ctx.types.factory();
+                    prop.type_id = factory.union(vec![prop.type_id, TypeId::UNDEFINED]);
+                    prop.write_type = prop.type_id;
+                    e.insert(prop);
+                }
+            }
+        }
+
+        if properties.is_empty() {
+            return None;
+        }
+
+        // Build an object type from the collected properties
+        let props: Vec<PropertyInfo> = properties.into_values().collect();
+        let factory = self.ctx.types.factory();
+        Some(factory.object(props))
+    }
+
+    /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
+    /// Returns two sets:
+    /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
+    /// - `this.prop` assignments from inside prototype method bodies (typed as T | undefined)
+    #[allow(clippy::type_complexity)]
+    fn collect_prototype_members_and_this_properties(
+        &mut self,
+        func_decl_idx: NodeIndex,
+        func_name: &str,
+        parent_sym: tsz_binder::SymbolId,
+    ) -> (
+        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let mut method_bindings = Vec::new();
+        let mut this_props = Vec::new();
+
+        // Find the parent block/source file containing the function declaration
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(func_decl_idx)
+            .map_or(NodeIndex::NONE, |e| e.parent);
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return (method_bindings, this_props);
+        };
+
+        // Get sibling statements from the parent block or source file
+        let siblings: Vec<NodeIndex> = if let Some(block) = self.ctx.arena.get_block(parent_node) {
+            block.statements.nodes.clone()
+        } else if let Some(source) = self.ctx.arena.get_source_file(parent_node) {
+            source.statements.nodes.clone()
+        } else {
+            return (method_bindings, this_props);
+        };
+
+        // Look for `FuncName.prototype.X = rhs` patterns
+        for &stmt_idx in &siblings {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            // Check LHS: FuncName.prototype.methodName
+            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(lhs_access) = self.ctx.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+
+            // The object should be FuncName.prototype
+            let Some(proto_node) = self.ctx.arena.get(lhs_access.expression) else {
+                continue;
+            };
+            if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node) else {
+                continue;
+            };
+
+            // Check: object is FuncName
+            let Some(base_node) = self.ctx.arena.get(proto_access.expression) else {
+                continue;
+            };
+            if base_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
+                continue;
+            };
+            if base_ident.escaped_text != func_name {
+                continue;
+            }
+
+            // Check: property is "prototype"
+            let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument) else {
+                continue;
+            };
+            let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node) else {
+                continue;
+            };
+            if proto_ident.escaped_text != "prototype" {
+                continue;
+            }
+
+            // Get the method name from the LHS
+            let Some(method_name_node) = self.ctx.arena.get(lhs_access.name_or_argument) else {
+                continue;
+            };
+            let Some(method_ident) = self.ctx.arena.get_identifier(method_name_node) else {
+                continue;
+            };
+            let method_name_str = method_ident.escaped_text.clone();
+            let method_name_atom = self.ctx.types.intern_string(&method_name_str);
+
+            // Add the prototype method itself as an instance property
+            let rhs_type = self.get_type_of_node(binary.right);
+            method_bindings.push((
+                method_name_atom,
+                tsz_solver::PropertyInfo {
+                    name: method_name_atom,
+                    type_id: rhs_type,
+                    write_type: rhs_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: true,
+                    visibility: tsz_solver::Visibility::Public,
+                    parent_id: Some(parent_sym),
+                    declaration_order: 0,
+                },
+            ));
+
+            // If RHS is a function, also collect this-property assignments from its body
+            let Some(rhs_node) = self.ctx.arena.get(binary.right) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+                continue;
+            }
+            let Some(rhs_func) = self.ctx.arena.get_function(rhs_node) else {
+                continue;
+            };
+            let method_body = rhs_func.body;
+            if method_body.is_none() {
+                continue;
+            }
+
+            // Collect this-property assignments from the prototype method body
+            let mut method_this_props: rustc_hash::FxHashMap<
+                tsz_common::interner::Atom,
+                tsz_solver::PropertyInfo,
+            > = rustc_hash::FxHashMap::default();
+            self.collect_js_constructor_this_properties(
+                method_body,
+                &mut method_this_props,
+                Some(parent_sym),
+            );
+
+            for (name, prop) in method_this_props {
+                this_props.push((name, prop));
+            }
+        }
+
+        (method_bindings, this_props)
     }
 
     /// Resolve a self-referencing class constructor in a static initializer.
