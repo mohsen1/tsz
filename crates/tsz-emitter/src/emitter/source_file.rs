@@ -375,6 +375,11 @@ impl<'a> Printer<'a> {
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
         let is_commonjs = self.ctx.is_commonjs();
+        // Check upfront if runtime helpers will be injected — this affects
+        // whether attached header comments should be deferred to after helpers.
+        let will_emit_helpers = !self.ctx.options.no_emit_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed();
         if let Some(text) = self.source_text {
             while self.comment_emit_idx < self.all_comments.len() {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
@@ -447,9 +452,20 @@ impl<'a> Printer<'a> {
                     // (with space) must follow the normal detached logic so they
                     // appear BEFORE `__esModule`, matching tsc behavior.
                     let is_triple_slash_no_space = trimmed_comment.starts_with("///<reference");
-                    if is_commonjs
-                        && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency))
-                    {
+                    // Defer "attached" comments (no blank line after) in two cases:
+                    // 1. CJS mode: always defer attached comments + triple-slash refs
+                    //    so they appear after __esModule/exports preamble.
+                    // 2. Any mode with helpers: defer attached comments so they
+                    //    appear after injected helpers (__awaiter, __decorate, etc.),
+                    //    matching tsc's behavior of keeping comments attached to
+                    //    the first real statement.
+                    let should_defer = (is_commonjs
+                        && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
+                        || (will_emit_helpers
+                            && !is_detached
+                            && !is_triple_slash_reference
+                            && !is_amd_dependency);
+                    if should_defer {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment_with_reindent(comment_text, Some(c_pos));

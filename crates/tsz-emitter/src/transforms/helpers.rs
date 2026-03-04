@@ -367,6 +367,38 @@ pub struct HelpersNeeded {
     pub set_function_name: bool,
 }
 
+impl HelpersNeeded {
+    /// Returns true if any helper is needed.
+    pub fn any_needed(&self) -> bool {
+        self.extends
+            || self.assign
+            || self.rest
+            || self.decorate
+            || self.param
+            || self.metadata
+            || self.awaiter
+            || self.generator
+            || self.values
+            || self.read
+            || self.spread_array
+            || self.async_values
+            || self.export_star
+            || self.import_default
+            || self.import_star
+            || self.make_template_object
+            || self.class_private_field_get
+            || self.class_private_field_set
+            || self.class_private_field_in
+            || self.create_binding
+            || self.add_disposable_resource
+            || self.dispose_resources
+            || self.es_decorate
+            || self.run_initializers
+            || self.prop_key
+            || self.set_function_name
+    }
+}
+
 /// Generate helper code for the needed helpers.
 ///
 /// Ordering follows TypeScript's `compareEmitHelpers` priority system.
