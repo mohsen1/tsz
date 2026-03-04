@@ -512,6 +512,31 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeData::Intersection(members_id)) => {
             ArrayLikeKind::Intersection(db.type_list(members_id).to_vec())
         }
+        // Type applications (e.g., `ConstructorParameters<Ctor>`): evaluate to
+        // resolve the application, then classify the result.
+        Some(TypeData::Application(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            if evaluated != type_id {
+                classify_array_like(db, evaluated)
+            } else {
+                ArrayLikeKind::Other
+            }
+        }
+        // Deferred conditional types: check if the default constraint is array-like.
+        // e.g., `T extends U ? infer P : never` where P is constrained to an array.
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.conditional_type(cond_id);
+            if cond.false_type == TypeId::NEVER {
+                // Common pattern: `T extends U ? X : never` — just check the true branch
+                classify_array_like(db, cond.true_type)
+            } else if cond.true_type == TypeId::NEVER {
+                classify_array_like(db, cond.false_type)
+            } else {
+                // General case: both branches must be array-like
+                // Return as union so the checker can validate each branch
+                ArrayLikeKind::Union(vec![cond.true_type, cond.false_type])
+            }
+        }
         // Homomorphic mapped types over array-like sources preserve array structure.
         // e.g., `{ [K in keyof T]: T[K] }` where `T extends readonly unknown[]`
         // is still array-like because it maps over an array/tuple.
