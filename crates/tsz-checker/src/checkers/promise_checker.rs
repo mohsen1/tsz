@@ -602,12 +602,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `Some(TReturn)` if the type is a Generator/AsyncGenerator/Iterator/AsyncIterator
     /// type application with at least 2 type arguments, otherwise `None`.
     pub fn get_generator_return_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        if let Some(result) = self.get_generator_arg_direct(type_id, 1) {
-            return Some(result);
-        }
-
-        // Fallback: resolve through interface/class heritage clauses.
-        self.resolve_generator_arg_from_heritage(type_id, 1, 0)
+        self.get_generator_arg_with_eval(type_id, 1)
     }
 
     /// Extract the `TYield` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
@@ -615,12 +610,7 @@ impl<'a> CheckerState<'a> {
     /// For `yield expr` in a generator with an explicit return annotation,
     /// `expr` must be assignable to `TYield` (the first type argument).
     pub fn get_generator_yield_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        if let Some(result) = self.get_generator_arg_direct(type_id, 0) {
-            return Some(result);
-        }
-
-        // Fallback: resolve through interface/class heritage clauses.
-        self.resolve_generator_arg_from_heritage(type_id, 0, 0)
+        self.get_generator_arg_with_eval(type_id, 0)
     }
 
     /// Extract the `TNext` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
@@ -628,30 +618,97 @@ impl<'a> CheckerState<'a> {
     /// For yield expressions in a generator, the result type of `yield` is `TNext`
     /// (the type passed to `.next()`). This is the third type argument (index 2).
     pub fn get_generator_next_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        if let Some(result) = self.get_generator_arg_direct(type_id, 2) {
+        self.get_generator_arg_with_eval(type_id, 2)
+    }
+
+    /// Shared helper: try direct extraction, then heritage, then shallow-expand
+    /// type alias applications and retry.
+    fn get_generator_arg_with_eval(&mut self, type_id: TypeId, arg_index: usize) -> Option<TypeId> {
+        if let Some(result) = self.get_generator_arg_direct(type_id, arg_index) {
             return Some(result);
         }
 
         // Fallback: resolve through interface/class heritage clauses.
-        self.resolve_generator_arg_from_heritage(type_id, 2, 0)
+        if let Some(result) = self.resolve_generator_arg_from_heritage(type_id, arg_index, 0) {
+            return Some(result);
+        }
+
+        // Fallback: shallow-expand type alias applications.
+        // For `type MyGen<T> = Generator<..., T, ...> | AsyncGenerator<..., T, ...>`,
+        // instantiate the alias body with args but don't recursively evaluate
+        // Generator/AsyncGenerator into structural forms. This preserves the
+        // Application wrappers we need to extract type args from.
+        if let Some(expanded) = self.shallow_expand_type_alias(type_id) {
+            return self.get_generator_arg_direct(expanded, arg_index);
+        }
+
+        None
     }
 
-    /// Direct extraction of a type argument at `arg_index` from a generator-like Application type.
-    fn get_generator_arg_direct(&mut self, type_id: TypeId, arg_index: usize) -> Option<TypeId> {
-        let app = query::type_application(self.ctx.types, type_id)?;
-
-        if app.args.is_empty() || !self.is_generator_like_base_type(app.base) {
+    /// Expand a type alias application by one level: substitute type args into the body
+    /// without recursively evaluating the result. This preserves Application types like
+    /// `Generator<Y,R,N>` in their wrapper form rather than expanding them to structural objects.
+    fn shallow_expand_type_alias(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let (base, args) = tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;
+        if args.is_empty() {
             return None;
         }
 
-        if arg_index < app.args.len() {
-            Some(app.args[arg_index])
-        } else if arg_index == 1 && app.args.len() == 1 {
-            // IterableIterator<T>, AsyncIterableIterator<T> — only 1 type arg.
-            // TReturn defaults to `any` per the lib definitions.
-            Some(TypeId::ANY)
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body_type == TypeId::ANY || body_type == TypeId::ERROR || type_params.is_empty() {
+            return None;
+        }
+
+        let substitution =
+            tsz_solver::TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+        let instantiated = tsz_solver::instantiate_type(self.ctx.types, body_type, &substitution);
+        if instantiated != type_id {
+            Some(instantiated)
         } else {
             None
+        }
+    }
+
+    /// Direct extraction of a type argument at `arg_index` from a generator-like Application type.
+    /// Also handles union types (e.g., `Generator<Y,R,N> | AsyncGenerator<Y,R,N>`) by extracting
+    /// the arg from each union member and combining them into a union.
+    fn get_generator_arg_direct(&mut self, type_id: TypeId, arg_index: usize) -> Option<TypeId> {
+        // Try direct extraction first (non-union case)
+        if let Some(app) = query::type_application(self.ctx.types, type_id) {
+            if !app.args.is_empty() && self.is_generator_like_base_type(app.base) {
+                if arg_index < app.args.len() {
+                    return Some(app.args[arg_index]);
+                } else if arg_index == 1 && app.args.len() == 1 {
+                    // IterableIterator<T>, AsyncIterableIterator<T> — only 1 type arg.
+                    // TReturn defaults to `any` per the lib definitions.
+                    return Some(TypeId::ANY);
+                }
+            }
+            return None;
+        }
+
+        // Handle union types: extract the arg from each generator-like member
+        let members = query::union_members(self.ctx.types, type_id)?;
+        let mut extracted_args: Vec<TypeId> = Vec::new();
+        for member in &members {
+            if let Some(app) = query::type_application(self.ctx.types, *member)
+                && !app.args.is_empty() && self.is_generator_like_base_type(app.base) {
+                    if arg_index < app.args.len() {
+                        extracted_args.push(app.args[arg_index]);
+                    } else if arg_index == 1 && app.args.len() == 1 {
+                        extracted_args.push(TypeId::ANY);
+                    }
+                }
+        }
+        if extracted_args.is_empty() {
+            return None;
+        }
+        // If all extracted args are the same, return it directly; otherwise union them
+        if extracted_args.iter().all(|&a| a == extracted_args[0]) {
+            Some(extracted_args[0])
+        } else {
+            Some(self.ctx.types.factory().union(extracted_args))
         }
     }
 
