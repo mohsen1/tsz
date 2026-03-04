@@ -136,6 +136,7 @@ function findTszBinary(): string {
   }
 
   const possiblePaths = [
+    path.join(ROOT_DIR, '.target/dist-fast/tsz'),
     path.join(ROOT_DIR, '.target/release/tsz'),
     path.join(ROOT_DIR, 'target/release/tsz'),
     tszInPath(),
