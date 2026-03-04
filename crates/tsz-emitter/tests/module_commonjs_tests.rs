@@ -6,13 +6,20 @@ use tsz_parser::parser::ParserState;
 
 #[test]
 fn test_sanitize_module_name() {
+    // tsc uses the last path segment of the module specifier
     assert_eq!(sanitize_module_name("./foo"), "foo");
-    assert_eq!(sanitize_module_name("./foo/bar"), "foo_bar");
+    assert_eq!(sanitize_module_name("./foo/bar"), "bar");
     assert_eq!(sanitize_module_name("../utils"), "utils");
-    assert_eq!(sanitize_module_name("@scope/pkg"), "_scope_pkg");
-    assert_eq!(sanitize_module_name("./foo-bar/baz.qux"), "foo_bar_baz_qux");
-    assert_eq!(sanitize_module_name("./123pkg/mod"), "_123pkg_mod");
+    assert_eq!(sanitize_module_name("@scope/pkg"), "pkg");
+    assert_eq!(sanitize_module_name("./foo-bar/baz.qux"), "baz_qux");
+    assert_eq!(sanitize_module_name("./123pkg/mod"), "mod");
     assert_eq!(sanitize_module_name("./"), "module");
+    // Scoped packages with subpaths
+    assert_eq!(sanitize_module_name("@ts-bug/core/utils"), "utils");
+    assert_eq!(sanitize_module_name("ext/other"), "other");
+    assert_eq!(sanitize_module_name("@emotion/react"), "react");
+    // Simple module names (no path separator)
+    assert_eq!(sanitize_module_name("demoModule"), "demoModule");
 }
 
 #[test]

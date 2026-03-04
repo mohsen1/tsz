@@ -292,15 +292,24 @@ pub(crate) fn string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<S
 
 /// Sanitize a module specifier string for use as a JavaScript variable name.
 ///
-/// Strips leading `./` and `../` prefixes, replaces non-identifier characters
-/// with `_`, and ensures the result is a valid identifier (non-empty, starts
-/// with a letter/`_`/`$`).
+/// Extracts the last path segment of a module specifier and sanitizes it
+/// to a valid JS identifier base name (matching tsc's `makeUniqueName`).
+///
+/// Examples:
+///   `"ext/other"` → `"other"`
+///   `"@ts-bug/core/utils"` → `"utils"`
+///   `"@emotion/react"` → `"react"`
+///   `"demoModule"` → `"demoModule"`
+///   `"./foo"` → `"foo"`
 pub(crate) fn sanitize_module_name(module_spec: &str) -> String {
+    // tsc uses the last path segment of the module specifier for the
+    // generated variable name (the part after the final `/`).
     let raw = module_spec
         .trim_start_matches("./")
         .trim_start_matches("../");
-    let mut sanitized = String::with_capacity(raw.len());
-    for ch in raw.chars() {
+    let last_segment = raw.rsplit('/').next().unwrap_or(raw);
+    let mut sanitized = String::with_capacity(last_segment.len());
+    for ch in last_segment.chars() {
         if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
             sanitized.push(ch);
         } else {
