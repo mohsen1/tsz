@@ -241,13 +241,23 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
-        let func = if is_jsxs { "_jsxs" } else { "_jsx" };
+        let is_cjs = self.ctx.is_commonjs();
+        let func_name = if is_jsxs { "jsxs" } else { "jsx" };
 
-        self.write(func);
-        self.write("(");
+        if is_cjs {
+            let var_name = self.jsx_cjs_runtime_var();
+            self.write(&format!("(0, {var_name}.{func_name})("));
+        } else {
+            self.write(if is_jsxs { "_jsxs(" } else { "_jsx(" });
+        }
 
         // Fragment tag
-        self.write("_Fragment");
+        if is_cjs {
+            let var_name = self.jsx_cjs_runtime_var();
+            self.write(&format!("{var_name}.Fragment"));
+        } else {
+            self.write("_Fragment");
+        }
 
         // Props with children
         self.write(", { ");
@@ -297,9 +307,17 @@ impl<'a> Printer<'a> {
             .collect();
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
-        let func = if is_jsxs { "_jsxs" } else { "_jsx" };
-        self.write(func);
-        self.write("(");
+        let is_cjs = self.ctx.is_commonjs();
+        let func_name = if is_jsxs { "jsxs" } else { "jsx" };
+
+        if is_cjs {
+            // CJS: (0, jsx_runtime_1.jsx)(tag, props)
+            let var_name = self.jsx_cjs_runtime_var();
+            self.write(&format!("(0, {var_name}.{func_name})("));
+        } else {
+            // ESM: _jsx(tag, props)
+            self.write(if is_jsxs { "_jsxs(" } else { "_jsx(" });
+        }
 
         // Tag name
         self.emit_jsx_tag_name_as_argument(tag_name);
@@ -884,10 +902,22 @@ impl<'a> Printer<'a> {
     // JSX Auto Import Injection
     // =========================================================================
 
+    /// Get the CJS variable name for the JSX runtime module import.
+    /// e.g., "react/jsx-runtime" → "jsx_runtime_1", "react/jsx-dev-runtime" → "jsx_dev_runtime_1"
+    fn jsx_cjs_runtime_var(&self) -> String {
+        let suffix = match self.ctx.options.jsx {
+            JsxEmit::ReactJsxDev => "jsx-dev-runtime",
+            _ => "jsx-runtime",
+        };
+        let sanitized = crate::transforms::emit_utils::sanitize_module_name(suffix);
+        format!("{sanitized}_1")
+    }
+
     /// Check if the file needs JSX runtime auto-imports and return the import text.
     /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
     /// Only imports the functions that are actually used in the file.
     pub(super) fn jsx_auto_import_text(&self) -> Option<String> {
+        let is_cjs = self.ctx.is_commonjs();
         match self.ctx.options.jsx {
             JsxEmit::ReactJsx => {
                 let source = self
@@ -900,20 +930,27 @@ impl<'a> Printer<'a> {
                 if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
                     return None;
                 }
-                let mut imports = Vec::new();
-                if usage.needs_jsx {
-                    imports.push("jsx as _jsx");
+                if is_cjs {
+                    let var_name = self.jsx_cjs_runtime_var();
+                    Some(format!(
+                        "const {var_name} = require(\"{source}/jsx-runtime\");\n"
+                    ))
+                } else {
+                    let mut imports = Vec::new();
+                    if usage.needs_jsx {
+                        imports.push("jsx as _jsx");
+                    }
+                    if usage.needs_jsxs {
+                        imports.push("jsxs as _jsxs");
+                    }
+                    if usage.needs_fragment {
+                        imports.push("Fragment as _Fragment");
+                    }
+                    Some(format!(
+                        "import {{ {} }} from \"{source}/jsx-runtime\";\n",
+                        imports.join(", ")
+                    ))
                 }
-                if usage.needs_jsxs {
-                    imports.push("jsxs as _jsxs");
-                }
-                if usage.needs_fragment {
-                    imports.push("Fragment as _Fragment");
-                }
-                Some(format!(
-                    "import {{ {} }} from \"{source}/jsx-runtime\";\n",
-                    imports.join(", ")
-                ))
             }
             JsxEmit::ReactJsxDev => {
                 let source = self
@@ -926,17 +963,24 @@ impl<'a> Printer<'a> {
                 if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
                     return None;
                 }
-                let mut imports = Vec::new();
-                if usage.needs_jsx || usage.needs_jsxs {
-                    imports.push("jsxDEV as _jsxDEV");
+                if is_cjs {
+                    let var_name = self.jsx_cjs_runtime_var();
+                    Some(format!(
+                        "const {var_name} = require(\"{source}/jsx-dev-runtime\");\n"
+                    ))
+                } else {
+                    let mut imports = Vec::new();
+                    if usage.needs_jsx || usage.needs_jsxs {
+                        imports.push("jsxDEV as _jsxDEV");
+                    }
+                    if usage.needs_fragment {
+                        imports.push("Fragment as _Fragment");
+                    }
+                    Some(format!(
+                        "import {{ {} }} from \"{source}/jsx-dev-runtime\";\n",
+                        imports.join(", ")
+                    ))
                 }
-                if usage.needs_fragment {
-                    imports.push("Fragment as _Fragment");
-                }
-                Some(format!(
-                    "import {{ {} }} from \"{source}/jsx-dev-runtime\";\n",
-                    imports.join(", ")
-                ))
             }
             _ => None,
         }

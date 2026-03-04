@@ -535,13 +535,17 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit JSX auto-import for jsx=react-jsx / react-jsxdev
-        if let Some(jsx_import) = self.jsx_auto_import_text() {
-            self.write(&jsx_import);
+        // Emit JSX auto-import for jsx=react-jsx / react-jsxdev (ESM only here;
+        // CJS require() is emitted after __esModule below)
+        let jsx_import_text = self.jsx_auto_import_text();
+        if !self.ctx.is_commonjs() {
+            if let Some(ref jsx_import) = jsx_import_text {
+                self.write(jsx_import);
+            }
         }
 
         // Emit runtime helpers (must come BEFORE __esModule marker)
-        // Order: "use strict" → jsx-import → helpers → __esModule → exports init
+        // Order: "use strict" → jsx-import(ESM) → helpers → __esModule → jsx-import(CJS) → exports init
 
         // Use helpers from TransformContext (populated during lowering pass)
         // This eliminates O(N) arena scans - all helpers are detected in Phase 1
@@ -645,6 +649,11 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             self.ctx.module_state.default_func_export_hoisted = default_func_export.is_some();
+
+            // Emit CJS JSX runtime require() after exports preamble
+            if let Some(ref jsx_import) = jsx_import_text {
+                self.write(jsx_import);
+            }
         }
 
         if !deferred_header_comments.is_empty() {
