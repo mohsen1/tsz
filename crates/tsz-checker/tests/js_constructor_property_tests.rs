@@ -344,6 +344,67 @@ b.x;
     );
 }
 
+/// Generic constructor function with @template: instance properties get instantiated types
+#[test]
+fn test_generic_constructor_function_template_instantiation() {
+    let source = r#"
+/**
+ * @param {T} t
+ * @template T
+ */
+function Zet(t) {
+    /** @type {T} */
+    this.u
+    this.t = t
+}
+var z = new Zet(1)
+z.t = 2
+z.u = false
+"#;
+    let diagnostics = check_js(source);
+    // z.u = false should produce TS2322: boolean not assignable to number
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly 1 TS2322 for 'z.u = false', got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0].1.contains("boolean"),
+        "Expected error about boolean, got: {}",
+        ts2322[0].1
+    );
+}
+
+/// Generic constructor: z.t = 2 should not error (number assignable to number)
+#[test]
+fn test_generic_constructor_function_template_compatible_assignment() {
+    let source = r#"
+/**
+ * @param {T} t
+ * @template T
+ */
+function Zet(t) {
+    this.t = t
+}
+var z = new Zet(1)
+z.t = 2
+"#;
+    let diagnostics = check_js(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for compatible assignment z.t = 2, got: {diagnostics:?}"
+    );
+}
+
 /// Plain function constructor: this.prop in prototype method should be accessible but nullable
 #[test]
 fn test_plain_function_constructor_prototype_this_prop_has_undefined() {

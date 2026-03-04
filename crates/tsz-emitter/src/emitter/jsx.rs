@@ -903,7 +903,7 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Get the CJS variable name for the JSX runtime module import.
-    /// e.g., "react/jsx-runtime" → "jsx_runtime_1", "react/jsx-dev-runtime" → "jsx_dev_runtime_1"
+    /// e.g., "react/jsx-runtime" → "`jsx_runtime_1`", "react/jsx-dev-runtime" → "`jsx_dev_runtime_1`"
     fn jsx_cjs_runtime_var(&self) -> String {
         let suffix = match self.ctx.options.jsx {
             JsxEmit::ReactJsxDev => "jsx-dev-runtime",
