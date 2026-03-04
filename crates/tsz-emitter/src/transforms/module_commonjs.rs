@@ -389,6 +389,52 @@ pub fn collect_export_names_categorized(
     (func_exports, other_exports, default_func_export)
 }
 
+/// Collect names from inline-exported variable declarations (`export let/const/var`).
+///
+/// In CJS mode, tsc substitutes ALL identifier references to these variables
+/// with `exports.X` (both reads and writes).  This does NOT apply to classes,
+/// functions, enums, namespaces, or re-exports (`export { y }`).
+pub fn collect_inline_exported_var_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        // Direct: export let/const/var x = ...
+        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            if let Some(var_stmt) = arena.get_variable(node)
+                && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                for &decl_idx in &var_stmt.declarations.nodes {
+                    collect_declaration_names(arena, decl_idx, &mut names);
+                }
+            }
+        }
+        // Wrapped: ExportDeclaration { clause: VariableStatement }
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(export_decl) = arena.get_export_decl(node)
+                && !export_decl.is_type_only
+                && export_decl.module_specifier.is_none()
+                && let Some(clause_node) = arena.get(export_decl.export_clause)
+                && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                if let Some(var_stmt) = arena.get_variable(clause_node)
+                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        collect_declaration_names(arena, decl_idx, &mut names);
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Emit the exports initialization line
 ///
 /// ```javascript

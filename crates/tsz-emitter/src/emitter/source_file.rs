@@ -596,6 +596,16 @@ impl<'a> Printer<'a> {
                     &source.statements.nodes,
                     self.ctx.options.preserve_const_enums,
                 );
+
+            // Collect inline-exported variable names for read substitution.
+            // In CJS, tsc rewrites all references to `export let/const/var` names
+            // as `exports.X` (both reads and writes).
+            let inline_var_names = module_commonjs::collect_inline_exported_var_names(
+                self.arena,
+                &source.statements.nodes,
+            );
+            self.commonjs_exported_var_names
+                .extend(inline_var_names.into_iter());
             // When `export =` is present, suppress hoisted function exports
             // (exports.f = f;) since module.exports replaces them, but keep
             // void 0 initialization for non-function exports (tsc behavior).
