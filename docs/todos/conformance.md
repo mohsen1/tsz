@@ -1,7 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9953/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9958/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04j — JS computed property class member recognition (+3 conf)
+
+### Fixed: `this[computedKey] = value` in JS class constructors now recognized as class members
+
+**Area**: salsa (66.3% → 67.9%)
+
+**Root cause**: `extract_this_property_assignment` in `class_type/core.rs` only handled
+`PROPERTY_ACCESS_EXPRESSION` (`this.prop = value`), not `ELEMENT_ACCESS_EXPRESSION`
+(`this[key] = value`). When a JS class constructor used computed property assignments like
+`this[_sym] = "ok"` (where `_sym = Symbol("_sym")`) or `this["key"] = "value"`, these
+assignments were silently ignored during class member collection. This caused:
+- TS2322 false positives ("Type 'string' is not assignable to type 'undefined'") for Symbol-keyed properties
+- TS7053 false positives ("Element implicitly has an 'any' type") for string-keyed properties
+- Both errors for `var self = this; self[key] = value` alias patterns
+
+**Fix (1 file)**:
+1. **`types/class_type/core.rs`**: Extended `extract_this_property_assignment` to also handle
+   `ELEMENT_ACCESS_EXPRESSION`. For element access, evaluates the key expression's type with
+   `preserve_literal_types = true` and uses `literal_property_name` solver query to resolve
+   the property name. Supports Symbol keys, string literal keys, and const variable references.
+   Changed method from `&self` to `&mut self` to enable type evaluation.
+
+**Tests added**: 3 unit tests in `js_constructor_property_tests.rs`:
+- `test_js_constructor_element_access_symbol_key_no_false_error` — Symbol key
+- `test_js_constructor_element_access_string_key_no_false_error` — string literal key
+- `test_js_constructor_element_access_self_alias_no_false_error` — self alias with Symbol key
+
+**Tests fixed** (conformance): lateBoundClassMemberAssignmentJS, lateBoundClassMemberAssignmentJS2,
+lateBoundClassMemberAssignmentJS3
+
+### Remaining salsa computed property issues
+
+1. **lateBoundAssignmentDeclarationSupport1-5**: Multi-file tests where computed property assignments
+   happen on module exports (e.g., `exports[_sym] = "ok"` in one file, accessed from another).
+   Need cross-file type resolution for computed properties on module exports.
+
+2. **lateBoundAssignmentDeclarationSupport6**: Error-code matches but fingerprint fails — likely
+   a message text or location offset issue.
 
 ## Session 2026-03-04i — Generic JS constructor @template instantiation (+1 conf)
 
