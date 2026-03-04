@@ -1198,8 +1198,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.module,
             tsz_common::common::ModuleKind::Preserve
         );
+        // For node module modes (node16/node18/node20/nodenext), the module format
+        // is per-file: .mts → ESM, .cts → CJS, .ts → depends on nearest package.json
+        // "type" field. Use `file_is_esm` from the driver to determine this.
+        let is_node_esm_file =
+            self.ctx.compiler_options.module.is_node_module() && self.ctx.file_is_esm == Some(true);
 
-        if (is_es_module || is_system_module)
+        if (is_es_module || is_system_module || is_node_esm_file)
             && !is_preserve
             && !is_declaration_file
             && !self.is_js_file()
