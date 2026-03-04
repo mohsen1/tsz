@@ -795,6 +795,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &s_callable.properties,
                     &t_callable.properties,
                     priority,
+                    false, // callables are not fresh object literals
                 );
                 if let (Some(s_idx), Some(t_idx)) =
                     (&s_callable.string_index, &t_callable.string_index)
@@ -842,12 +843,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_is_fresh = s_shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
                 self.constrain_properties(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape.properties,
                     priority,
+                    source_is_fresh,
                 );
             }
             (
@@ -856,12 +861,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_is_fresh = s_shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
                 self.constrain_properties(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape.properties,
                     priority,
+                    source_is_fresh,
                 );
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.string_index) {
                     self.constrain_types(
@@ -899,12 +908,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::ObjectWithIndex(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_is_fresh = s_shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
                 self.constrain_properties(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape.properties,
                     priority,
+                    source_is_fresh,
                 );
                 self.constrain_properties_against_index_signatures(
                     ctx,
@@ -917,12 +930,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_is_fresh = s_shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
                 self.constrain_properties(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape.properties,
                     priority,
+                    source_is_fresh,
                 );
                 self.constrain_index_signatures_to_properties(
                     ctx,
@@ -1585,6 +1602,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_props: &[PropertyInfo],
         target_props: &[PropertyInfo],
         priority: crate::types::InferencePriority,
+        source_is_fresh: bool,
     ) {
         let mut source_idx = 0;
         let mut target_idx = 0;
@@ -1603,6 +1621,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             priority,
                             property_index,
                             Some(source.name),
+                            source_is_fresh,
                         );
                     } else {
                         self.constrain_types(
@@ -1626,6 +1645,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     priority,
                                     property_index,
                                     Some(source.name),
+                                    source_is_fresh,
                                 );
                             } else {
                                 self.constrain_types(
@@ -1644,6 +1664,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                                 property_index,
                                 Some(source.name),
+                                source_is_fresh,
                             );
                         } else {
                             self.constrain_types(
@@ -2041,6 +2062,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                         property_index,
                         None,
+                        false,
                     );
                 } else {
                     self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
@@ -2055,6 +2077,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                         property_index,
                         None,
+                        false,
                     );
                 } else {
                     self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
@@ -2099,6 +2122,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                         property_index,
                         None,
+                        false,
                     );
                 } else {
                     self.constrain_types(ctx, var_map, number_idx.value_type, prop_type, priority);
@@ -2113,6 +2137,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                         property_index,
                         None,
+                        false,
                     );
                 } else {
                     self.constrain_types(ctx, var_map, string_idx.value_type, prop_type, priority);

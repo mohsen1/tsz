@@ -317,7 +317,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Return true if a binary operator token is any assignment operator.
-    fn is_assignment_operator(op: u16) -> bool {
+    const fn is_assignment_operator(op: u16) -> bool {
         op == SyntaxKind::EqualsToken as u16
             || op == SyntaxKind::PlusEqualsToken as u16
             || op == SyntaxKind::MinusEqualsToken as u16

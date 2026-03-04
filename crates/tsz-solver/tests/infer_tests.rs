@@ -300,6 +300,7 @@ fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
         crate::types::InferencePriority::NakedTypeVariable,
         1,
         Some(baz),
+        false,
     );
     ctx.add_property_candidate_with_index(
         var,
@@ -307,10 +308,64 @@ fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
         crate::types::InferencePriority::NakedTypeVariable,
         0,
         Some(bar),
+        false,
     );
 
     let result = ctx.resolve_with_constraints(var).unwrap();
     assert_eq!(result, TypeId::NUMBER);
+}
+
+#[test]
+fn test_fresh_object_property_literal_is_widened() {
+    // When a literal type is inferred from a fresh object literal property,
+    // it should be widened (e.g., "hello" → string). This matches TSC's
+    // RequiresWidening behavior for object literal expressions.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    let hello = interner.literal_string("hello");
+    let prop_name = interner.intern_string("a");
+
+    // source_is_fresh = true → candidate should be widened
+    ctx.add_property_candidate_with_index(
+        var,
+        hello,
+        crate::types::InferencePriority::NakedTypeVariable,
+        0,
+        Some(prop_name),
+        true, // source is a fresh object literal
+    );
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    // "hello" should be widened to string because source is fresh
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_non_fresh_object_property_literal_is_not_widened() {
+    // When a literal type is inferred from a non-fresh object (type annotation),
+    // it should NOT be widened. E.g., type A = { kind: 'a' } → T infers 'a', not string.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    let a_lit = interner.literal_string("a");
+    let prop_name = interner.intern_string("kind");
+
+    // source_is_fresh = false → candidate should NOT be widened
+    ctx.add_property_candidate_with_index(
+        var,
+        a_lit,
+        crate::types::InferencePriority::NakedTypeVariable,
+        0,
+        Some(prop_name),
+        false, // source is not a fresh object literal
+    );
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    // 'a' should NOT be widened — it's from a type annotation
+    assert_eq!(result, a_lit);
 }
 
 #[test]
