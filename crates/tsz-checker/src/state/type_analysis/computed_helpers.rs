@@ -331,6 +331,13 @@ impl<'a> CheckerState<'a> {
         let original_object_type = object_type;
         let object_type = self.evaluate_application_type(object_type);
 
+        // Resolve Lazy class types to their constructor type for private name access.
+        // When a class references itself during construction (e.g., `static s = C.#method()`),
+        // the type of `C` is a Lazy(DefId) placeholder. The solver's resolve_lazy resolves
+        // this to the INSTANCE type, but for value-position class references, we need the
+        // CONSTRUCTOR type (which has the static private members).
+        let object_type = self.resolve_lazy_class_to_constructor(object_type);
+
         // Property access on `never` returns `never` (bottom type propagation).
         // TSC does not emit TS18050 for property access on `never` — the result is
         // simply `never`, which allows exhaustive narrowing patterns to work correctly.
