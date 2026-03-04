@@ -1,7 +1,61 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9943/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9947/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04g — Declared primitive constraint literal preservation (+4 conf)
+
+### Fixed: Literal types preserved for `T extends string/number/boolean/bigint` constraints
+
+**Area**: types/literal (65.9% → improved), compiler
+
+**Root cause**: In `resolve_from_candidates()` (infer_resolve.rs), `constraint_implies_literals()` only checked
+if upper bounds contained literal types (like `"a" | "b"`). It missed the case where the declared constraint
+IS a primitive type itself (`extends string`, `extends number`, etc.). TSC preserves literal types when the
+type parameter's declared constraint is a primitive — e.g., `<A extends string>(a: A)` called with `"z"`
+should infer `A = "z"`, not `A = string`.
+
+**Critical distinction**: The upper bounds in our `InferenceInfo` conflate two sources:
+1. Explicit `extends` constraints from type parameter declarations
+2. Contextual type upper bounds from return type matching
+
+Only the DECLARED constraint should trigger literal preservation. For example, `<T>(value: T): Box<T>`
+contextually typed as `Box<boolean>` should still widen `false` to `boolean` (no declared constraint).
+
+**Fix (5 files)**:
+1. **`inference/infer.rs`**: Added `declared_constraints: FxHashMap<InferenceVar, TypeId>` field to
+   `InferenceContext` with `set_declared_constraint` / `get_declared_constraint` methods.
+2. **`inference/infer_resolve.rs`**: Added `declared_constraint_is_primitive()` method that checks for
+   `string/number/boolean/bigint` (including in unions). Updated `resolve_from_candidates()` to use
+   declared constraint for primitive literal preservation check.
+3. **`operations/generic_call.rs`**: Set declared constraint when adding type parameter bounds.
+4. **`operations/constraints.rs`**: Set declared constraint in function type inference.
+5. **`relations/subtype/rules/functions.rs`**: Set declared constraint in function subtype checks.
+
+**Tests added**: 3 unit tests in `infer_tests.rs`:
+- `test_declared_primitive_constraint_preserves_literal` — `T extends string` keeps `"z"` literal
+- `test_contextual_primitive_bound_widens_literal` — `T` (no extends) widens `false` to `boolean`
+- `test_declared_number_constraint_preserves_numeric_literal` — `T extends number` keeps `42` literal
+
+**Tests fixed** (conformance):
+- `nestedTypeVariableInfersLiteral` — `Record<"z", string>` now assignable to `{z: string}`
+- `deepKeysIndexing` — correct indexed access type inference with literal types
+- `privateNamesConstructorChain-1` — intersection signature resolution
+- `privateNamesConstructorChain-2` — intersection signature resolution
+
+### Remaining types/literal issues
+
+1. **`contextualTypeShouldBeLiteral`** (extra TS2322): Object literal `{ type: 'string' }` assigned to
+   `(TestString | TestObject) & { [k: string]: any }` — the `type` property literal `'string'` is widened
+   to `string`, preventing discriminated union matching. This is NOT about generic inference — it's about
+   property literal widening in direct assignments to intersection types.
+
+2. **`typeInferenceLiteralUnion`** (extra TS2322): Tuple/array inference issue — unrelated to primitive
+   constraint literal preservation. The problem is array-to-tuple inference (`(Primitive | T | undefined)[]`
+   not assignable to `[Primitive | T, Primitive | T] | [undefined, undefined]`).
+
+3. **`exhaustiveSwitchWithWideningLiteralTypes`** (extra TS2366): `readonly kind = "A"` — the switch
+   exhaustiveness check doesn't recognize the literal type narrowing. Likely a control flow narrowing issue.
 
 ## Session 2026-03-04f — JS constructor function instance type synthesis (+1 conf)
 
