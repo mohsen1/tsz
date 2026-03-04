@@ -154,6 +154,26 @@ fn strip_type_annotations_safe(line: &str) -> String {
         }
     }
 
+    // Strip `as Type` type assertions (value as SomeType → value)
+    // Also strip `satisfies Type` (value satisfies SomeType → value)
+    // These are type-only positions that should not count as value usages.
+    for keyword in [" as ", " satisfies "] {
+        while let Some(kw_pos) = result.find(keyword) {
+            // Check it's not inside a string by verifying balanced quotes before it
+            let before = &result[..kw_pos];
+            let single_quotes = before.chars().filter(|&c| c == '\'').count();
+            let double_quotes = before.chars().filter(|&c| c == '"').count();
+            if single_quotes % 2 != 0 || double_quotes % 2 != 0 {
+                break; // inside a string, stop
+            }
+            // Find end of type expression after the keyword
+            let type_start = kw_pos + keyword.len();
+            let type_end = skip_type_annotation(result.as_bytes(), type_start);
+            // Replace `value as Type` with `value`
+            result = format!("{}{}", &result[..kw_pos], &result[type_end..]);
+        }
+    }
+
     // Strip `implements` clauses (always type-only)
     if let Some(impl_pos) = result.find(" implements ") {
         // Check it's not inside a string by verifying balanced quotes before it
