@@ -1,4 +1,4 @@
-use super::Printer;
+use super::{JsxEmit, Printer};
 use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -539,6 +539,9 @@ impl<'a> Printer<'a> {
         let mut dep_vars = HashMap::new();
         let mut seen_value = HashSet::new();
         let mut seen_side_effect = HashSet::new();
+        // Track deps that were explicitly rejected (type-only usage) so they
+        // don't get re-added from the `dependencies` fallback list.
+        let mut rejected_deps: HashSet<String> = HashSet::new();
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -550,6 +553,36 @@ impl<'a> Printer<'a> {
                     continue;
                 };
                 if !self.import_decl_has_runtime_value(import_decl) {
+                    continue;
+                }
+                // When JSX mode requires a factory, don't elide imports matching
+                // the factory name — JSX elements implicitly reference it but the
+                // text-based heuristic won't find it in the source.
+                let is_jsx_factory = matches!(
+                    self.ctx.options.jsx,
+                    JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+                ) && {
+                    let import_name = self.get_identifier_text_idx(import_decl.import_clause);
+                    let factory_root = self
+                        .ctx
+                        .options
+                        .jsx_factory
+                        .as_deref()
+                        .and_then(|f| f.split('.').next())
+                        .unwrap_or("React");
+                    import_name == factory_root
+                };
+                // Check value-level usage: `import x = require("m")` where
+                // `x` is only used in type positions should not be included in
+                // AMD deps (tsc elides these).
+                if !is_jsx_factory
+                    && !self.import_equals_has_value_usage_after_node(stmt_node, import_decl)
+                {
+                    if let Some(spec) =
+                        self.system_module_specifier_text(import_decl.module_specifier)
+                    {
+                        rejected_deps.insert(spec);
+                    }
                     continue;
                 }
                 let Some(module_spec) =
@@ -637,7 +670,10 @@ impl<'a> Printer<'a> {
         }
 
         for dep in dependencies {
-            if seen_value.contains(dep) || seen_side_effect.contains(dep) {
+            if seen_value.contains(dep)
+                || seen_side_effect.contains(dep)
+                || rejected_deps.contains(dep)
+            {
                 continue;
             }
             if seen_side_effect.insert(dep.clone()) {
