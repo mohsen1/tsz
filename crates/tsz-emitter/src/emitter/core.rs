@@ -63,6 +63,10 @@ pub struct PrinterOptions {
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
     pub module_detection_force: bool,
+    /// When true, this file was resolved from Node16/NodeNext to ESM based on
+    /// file extension (.mts) or package.json "type":"module". Such files are
+    /// definitively ES modules regardless of import/export content.
+    pub resolved_node_module_to_esm: bool,
     /// When true, preserve const enum declarations instead of erasing them
     pub preserve_const_enums: bool,
     /// JSX emit mode
@@ -92,6 +96,7 @@ impl Default for PrinterOptions {
             legacy_decorators: false,
             es_module_interop: false,
             module_detection_force: false,
+            resolved_node_module_to_esm: false,
             preserve_const_enums: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
