@@ -145,12 +145,16 @@ impl<'a> Printer<'a> {
                 || trimmed.starts_with("export type{")
                 || trimmed.starts_with("type ")
                 || trimmed.starts_with("interface ")
-                // Other import/export statements - identifiers from other
+                // Other import statements - identifiers from other
                 // imports should not count as value usages of *this* import
                 || trimmed.starts_with("import ")
                 || trimmed.starts_with("import{")
-                || trimmed.starts_with("export ")
+                // Re-export statements (but NOT value-level export declarations
+                // like `export var/let/const/function/class/default/enum/abstract/async`)
                 || trimmed.starts_with("export{")
+                || trimmed.starts_with("export {")
+                || trimmed.starts_with("export *")
+                || trimmed.starts_with("export import ")
             {
                 result.push('\n');
                 continue;
