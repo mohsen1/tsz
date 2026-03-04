@@ -1035,4 +1035,93 @@ mod tests {
             "data-* attribute should not cause TS2322, got: {diagnostics:?}"
         );
     }
+
+    /// TS2786: Class component whose construct signature return type doesn't
+    /// satisfy JSX.ElementClass should emit "cannot be used as a JSX component".
+    #[test]
+    fn jsx_class_component_invalid_return_type_emits_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render: any; }
+                interface IntrinsicElements { }
+            }
+            interface BadComponentType { new(n: string): { x: number }; }
+            declare var BadComponent: BadComponentType;
+            <BadComponent />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2786),
+            "Class component with invalid return type should emit TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2786 should NOT fire when the construct signature return type
+    /// satisfies JSX.ElementClass.
+    #[test]
+    fn jsx_class_component_valid_return_type_no_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render: any; }
+                interface IntrinsicElements { }
+            }
+            interface GoodComponentType { new(): { render: any }; }
+            declare var GoodComponent: GoodComponentType;
+            <GoodComponent />;
+            "#,
+        );
+        assert!(
+            !diagnostics.contains(&2786),
+            "Valid class component should not emit TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2607: When `ElementAttributesProperty` specifies a property name (e.g. `pr`)
+    /// and the class component instance type doesn't have that property,
+    /// emit "JSX element class does not support attributes".
+    #[test]
+    fn jsx_class_component_missing_eap_member_emits_ts2607() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementAttributesProperty { pr: any; }
+                interface IntrinsicElements { }
+            }
+            interface CompType { new(n: string): { x: number }; }
+            declare var Comp: CompType;
+            <Comp x={10} />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2607),
+            "Class component without ElementAttributesProperty member should emit TS2607, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2608: `ElementAttributesProperty` with more than one property should
+    /// emit "may not have more than one property".
+    #[test]
+    fn jsx_element_attributes_property_multiple_members_emits_ts2608() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementAttributesProperty { pr1: any; pr2: any; }
+                interface IntrinsicElements { }
+            }
+            interface CompType { new(n: string): {}; }
+            declare var Comp: CompType;
+            <Comp x={10} />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2608),
+            "ElementAttributesProperty with multiple members should emit TS2608, got: {diagnostics:?}"
+        );
+    }
 }
