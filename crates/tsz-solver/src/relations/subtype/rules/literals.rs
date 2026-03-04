@@ -992,6 +992,43 @@ pub(crate) fn find_number_length(s: &str) -> usize {
         return i + 3;
     }
 
+    // Check for 0x/0o/0b prefixes (valid JS number literals)
+    if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() {
+        match chars[i + 1] {
+            'x' | 'X' => {
+                let mut j = i + 2;
+                let digit_start = j;
+                while j < chars.len() && chars[j].is_ascii_hexdigit() {
+                    j += 1;
+                }
+                if j > digit_start {
+                    return j;
+                }
+            }
+            'o' | 'O' => {
+                let mut j = i + 2;
+                let digit_start = j;
+                while j < chars.len() && matches!(chars[j], '0'..='7') {
+                    j += 1;
+                }
+                if j > digit_start {
+                    return j;
+                }
+            }
+            'b' | 'B' => {
+                let mut j = i + 2;
+                let digit_start = j;
+                while j < chars.len() && matches!(chars[j], '0' | '1') {
+                    j += 1;
+                }
+                if j > digit_start {
+                    return j;
+                }
+            }
+            _ => {}
+        }
+    }
+
     let start = i;
     let mut has_digits = false;
     let mut has_dot = false;
@@ -1047,24 +1084,66 @@ pub(crate) fn is_valid_number(s: &str) -> bool {
     if s == "NaN" || s == "Infinity" || s == "-Infinity" || s == "+Infinity" {
         return true;
     }
+    // Handle hex/octal/binary prefixes (Rust's f64 parse doesn't accept these)
+    if s.len() >= 3 && s.starts_with('0') {
+        match s.as_bytes()[1] {
+            b'x' | b'X' => return s[2..].chars().all(|c| c.is_ascii_hexdigit()),
+            b'o' | b'O' => return s[2..].chars().all(|c| matches!(c, '0'..='7')),
+            b'b' | b'B' => return s[2..].chars().all(|c| matches!(c, '0' | '1')),
+            _ => {}
+        }
+    }
     // Try parsing as f64
     s.parse::<f64>().is_ok()
 }
 
 /// Find the length of a valid integer at the start of a string.
+/// Handles decimal, hex (0x), octal (0o), and binary (0b) formats,
+/// matching JavaScript/TypeScript `BigInt` literal syntax.
 pub(crate) fn find_integer_length(s: &str) -> usize {
-    let chars: Vec<char> = s.chars().collect();
+    let bytes = s.as_bytes();
     let mut i = 0;
 
-    // Handle optional sign
-    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+    // Handle optional sign (only for decimal integers)
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
         i += 1;
     }
 
     let start = i;
 
-    // Must have at least one digit
-    while i < chars.len() && chars[i].is_ascii_digit() {
+    // Check for 0x/0o/0b prefixes (no sign allowed for prefixed forms)
+    if start == i && i + 1 < bytes.len() && bytes[i] == b'0' {
+        match bytes[i + 1] {
+            b'x' | b'X' => {
+                i += 2;
+                let digit_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                return if i > digit_start { i } else { 0 };
+            }
+            b'o' | b'O' => {
+                i += 2;
+                let digit_start = i;
+                while i < bytes.len() && matches!(bytes[i], b'0'..=b'7') {
+                    i += 1;
+                }
+                return if i > digit_start { i } else { 0 };
+            }
+            b'b' | b'B' => {
+                i += 2;
+                let digit_start = i;
+                while i < bytes.len() && matches!(bytes[i], b'0' | b'1') {
+                    i += 1;
+                }
+                return if i > digit_start { i } else { 0 };
+            }
+            _ => {}
+        }
+    }
+
+    // Decimal: must have at least one digit
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
         i += 1;
     }
 

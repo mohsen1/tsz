@@ -359,3 +359,77 @@ fn test_template_to_template_string_not_subtype_of_number() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(!checker.is_subtype_of(source, target));
 }
+
+// ==========================================================================
+// Hex/Octal/Binary literal matching for ${bigint} and ${number} patterns
+// ==========================================================================
+
+#[test]
+fn test_hex_literal_matches_bigint_pattern() {
+    // "0x1" should be subtype of `${bigint}` (hex is valid bigint syntax)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0x1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_octal_literal_matches_bigint_pattern() {
+    // "0o1" should be subtype of `${bigint}` (octal is valid bigint syntax)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0o1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_binary_literal_matches_bigint_pattern() {
+    // "0b1" should be subtype of `${bigint}` (binary is valid bigint syntax)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0b1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_hex_literal_matches_number_pattern() {
+    // "0x1" should be subtype of `${number}` (hex is valid number syntax in JS)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0x1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_octal_literal_matches_number_pattern() {
+    // "0o1" should be subtype of `${number}` (octal is valid number syntax in JS)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0o1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_binary_literal_matches_number_pattern() {
+    // "0b1" should be subtype of `${number}` (binary is valid number syntax in JS)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0b1");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(literal, pattern));
+}
+
+#[test]
+fn test_invalid_hex_does_not_match_bigint_pattern() {
+    // "0xGG" should NOT be subtype of `${bigint}` (invalid hex)
+    let interner = TypeInterner::new();
+    let literal = interner.literal_string("0xGG");
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(literal, pattern));
+}

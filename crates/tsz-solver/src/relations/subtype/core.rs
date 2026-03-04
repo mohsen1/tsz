@@ -596,6 +596,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            // Enum source decomposition: if source is an enum type, decompose it to
+            // its structural member union and check against the target union.
+            // e.g., enum Choice { A, B, C } <: Choice.A | Choice.B | Choice.C
+            // The per-member enum-to-enum check fails (nominal DefId mismatch between
+            // parent enum and member enum), but the structural members (0|1|2) ARE
+            // each assignable to one of the target member enums.
+            if let Some((_s_def_id, s_members)) = enum_components(self.interner, source)
+                && self.check_subtype(s_members, target).is_true() {
+                    return SubtypeResult::True;
+                }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
