@@ -497,6 +497,7 @@ impl<'a> Printer<'a> {
                     let next_content_pos = self
                         .all_comments
                         .get(self.comment_emit_idx + 1)
+                        .filter(|next_c| next_c.end <= first_stmt_pos)
                         .map_or(first_stmt_pos, |next_c| next_c.pos);
                     let between_after = &text[c_end as usize..next_content_pos as usize];
                     let is_detached =
@@ -516,10 +517,7 @@ impl<'a> Printer<'a> {
                     //    the first real statement.
                     let should_defer = (is_commonjs
                         && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
-                        || (will_emit_helpers
-                            && !is_detached
-                            && !is_triple_slash_reference
-                            && !is_amd_dependency);
+                        || (will_emit_helpers && !is_detached && !is_amd_dependency);
                     if should_defer {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
