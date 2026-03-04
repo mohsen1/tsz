@@ -427,7 +427,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let (non_nullish, cause) = self.split_nullish_type(left_type);
+                // Evaluate the left type to resolve type aliases (Applications)
+                // before splitting nullish parts. For example, `Maybe<T> = null | undefined | T`
+                // stored as an Application needs to be expanded so that the nullish split
+                // can see through the alias to extract the non-nullable component.
+                let evaluated_left = self.evaluate_type_with_env(left_type);
+                let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
                 if cause.is_none() {
                     type_stack.push(left_type);
                 } else {
