@@ -286,10 +286,31 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            // For anonymous `export default class` with decorators, synthesize "default_1"
+            let class_name = if class_name.is_empty()
+                && !legacy_class_decorators.is_empty()
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword)
+            {
+                "default_1".to_string()
+            } else {
+                class_name
+            };
+
             if class_name.is_empty() {
                 self.emit_class_es6_with_options(node, idx, false, None);
                 return;
             }
+
+            let is_esm_export_default = !self.ctx.is_commonjs()
+                && !self.in_namespace_iife
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
 
             // When there are class-level decorators, emit as `let Name = class { ... };`
             // When only member decorators, emit as normal `class Name { ... }`
@@ -301,7 +322,13 @@ impl<'a> Printer<'a> {
                     Some(("let", class_name.clone())),
                 );
             } else {
-                self.emit_class_es6_with_options(node, idx, false, None);
+                // For ESM export default with only member decorators,
+                // suppress modifiers to emit `export default` separately after __decorate
+                if is_esm_export_default {
+                    self.emit_class_es6_with_options(node, idx, true, None);
+                } else {
+                    self.emit_class_es6_with_options(node, idx, false, None);
+                }
             }
             // Only write newline if not already at line start (class declarations
             // with lowered static fields already end with write_line()).
@@ -330,6 +357,15 @@ impl<'a> Printer<'a> {
                 commonjs_default,
                 false,
             );
+
+            // For ESM `export default` decorated classes, emit the export after
+            // the decorator assignment: `export default ClassName;`
+            if is_esm_export_default {
+                self.write_line();
+                self.write("export default ");
+                self.write(&class_name);
+                self.write(";");
+            }
             return;
         }
 
