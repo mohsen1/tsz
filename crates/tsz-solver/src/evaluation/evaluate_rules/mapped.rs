@@ -242,8 +242,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Properties are stored sorted by Atom for hashing, but we
                         // need declaration order. Sort by declaration_order to
                         // restore the original source order.
-                        let mut props: Vec<&PropertyInfo> =
-                            shape.properties.iter().collect();
+                        let mut props: Vec<&PropertyInfo> = shape.properties.iter().collect();
                         props.sort_by_key(|p| p.declaration_order);
                         props.iter().map(|p| p.name).collect()
                     }

@@ -1562,11 +1562,7 @@ impl<'a> CheckerState<'a> {
 
         for &decl_idx in remote_interface_decls {
             // Look up the remote arena for this declaration
-            let arenas = self
-                .ctx
-                .binder
-                .declaration_arenas
-                .get(&(sym_id, decl_idx));
+            let arenas = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx));
             let remote_arenas: Vec<&tsz_parser::parser::NodeArena> = if let Some(arenas) = arenas {
                 arenas
                     .iter()
@@ -1643,10 +1639,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(&remote_is_method) = remote_members.get(&name) {
                         if is_method != remote_is_method {
                             // Property-vs-method conflict across files
-                            let message = format_message(
-                                diagnostic_messages::DUPLICATE_IDENTIFIER,
-                                &[&name],
-                            );
+                            let message =
+                                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
                             self.error_at_node(
                                 sig.name,
                                 &message,
