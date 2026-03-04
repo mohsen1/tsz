@@ -1,7 +1,32 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9961/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9964/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04m — Lazy type TS2538 + TS1099 column fix (+3 conf)
+
+### Fixed: TS2538 not emitted for interface-typed index expressions
+
+**Area**: checker/access
+
+**Root cause**: `get_invalid_index_type_member()` in the solver skips `TypeData::Lazy(DefId)` types
+(interfaces, classes, type aliases). When `obj[x]` where `x: SomeInterface`, the Lazy type was never
+resolved to its underlying object type, so the TS2538 check silently passed.
+
+**Fix**: In `access.rs`, resolve Lazy types via `resolve_lazy_type()` before calling
+`type_get_invalid_index_type_member()`. Net conformance impact: 0 (affected tests have other
+blockers), but correctness fix for TS2538 emission.
+
+### Fixed: TS1099 "Type argument list cannot be empty" column off-by-1
+
+**Root cause**: `parse_type_arguments()` and `try_parse_type_arguments_for_call()` in the parser
+consumed the `<` token via `parse_expected_less_than()`, then reported TS1099 at the current token
+position (`>`). tsc reports at the `<` position.
+
+**Fix**: Save `scanner.get_token_start()` before consuming `<`, then use `parse_error_at()` with
+the saved position instead of `parse_error_at_current_token()`.
+
+**Tests fixed** (+3): `emptyGenericParamList`, `emptyTypeArgumentList`, `emptyTypeArgumentListWithNew`
 
 ## Session 2026-03-04l — Object type exempt from weak type check (+1 conf)
 
