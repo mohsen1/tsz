@@ -1235,4 +1235,61 @@ mod tests {
             "Generic SFC with incompatible return should emit TS2786, got: {diagnostics:?}"
         );
     }
+
+    /// TS2786 should NOT fire for class components with synthesized default
+    /// constructors (no params). The instance type may lack inherited members
+    /// like `render()` from the base class.
+    #[test]
+    fn jsx_class_component_no_param_constructor_no_false_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render(): any; }
+                interface IntrinsicElements { }
+            }
+            declare class Component<P> {
+                constructor(props: P);
+                props: P;
+                render(): JSX.Element;
+            }
+            class MyComp extends Component<{ x: number }> {}
+            <MyComp />;
+            "#,
+        );
+        assert!(
+            !diagnostics.contains(&2786),
+            "Class with no-param constructor should not emit false TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2786 should NOT fire when a construct signature return type contains
+    /// type parameters from an outer scope (e.g. `ComponentClass`<P> where P
+    /// comes from a function parameter).
+    #[test]
+    fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render(): any; }
+                interface IntrinsicElements { }
+            }
+            declare class Component<P> {
+                constructor(props: P);
+                props: P;
+                render(): JSX.Element;
+            }
+            interface ComponentClass<P> {
+                new(props: P): Component<P>;
+            }
+            declare function makeP<P>(Ctor: ComponentClass<P>): void;
+            "#,
+        );
+        // No JSX usage here, just ensuring no false positives from type resolution
+        assert!(
+            !diagnostics.contains(&2786),
+            "Component with outer type params should not emit false TS2786, got: {diagnostics:?}"
+        );
+    }
 }

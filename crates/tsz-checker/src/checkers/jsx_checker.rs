@@ -574,6 +574,10 @@ impl<'a> CheckerState<'a> {
             if !is_concrete(member_type) {
                 continue;
             }
+            // Skip unresolved Application/Lazy member types (e.g. ComponentClass<any>)
+            if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, member_type) {
+                continue;
+            }
 
             let is_unresolved = |t: TypeId| -> bool {
                 !is_concrete(t)
@@ -605,9 +609,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Check call/construct signatures against JSX.Element/ElementClass
-            // is_call_sig tracks whether we're checking call sigs (SFC-like) vs
-            // construct sigs (class component) — call sig return types allow null.
+            // Check call/construct signatures against JSX.Element/ElementClass.
             for (get_sigs_fn, target, is_call_sig) in [
                 (
                     tsz_solver::type_queries::get_call_signatures as fn(_, _) -> _,
@@ -626,13 +628,36 @@ impl<'a> CheckerState<'a> {
                 {
                     let mut any_concrete = false;
                     let any_valid = sigs.iter().any(|sig| {
+                        // Skip generic construct signatures — return type has
+                        // unresolved type params that can't be checked until
+                        // instantiation. Call sigs (SFCs) are still checked.
+                        if !is_call_sig && !sig.type_params.is_empty() {
+                            return true;
+                        }
+                        // Skip construct sigs with no params — these are
+                        // synthesized default constructors from class
+                        // declarations where inherited members (e.g. render()
+                        // from React.Component) aren't in the instance type.
+                        if !is_call_sig && sig.params.is_empty() {
+                            return true;
+                        }
                         let ret = self.evaluate_type_with_env(sig.return_type);
                         if is_unresolved(ret) || is_valid_null_like_return(ret) {
                             return true;
                         }
+                        // For construct sigs, skip if the return type still
+                        // contains type parameters (from outer scopes). The
+                        // instance type is incomplete until instantiation.
+                        if !is_call_sig
+                            && tsz_solver::type_queries::data::contains_type_parameters_db(
+                                self.ctx.types,
+                                ret,
+                            )
+                        {
+                            return true;
+                        }
                         any_concrete = true;
                         target.is_none_or(|t| {
-                            // Call signatures (SFC-like): allow null/undefined return
                             let check_ret = if is_call_sig {
                                 let stripped = tsz_solver::remove_nullish(self.ctx.types, ret);
                                 if stripped == TypeId::NEVER {
@@ -828,13 +853,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Extract props type from a class component via construct signatures.
-    ///
-    /// For class components, TSC:
-    /// 1. Gets the construct signature return type (the instance type)
-    /// 2. Looks up `JSX.ElementAttributesProperty` to find which instance
-    ///    property holds the props
-    /// 3. If `ElementAttributesProperty` is empty, the instance type IS the props
-    /// 4. If it has a member (e.g., `{ props: {} }`), accesses that property
     fn get_class_component_props_type(
         &mut self,
         component_type: TypeId,
@@ -857,6 +875,11 @@ impl<'a> CheckerState<'a> {
 
         let instance_type = sig.return_type;
         if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
+            return None;
+        }
+        // Skip when the instance type is an unresolved Application/Lazy
+        // (e.g. Component<P, State> with outer type parameter P)
+        if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, instance_type) {
             return None;
         }
 
@@ -885,8 +908,23 @@ impl<'a> CheckerState<'a> {
                         Some(evaluated)
                     }
                     // Instance type doesn't have the ElementAttributesProperty member.
-                    // Emit TS2607 and skip attribute checking.
+                    // This can happen when class inheritance doesn't include inherited
+                    // members in the construct signature return type.
+                    // Fall back to the first construct parameter as props type (the
+                    // common React pattern: `new(props: P)`). If no suitable fallback,
+                    // emit TS2607.
                     _ => {
+                        // Try first construct param as fallback (React-style: new(props: P))
+                        if let Some(first_param) = sig.params.first() {
+                            let param_type = self.evaluate_type_with_env(first_param.type_id);
+                            if param_type != TypeId::ANY
+                                && param_type != TypeId::ERROR
+                                && param_type != TypeId::STRING
+                                && param_type != TypeId::NUMBER
+                            {
+                                return Some(param_type);
+                            }
+                        }
                         if let Some(elem_idx) = element_idx {
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node_msg(
@@ -1632,11 +1670,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check TS2746: when the component's `children` prop expects a single child
-    /// but multiple children are provided in the JSX element body.
-    ///
-    /// tsc checks if the `children` prop type is NOT an array-like type. If the
-    /// type is a single value type (not array, not tuple), it emits TS2746.
+    /// Check TS2746: children count mismatch (single child expected, multiple provided).
     fn check_jsx_children_count(&mut self, props_type: TypeId, tag_name_idx: NodeIndex) {
         use tsz_solver::operations::property::PropertyAccessResult;
 
@@ -1669,10 +1703,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Check if a type can accept multiple children values.
-    /// Returns true if the type is array-like, or if it's a union where any member
-    /// is array-like (e.g., `string | Element[]` or `ReactNode`).
-    /// Evaluates each type to resolve type aliases (e.g., `ReactFragment` → {} | Array<...>).
+    /// Check if a type can accept multiple children (array-like or union with array member).
     fn type_accepts_multiple_children(&mut self, type_id: TypeId) -> bool {
         // Evaluate to resolve type aliases and lazy references
         let type_id = self.evaluate_type_with_env(type_id);
@@ -1752,16 +1783,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2322: Check spread attributes against `IntrinsicAttributes` for generic SFCs.
-    ///
-    /// For generic SFCs like `Component<T>(props: T)`, we can't infer type arguments
-    /// from JSX attributes. But tsc still checks that spread attributes satisfy
-    /// `IntrinsicAttributes & inferred_props_type`. Since the inferred props type
-    /// equals the spread type (T = U from the spread), the target is
-    /// `IntrinsicAttributes & spread_type`. The check reduces to:
-    /// does `spread_type <: IntrinsicAttributes`?
-    ///
-    /// For unconstrained type parameters (constraint = `unknown`), this fails because
-    /// `unknown` is not assignable to the `IntrinsicAttributes` interface.
     fn check_generic_sfc_spread_intrinsic_attrs(
         &mut self,
         component_type: TypeId,
@@ -1807,24 +1828,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Build target: IntrinsicAttributes & spread_type (matching tsc's format).
-            // tsc infers the component's type parameter from the spread, so the
-            // inferred props type = spread_type. The full target is then
-            // IntrinsicAttributes & spread_type.
+            // Build target: IntrinsicAttributes & spread_type
             let target = self
                 .ctx
                 .types
                 .factory()
                 .intersection(vec![ia_type, spread_type]);
 
-            // Check: spread_type <: IntrinsicAttributes & spread_type
-            // Since spread_type <: spread_type is always true, this reduces to
-            // spread_type <: IntrinsicAttributes.
             if !self.is_assignable_to(spread_type, target) {
                 let spread_name = self.format_type(spread_type);
-                // Format target as "IntrinsicAttributes & U" matching tsc's output.
-                // tsc uses the short name "IntrinsicAttributes" (without JSX. namespace)
-                // and puts it before the spread type in the intersection.
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
                 let message =
                     format!("Type '{spread_name}' is not assignable to type '{target_name}'.");
@@ -1859,9 +1871,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check for per-file /** @jsx factory */ pragma — overrides global factory.
-        // In tsc, the @jsx pragma sets the factory for the current file and
-        // the scope check uses the pragma factory name (not the global one).
+        // Check for per-file /** @jsx factory */ pragma
         let pragma_factory = self
             .ctx
             .arena
@@ -1877,10 +1887,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check full scope chain at the JSX element location.
-        // tsc's resolveName for factory checks includes ALL symbols (class members,
-        // parameters, locals, imports, globals) — so we use an accept-all filter
-        // rather than the checker's default filter that excludes class members.
+        // Check full scope chain (accept-all filter to include class members)
         let lib_binders = self.get_lib_binders();
         let found = self.ctx.binder.resolve_name_with_filter(
             root_ident,
@@ -1915,12 +1922,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check that the JSX import source module can be resolved (TS2875).
-    /// Emits TS2875 if `<jsxImportSource>/jsx-runtime` (or `/jsx-dev-runtime`) is not found.
-    ///
-    /// tsc 6.0 behavior:
-    /// - Only `react-jsx` and `react-jsxdev` modes require the import source.
-    /// - When `jsxImportSource` is not explicitly set, defaults to `"react"`.
-    /// - The diagnostic fires once per file at the first JSX element.
     fn check_jsx_import_source(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
