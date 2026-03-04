@@ -1,7 +1,48 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9973/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9971/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04s — Intersection type diagnostics: parenthesization + distribution preservation (+1 conf)
+
+### Fixed: Intersection/union type display in diagnostic messages
+
+**Area**: types/intersection (fingerprint-level fixes)
+
+**Root cause (three issues)**:
+
+1. **Missing parenthesization in union-of-intersections**: When formatting `(A & B) | (C & D)` for error
+   messages, our `format_union()` did not parenthesize intersection members. TSC writes `(A & B) | (C & D)`
+   for readability even though `&` binds tighter than `|`. Similarly, `format_intersection()` did not
+   parenthesize union members — `(A | B) & (C | D)` is semantically required since without parens it
+   would be parsed as `A | (B & C) | D`.
+
+2. **Eager distribution of all-union intersections**: `normalize_intersection()` eagerly distributed
+   `(A | B) & (C | D)` into `(A & C) | (A & D) | (B & C) | (B & D)`, but TSC preserves the original
+   intersection form when ALL members are unions. This caused error messages to show the expanded
+   distributed form instead of the original declared type.
+
+3. **Intersection display ordering for compound members**: `intersection_display_key()` used TypeId
+   ordering for union/intersection members, but TSC preserves source order. Fixed by sorting compound
+   types by the minimum DefId of their Lazy constituents.
+
+**Fix (2 files, +4 tests)**:
+- **`diagnostics/format.rs`**: Added `format_union_member()` and `format_intersection_member()` helpers
+  that parenthesize intersection-in-union and union-in-intersection members. Updated
+  `intersection_display_key()` to use DefId-based ordering for Union/Intersection members.
+- **`intern/intersection.rs`**: Added `has_non_union` guard before `distribute_intersection_over_unions()`.
+  When ALL members are unions, distribution is skipped, preserving the intersection form.
+- **Tests**: 4 unit tests in `diagnostics_tests.rs` covering parenthesization and distribution behavior.
+
+**Conformance tests fixed**: `intersectionAndUnionTypes` (fingerprint-level match)
+
+### Remaining types/intersection failures (6 fingerprint-level failures)
+- **commonTypeIntersection**: Fingerprint-only (line/message differences)
+- **intersectionAsWeakTypeSource**: TS2739 message differs (branded type display)
+- **intersectionNarrowing**: Missing narrowing through intersection constraint
+- **intersectionTypeAssignment**: Object property display order differs
+- **intersectionWithIndexSignatures**: Index signature intersection display
+- **intersectionWithUnionConstraint**: Constraint type display with `U & T` vs resolved
 
 ## Session 2026-03-04r — Decompose intersection types during generic call inference (+2 conf)
 
