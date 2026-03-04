@@ -505,20 +505,16 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(SPREAD_ARRAY_HELPER);
         output.push('\n');
     }
-    if helpers.async_values {
-        output.push_str(ASYNC_VALUES_HELPER);
-        output.push('\n');
-    }
     if helpers.import_default {
         output.push_str(IMPORT_DEFAULT_HELPER);
         output.push('\n');
     }
-    if helpers.class_private_field_set {
-        output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
-        output.push('\n');
-    }
     if helpers.class_private_field_get {
         output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
+        output.push('\n');
+    }
+    if helpers.class_private_field_set {
+        output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
         output.push('\n');
     }
     if helpers.class_private_field_in {
@@ -531,6 +527,10 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     }
     if helpers.dispose_resources {
         output.push_str(DISPOSE_RESOURCES_HELPER);
+        output.push('\n');
+    }
+    if helpers.async_values {
+        output.push_str(ASYNC_VALUES_HELPER);
         output.push('\n');
     }
 
