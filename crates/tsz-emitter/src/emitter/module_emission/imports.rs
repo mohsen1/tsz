@@ -291,7 +291,6 @@ impl<'a> Printer<'a> {
         let mut paren_depth = 0u32;
         while i < len {
             match bytes[i] {
-                b'{' if angle_depth == 0 && paren_depth == 0 => return i,
                 b'=' if i + 1 < len
                     && bytes[i + 1] == b'>'
                     && angle_depth == 0
@@ -299,9 +298,9 @@ impl<'a> Printer<'a> {
                 {
                     return i;
                 }
-                b',' if angle_depth == 0 && paren_depth == 0 => return i,
-                b')' if angle_depth == 0 && paren_depth == 0 => return i,
-                b';' if angle_depth == 0 && paren_depth == 0 => return i,
+                b'{' | b',' | b')' | b';' if angle_depth == 0 && paren_depth == 0 => {
+                    return i;
+                }
                 b'<' => angle_depth += 1,
                 b'>' if angle_depth > 0 => angle_depth -= 1,
                 b'(' => paren_depth += 1,

@@ -15227,3 +15227,73 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
         "T should be inferred as number when no structural match exists"
     );
 }
+
+// =============================================================================
+// Declared Constraint Literal Preservation Tests
+// =============================================================================
+
+#[test]
+fn test_declared_primitive_constraint_preserves_literal() {
+    // T extends string with candidate "z" → should preserve literal "z"
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var = ctx.fresh_type_param(t_name, false);
+    ctx.add_upper_bound(var, TypeId::STRING);
+    ctx.set_declared_constraint(var, TypeId::STRING);
+
+    let z_literal = interner.literal_string("z");
+    ctx.add_candidate(var, z_literal, InferencePriority::NakedTypeVariable);
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(
+        result, z_literal,
+        "T extends string: literal 'z' should be preserved, not widened to string"
+    );
+}
+
+#[test]
+fn test_contextual_primitive_bound_widens_literal() {
+    // T (no extends) with candidate `false` and contextual upper bound `boolean`
+    // → should widen `false` to `boolean`
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var = ctx.fresh_type_param(t_name, false);
+    // Add boolean as upper bound from contextual typing (NOT declared constraint)
+    ctx.add_upper_bound(var, TypeId::BOOLEAN);
+    // Do NOT call set_declared_constraint — no explicit `extends` clause
+
+    let false_literal = interner.intern(TypeData::Literal(crate::LiteralValue::Boolean(false)));
+    ctx.add_candidate(var, false_literal, InferencePriority::NakedTypeVariable);
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "T (no extends): literal `false` should be widened to boolean via contextual bound"
+    );
+}
+
+#[test]
+fn test_declared_number_constraint_preserves_numeric_literal() {
+    // T extends number with candidate 42 → should preserve literal 42
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var = ctx.fresh_type_param(t_name, false);
+    ctx.add_upper_bound(var, TypeId::NUMBER);
+    ctx.set_declared_constraint(var, TypeId::NUMBER);
+
+    let forty_two = interner.literal_number(42.0);
+    ctx.add_candidate(var, forty_two, InferencePriority::NakedTypeVariable);
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(
+        result, forty_two,
+        "T extends number: literal 42 should be preserved, not widened to number"
+    );
+}

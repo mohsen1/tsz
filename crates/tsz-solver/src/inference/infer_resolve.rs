@@ -244,8 +244,10 @@ impl<'a> InferenceContext<'a> {
 
         let upper_bounds_only = candidates.is_empty() && !upper_bounds.is_empty();
 
+        let declared_constraint = self.declared_constraints.get(&root).copied();
+
         let result = if !candidates.is_empty() {
-            self.resolve_from_candidates(&candidates, is_const, &upper_bounds)
+            self.resolve_from_candidates(&candidates, is_const, &upper_bounds, declared_constraint)
         } else if !upper_bounds.is_empty() {
             // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
             // This matches TypeScript: un-inferred generics default to their constraint.
@@ -287,6 +289,7 @@ impl<'a> InferenceContext<'a> {
         candidates: &[InferenceCandidate],
         is_const: bool,
         upper_bounds: &[TypeId],
+        declared_constraint: Option<TypeId>,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
         if filtered.is_empty() {
@@ -303,9 +306,16 @@ impl<'a> InferenceContext<'a> {
         let all_from_object_properties = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_object_property);
-        // TypeScript preserves literal types when the constraint implies literals
-        // (e.g., T extends "a" | "b"). Widening "b" to string would violate the constraint.
-        let preserve_literals = is_const || self.constraint_implies_literals(upper_bounds);
+        // TypeScript preserves literal types when:
+        // 1. The type parameter is `const`, OR
+        // 2. The declared constraint implies literals (e.g., T extends "a" | "b"), OR
+        // 3. The declared constraint IS a primitive (e.g., T extends string/number/boolean/bigint)
+        // Note: we use the declared constraint (from the `extends` clause), NOT upper_bounds
+        // which also includes contextual type bounds. This prevents false preservation when
+        // e.g., `<T>(value: T): Box<T>` is contextually typed as `Box<boolean>`.
+        let preserve_literals = is_const
+            || self.constraint_implies_literals(upper_bounds)
+            || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c));
         let widened = if preserve_literals {
             if is_const {
                 filtered_no_never
@@ -408,6 +418,25 @@ impl<'a> InferenceContext<'a> {
     /// or in object properties). This is critical for discriminated union constraints
     /// like `{ kind: "a" } | { kind: "b" }` — the literal "a"/"b" in object
     /// properties must be detected so `preserve_literals` prevents widening.
+    /// Check if a declared constraint is a primitive type (string/number/boolean/bigint)
+    /// or a union containing one. These constraints permit literal type preservation.
+    fn declared_constraint_is_primitive(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::STRING
+            || type_id == TypeId::NUMBER
+            || type_id == TypeId::BOOLEAN
+            || type_id == TypeId::BIGINT
+        {
+            return true;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return members
+                .iter()
+                .any(|&m| self.declared_constraint_is_primitive(m));
+        }
+        false
+    }
+
     fn type_implies_literals(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
@@ -1117,8 +1146,9 @@ impl<'a> InferenceContext<'a> {
             // This uses the same logic as compute_constraint_result but doesn't
             // validate against upper bounds yet (that happens in final resolution)
             let is_const = self.is_var_const(root);
+            let dc = self.declared_constraints.get(&root).copied();
             let result =
-                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds);
+                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds, dc);
 
             // Check for occurs (recursive type)
             if self.occurs_in(root, result) {
@@ -1176,7 +1206,13 @@ impl<'a> InferenceContext<'a> {
 
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
-                        self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds)
+                        let dc = self.declared_constraints.get(&root).copied();
+                        self.resolve_from_candidates(
+                            &info.candidates,
+                            is_const,
+                            &info.upper_bounds,
+                            dc,
+                        )
                     } else if !info.upper_bounds.is_empty() {
                         // No candidates yet, but we have a constraint (upper bound).
                         // Use the constraint as contextual fallback so that mapped types
