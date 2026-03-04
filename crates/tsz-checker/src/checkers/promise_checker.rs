@@ -693,13 +693,15 @@ impl<'a> CheckerState<'a> {
         let mut extracted_args: Vec<TypeId> = Vec::new();
         for member in &members {
             if let Some(app) = query::type_application(self.ctx.types, *member)
-                && !app.args.is_empty() && self.is_generator_like_base_type(app.base) {
-                    if arg_index < app.args.len() {
-                        extracted_args.push(app.args[arg_index]);
-                    } else if arg_index == 1 && app.args.len() == 1 {
-                        extracted_args.push(TypeId::ANY);
-                    }
+                && !app.args.is_empty()
+                && self.is_generator_like_base_type(app.base)
+            {
+                if arg_index < app.args.len() {
+                    extracted_args.push(app.args[arg_index]);
+                } else if arg_index == 1 && app.args.len() == 1 {
+                    extracted_args.push(TypeId::ANY);
                 }
+            }
         }
         if extracted_args.is_empty() {
             return None;
