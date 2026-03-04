@@ -521,7 +521,8 @@ impl<'a> Printer<'a> {
                         && let Some(inline_decls) = self.try_collect_inline_cjs_exports(node)
                     {
                         // Inline form: exports.x = initializer;
-                        for (name, init_idx) in &inline_decls {
+                        let decl_count = inline_decls.len();
+                        for (i, (name, init_idx)) in inline_decls.iter().enumerate() {
                             // Track that this variable was inlined (no local declaration).
                             self.ctx
                                 .module_state
@@ -534,7 +535,12 @@ impl<'a> Printer<'a> {
                             // for inline-exported variable names automatically.
                             self.emit(*init_idx);
                             self.write(";");
-                            self.write_line();
+                            // Skip write_line() on the last declaration so the
+                            // source_file.rs statement loop can emit trailing
+                            // comments (e.g., `// error`) before the newline.
+                            if i < decl_count - 1 {
+                                self.write_line();
+                            }
                         }
                     } else if !is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                         // For non-default class declarations, use the deferred export

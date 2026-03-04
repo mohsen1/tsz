@@ -10,6 +10,7 @@ pub mod context;
 pub mod declaration_emitter;
 pub mod emitter;
 pub mod enums;
+pub mod import_usage;
 pub mod lowering;
 pub mod output;
 pub mod safe_slice;

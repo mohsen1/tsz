@@ -452,52 +452,33 @@ impl<'a> LoweringPass<'a> {
         };
         start = start.min(source_text.len());
         let bytes = source_text.as_bytes();
+        // Skip past the entire import line (including trailing comments)
+        // to avoid matching identifiers in trailing comments like
+        // `import { yield } from "m"; // error to use default as binding name`
         while start < bytes.len() {
             match bytes[start] {
-                b';' => {
+                b'\n' => {
                     start += 1;
                     break;
                 }
-                b'\n' | b'\r' => break,
+                b'\r' => {
+                    start += 1;
+                    if start < bytes.len() && bytes[start] == b'\n' {
+                        start += 1;
+                    }
+                    break;
+                }
                 _ => start += 1,
             }
         }
         let haystack = &source_text[start..];
+        // Strip type-only content so identifiers in type positions
+        // (type aliases, interfaces, type annotations, etc.) don't
+        // cause unnecessary helper emission.
+        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
         names
             .iter()
-            .any(|name| Self::contains_identifier_occurrence(haystack, name))
-    }
-
-    fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
-        if ident.is_empty() {
-            return false;
-        }
-        let mut search_from = 0usize;
-        while let Some(rel) = haystack[search_from..].find(ident) {
-            let pos = search_from + rel;
-            let before_ok = if pos == 0 {
-                true
-            } else {
-                haystack[..pos]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-            };
-            let after_idx = pos + ident.len();
-            let after_ok = if after_idx >= haystack.len() {
-                true
-            } else {
-                haystack[after_idx..]
-                    .chars()
-                    .next()
-                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-            };
-            if before_ok && after_ok {
-                return true;
-            }
-            search_from = pos + ident.len();
-        }
-        false
+            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
     }
 
     fn visit_export_declaration(&mut self, node: &Node, _idx: NodeIndex) {
