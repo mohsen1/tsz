@@ -539,6 +539,19 @@ impl<'a> Printer<'a> {
                     return None;
                 }
 
+                // tsc uses split form (const x = val; exports.x = x;) for
+                // arrow functions, function expressions, and class expressions.
+                // Only primitive/object/call initializers use inline form.
+                if let Some(init_node) = self.arena.get(decl.initializer) {
+                    let k = init_node.kind;
+                    if k == syntax_kind_ext::ARROW_FUNCTION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        return None;
+                    }
+                }
+
                 result.push((name, decl.initializer));
             }
         }
