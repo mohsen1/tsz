@@ -31,6 +31,10 @@ stacker = "0.1.23"
 web-time = { workspace = true }
 
 [[test]]
+name = "ts1238_tests"
+path = "tests/ts1238_tests.rs"
+
+[[test]]
 name = "lazy_class_constructor_type_tests"
 path = "tests/lazy_class_constructor_type_tests.rs"
 

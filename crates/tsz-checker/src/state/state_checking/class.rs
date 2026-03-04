@@ -54,7 +54,20 @@ impl<'a> CheckerState<'a> {
                     && mod_node.kind == syntax_kind_ext::DECORATOR
                     && let Some(decorator) = self.ctx.arena.get_decorator(mod_node)
                 {
-                    self.compute_type_of_node(decorator.expression);
+                    let decorator_type = self.compute_type_of_node(decorator.expression);
+
+                    // TS1238: Validate class decorator call signature.
+                    // For experimental decorators, the decorator is called as
+                    // decoratorExpr(classConstructor). If no call signature exists
+                    // or call resolution fails, emit TS1238.
+                    if self.ctx.compiler_options.experimental_decorators {
+                        self.check_class_decorator_call_signature(
+                            decorator.expression,
+                            decorator_type,
+                            stmt_idx,
+                            class,
+                        );
+                    }
                 }
             }
         }
@@ -1033,5 +1046,82 @@ impl<'a> CheckerState<'a> {
         let diag = emit_error_global_type_missing(type_name, self.ctx.file_name.clone(), 0, 0);
         self.ctx.push_diagnostic(diag.clone());
         self.ctx.push_diagnostic(diag);
+    }
+
+    /// TS1238: Check that a class decorator expression has a compatible call signature.
+    ///
+    /// For experimental decorators, the decorator is called as `decoratorExpr(classConstructor)`.
+    /// If the decorator type has no call signatures, or if call resolution against the class
+    /// constructor type fails, emit TS1238.
+    fn check_class_decorator_call_signature(
+        &mut self,
+        decorator_node: NodeIndex,
+        decorator_type: TypeId,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::query_boundaries::common::call_signatures_for_type;
+        use tsz_solver::type_queries::get_function_shape;
+
+        // Skip validation for error types or any — these won't produce meaningful diagnostics
+        if decorator_type == TypeId::ERROR
+            || decorator_type == TypeId::ANY
+            || decorator_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        // Resolve Lazy(DefId) references and evaluate applications so that
+        // type queries can see the underlying type shape.
+        self.ensure_relation_input_ready(decorator_type);
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+
+        // After evaluation, any/unknown/error → skip
+        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+            return;
+        }
+
+        // Check if the decorator type is callable.
+        // TypeData::Function has a single call signature (function declarations/expressions).
+        // TypeData::Callable has overloaded call/construct signatures (interfaces).
+        let has_call_signatures = get_function_shape(self.ctx.types, resolved).is_some()
+            || call_signatures_for_type(self.ctx.types, resolved)
+                .is_some_and(|sigs| !sigs.is_empty());
+
+        if !has_call_signatures {
+            // No call signatures at all (e.g., a class used as decorator — has construct
+            // signatures but no call signatures). Emit TS1238.
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+            return;
+        }
+
+        // Has call signatures — try to resolve the call with the class constructor type.
+        // resolve_call handles both Function and Callable types internally.
+        // If resolution fails (type mismatch, arity error), emit TS1238.
+        let class_constructor_type = self.get_class_constructor_type(class_idx, class);
+        if class_constructor_type == TypeId::ERROR {
+            return;
+        }
+
+        let (result, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            &[class_constructor_type],
+            false,
+            None,
+            None,
+        );
+
+        if !matches!(result, tsz_solver::CallResult::Success(_)) {
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+        }
     }
 }
