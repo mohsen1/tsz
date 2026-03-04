@@ -1,7 +1,50 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9940/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9938/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04d — Fresh object literal property inference widening (+4 conf)
+
+### Fixed: Literal types from fresh object literal properties not widened during generic inference
+
+**Area**: types/intersection (62.5% → 66.7%), types/typeRelationships, compiler
+
+**Root cause**: In `constrain_properties()` (constraints.rs), when matching object properties
+against type parameter placeholders, `add_property_candidate_with_index` set `from_object_property = true`,
+which made `is_fresh_literal = false` for ALL property candidates. This prevented `widen_candidate_types`
+from widening literal types like `"hello"` → `string` or `42` → `number`.
+
+TSC distinguishes fresh literals (from object literal expressions) vs non-fresh literals (from type
+annotations) using `RequiresWidening` / `TypeFlags.FreshLiteral`. Our system uses `ObjectFlags::FRESH_LITERAL`
+on object shapes. The fix threads this flag through the inference pipeline:
+
+**Fix (3 files)**:
+1. **`inference/infer.rs`**: Added `source_is_fresh: bool` parameter to `add_property_candidate_with_index`
+   and `add_candidate_with_context`. Changed `is_fresh_literal` computation from
+   `!from_object_property && is_literal` to `(!from_object_property || source_is_fresh) && is_literal`.
+2. **`operations/constraints.rs`**: Added `source_is_fresh: bool` parameter to `constrain_properties`.
+   Object-Object matching arms now check `ObjectFlags::FRESH_LITERAL` on the source shape and pass it
+   through. Callable and index signature paths pass `false`.
+
+**Tests added**: 2 unit tests in `infer_tests.rs`:
+- `test_fresh_object_property_literal_is_widened` — source_is_fresh=true → literal widened
+- `test_non_fresh_object_property_literal_is_not_widened` — source_is_fresh=false → literal preserved
+
+**Tests fixed** (conformance):
+- `intersectionTypeInference` — false TS2403 removed (T inferred as string, not "hello")
+- `intersectionTypeInference3` — false TS2769 removed
+- `genericCallInferenceConditionalType1` — bonus fix
+- `genericCallWithObjectLiteralArgs` — directly validates widening behavior
+
+### Remaining types/intersection issues (7 tests)
+
+All 7 remaining failures are fingerprint-only (error codes match, message text or location differs):
+- commonTypeIntersection, intersectionAndUnionTypes, intersectionAsWeakTypeSource,
+  intersectionNarrowing, intersectionTypeAssignment, intersectionWithIndexSignatures,
+  intersectionWithUnionConstraint
+
+Common fingerprint issues: union member ordering in diagnostic messages, diagnostic location offsets.
+These are presentation issues, not type system bugs.
 
 ## Session 2026-03-04c — Nested excess property checking with index signature intersection targets (+2 conf)
 
