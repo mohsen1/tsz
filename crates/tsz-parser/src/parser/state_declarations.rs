@@ -385,7 +385,21 @@ impl ParserState {
         start_pos: u32,
         readonly: bool,
     ) -> Option<TypeMemberPropertyOrMethodName> {
-        if self.is_token(SyntaxKind::Identifier)
+        if self.is_token(SyntaxKind::PrivateIdentifier) {
+            // TS18016: Private identifiers are not allowed outside class bodies.
+            // Parse the private identifier so the member is well-formed, but emit a diagnostic.
+            let name = self.parse_property_name();
+            if let Some(name_node) = self.arena.get(name) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            }
+            Some(TypeMemberPropertyOrMethodName::Property(name))
+        } else if self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
             || self.is_identifier_or_keyword()

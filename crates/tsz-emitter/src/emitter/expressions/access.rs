@@ -14,24 +14,19 @@ impl<'a> Printer<'a> {
         };
 
         // Private field lowering: `this.#field` → `__classPrivateFieldGet(this, _C_field, "f")`
-        if !self.private_field_weakmaps.is_empty() {
-            if let Some(name_node) = self.arena.get(access.name_or_argument)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                if let Some(field_name) =
-                    get_private_field_name(self.arena, access.name_or_argument)
-                {
-                    let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                    if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned()
-                    {
-                        self.write("__classPrivateFieldGet(");
-                        self.emit(access.expression);
-                        self.write(", ");
-                        self.write(&weakmap_name);
-                        self.write(", \"f\")");
-                        return;
-                    }
-                }
+        if !self.private_field_weakmaps.is_empty()
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            && let Some(field_name) = get_private_field_name(self.arena, access.name_or_argument)
+        {
+            let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+            if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
+                self.write("__classPrivateFieldGet(");
+                self.emit(access.expression);
+                self.write(", ");
+                self.write(&weakmap_name);
+                self.write(", \"f\")");
+                return;
             }
         }
 

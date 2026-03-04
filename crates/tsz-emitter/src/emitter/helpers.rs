@@ -1090,6 +1090,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Find the position of a specific byte in source text between `from` and `to`.
+    #[allow(dead_code)]
     pub(super) fn find_char_after(&self, from: u32, to: u32, ch: u8) -> Option<u32> {
         let text = self.source_text?;
         let bytes = text.as_bytes();

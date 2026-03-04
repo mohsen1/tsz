@@ -289,10 +289,10 @@ impl<'a> LoweringPass<'a> {
                 _ => None,
             };
 
-            if let Some(body) = body_idx {
-                if self.subtree_has_private_field_write(body) {
-                    return true;
-                }
+            if let Some(body) = body_idx
+                && self.subtree_has_private_field_write(body)
+            {
+                return true;
             }
         }
         false
@@ -411,14 +411,14 @@ impl<'a> LoweringPass<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
         // Check class-level decorators
-        if let Some(mods) = &class_data.modifiers {
-            if mods.nodes.iter().any(|&mod_idx| {
+        if let Some(mods) = &class_data.modifiers
+            && mods.nodes.iter().any(|&mod_idx| {
                 self.arena
                     .get(mod_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-            }) {
-                return true;
-            }
+            })
+        {
+            return true;
         }
         // Check member-level decorators
         for &member_idx in &class_data.members.nodes {
@@ -441,14 +441,14 @@ impl<'a> LoweringPass<'a> {
                 }
                 _ => None,
             };
-            if let Some(mods) = mods {
-                if mods.nodes.iter().any(|&mod_idx| {
+            if let Some(mods) = mods
+                && mods.nodes.iter().any(|&mod_idx| {
                     self.arena
                         .get(mod_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                }) {
-                    return true;
-                }
+                })
+            {
+                return true;
             }
         }
         false
@@ -496,16 +496,13 @@ impl<'a> LoweringPass<'a> {
                 continue;
             }
             // Check if name is computed (but not a string literal)
-            if let Some(name_node) = self.arena.get(name_idx) {
-                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    if let Some(computed) = self.arena.get_computed_property(name_node) {
-                        if let Some(expr_node) = self.arena.get(computed.expression) {
-                            if expr_node.kind != SyntaxKind::StringLiteral as u16 {
-                                return true;
-                            }
-                        }
-                    }
-                }
+            if let Some(name_node) = self.arena.get(name_idx)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.arena.get_computed_property(name_node)
+                && let Some(expr_node) = self.arena.get(computed.expression)
+                && expr_node.kind != SyntaxKind::StringLiteral as u16
+            {
+                return true;
             }
         }
         false
@@ -551,10 +548,10 @@ impl<'a> LoweringPass<'a> {
             if !has_decorators {
                 continue;
             }
-            if let Some(name_node) = self.arena.get(name_idx) {
-                if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                    return true;
-                }
+            if let Some(name_node) = self.arena.get(name_idx)
+                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            {
+                return true;
             }
         }
         false

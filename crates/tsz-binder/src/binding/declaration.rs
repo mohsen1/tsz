@@ -762,10 +762,10 @@ impl BinderState {
             // We filter to ENUM_MEMBER only so namespace exports don't leak in
             // (e.g., `namespace x { export let y } enum x { z = y }` should error).
             for (name, sym_id) in exports.iter() {
-                if let Some(sym) = self.symbols.get(*sym_id) {
-                    if sym.flags & symbol_flags::ENUM_MEMBER != 0 {
-                        self.current_scope.set(name.to_string(), *sym_id);
-                    }
+                if let Some(sym) = self.symbols.get(*sym_id)
+                    && sym.flags & symbol_flags::ENUM_MEMBER != 0
+                {
+                    self.current_scope.set(name.to_string(), *sym_id);
                 }
             }
 

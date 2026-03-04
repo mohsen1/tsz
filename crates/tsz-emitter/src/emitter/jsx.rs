@@ -444,13 +444,13 @@ impl<'a> Printer<'a> {
                     };
                     result.attrs.push(JsxAttrInfo::Named { name, value });
                 }
-            } else if prop_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                if let Some(spread) = self.arena.get_jsx_spread_attribute(prop_node) {
-                    result.has_spread = true;
-                    result.attrs.push(JsxAttrInfo::Spread {
-                        expr: spread.expression,
-                    });
-                }
+            } else if prop_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE
+                && let Some(spread) = self.arena.get_jsx_spread_attribute(prop_node)
+            {
+                result.has_spread = true;
+                result.attrs.push(JsxAttrInfo::Spread {
+                    expr: spread.expression,
+                });
             }
         }
 
@@ -463,28 +463,28 @@ impl<'a> Printer<'a> {
             return String::new();
         };
 
-        if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return self.arena.resolve_identifier_text(ident).to_string();
-            }
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            return self.arena.resolve_identifier_text(ident).to_string();
         }
 
-        if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
-            if let Some(ns) = self.arena.get_jsx_namespaced_name(node) {
-                let ns_text = self
-                    .arena
-                    .get(ns.namespace)
-                    .and_then(|n| self.arena.get_identifier(n))
-                    .map(|i| self.arena.resolve_identifier_text(i))
-                    .unwrap_or("");
-                let name_text = self
-                    .arena
-                    .get(ns.name)
-                    .and_then(|n| self.arena.get_identifier(n))
-                    .map(|i| self.arena.resolve_identifier_text(i))
-                    .unwrap_or("");
-                return format!("{ns_text}:{name_text}");
-            }
+        if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME
+            && let Some(ns) = self.arena.get_jsx_namespaced_name(node)
+        {
+            let ns_text = self
+                .arena
+                .get(ns.namespace)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|i| self.arena.resolve_identifier_text(i))
+                .unwrap_or("");
+            let name_text = self
+                .arena
+                .get(ns.name)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|i| self.arena.resolve_identifier_text(i))
+                .unwrap_or("");
+            return format!("{ns_text}:{name_text}");
         }
 
         String::new()
@@ -503,10 +503,10 @@ impl<'a> Printer<'a> {
 
         // JSX expression container (e.g. `{expr}`)
         if node.kind == syntax_kind_ext::JSX_EXPRESSION {
-            if let Some(expr) = self.arena.get_jsx_expression(node) {
-                if expr.expression.is_some() {
-                    return JsxAttrValue::Expr(expr.expression);
-                }
+            if let Some(expr) = self.arena.get_jsx_expression(node)
+                && expr.expression.is_some()
+            {
+                return JsxAttrValue::Expr(expr.expression);
             }
             return JsxAttrValue::Bool(true);
         }
@@ -538,10 +538,10 @@ impl<'a> Printer<'a> {
                 result.push(child);
             } else if node.kind == syntax_kind_ext::JSX_EXPRESSION {
                 // Empty JSX expression containers `{}` are skipped
-                if let Some(expr) = self.arena.get_jsx_expression(node) {
-                    if expr.expression.is_some() {
-                        result.push(child);
-                    }
+                if let Some(expr) = self.arena.get_jsx_expression(node)
+                    && expr.expression.is_some()
+                {
+                    result.push(child);
                 }
             } else {
                 result.push(child);
@@ -556,24 +556,23 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if node.kind == SyntaxKind::JsxText as u16 {
-            if let Some(text) = self.arena.get_jsx_text(node) {
-                let processed = process_jsx_text(&text.text);
-                let decoded = decode_jsx_entities(&processed);
-                self.write("\"");
-                self.write(&escape_jsx_text_for_js_with_quote(&decoded, '"'));
-                self.write("\"");
-                return;
-            }
+        if node.kind == SyntaxKind::JsxText as u16
+            && let Some(text) = self.arena.get_jsx_text(node)
+        {
+            let processed = process_jsx_text(&text.text);
+            let decoded = decode_jsx_entities(&processed);
+            self.write("\"");
+            self.write(&escape_jsx_text_for_js_with_quote(&decoded, '"'));
+            self.write("\"");
+            return;
         }
 
-        if node.kind == syntax_kind_ext::JSX_EXPRESSION {
-            if let Some(expr) = self.arena.get_jsx_expression(node) {
-                if expr.expression.is_some() {
-                    self.emit(expr.expression);
-                    return;
-                }
-            }
+        if node.kind == syntax_kind_ext::JSX_EXPRESSION
+            && let Some(expr) = self.arena.get_jsx_expression(node)
+            && expr.expression.is_some()
+        {
+            self.emit(expr.expression);
+            return;
         }
 
         // JSX element, fragment, or self-closing element — emit recursively
@@ -1115,9 +1114,9 @@ fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> String {
                     // UTF-16 surrogate pair
                     let hi = 0xD800 + ((cp - 0x10000) >> 10);
                     let lo = 0xDC00 + ((cp - 0x10000) & 0x3FF);
-                    result.push_str(&format!("\\u{:04X}\\u{:04X}", hi, lo));
+                    result.push_str(&format!("\\u{hi:04X}\\u{lo:04X}"));
                 } else {
-                    result.push_str(&format!("\\u{:04X}", cp));
+                    result.push_str(&format!("\\u{cp:04X}"));
                 }
             }
             _ => result.push(c),
@@ -1174,8 +1173,7 @@ fn decode_jsx_entities(s: &str) -> String {
 /// Resolve a single HTML entity body (without & and ;) to its character(s).
 fn resolve_entity(body: &str) -> Option<String> {
     // Numeric: &#123; or &#x7D;
-    if body.starts_with('#') {
-        let num_part = &body[1..];
+    if let Some(num_part) = body.strip_prefix('#') {
         let cp = if num_part.starts_with('x') || num_part.starts_with('X') {
             u32::from_str_radix(&num_part[1..], 16).ok()?
         } else {

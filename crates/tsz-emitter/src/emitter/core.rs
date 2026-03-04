@@ -340,13 +340,13 @@ pub struct Printer<'a> {
     /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
     pub(crate) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
 
-    /// Private field WeakMap mapping for ES2015-ES2021 class private field lowering.
-    /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (WeakMap variable name).
+    /// Private field `WeakMap` mapping for ES2015-ES2021 class private field lowering.
+    /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (`WeakMap` variable name).
     /// When non-empty, property accesses with private identifiers are lowered to
     /// `__classPrivateFieldGet`/`__classPrivateFieldSet` helper calls.
     pub(crate) private_field_weakmaps: FxHashMap<String, String>,
 
-    /// Pending WeakMap initializations to emit after the class body.
+    /// Pending `WeakMap` initializations to emit after the class body.
     /// Each entry is `_ClassName_fieldName = new WeakMap()`.
     pub(crate) pending_weakmap_inits: Vec<String>,
 }
