@@ -162,7 +162,6 @@ FAIL TypeScript/tests/cases/compiler/contravariantInferenceAndTypeGuard.ts
 FAIL TypeScript/tests/cases/compiler/contravariantOnlyInferenceFromAnnotatedFunction.ts
 FAIL TypeScript/tests/cases/compiler/controlFlowAliasedDiscriminants.ts
 FAIL TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts
-FAIL TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts
 FAIL TypeScript/tests/cases/compiler/controlFlowForCatchAndFinally.ts
 FAIL TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts
 FAIL TypeScript/tests/cases/compiler/controlFlowForIndexSignatures.ts
@@ -783,7 +782,6 @@ FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts
 FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts
 FAIL TypeScript/tests/cases/compiler/metadataImportType.ts
 FAIL TypeScript/tests/cases/compiler/methodChainError.ts
-FAIL TypeScript/tests/cases/compiler/methodSignatureHandledDeclarationKindForSymbol.ts
 FAIL TypeScript/tests/cases/compiler/mismatchedExplicitTypeParameterAndArgumentType.ts
 FAIL TypeScript/tests/cases/compiler/mismatchedGenericArguments1.ts
 FAIL TypeScript/tests/cases/compiler/missingCloseParenStatements.ts
@@ -1576,7 +1574,6 @@ FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyN
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType9_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesWithStaticProperty.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
-FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment5SiblingInitializer.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringAssignabilityCheck.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringControlFlow.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment3.ts
@@ -2238,7 +2235,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForI
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement4.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement5.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement3.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement9.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode15-negative.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode15.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode6-negative.ts
@@ -3772,6 +3768,7 @@ PASS TypeScript/tests/cases/compiler/controlFlowCommaExpressionAssertionWithinTe
 PASS TypeScript/tests/cases/compiler/controlFlowCommaExpressionFunctionCall.ts
 PASS TypeScript/tests/cases/compiler/controlFlowDestructuringLoop.ts
 PASS TypeScript/tests/cases/compiler/controlFlowDestructuringParameters.ts
+PASS TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts
 PASS TypeScript/tests/cases/compiler/controlFlowFavorAssertedTypeThroughTypePredicate.ts
 PASS TypeScript/tests/cases/compiler/controlFlowFinallyNoCatchAssignments.ts
 PASS TypeScript/tests/cases/compiler/controlFlowForCompoundAssignmentToThisMember.ts
@@ -5899,6 +5896,7 @@ PASS TypeScript/tests/cases/compiler/metadataReferencedWithinFilteredUnion.ts
 PASS TypeScript/tests/cases/compiler/methodContainingLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/methodInAmbientClass1.ts
 PASS TypeScript/tests/cases/compiler/methodSignatureDeclarationEmit1.ts
+PASS TypeScript/tests/cases/compiler/methodSignatureHandledDeclarationKindForSymbol.ts
 PASS TypeScript/tests/cases/compiler/mismatchedClassConstructorVariable.ts
 PASS TypeScript/tests/cases/compiler/missingArgument1.ts
 PASS TypeScript/tests/cases/compiler/missingCloseBrace.ts
@@ -8327,7 +8325,6 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowInstanceOfGuardPr
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNullishCoalesce.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain2.ts
-PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowStringIndex.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowSuperPropertyAccess.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowTruthiness.ts
@@ -8824,6 +8821,7 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBind
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment1ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment3.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment4.ts
+PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment5SiblingInitializer.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringCatch.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringEvaluationOrder.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringInFunctionType.ts
@@ -11279,6 +11277,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForS
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement6.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement8.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement9.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserIfStatement2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserWithStatement2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/ReturnStatements/parserReturnStatement1.ts
