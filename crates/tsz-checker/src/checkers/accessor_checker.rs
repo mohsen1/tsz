@@ -50,8 +50,8 @@ impl<'a> CheckerState<'a> {
                 let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
                 let name_node_idx = accessor.name;
 
-                // Get accessor name
-                if let Some(name) = self.get_property_name(accessor.name) {
+                // Get accessor name (use resolved variant for computed names like [G.B])
+                if let Some(name) = self.get_property_name_resolved(accessor.name) {
                     let pair = accessors.entry(name).or_default();
                     if node.kind == syntax_kind_ext::GET_ACCESSOR {
                         pair.getter = Some((name_node_idx, is_abstract));
@@ -210,7 +210,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let Some(name) = self.get_property_name(accessor.name) else {
+            let Some(name) = self.get_property_name_resolved(accessor.name) else {
                 continue;
             };
 
