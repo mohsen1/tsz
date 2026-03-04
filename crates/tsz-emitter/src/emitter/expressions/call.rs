@@ -116,8 +116,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if self.ctx.is_commonjs()
-            && !self.suppress_commonjs_named_import_substitution
+        if !self.suppress_commonjs_named_import_substitution
             && let Some(expr_node) = self.arena.get(call.expression)
             && let Some(ident) = self.arena.get_identifier(expr_node)
             && let Some(subst) = self
@@ -134,8 +133,7 @@ impl<'a> Printer<'a> {
 
         // CJS exported variable indirect call: `foo()` → `(0, exports.foo)()`
         // The `(0, ...)` wrapper prevents `this` binding to `exports`.
-        if self.ctx.is_commonjs()
-            && !self.suppress_ns_qualification
+        if !self.suppress_ns_qualification
             && let Some(expr_node) = self.arena.get(call.expression)
             && let Some(ident) = self.arena.get_identifier(expr_node)
             && self

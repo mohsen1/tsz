@@ -47,18 +47,18 @@ impl<'a> Printer<'a> {
                 self.write(&ns_name);
                 self.write(".");
                 self.write_identifier(emit_text);
-            } else if self.ctx.is_commonjs()
-                && !self.suppress_ns_qualification
+            } else if !self.suppress_ns_qualification
                 && self
                     .commonjs_exported_var_names
                     .contains(original_text.as_str())
             {
                 // In CJS modules, inline-exported variable references (let/const/var)
                 // are rewritten to `exports.X` for both reads and writes.
+                // Note: we check the set directly (not is_commonjs()) because the module
+                // kind is temporarily set to None inside export statement bodies.
                 self.write("exports.");
                 self.write_identifier(emit_text);
-            } else if self.ctx.is_commonjs()
-                && !self.suppress_commonjs_named_import_substitution
+            } else if !self.suppress_commonjs_named_import_substitution
                 && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
             {
                 let subst = subst.clone();
