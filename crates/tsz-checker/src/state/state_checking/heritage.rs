@@ -965,9 +965,10 @@ impl<'a> CheckerState<'a> {
     /// only works on direct `Callable` types, not intersections.
     fn has_generic_construct_signatures(&self, type_id: TypeId) -> bool {
         if let Some(sigs) = class_query::construct_signatures_for_type(self.ctx.types, type_id)
-            && sigs.iter().any(|sig| !sig.type_params.is_empty()) {
-                return true;
-            }
+            && sigs.iter().any(|sig| !sig.type_params.is_empty())
+        {
+            return true;
+        }
         // For intersection types, check each member
         if let Some(members) = class_query::intersection_members(self.ctx.types, type_id) {
             for member in &members {
