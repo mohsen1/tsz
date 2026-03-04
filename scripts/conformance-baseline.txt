@@ -448,6 +448,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2098,9 +2099,7 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/resolutionModeTypeOnlyI
 FAIL TypeScript/tests/cases/conformance/moduleResolution/selfNameModuleAugmentation.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny_relativePath.ts
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName.ts
-FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJs1.ts
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsConditionalPackageExports.ts
-FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsImportHelpersCollisions1.ts
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsImportHelpersCollisions2.ts
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsPackageExports.ts
@@ -5006,7 +5005,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -10651,8 +10649,10 @@ PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_vsA
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_withAugmentation.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName2.ts
+PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJs1.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsCjsFromJs.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsDynamicImport.ts
+PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsExportlessJsModuleDetectionAuto.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsGeneratedNameCollisions.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsImportAssignment.ts

@@ -33,6 +33,69 @@ pub(crate) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
     }
 }
 
+/// Check if a module specifier refers to a Node.js built-in module.
+/// Handles both bare names ("fs") and the `node:` prefix ("node:fs").
+fn is_node_builtin_module(name: &str) -> bool {
+    let bare = name.strip_prefix("node:").unwrap_or(name);
+    matches!(
+        bare,
+        "assert"
+            | "assert/strict"
+            | "async_hooks"
+            | "buffer"
+            | "child_process"
+            | "cluster"
+            | "console"
+            | "constants"
+            | "crypto"
+            | "dgram"
+            | "diagnostics_channel"
+            | "dns"
+            | "dns/promises"
+            | "domain"
+            | "events"
+            | "fs"
+            | "fs/promises"
+            | "http"
+            | "http2"
+            | "https"
+            | "inspector"
+            | "inspector/promises"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "path/posix"
+            | "path/win32"
+            | "perf_hooks"
+            | "process"
+            | "punycode"
+            | "querystring"
+            | "readline"
+            | "readline/promises"
+            | "repl"
+            | "stream"
+            | "stream/consumers"
+            | "stream/promises"
+            | "stream/web"
+            | "string_decoder"
+            | "sys"
+            | "timers"
+            | "timers/promises"
+            | "tls"
+            | "trace_events"
+            | "tty"
+            | "url"
+            | "util"
+            | "util/types"
+            | "v8"
+            | "vm"
+            | "wasi"
+            | "worker_threads"
+            | "zlib"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Import Declaration Validation
@@ -468,6 +531,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Node.js built-in modules (e.g. "fs", "path", "node:fs") should not
+        // trigger TS2307/TS2882 when using Node module resolution. TSC resolves
+        // these via @types/node; our single-file checker lacks this, so we
+        // suppress resolution errors for known built-in names.
+        let is_node_builtin = self.ctx.compiler_options.module.is_node_module()
+            && is_node_builtin_module(module_name);
+
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
@@ -479,6 +549,11 @@ impl<'a> CheckerState<'a> {
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
                 || error_code == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
             {
+                // Node.js built-in modules: suppress TS2307/TS2882 entirely.
+                if is_node_builtin {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
                 // Side-effect imports use TS2882 instead of TS2307/TS2792,
                 // but only when noUncheckedSideEffectImports is enabled.
                 // When disabled, side-effect imports with resolution errors are silently ignored.
@@ -599,7 +674,21 @@ impl<'a> CheckerState<'a> {
                         }
                     };
 
-                    if current_is_commonjs && target_is_esm && !is_type_only_import {
+                    // TSC suppresses TS1479 for .cjs files with relative imports.
+                    // .cjs files are always CJS, but TS1479 only applies for non-relative
+                    // (package) imports where Node's runtime resolution would fail loading
+                    // an ESM module via require(). Relative imports within the project are
+                    // handled by tsc's output processing, not Node's runtime loader.
+                    let is_cjs_file = self.ctx.file_name.ends_with(".cjs");
+                    let is_relative_import =
+                        module_name.starts_with("./") || module_name.starts_with("../");
+                    let suppress_for_cjs_relative = is_cjs_file && is_relative_import;
+
+                    if current_is_commonjs
+                        && target_is_esm
+                        && !is_type_only_import
+                        && !suppress_for_cjs_relative
+                    {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
@@ -710,6 +799,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Node.js built-in modules: suppress fallback TS2307/TS2882 too.
+        if is_node_builtin {
             self.ctx.import_resolution_stack.pop();
             return;
         }

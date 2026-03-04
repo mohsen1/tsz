@@ -2442,6 +2442,41 @@ fn test_ts2882_regular_import_still_emits_ts2307() {
     );
 }
 
+/// Node.js built-in modules should NOT trigger TS2882 when using Node module resolution.
+/// TSC resolves these via @types/node; we suppress them for known builtins.
+#[test]
+fn test_ts2882_node_builtin_suppressed() {
+    let opts = CheckerOptions {
+        module: tsz_common::common::ModuleKind::Node16,
+        no_unchecked_side_effect_imports: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_imports_and_get_diagnostics(r#"import "fs";"#, opts);
+    assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 for Node.js built-in 'fs'.\nActual: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 for Node.js built-in 'fs'.\nActual: {diagnostics:?}"
+    );
+}
+
+/// Node.js built-in modules with node: prefix should also be suppressed.
+#[test]
+fn test_ts2882_node_builtin_prefix_suppressed() {
+    let opts = CheckerOptions {
+        module: tsz_common::common::ModuleKind::Node16,
+        no_unchecked_side_effect_imports: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_imports_and_get_diagnostics(r#"import "node:fs";"#, opts);
+    assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 for Node.js built-in 'node:fs'.\nActual: {diagnostics:?}"
+    );
+}
+
 // TS7051: Parameter has a name but no type. Did you mean 'arg0: string'?
 // TS7006: Parameter 'x' implicitly has an 'any' type.
 
@@ -3630,6 +3665,28 @@ fn test_ts1479_js_file_single_file_no_false_positive() {
     assert!(
         !has_error(&diagnostics, 1479),
         "Should NOT emit TS1479 in single-file mode.\nActual: {diagnostics:?}"
+    );
+}
+
+/// .cjs files should NOT get TS1479 for relative imports.
+/// TSC suppresses TS1479 for .cjs files importing via relative paths because
+/// the imports won't be transformed to `require()` calls (already JS, not TS).
+/// Non-relative (package) imports in .cjs files CAN get TS1479.
+#[test]
+fn test_ts1479_cjs_file_relative_import_suppressed() {
+    let opts = CheckerOptions {
+        module: tsz_common::common::ModuleKind::Node16,
+        ..CheckerOptions::default()
+    };
+    // Relative import in .cjs file — should NOT emit TS1479
+    let diagnostics = compile_with_file_name_and_get_diagnostics(
+        "test.cjs",
+        r#"import * as m from './index.mjs';"#,
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 1479),
+        "Should NOT emit TS1479 for .cjs file with relative import.\nActual: {diagnostics:?}"
     );
 }
 
