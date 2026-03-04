@@ -660,12 +660,11 @@ impl<'a> Printer<'a> {
             // No assignment prefix — use anonymous_default_export_name if available
             // (e.g., `export default class {}` → `class default_1 {}`)
             let override_name = self.anonymous_default_export_name.clone();
-            if let Some(name) = override_name {
-                if !name.is_empty() {
+            if let Some(name) = override_name
+                && !name.is_empty() {
                     self.write_space();
                     self.write(&name);
                 }
-            }
         }
 
         if let Some(ref heritage_clauses) = class.heritage_clauses {

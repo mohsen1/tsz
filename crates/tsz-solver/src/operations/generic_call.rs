@@ -121,6 +121,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &mut placeholder_visited,
                 ) {
                     infer_ctx.add_upper_bound(var, inst_constraint);
+                    infer_ctx.set_declared_constraint(var, inst_constraint);
                 }
             }
 

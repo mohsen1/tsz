@@ -284,6 +284,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let var = infer_ctx.fresh_type_param(tp.name, tp.is_const);
             if let Some(constraint) = tp.constraint {
                 infer_ctx.add_upper_bound(var, constraint);
+                infer_ctx.set_declared_constraint(var, constraint);
             }
         }
 

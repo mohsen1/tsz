@@ -219,6 +219,11 @@ pub struct InferenceContext<'a> {
     pub(crate) table: InPlaceUnificationTable<InferenceVar>,
     /// Map from type parameter names to inference variables, with const flag
     pub(crate) type_params: Vec<(Atom, InferenceVar, bool)>,
+    /// Declared `extends` constraints per inference variable (from type parameter declarations).
+    /// Separate from `upper_bounds` which also includes contextual type bounds.
+    /// Used to decide literal type preservation: `T extends string` preserves `"z"`,
+    /// but contextual `Box<boolean>` should NOT preserve `false`.
+    pub(crate) declared_constraints: FxHashMap<InferenceVar, TypeId>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -232,6 +237,7 @@ impl<'a> InferenceContext<'a> {
             subtype_cache: RefCell::new(FxHashMap::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
+            declared_constraints: FxHashMap::default(),
         }
     }
 
@@ -245,6 +251,7 @@ impl<'a> InferenceContext<'a> {
             subtype_cache: RefCell::new(FxHashMap::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
+            declared_constraints: FxHashMap::default(),
         }
     }
 
@@ -274,6 +281,17 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .find(|(n, _, _)| *n == name)
             .map(|(_, v, _)| *v)
+    }
+
+    /// Record the declared `extends` constraint for an inference variable.
+    pub fn set_declared_constraint(&mut self, var: InferenceVar, constraint: TypeId) {
+        self.declared_constraints.insert(var, constraint);
+    }
+
+    /// Get the declared `extends` constraint for an inference variable.
+    pub fn get_declared_constraint(&mut self, var: InferenceVar) -> Option<TypeId> {
+        let root = self.table.find(var);
+        self.declared_constraints.get(&root).copied()
     }
 
     /// Check if an inference variable is a const type parameter
