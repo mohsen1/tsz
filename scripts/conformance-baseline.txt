@@ -452,7 +452,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1448,8 +1447,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
@@ -2093,6 +2090,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadChildrenInvalidType.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType3.tsx
@@ -2289,9 +2287,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupp
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport4.ts
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport5.ts
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport6.ts
-FAIL TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS.ts
-FAIL TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS2.ts
-FAIL TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS3.ts
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAliasUnknown.ts
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAssignment.ts
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAssignment7.ts
@@ -2380,7 +2375,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAndUnionT
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -5018,6 +5012,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -8193,6 +8188,8 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInterfaceExtendingClass.ts
@@ -11464,6 +11461,9 @@ PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignmen
 PASS TypeScript/tests/cases/conformance/salsa/jsdocConstructorFunctionTypeReference.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsObjectsMarkedAsOpenEnded.ts
 PASS TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport7.ts
+PASS TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS.ts
+PASS TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS2.ts
+PASS TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS3.ts
 PASS TypeScript/tests/cases/conformance/salsa/malformedTags.ts
 PASS TypeScript/tests/cases/conformance/salsa/methodsReturningThis.ts
 PASS TypeScript/tests/cases/conformance/salsa/mixedPropertyElementAccessAssignmentDeclaration.ts
@@ -11823,6 +11823,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
