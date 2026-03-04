@@ -252,12 +252,12 @@ export function parseBaseline(content: string): BaselineContent {
 
   // Refine JS/DTS selection by preferring files that match the source basename.
   if (result.sourceFileName) {
-    const sourceBase = result.sourceFileName.replace(/\.(ts|tsx|mts|cts)$/, '');
-    const sourceExt = result.sourceFileName.match(/\.(ts|tsx|mts|cts)$/)?.[1] ?? 'ts';
+    const sourceBase = result.sourceFileName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+    const sourceExt = result.sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
     const preferredJsExt =
-      sourceExt === 'tsx' ? 'jsx' :
-      sourceExt === 'mts' ? 'mjs' :
-      sourceExt === 'cts' ? 'cjs' : 'js';
+      sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+      sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+      sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
     const preferredJsName = `${sourceBase}.${preferredJsExt}`;
     const preferredDtsName = `${sourceBase}.d.ts`;
 

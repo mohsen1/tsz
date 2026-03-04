@@ -269,11 +269,16 @@ export class CliTranspiler {
 
       inputFiles.push(filePath);
 
-      const extMatch = relName.match(/\.(ts|tsx|mts|cts)$/);
+      const extMatch = relName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/);
       const ext = extMatch ? `.${extMatch[1]}` : '.ts';
-      const stem = filePath.replace(/\.(ts|tsx|mts|cts)$/, '');
+      const stem = filePath.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+      // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
+      // For JS→JS (allowJs): output has same extension as input
       const sourceDefaultJsPath =
-        ext === '.tsx' ? `${stem}.jsx` : ext === '.mts' ? `${stem}.mjs` : ext === '.cts' ? `${stem}.cjs` : `${stem}.js`;
+        ext === '.tsx' || ext === '.jsx' ? `${stem}.jsx` :
+        ext === '.mts' || ext === '.mjs' ? `${stem}.mjs` :
+        ext === '.cts' || ext === '.cjs' ? `${stem}.cjs` :
+        `${stem}.js`;
 
       expectedOutputs.push({
         jsPath: sourceDefaultJsPath,
