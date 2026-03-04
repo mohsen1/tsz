@@ -318,7 +318,7 @@ impl<'a> Printer<'a> {
                     let block_exports = ns_emitter.collect_exported_var_names(namespace_node);
                     let entry = self
                         .namespace_prior_exports
-                        .entry(ns_name_for_exports.clone())
+                        .entry(ns_name_for_exports)
                         .or_default();
                     entry.extend(block_exports);
                     ns_emitter.set_prior_exported_vars(entry.clone());
@@ -405,10 +405,8 @@ impl<'a> Printer<'a> {
                                 let ns_name = self.get_identifier_text_idx(module_decl.name);
                                 if !ns_name.is_empty() {
                                     let block_exports = ns_emitter.collect_exported_var_names(idx);
-                                    let entry = self
-                                        .namespace_prior_exports
-                                        .entry(ns_name.clone())
-                                        .or_default();
+                                    let entry =
+                                        self.namespace_prior_exports.entry(ns_name).or_default();
                                     entry.extend(block_exports);
                                     ns_emitter.set_prior_exported_vars(entry.clone());
                                 }
@@ -902,7 +900,7 @@ impl<'a> Printer<'a> {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
                     let entry = self
                         .namespace_prior_exports
-                        .entry(ns_name_for_exports.clone())
+                        .entry(ns_name_for_exports)
                         .or_default();
                     entry.extend(block_exports);
                     ns_emitter.set_prior_exported_vars(entry.clone());
@@ -1082,7 +1080,7 @@ impl<'a> Printer<'a> {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
                     let entry = self
                         .namespace_prior_exports
-                        .entry(ns_name_for_exports.clone())
+                        .entry(ns_name_for_exports)
                         .or_default();
                     entry.extend(block_exports);
                     ns_emitter.set_prior_exported_vars(entry.clone());
@@ -1147,10 +1145,7 @@ impl<'a> Printer<'a> {
                         let ns_name = self.get_identifier_text_idx(module_decl.name);
                         if !ns_name.is_empty() {
                             let block_exports = ns_emitter.collect_exported_var_names(idx);
-                            let entry = self
-                                .namespace_prior_exports
-                                .entry(ns_name.clone())
-                                .or_default();
+                            let entry = self.namespace_prior_exports.entry(ns_name).or_default();
                             entry.extend(block_exports);
                             ns_emitter.set_prior_exported_vars(entry.clone());
                         }

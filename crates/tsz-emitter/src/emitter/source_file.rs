@@ -602,8 +602,7 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
             );
-            self.commonjs_exported_var_names
-                .extend(inline_var_names.into_iter());
+            self.commonjs_exported_var_names.extend(inline_var_names);
             // When `export =` is present, suppress hoisted function exports
             // (exports.f = f;) since module.exports replaces them, but keep
             // void 0 initialization for non-function exports (tsc behavior).
