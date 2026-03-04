@@ -531,14 +531,9 @@ impl<'a> Printer<'a> {
         }
 
         if !has_value_binding {
-            if named_bindings_all_type_only {
-                return;
-            }
-            // `import {} from "x"` has no local value bindings but is still a runtime side effect.
-            self.write("require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
+            // `import { type Foo } from "x"` and `import {} from "x"` have no runtime
+            // bindings and are elided in CJS mode.  Only `import "x"` (bare import
+            // without an import clause, handled earlier) is a true side-effect import.
             return;
         }
 
