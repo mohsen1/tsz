@@ -318,28 +318,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if is_function_body_block {
-            // tsc places comments between the last statement and `}` AFTER the
-            // closing brace, at the outer indentation level.
-            let has_pending = !self.ctx.options.remove_comments
-                && self.comment_emit_idx < self.all_comments.len()
-                && self.all_comments[self.comment_emit_idx].end <= block_close_pos;
-            self.decrease_indent();
-            self.map_closing_brace(node);
-            self.write_with_end_marker("}");
-            if has_pending {
-                self.write_line();
-                self.emit_comments_before_pos(block_close_pos);
-            }
-        } else {
-            // Control-flow blocks (if/for/while): comments stay inside.
-            if !self.ctx.options.remove_comments {
-                self.emit_comments_before_pos(block_close_pos);
-            }
-            self.decrease_indent();
-            self.map_closing_brace(node);
-            self.write_with_end_marker("}");
+        // tsc keeps comments between the last statement and `}` INSIDE the
+        // block at body indentation for both function bodies and control-flow
+        // blocks. Emit them before decreasing indent so they stay inside.
+        if !self.ctx.options.remove_comments {
+            self.emit_comments_before_pos(block_close_pos);
         }
+        self.decrease_indent();
+        self.map_closing_brace(node);
+        self.write_with_end_marker("}");
         self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
         // the calling context (class member loop, statement loop, etc.)
