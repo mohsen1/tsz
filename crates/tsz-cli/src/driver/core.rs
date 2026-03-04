@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, ModuleDetection};
+use crate::args::{CliArgs, Module, ModuleDetection};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
@@ -1876,8 +1876,30 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_emit_helpers {
         options.printer.no_emit_helpers = true;
     }
-    if let Some(ModuleDetection::Force) = args.module_detection {
-        options.printer.module_detection_force = true;
+    // Implement tsc's getEmitModuleDetectionKind for CLI overrides:
+    // - Explicit "force" -> all non-declaration files are modules
+    // - Explicit "auto"/"legacy" -> override config default (may undo Node16+ auto-force)
+    // - Not set -> preserve config-level default
+    match args.module_detection {
+        Some(ModuleDetection::Force) => {
+            options.printer.module_detection_force = true;
+        }
+        Some(ModuleDetection::Auto | ModuleDetection::Legacy) => {
+            // Explicitly opting out of force mode
+            options.printer.module_detection_force = false;
+        }
+        None => {
+            // When module detection is not set via CLI, check if the CLI also overrides
+            // the module kind. If module is now a node module, apply tsc's default (Force).
+            if let Some(ref module_val) = args.module {
+                if matches!(
+                    module_val,
+                    Module::Node16 | Module::Node18 | Module::Node20 | Module::NodeNext
+                ) {
+                    options.printer.module_detection_force = true;
+                }
+            }
+        }
     }
     if args.preserve_const_enums {
         options.printer.preserve_const_enums = true;

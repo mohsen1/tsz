@@ -1075,6 +1075,12 @@ impl<'a> Printer<'a> {
     /// TypeScript emits __esModule for ANY module syntax, including type-only
     /// imports/exports, declared exports, exported interfaces/type aliases,
     /// and `import.meta` usage (which makes the file a module per spec).
+    ///
+    /// Mirrors tsc's `shouldEmitUnderscoreUnderscoreESModule`:
+    /// - JS files with CJS patterns (module.exports, exports.foo) and no real ESM syntax
+    ///   do NOT get __esModule, even when moduleDetection=force.
+    /// - Files with `export =` do NOT get __esModule.
+    /// - All other module files get __esModule.
     pub(in crate::emitter) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
         // If file has a runtime `export =`, do not emit __esModule.
         // Type-only `export =` aliases (e.g. interface) are filtered out.
@@ -1082,12 +1088,37 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        // Check if the file has real ESM syntax (import/export statements)
+        let has_esm_syntax = self.has_esm_module_syntax(statements);
+
+        // tsc's shouldEmitUnderscoreUnderscoreESModule:
+        // For JS files (.js/.cjs/.mjs) with CJS patterns (module.exports, exports.foo)
+        // and no real ESM import/export syntax, skip __esModule.
+        // This matches: `hasJSFileExtension(file) && file.commonJsModuleIndicator &&
+        //   (!file.externalModuleIndicator || file.externalModuleIndicator === true)`
+        if self.is_current_root_js_source
+            && self.has_commonjs_module_indicator(statements)
+            && !has_esm_syntax
+        {
+            return false;
+        }
+
+        // If file has real ESM syntax, emit __esModule
+        if has_esm_syntax {
+            return true;
+        }
+
         // moduleDetection=force: treat all non-declaration files as modules
         if self.ctx.options.module_detection_force {
             return true;
         }
 
-        // Second check: look for ANY module syntax (including type-only)
+        false
+    }
+
+    /// Check if the file has any ESM module syntax (import/export statements,
+    /// import.meta, export modifiers).
+    fn has_esm_module_syntax(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
@@ -1125,11 +1156,91 @@ impl<'a> Printer<'a> {
         }
 
         // `import.meta` usage makes the file a module (ESM-only syntax).
-        // Must check the full AST since `import.meta` can appear in any expression.
         if self.contains_import_meta(statements) {
             return true;
         }
 
+        false
+    }
+
+    /// Check if the file has CJS module patterns like `module.exports = ...`,
+    /// `exports.foo = ...`, or `require("...")`.
+    /// This is a lightweight emitter-level check that approximates tsc's
+    /// binder-level `commonJsModuleIndicator`.
+    fn has_commonjs_module_indicator(&self, statements: &NodeList) -> bool {
+        for &stmt_idx in &statements.nodes {
+            if let Some(node) = self.arena.get(stmt_idx) {
+                if self.statement_has_cjs_pattern(node) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a statement contains CJS module patterns.
+    /// Looks for:
+    /// - `module.exports = ...` (BinaryExpression with PropertyAccessExpression)
+    /// - `exports.foo = ...` (BinaryExpression with PropertyAccessExpression)
+    /// - Top-level `require("...")` calls
+    fn statement_has_cjs_pattern(&self, node: &Node) -> bool {
+        // Check expression statements: `module.exports = X;` or `exports.foo = X;`
+        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+                if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+                    return self.expression_is_cjs_pattern(expr_node);
+                }
+            }
+        }
+        false
+    }
+
+    /// Get the identifier text from a node, if it is an identifier.
+    fn identifier_text_of(&self, node: &Node) -> Option<&str> {
+        self.arena
+            .get_identifier(node)
+            .map(|id| id.escaped_text.as_str())
+    }
+
+    /// Check if an expression is a CJS module pattern.
+    fn expression_is_cjs_pattern(&self, node: &Node) -> bool {
+        // Binary expression: `module.exports = X` or `exports.foo = X`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(node) {
+                if let Some(left) = self.arena.get(bin.left) {
+                    // Check for `module.exports` or `exports.foo`
+                    if left.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                        if let Some(access) = self.arena.get_access_expr(left) {
+                            if let Some(expr) = self.arena.get(access.expression) {
+                                let expr_text = self.identifier_text_of(expr);
+                                // `module.exports = ...`
+                                if expr_text == Some("module") {
+                                    if let Some(name) = self.arena.get(access.name_or_argument) {
+                                        if self.identifier_text_of(name) == Some("exports") {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                // `exports.foo = ...`
+                                if expr_text == Some("exports") {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Call expression: `require("...")`
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            if let Some(call) = self.arena.get_call_expr(node) {
+                if let Some(callee) = self.arena.get(call.expression) {
+                    if self.identifier_text_of(callee) == Some("require") {
+                        return true;
+                    }
+                }
+            }
+        }
         false
     }
 

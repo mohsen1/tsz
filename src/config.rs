@@ -875,9 +875,18 @@ pub fn resolve_compiler_options(
         resolved.strip_internal = strip_internal;
     }
 
-    if let Some(ref module_detection) = options.module_detection
-        && module_detection.eq_ignore_ascii_case("force")
-    {
+    // Implement tsc's getEmitModuleDetectionKind:
+    // - If moduleDetection is explicitly "force", all non-declaration files are modules.
+    // - If moduleDetection is explicitly "auto" or "legacy", use their respective rules.
+    // - If moduleDetection is NOT set and module is Node16-NodeNext, default to "force".
+    // - If moduleDetection is NOT set and module is anything else, default to "auto".
+    if let Some(ref module_detection) = options.module_detection {
+        if module_detection.eq_ignore_ascii_case("force") {
+            resolved.printer.module_detection_force = true;
+        }
+        // "auto" and "legacy" both leave module_detection_force as false
+    } else if resolved.printer.module.is_node_module() {
+        // tsc defaults to Force for Node16/Node18/Node20/NodeNext
         resolved.printer.module_detection_force = true;
     }
 
