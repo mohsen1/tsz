@@ -85,10 +85,32 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     Some(context.options.checker.jsx_import_source.clone());
             }
 
-            // For Node16/NodeNext, resolve the per-file module format based on
-            // file extension and nearest package.json "type" field.
-            // .mts/.mjs -> ESM, .cts/.cjs -> CJS, .ts/.js -> depends on package.json
+            // Per-file module kind resolution.
+            //
+            // tsc's module emit behavior depends on:
+            // 1. The --module setting (global)
+            // 2. The file extension (.cts/.cjs -> CJS, .mts/.mjs -> ESM)
+            // 3. For node modules, the nearest package.json "type" field
+            // 4. The effective moduleDetection mode (determines if all files are modules)
+            //
+            // The config-level module_detection_force is already set correctly:
+            // - true when moduleDetection=force (explicit or tsc default for node modules)
+            // - false when moduleDetection=auto or legacy
+            //
+            // Here we handle per-file overrides.
+            let file_name_lower = input_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let is_cts_or_cjs =
+                file_name_lower.ends_with(".cts") || file_name_lower.ends_with(".cjs");
+            let is_mts_or_mjs =
+                file_name_lower.ends_with(".mts") || file_name_lower.ends_with(".mjs");
+
             if printer_options.module.is_node_module() {
+                // For Node16/NodeNext, resolve the per-file module format based on
+                // file extension and nearest package.json "type" field.
                 let mode = implied_resolution_mode_for_file(&input_path, context.base_dir);
                 if mode == "import" {
                     printer_options.module = ModuleKind::ESNext;
@@ -96,6 +118,26 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 } else {
                     printer_options.module = ModuleKind::CommonJS;
                 }
+                // module_detection_force is already set at config level
+                // (true by default for node modules when moduleDetection not explicit)
+            } else if is_cts_or_cjs {
+                // .cts/.cjs files always emit as CJS regardless of --module setting.
+                // This handles cases like module=esnext with .cts files.
+                if !printer_options.module.is_commonjs() {
+                    printer_options.module = ModuleKind::CommonJS;
+                }
+            }
+
+            if is_mts_or_mjs && !printer_options.module.is_es_module() {
+                // .mts/.mjs files always emit as ESM regardless of --module setting.
+                printer_options.module = ModuleKind::ESNext;
+            }
+
+            // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
+            // always modules in "auto" mode. This applies even when the config-level
+            // module_detection_force is false (e.g., explicit moduleDetection=auto).
+            if !printer_options.module_detection_force && (is_cts_or_cjs || is_mts_or_mjs) {
+                printer_options.module_detection_force = true;
             }
 
             // Run the lowering pass to generate transform directives
