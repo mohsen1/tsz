@@ -15094,3 +15094,136 @@ fn test_no_deep_widen_when_constraint_implies_literals() {
     // Should preserve the literal "a" (constraint implies literals)
     assert_eq!(result, a_lit);
 }
+
+// =============================================================================
+// Union-to-union inference: structural matching
+// =============================================================================
+
+/// Regression test for union inference with generic application members.
+///
+/// Given `lift<V>(value: V | Foo<V>): Foo<V>` called with argument of type
+/// `U | Foo<U>`, the inference should resolve `V = U`, NOT `V = U | Foo<U>`.
+///
+/// Without structural matching, `Foo<U>` matches the naked type param `V`
+/// in the target union, adding `Foo<U>` as an extra candidate for `V`.
+#[test]
+fn test_union_inference_prefers_structural_match_over_naked_type_param() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create outer type param U (from enclosing function scope)
+    let u_name = interner.intern_string("U");
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Create Foo<T> interface as an object with a `prop: T` property
+    let v_name = interner.intern_string("V");
+    let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: v_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Build Foo<U> and Foo<V> as objects with `prop: U` and `prop: V`
+    let prop_name = interner.intern_string("prop");
+    let foo_u = interner.object(vec![crate::PropertyInfo::new(prop_name, u_type)]);
+    let foo_v = interner.object(vec![crate::PropertyInfo::new(prop_name, v_type)]);
+
+    // Parameter type: V | Foo<V>
+    let param_type = interner.union(vec![v_type, foo_v]);
+    // Argument type: U | Foo<U>
+    let arg_type = interner.union(vec![u_type, foo_u]);
+
+    let func = FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: v_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: foo_v,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let result = infer_generic_function(&interner, &mut checker, &func, &[arg_type]);
+
+    // V should be inferred as U, so return type Foo<V> → Foo<U> = foo_u
+    // The result should be an object with prop: U, not prop: U | Foo<U>
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        let prop = shape
+            .properties
+            .iter()
+            .find(|p| p.name == prop_name)
+            .expect("should have prop");
+        // prop.type_id should be U, not U | Foo<U>
+        assert_eq!(
+            prop.type_id, u_type,
+            "V should be inferred as U, so Foo<V>.prop should be U"
+        );
+    } else {
+        panic!("Expected object type for Foo<V> return, got {result:?}");
+    }
+}
+
+/// Test that naked type params still receive candidates when no structural match exists.
+///
+/// Given `foo<T>(x: T | string)` called with `number`, T should be inferred
+/// as `number` (number doesn't structurally match string, so it goes to T).
+#[test]
+fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    // Parameter: T | string
+    let param_type = interner.union(vec![t_type, TypeId::STRING]);
+
+    let func = FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Calling with number — should infer T = number
+    let result = infer_generic_function(&interner, &mut checker, &func, &[TypeId::NUMBER]);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "T should be inferred as number when no structural match exists"
+    );
+}

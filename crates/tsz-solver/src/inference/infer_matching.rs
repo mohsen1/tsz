@@ -520,6 +520,12 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Infer from union types
+    ///
+    /// Implements TSC's union-to-union inference strategy:
+    /// 1. Partition target members into parameterized (contains inference vars) and fixed.
+    /// 2. Further split parameterized into naked type params vs structured (e.g., `Foo<V>`).
+    /// 3. Filter out source members that match fixed targets.
+    /// 4. For remaining source members, prefer structural matches over naked type params.
     fn infer_unions(
         &mut self,
         source_members: TypeListId,
@@ -529,44 +535,121 @@ impl<'a> InferenceContext<'a> {
         let source_list = self.interner.type_list(source_members);
         let target_list = self.interner.type_list(target_members);
 
-        // TypeScript inference filtering: when the target union contains both
-        // type parameters and fixed types (e.g., `T | undefined`), strip source
-        // members that match fixed target members before inferring against the
-        // parameterized members. This prevents `undefined` in `number | undefined`
-        // from being inferred as a candidate for `T` in `T | undefined`.
         let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
             .iter()
             .partition(|&&t| self.target_contains_inference_param(t));
 
-        if !parameterized.is_empty() && !fixed.is_empty() {
-            // Filter source: only infer members not already covered by fixed targets
-            for &source_ty in source_list.iter() {
-                let matches_fixed = fixed.contains(&source_ty);
-                if !matches_fixed {
-                    for &target_ty in &parameterized {
-                        self.infer_from_types(source_ty, target_ty, priority)?;
+        if parameterized.is_empty() {
+            // No inference targets — nothing to infer
+            return Ok(());
+        }
+
+        // Further split parameterized into naked type params vs structured
+        let (_naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
+            .iter()
+            .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
+
+        for &source_ty in source_list.iter() {
+            // Skip source members that match fixed targets
+            if fixed.contains(&source_ty) {
+                continue;
+            }
+
+            if !structured_params.is_empty() {
+                // Check if this source member structurally matches any structured target
+                let has_structural_match = structured_params
+                    .iter()
+                    .any(|&t| self.types_share_outer_structure(source_ty, t));
+
+                if has_structural_match {
+                    // Infer only against structurally matching targets, NOT naked type params.
+                    // This prevents e.g. `Foo<U>` from being inferred against naked `V`
+                    // when `Foo<V>` is available as a structural match.
+                    for &target_ty in &structured_params {
+                        if self.types_share_outer_structure(source_ty, target_ty) {
+                            self.infer_from_types(source_ty, target_ty, priority)?;
+                        }
                     }
+                    continue;
                 }
             }
-        } else {
-            // No filtering needed — fall back to exhaustive inference
-            for source_ty in source_list.iter() {
-                for target_ty in target_list.iter() {
-                    self.infer_from_types(*source_ty, *target_ty, priority)?;
-                }
+
+            // No structural match found — infer against all parameterized targets
+            // (including naked type params)
+            for &target_ty in &parameterized {
+                self.infer_from_types(source_ty, target_ty, priority)?;
             }
         }
 
         Ok(())
     }
 
+    /// Check if two types share the same outer structure (same kind / same generic base).
+    ///
+    /// Used to match source union members to the best target union member during
+    /// inference. For example, `Foo<U>` and `Foo<V>` share outer structure (both
+    /// are applications of `Foo`), but `U` and `Foo<V>` do not.
+    fn types_share_outer_structure(&self, source: TypeId, target: TypeId) -> bool {
+        let (Some(s_key), Some(t_key)) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        else {
+            return false;
+        };
+        match (s_key, t_key) {
+            // Both are applications of the same base type
+            (TypeData::Application(s_app_id), TypeData::Application(t_app_id)) => {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                s_app.base == t_app.base
+            }
+            // Both share the same structural kind
+            (TypeData::Object(_), TypeData::Object(_))
+            | (TypeData::Callable(_), TypeData::Callable(_))
+            | (TypeData::Function(_), TypeData::Function(_))
+            | (TypeData::Tuple(_), TypeData::Tuple(_))
+            | (TypeData::Array(_), TypeData::Array(_)) => true,
+            _ => false,
+        }
+    }
+
     /// Check if a target type directly is or contains an inference type parameter.
+    ///
+    /// This must be recursive: for `V | Foo<V>`, both `V` (direct type param)
+    /// and `Foo<V>` (application containing a type param) are parameterized.
+    /// Without recursion, `Foo<V>` would be classified as "fixed", causing
+    /// source members like `Foo<U>` to be inferred against the naked `V`
+    /// instead of structurally matching `Foo<V>`.
     fn target_contains_inference_param(&self, target: TypeId) -> bool {
+        self.target_contains_inference_param_inner(target, &mut std::collections::HashSet::new())
+    }
+
+    fn target_contains_inference_param_inner(
+        &self,
+        target: TypeId,
+        visited: &mut std::collections::HashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(target) {
+            return false;
+        }
         let Some(key) = self.interner.lookup(target) else {
             return false;
         };
         match key {
             TypeData::TypeParameter(ref info) => self.find_type_param(info.name).is_some(),
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                let base = app.base;
+                let args: Vec<TypeId> = app.args.to_vec();
+                self.target_contains_inference_param_inner(base, visited)
+                    || args
+                        .iter()
+                        .any(|&arg| self.target_contains_inference_param_inner(arg, visited))
+            }
+            TypeData::Union(members) | TypeData::Intersection(members) => {
+                let list: Vec<TypeId> = self.interner.type_list(members).to_vec();
+                list.iter()
+                    .any(|&m| self.target_contains_inference_param_inner(m, visited))
+            }
             _ => false,
         }
     }
