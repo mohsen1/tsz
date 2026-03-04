@@ -497,9 +497,16 @@ impl<'a> Printer<'a> {
                     {
                         // Inline form: exports.x = initializer;
                         for (name, init_idx) in &inline_decls {
+                            // Track that this variable was inlined (no local declaration).
+                            self.ctx
+                                .module_state
+                                .inlined_var_exports
+                                .insert(name.clone());
                             self.write("exports.");
                             self.write(name);
                             self.write(" = ");
+                            // When the initializer is an identifier that was also
+                            // inlined, use exports.ident (no local exists).
                             if let Some(init_node) = self.arena.get(*init_idx)
                                 && init_node.kind == SyntaxKind::Identifier as u16
                             {
