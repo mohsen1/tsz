@@ -472,21 +472,20 @@ impl<'a> Printer<'a> {
                 continue;
             };
             // Only collect non-exported variable declarations
-            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                if let Some(var_data) = self.arena.get_variable(stmt_node) {
-                    for &decl_list_idx in &var_data.declarations.nodes {
-                        if let Some(decl_list_node) = self.arena.get(decl_list_idx)
-                            && let Some(decl_list) = self.arena.get_variable(decl_list_node)
-                        {
-                            for &decl_idx in &decl_list.declarations.nodes {
-                                if let Some(decl_node) = self.arena.get(decl_idx)
-                                    && let Some(decl) =
-                                        self.arena.get_variable_declaration(decl_node)
-                                    && let Some(name_node) = self.arena.get(decl.name)
-                                    && let Some(ident) = self.arena.get_identifier(name_node)
-                                {
-                                    names.insert(ident.escaped_text.clone());
-                                }
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_data) = self.arena.get_variable(stmt_node)
+            {
+                for &decl_list_idx in &var_data.declarations.nodes {
+                    if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                        && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                    {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = self.arena.get(decl_idx)
+                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                && let Some(name_node) = self.arena.get(decl.name)
+                                && let Some(ident) = self.arena.get_identifier(name_node)
+                            {
+                                names.insert(ident.escaped_text.clone());
                             }
                         }
                     }

@@ -416,20 +416,17 @@ pub fn collect_inline_exported_var_names(
             }
         }
         // Wrapped: ExportDeclaration { clause: VariableStatement }
-        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            if let Some(export_decl) = arena.get_export_decl(node)
-                && !export_decl.is_type_only
-                && export_decl.module_specifier.is_none()
-                && let Some(clause_node) = arena.get(export_decl.export_clause)
-                && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            {
-                if let Some(var_stmt) = arena.get_variable(clause_node)
-                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    for &decl_idx in &var_stmt.declarations.nodes {
-                        collect_declaration_names(arena, decl_idx, &mut names);
-                    }
-                }
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_decl) = arena.get_export_decl(node)
+            && !export_decl.is_type_only
+            && export_decl.module_specifier.is_none()
+            && let Some(clause_node) = arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = arena.get_variable(clause_node)
+            && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            for &decl_idx in &var_stmt.declarations.nodes {
+                collect_declaration_names(arena, decl_idx, &mut names);
             }
         }
     }

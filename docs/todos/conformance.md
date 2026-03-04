@@ -1,7 +1,38 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9969/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9971/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04q — Fix generic rest param excess arg detection (+4 conf)
+
+### Fixed: TS2554 not emitted for excess arguments with generic rest params
+
+**Area**: types/rest, compiler, classes/members
+
+**Root cause**: When a generic function has `...args: TS` as a rest parameter and `TS` also appears
+in another parameter (e.g., `handler: (...args: TS) => void`), the `rest_tuple_inference_target`
+bundled the actual rest arguments into a tuple and constrained `TS` with it in Round 1. Since the
+handler is contextually sensitive (processed in Round 2), `fix_current_variables()` locked in the
+rest args tuple before the handler could provide its authoritative inference. This caused `TS` to be
+inferred as the wider rest-args tuple instead of the handler-inferred tuple, making the post-inference
+arg count check see `8 == 8` instead of `8 > 3`.
+
+**Fix (1 file)**: In `generic_call.rs`, before adding the rest_tuple_inference constraint, check
+if the target type variable's placeholder also appears in other (non-rest) parameter types via
+`type_contains_placeholder`. If it does, skip the rest_tuple constraint entirely — the handler
+inference in Round 2 provides the authoritative type for `TS`, and excess args are caught by the
+post-inference arg count check.
+
+**Test**: `test_call_generic_rest_excess_args_detected_when_shared_type_param` in operations_tests.rs
+
+**Conformance tests fixed**: `genericRestArity`, `genericRestArityStrict` (+2 types/rest),
+`genericCallInferenceConditionalType1` (+1 compiler), `privateNamesConstructorChain-1/2` (+2 classes/members)
+
+### Remaining types/rest failures (4 error-code failures after fix)
+- **genericRestParameters1**: Many extra TS2345 from incorrect overload resolution with rest tuple unions
+- **genericRestParameters3**: Extra TS2344/TS2370 from CoolArray extending Array constraint issues
+- **objectRestNegative**: Missing TS2462/TS2701/TS7008 (parser-level destructuring rest validation)
+- **restTuplesFromContextualTypes**: Extra TS2322/TS2339, missing TS2345 (tuple union contextual typing)
 
 ## Session 2026-03-04p — Suppress false TS1479/TS2882 in node/allowJs area (+1 conf)
 

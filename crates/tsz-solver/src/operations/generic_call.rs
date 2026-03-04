@@ -378,15 +378,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
         }
 
-        // Process rest tuple in Round 1 (it's non-contextual)
+        // Process rest tuple in Round 1 (it's non-contextual).
+        // Skip when the rest param's type variable also appears in other parameter
+        // types (e.g., `call<TS>(handler: (...args: TS) => void, ...args: TS)`).
+        // In that case the other parameter provides a more authoritative constraint
+        // (e.g., from the handler's callback params), and the rest args should be
+        // validated against the inferred type, not used to infer it.
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
-            self.constrain_types(
-                &mut infer_ctx,
-                &var_map,
-                tuple_type,
-                target_type,
-                crate::types::InferencePriority::NakedTypeVariable,
-            );
+            let target_var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
+                FxHashMap::from_iter([(target_type, crate::inference::infer::InferenceVar(0))]);
+            let appears_in_other_params = instantiated_params
+                [..instantiated_params.len().saturating_sub(1)]
+                .iter()
+                .any(|p| {
+                    placeholder_visited.clear();
+                    self.type_contains_placeholder(
+                        p.type_id,
+                        &target_var_map,
+                        &mut placeholder_visited,
+                    )
+                });
+            if !appears_in_other_params {
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    tuple_type,
+                    target_type,
+                    crate::types::InferencePriority::NakedTypeVariable,
+                );
+            }
         }
 
         // === Fixing: Resolve variables with enough information ===

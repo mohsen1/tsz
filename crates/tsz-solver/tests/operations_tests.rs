@@ -2415,6 +2415,119 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
     }
 }
 
+/// Regression test: call<TS extends unknown[]>(handler: (...args: TS) => void, ...args: TS)
+/// with too many args should emit TS2554. The handler's params infer TS = [number, number],
+/// so the function expects 3 args total (handler + 2 numbers). Passing 8 args should fail.
+/// This tests that `rest_tuple_inference` is skipped when the type variable also appears
+/// in another parameter (the handler), preventing the rest args from overriding the
+/// handler-inferred tuple type.
+#[test]
+fn test_call_generic_rest_excess_args_detected_when_shared_type_param() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // TS extends unknown[]
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let ts_param = TypeParamInfo {
+        name: interner.intern_string("TS"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let ts_type = interner.intern(TypeData::TypeParameter(ts_param.clone()));
+
+    // handler: (...args: TS) => void
+    let handler_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: ts_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // call<TS extends unknown[]>(handler: (...args: TS) => void, ...args: TS): void
+    let call_fn = interner.function(FunctionShape {
+        type_params: vec![ts_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("handler")),
+                type_id: handler_fn,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("args")),
+                type_id: ts_type,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // The handler callback: (x: number, y: number) => number
+    let handler_arg = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with 8 args: call(handler, 1, 2, 3, 4, 5, 6, 7)
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+    let three = interner.literal_number(3.0);
+    let four = interner.literal_number(4.0);
+    let five = interner.literal_number(5.0);
+    let six = interner.literal_number(6.0);
+    let seven = interner.literal_number(7.0);
+    let result = evaluator.resolve_call(
+        call_fn,
+        &[handler_arg, one, two, three, four, five, six, seven],
+    );
+
+    match result {
+        CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            actual,
+        } => {
+            assert_eq!(expected_min, 3, "handler + 2 tuple elements");
+            assert_eq!(expected_max, Some(3), "fixed-length tuple [number, number]");
+            assert_eq!(actual, 8, "handler + 7 number args");
+        }
+        _ => panic!("Expected ArgumentCountMismatch for excess args, got {result:?}"),
+    }
+}
+
 #[test]
 fn test_call_generic_default_rest_tuple_optional_allows_empty() {
     let interner = TypeInterner::new();

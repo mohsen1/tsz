@@ -1,9 +1,9 @@
-/// Shared text-based heuristics for detecting value vs type-only usage of imports.
-///
-/// Both the lowering pass and the emitter need to determine whether an import
-/// binding is used in value positions (requiring helper emission / runtime code)
-/// or only in type positions (safe to erase).  These functions provide text-based
-/// analysis that works without full type information.
+//! Shared text-based heuristics for detecting value vs type-only usage of imports.
+//!
+//! Both the lowering pass and the emitter need to determine whether an import
+//! binding is used in value positions (requiring helper emission / runtime code)
+//! or only in type positions (safe to erase).  These functions provide text-based
+//! analysis that works without full type information.
 
 /// Check if `haystack` contains `ident` as a standalone identifier (not part of
 /// a larger word).
@@ -101,9 +101,7 @@ pub fn strip_type_only_content(source: &str) -> String {
                 match ch {
                     '{' => type_brace_depth += 1,
                     '}' => {
-                        if type_brace_depth > 0 {
-                            type_brace_depth -= 1;
-                        }
+                        type_brace_depth = type_brace_depth.saturating_sub(1);
                     }
                     _ => {}
                 }
@@ -197,9 +195,7 @@ fn strip_type_annotations_safe(line: &str) -> String {
                 i += 1;
             }
             b')' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                }
+                paren_depth = paren_depth.saturating_sub(1);
                 result.push(')');
                 i += 1;
             }
