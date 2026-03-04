@@ -1,7 +1,50 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9964/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9965/12570 (79.3%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04n — Optional param undefined stripping (+2 conf)
+
+### Fixed: False TS2345 when passing `T | undefined` to optional `T?` parameters
+
+**Area**: controlFlow, compiler, classes/members
+
+**Root cause**: In `CallEvaluator::check_argument_types_with` (solver `call_args.rs`), when checking
+argument assignability against optional parameters, the parameter type (`ParamInfo.type_id`) was the
+raw declared type (e.g. `string`) without `undefined`. A fast-path at lines 59-64 handled exact
+`undefined` args, but union args like `string | undefined` fell through to the full assignability
+check against bare `string`, failing with false TS2345.
+
+**Fix (1 file, 2 tests)**: Strip `undefined` from the argument type (via `narrowing::utils::remove_undefined`)
+when the parameter is optional, so `string | undefined` becomes `string` before checking against the
+raw param type `string`. This preserves error reporting paths (TS2322 property-level errors) that would
+break if the param type were instead widened to a union.
+
+**Tests added**: 2 unit tests in `operations_tests.rs`:
+- `test_call_optional_param_accepts_union_with_undefined` — `string | undefined` → optional `string?` succeeds
+- `test_call_optional_param_rejects_wrong_type_with_undefined` — `number | undefined` → optional `string?` fails
+
+**Tests fixed** (conformance): `mapConstructor`, `privateNamesConstructorChain-1`, `privateNamesConstructorChain-2`
+
+### Remaining controlFlow gaps (17 error-code failures after fix)
+
+1. **assertionTypePredicates1** (missing TS2775/TS2776/TS7027): Assertion type predicates not implemented.
+
+2. **controlFlowIterationErrors + Async** (missing TS2345/TS2769): Loop iteration type widening
+   where `string | number` should be narrowed per-iteration. Missing overload resolution for
+   iterators with incompatible types.
+
+3. **controlFlowOptionalChain** (missing TS2454, extra TS18047/TS2339/TS7027/TS7053): Complex
+   optional chain CFA — variable types not properly tracked through optional chains.
+
+4. **dependentDestructuredVariables** (many extras): Parser errors (TS1005/TS1096/TS1131/TS1268)
+   suggest destructuring pattern parsing issue.
+
+5. **exhaustiveSwitchStatements1** (missing TS2367/TS7027, extra TS2366/TS2454): Exhaustive switch
+   narrowing — switch on discriminated union not narrowing to `never` after all cases.
+
+6. **neverReturningFunctions1** (extra TS7027 fingerprint only): `f[0]()` where `f[0]` is
+   `() => never` is treated as never-returning, but tsc only recognizes dotted names for this.
 
 ## Session 2026-03-04m — Lazy type TS2538 + TS1099 column fix (+3 conf)
 
