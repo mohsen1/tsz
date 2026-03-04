@@ -479,6 +479,43 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY; // UNKNOWN remains ANY for now (could be stricter)
         }
 
+        // Resolve Lazy class references to their constructor types for STATIC private members.
+        //
+        // When a class type is referenced during its own type construction (e.g., in a static
+        // field initializer `static s = C.#method()`), the identifier resolves to
+        // `Lazy(class_def_id)` — a placeholder inserted to break circular resolution. This
+        // Lazy type would otherwise resolve to the *instance* type (via
+        // `resolve_and_insert_def_type`), causing the compatibility check to fail when the
+        // private member is static (whose declaring type is the constructor type).
+        //
+        // Only apply this resolution for static members; for instance members the Lazy
+        // resolves to the instance type which is correct.
+        let member_is_static = self.ctx.binder.get_symbol(symbols[0]).map_or(false, |sym| {
+            sym.declarations
+                .iter()
+                .any(|&decl_idx| self.class_member_is_static(decl_idx))
+        });
+        let object_type_for_check = if member_is_static
+            && let Some(def_id) =
+                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, object_type_for_check)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & tsz_binder::symbol_flags::CLASS != 0
+        {
+            // Resolve to the constructor type. Use the class_constructor_type_cache to
+            // avoid triggering further recursion if the constructor is already built.
+            let class_decl = self.get_class_declaration_from_symbol(sym_id);
+            if let Some(class_idx) = class_decl
+                && let Some(&ctor_type) = self.ctx.class_constructor_type_cache.get(&class_idx)
+            {
+                ctor_type
+            } else {
+                self.get_type_of_symbol(sym_id)
+            }
+        } else {
+            object_type_for_check
+        };
+
         // For private member access, use nominal typing based on private brand.
         // If both types have the same private brand, they're from the same class
         // declaration and the access should be allowed.
