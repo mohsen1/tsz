@@ -448,7 +448,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -616,7 +615,6 @@ FAIL TypeScript/tests/cases/compiler/intersectionPropertyCheck.ts
 FAIL TypeScript/tests/cases/compiler/intersectionsAndOptionalProperties.ts
 FAIL TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 FAIL TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
-FAIL TypeScript/tests/cases/compiler/intersectionTypeInference1.ts
 FAIL TypeScript/tests/cases/compiler/intersectionWithConflictingPrivates.ts
 FAIL TypeScript/tests/cases/compiler/intraBindingPatternReferences.ts
 FAIL TypeScript/tests/cases/compiler/intTypeCheck.ts
@@ -5002,6 +5000,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
@@ -5539,6 +5538,7 @@ PASS TypeScript/tests/cases/compiler/intersectionsAndOptionalProperties3.ts
 PASS TypeScript/tests/cases/compiler/intersectionsAndReadonlyProperties.ts
 PASS TypeScript/tests/cases/compiler/intersectionSatisfiesConstraint.ts
 PASS TypeScript/tests/cases/compiler/intersectionType_useDefineForClassFields.ts
+PASS TypeScript/tests/cases/compiler/intersectionTypeInference1.ts
 PASS TypeScript/tests/cases/compiler/intersectionTypeNormalization.ts
 PASS TypeScript/tests/cases/compiler/intersectionTypeWithLeadingOperator.ts
 PASS TypeScript/tests/cases/compiler/intersectionWithConstructSignaturePrototypeResult.ts
