@@ -12,22 +12,41 @@ extra_scripts: <script src="/sound-mode-editors.js"></script>
   <strong>Exploring Phase</strong> - Sound mode is an active area of research. Diagnostic codes, behavior, and coverage are subject to change. We're sharing it early to gather feedback.
 </div>
 
-**tsz** offers an opt-in **sound mode** - a stricter type-checking mode that catches real bugs TypeScript allows by design.
+**tsz** offers an opt-in **sound mode** — a stricter type-checking mode that catches real bugs TypeScript allows by design.
+
+## The Sound Mode Contract
+
+TypeScript explicitly lists "apply a sound or provably correct type system" as a **non-goal**. Sound Mode makes three guarantees:
+
+1. **Within Sound Mode–checked code**, tsz rejects the known TypeScript unsound patterns that can cause type-driven runtime exceptions — calling methods that aren't there, indexing missing keys, writing through an alias with the wrong element type.
+
+2. **Trust boundaries are explicit**: data from the outside world is `unknown` unless validated (e.g., `JSON.parse`, `fetch().json()`, DOM queries).
+
+3. **Any use of unsoundness must be explicit and auditable** (`// @tsz-unsound TSZ9xxx: reason`) and trackable in CI as technical debt.
 
 ## Quick Start
 
 ```bash
-# CLI flag
+# CLI flag (implemented)
 tsz check --sound src/
 
-# tsconfig.json
+# tsconfig.json (implemented)
 # { "compilerOptions": { "sound": true } }
 
-# Per-file pragma
+# Per-file pragma (planned - not yet parsed from source)
 # // @tsz-sound
 ```
 
-Or try it in the [Playground](/playground/) - select the **Sound Mode** example and check the **sound** checkbox.
+Or try it in the [Playground](/playground/) — select the **Sound Mode** example and check the **sound** checkbox.
+
+## Two Layers: Core vs Pedantic (Planned)
+
+The target design separates Sound Mode into two layers. Currently, `sound: true` is a single boolean that enables all available checks. The two-layer split and `sound: { pedantic: true }` config shape are planned but not yet implemented.
+
+- **`sound: true`** — Core runtime-safety checks. Every check in this layer catches patterns where "tsc allows it; this can crash."
+- **`sound: { pedantic: true }`** (planned) — Will add bug-finding heuristics (like sticky freshness) that catch likely mistakes but aren't strictly about runtime crashes.
+
+This prevents Sound Mode from feeling like "it hates JavaScript patterns" while keeping the strong guarantees for runtime safety.
 
 ## Why Sound Mode?
 
@@ -35,7 +54,7 @@ TypeScript is **intentionally unsound**. The TypeScript team prioritizes develop
 
 ## What Sound Mode Catches
 
-When sound mode is enabled, tsz applies stricter rules that close TypeScript's known escape hatches. Each check has a dedicated diagnostic code in the `TSZ9xxx` range.
+When sound mode is enabled, tsz applies stricter rules that close TypeScript's known escape hatches. Each check targets a dedicated diagnostic code in the `TSZ9xxx` range. Currently, sound mode errors are emitted as standard TS diagnostic codes (TS2322, TS2345, etc.); dedicated TSZ9xxx codes are being rolled out incrementally.
 
 ### TSZ9101: Covariant Mutable Arrays
 
@@ -60,9 +79,14 @@ console.log(dogs[1].breed);
 
 Sound mode: only `readonly Dog[]` → `readonly Animal[]` is safe.
 
+**How to fix:**
+- Accept `readonly Animal[]` in APIs that only read
+- Return `readonly` from producer functions
+- Break aliasing when mutability is needed: `const animals: Animal[] = [...dogs];`
+
 ### TSZ9102: Method Parameter Bivariance
 
-TypeScript allows method parameters to be checked bivariantly - both covariant and contravariant. This lets subclasses narrow parameter types unsafely.
+TypeScript allows method parameters to be checked bivariantly — both covariant and contravariant. Even `strictFunctionTypes` intentionally does not apply to method syntax. This lets subclasses narrow parameter types unsafely.
 
 ```typescript
 class Animal {
@@ -83,9 +107,14 @@ animal.feed(42);
 
 Sound mode: method parameters must be contravariant. A subclass method must accept *at least* what the superclass accepts.
 
+**How to fix:**
+- Widen the subclass parameter to match the parent
+- Use function-property syntax: `feed: (food: Food) => void` instead of `feed(food: Food): void`
+- Use overloads for event-map patterns
+
 ### TSZ9201: `any` Escape Detection
 
-`any` is the biggest source of unsoundness. It acts as both a top and a bottom type, silently bypassing all structural checks.
+`any` is the biggest source of unsoundness. It acts as both a top and a bottom type, silently bypassing all structural checks. Sound mode treats `any` as a **taint** — it may exist, but it cannot flow into structured types without an explicit boundary step.
 
 ```typescript
 function processUser(user: { name: string; age: number }) {
@@ -99,7 +128,7 @@ processUser(data); // tsc: no error!
 // 💥 Runtime: Cannot read properties of undefined (reading 'toUpperCase')
 ```
 
-Sound mode: `any` cannot bypass structural checks. Use `unknown` with proper narrowing instead:
+Sound mode: `any` is only assignable to `any` and `unknown`. Use `unknown` with proper narrowing instead:
 
 ```typescript
 const data: unknown = JSON.parse(input);
@@ -111,9 +140,9 @@ if (typeof data === "object" && data !== null
 }
 ```
 
-### TSZ9202: Unsafe Type Assertions
+### TSZ9202: Unsafe Type Assertions (Planned)
 
-Type assertions (`as`) let developers punch holes through the type system. Sound mode flags disjoint casts.
+Type assertions (`as`) let developers punch holes through the type system. Sound mode will restrict assertions to **widening only** (going from specific to general). Narrowing casts and sideways casts will be rejected.
 
 ```typescript
 interface Cat { meow(): void }
@@ -121,14 +150,22 @@ interface Dog { bark(): void }
 
 const cat: Cat = { meow() { console.log("meow") } };
 
-// tsc allows this - types are completely unrelated!
+// ❌ Sideways cast - rejected even through unknown
 const dog = cat as unknown as Dog;
 dog.bark(); // 💥 Runtime: dog.bark is not a function
+
+// ✅ Widening assertion is fine
+const x: "hello" = "hello";
+const y = x as string;  // OK: "hello" is assignable to string
 ```
+
+**How to fix:** Use `instanceof`, `in`, discriminant checks, `asserts` functions, or schema parsers (Zod, ArkType) instead of type assertions.
 
 ### TSZ9306: Sticky Freshness
 
 TypeScript checks excess properties on direct object literal assignment, but the check is bypassed through variable indirection. Sound mode preserves "freshness" so excess properties are always caught.
+
+**Note:** This check is currently active under `sound: true`. In the planned two-layer design, it will move to the **pedantic** layer (`sound: { pedantic: true }`) because extra properties don't cause runtime crashes -- it's a typo-catching heuristic.
 
 ```typescript
 interface Point2D { x: number; y: number }
@@ -138,19 +175,19 @@ const p1: Point2D = { x: 1, y: 2, z: 3 }; // Error: 'z' does not exist
 
 // Indirect assignment - tsc allows it!
 const point3d = { x: 1, y: 2, z: 3 };
-const p2: Point2D = point3d; // tsc: no error. Sound mode: error!
+const p2: Point2D = point3d; // tsc: no error. Sound mode (pedantic): error!
 
 // Same bypass in function arguments
 function distance(a: Point2D, b: Point2D): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 const origin = { x: 0, y: 0, label: "origin" };
-distance(origin, point3d); // tsc: no error. Sound mode: error!
+distance(origin, point3d); // tsc: no error. Sound mode (pedantic): error!
 ```
 
-### TSZ9501: Unchecked Indexed Access
+### TSZ9501: Unchecked Indexed Access (Planned)
 
-Accessing an object or array by index may return `undefined` if the key doesn't exist. TypeScript assumes the value is always present.
+Accessing an object or array by index may return `undefined` if the key doesn't exist. TypeScript assumes the value is always present. Sound mode will match TypeScript's `noUncheckedIndexedAccess` semantics -- this behavior will be implied even if the tsconfig flag isn't set. (Currently, `noUncheckedIndexedAccess` must be enabled separately.)
 
 ```typescript
 const scores: { [name: string]: number } = {
@@ -170,7 +207,7 @@ console.log(tenth.toUpperCase()); // 💥 Runtime error
 
 Sound mode: indexed access returns `T | undefined`, forcing a check before use.
 
-### TSZ9601: Enum-Number Assignment
+### TSZ9601: Enum-Number Assignment (Planned)
 
 TypeScript enums are freely assignable to and from `number`, which can lead to invalid enum values.
 
@@ -196,6 +233,25 @@ function handleStatus(s: Status) {
 
 Sound mode: enum values cannot be assigned to/from `number` without explicit conversion.
 
+**Canonical escape patterns:**
+```typescript
+const status = parseEnum(Status, userInput);  // Status | undefined
+if (status !== undefined) {
+  handleStatus(status);  // Safe!
+}
+```
+
+### Additional Core Checks (Planned)
+
+Sound mode will also address these soundness gaps (infrastructure hooks exist for all four -- see plan doc for feasibility notes):
+
+| Diagnostic | Description |
+|-----------|-------------|
+| TSZ9901 | **Non-null assertions** (`!`) flagged as unsound escape hatches |
+| TSZ9902 | **Definite assignment** (`!:`) flagged on class fields |
+| TSZ9903 | **Catch variables** always `unknown` (implied `useUnknownInCatchVariables`) |
+| TSZ9904 | **Exact optional properties** — distinguishes "missing" vs "present but `undefined`" |
+
 ## Planned: Generics & Type Algebra
 
 Sound mode will also address unsoundness in TypeScript's generic type system.
@@ -212,7 +268,7 @@ type A = IsString<string | number>;
 // Actual result: boolean (true | false) - it distributes!
 ```
 
-Sound mode: make distribution opt-in rather than the default behavior.
+Sound mode: keep TypeScript's behavior but add a diagnostic that flags surprising distributions and suggests the non-distributive pattern: `[T] extends [U] ? ...`
 
 ### Impossible Intersections
 
@@ -226,53 +282,76 @@ type Broken = { [key: string]: number } & { name: string };
 
 Sound mode: reduce impossible intersections to `never` immediately.
 
-### Generic Constraint Confusion
-
-TypeScript allows different type parameters with the same constraint to be treated as interchangeable:
-
-```typescript
-function f<T extends string, U extends string>(t: T): U {
-  return t; // tsc allows - both extend string!
-  // But T and U could be different literal types!
-}
-
-const result = f<"hello", "world">("hello");
-// result is typed as "world" but is actually "hello"
-```
-
-Sound mode: two different type parameters are never subtypes of each other unless they are the same parameter.
-
 ### Exact Types
 
-TypeScript's structural typing means any object with extra properties satisfies an interface. Sound mode introduces `Exact<T>` to opt into strict shape matching, making `Object.keys()` return `(keyof T)[]` safely:
+TypeScript's structural typing means any object with extra properties satisfies an interface. Sound mode introduces `Exact<T>` to opt into strict shape matching:
 
 ```typescript
-// With Exact<T>, this is sound:
+// Exact<T> is opt-in and non-infectious
 function getKeys<T>(obj: Exact<T>): (keyof T)[] {
-  return Object.keys(obj) as (keyof T)[];
+  return Object.keys(obj) as (keyof T)[];  // Sound!
 }
 
-// Without it, Object.keys may return keys not in T
+// Exact<T> is assignable to T, but not the reverse without proof
+const exact: Exact<User> = { name: "Alice" };  // OK
+const open: User = exact;  // OK (exact → open)
+const back: Exact<User> = open;  // Error (open → exact needs proof)
+```
+
+## Suppression: Auditable Technical Debt (Planned)
+
+The target suppression design is adoptable at scale while keeping sound mode honest. The `@tsz-unsound` comment directive is not yet implemented.
+
+```typescript
+// ✅ Valid: targeted, with reason
+// @tsz-unsound TSZ9202: validated by legacy runtime guard in foo.ts
+
+// ❌ Invalid: no code specified
+// @tsz-unsound: trust me
+
+// ❌ Invalid: no reason
+// @tsz-unsound TSZ9202
+
+// ❌ Stale suppression becomes an error
+// @tsz-unsound TSZ9101: array is readonly  ← no TSZ9101 here → error!
+```
+
+Rules:
+- **Targeted** — must name a specific TSZ code
+- **Sticky** — if the error disappears, the suppression itself becomes an error
+- **Reason required** — enforced formatting with explanation
+- **Diagnostic-only** — suppresses output, not semantics (the compiler still checks soundly)
+
+## Diagnostics CLI (Planned)
+
+```bash
+# Explain any sound mode diagnostic (planned)
+tsz explain TSZ9102
+
+# Sound mode summary for a project (planned)
+tsz check --sound --sound-summary src/
 ```
 
 ## Making Sound Mode Practical
 
 Catching unsoundness is only useful if you can actually enable it without drowning in false positives from third-party code. We're building several mechanisms to make sound mode practical for real codebases.
 
-### SoundlyTyped: Automated Ecosystem Soundness
+### SoundlyTyped: Automated Ecosystem Soundness (Planned)
 
-The biggest obstacle to sound typing is the ecosystem. Libraries ship `.d.ts` files full of `any`, bivariant methods, and open enums. **SoundlyTyped** is a fully automated transformation pipeline that rewrites upstream type definitions:
+The biggest obstacle to sound typing is the ecosystem. Libraries ship `.d.ts` files full of `any`, bivariant methods, and open enums. **SoundlyTyped** is a planned fully automated transformation pipeline that will rewrite upstream type definitions:
 
 - Maps `any` to `unknown` at module boundaries
 - Closes open numeric enums
-- Patches bivariant method signatures to use contravariant parameters
+- Patches bivariant method signatures to use contravariant parameters (via method-to-property conversion)
 - Regenerates automatically when upstream packages update
 
-No hand-coded type patches - purely mechanical transformations applied to `node_modules` and DefinitelyTyped.
+No hand-coded type patches — purely mechanical transformations applied to `node_modules` and DefinitelyTyped.
 
-### Sound Core Libraries
+**Auditability:** SoundlyTyped outputs go in a deterministic cache directory (`.tsz/soundlytyped/<pkg>@<version>/`) with a lockfile recording upstream version, transform version, and output hashes. Run `tsz soundlytyped diff <pkg>` for a human-readable summary of what changed.
 
-Standard library types like `JSON.parse()`, `fetch().json()`, and `document.getElementById()` return `any` for ergonomics. Sound mode ships alternative core typings (`*.sound.lib.d.ts`) where these return `unknown` instead, forcing explicit narrowing at every external data boundary.
+### Sound Core Libraries (Planned)
+
+Standard library types like `JSON.parse()`, `fetch().json()`, and `document.getElementById()` return `any` for ergonomics. Sound mode will ship alternative core typings (`*.sound.lib.d.ts`) where these return `unknown` instead, forcing explicit narrowing at every external data boundary.
 
 ```typescript
 // Standard lib: JSON.parse returns 'any'
@@ -288,7 +367,7 @@ if (isConfig(config)) {
 
 ### Runtime Validation Integration
 
-Sound mode pairs naturally with runtime validation libraries. When data crosses a trust boundary - user input, API responses, file reads - you need runtime checks regardless of your type system. Sound mode makes this explicit:
+Sound mode pairs naturally with runtime validation libraries. When data crosses a trust boundary — user input, API responses, file reads — you need runtime checks regardless of your type system. Sound mode makes this explicit:
 
 ```typescript
 import { z } from "zod";
@@ -307,6 +386,7 @@ const user = UserSchema.parse(await response.json());
 
 Sound mode supports gradual adoption so you don't have to convert your entire codebase at once:
 
-- **Per-file pragma** (`// @tsz-sound`) - enable sound mode one file at a time
-- **Per-directory** - use `tsconfig.json` extends to enable sound mode in specific directories
-- **Suppression comments** - `// @tsz-unsound` to acknowledge and suppress specific diagnostics during migration
+- **Per-file pragma** (`// @tsz-sound`) — enable sound mode one file at a time (planned -- not yet parsed)
+- **Per-directory** — use `tsconfig.json` extends to enable sound mode in specific directories
+- **Suppression comments** — `// @tsz-unsound TSZ9xxx: reason` to acknowledge and suppress specific diagnostics during migration (planned)
+- **Sound summary** — `tsz check --sound --sound-summary` to track progress by diagnostic code and file (planned)
