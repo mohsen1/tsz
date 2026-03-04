@@ -650,12 +650,26 @@ impl<'a> TypeFormatter<'a> {
             let first: Vec<String> = ordered
                 .iter()
                 .take(self.max_union_members)
-                .map(|&m| self.format(m))
+                .map(|&m| self.format_union_member(m))
                 .collect();
             return format!("{} | ...", first.join(" | "));
         }
-        let formatted: Vec<String> = ordered.iter().map(|&m| self.format(m)).collect();
+        let formatted: Vec<String> = ordered
+            .iter()
+            .map(|&m| self.format_union_member(m))
+            .collect();
         formatted.join(" | ")
+    }
+
+    /// Format a union member, parenthesizing intersection types for clarity.
+    /// TSC writes `(A & B) | (C & D)` even though `&` binds tighter than `|`.
+    fn format_union_member(&mut self, id: TypeId) -> String {
+        let formatted = self.format(id);
+        if matches!(self.interner.lookup(id), Some(TypeData::Intersection(_))) {
+            format!("({formatted})")
+        } else {
+            formatted
+        }
     }
 
     fn format_intersection(&mut self, members: &[TypeId]) -> String {
@@ -668,19 +682,53 @@ impl<'a> TypeFormatter<'a> {
             self.intersection_display_key(a)
                 .cmp(&self.intersection_display_key(b))
         });
-        let formatted: Vec<String> = display_order.iter().map(|&m| self.format(m)).collect();
+        let formatted: Vec<String> = display_order
+            .iter()
+            .map(|&m| self.format_intersection_member(m))
+            .collect();
         formatted.join(" & ")
+    }
+
+    /// Format an intersection member, parenthesizing union types.
+    /// `(A | B) & (C | D)` is semantically different from `A | B & C | D`.
+    fn format_intersection_member(&mut self, id: TypeId) -> String {
+        let formatted = self.format(id);
+        if matches!(self.interner.lookup(id), Some(TypeData::Union(_))) {
+            format!("({formatted})")
+        } else {
+            formatted
+        }
     }
 
     /// Compute a display sort key for an intersection member.
     /// Lazy(DefId) types sort by DefId (approximating declaration order).
+    /// Union types sort by the minimum DefId of their Lazy members.
     /// Other types sort by TypeId (preserving canonical order).
     fn intersection_display_key(&self, id: TypeId) -> (u32, u32) {
         // Use (category, sub_key) tuple:
         // - Category 0 = non-Lazy types (sort by TypeId)
-        // - Category 1 = Lazy types (sort by DefId)
+        // - Category 1 = Lazy/compound types (sort by DefId)
         match self.interner.lookup(id) {
             Some(TypeData::Lazy(def_id)) => (1, def_id.0),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                // For union/intersection members, use the minimum DefId of Lazy members
+                // to approximate source order (e.g., `A | B` sorts by min(DefId(A), DefId(B)))
+                let members = self.interner.type_list(list_id);
+                let min_def = members
+                    .iter()
+                    .filter_map(|&m| {
+                        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(m) {
+                            Some(def_id.0)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+                match min_def {
+                    Some(def) => (1, def),
+                    None => (0, id.0),
+                }
+            }
             _ => (0, id.0),
         }
     }
