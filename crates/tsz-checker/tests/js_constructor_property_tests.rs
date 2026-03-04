@@ -405,6 +405,91 @@ z.t = 2
     );
 }
 
+// === Computed property (element access) tests ===
+
+/// this[symbolKey] = value in JS class constructor → no false TS2322
+#[test]
+fn test_js_constructor_element_access_symbol_key_no_false_error() {
+    let source = r#"
+const _sym = Symbol("_sym");
+class MyClass {
+    constructor() {
+        this[_sym] = "ok";
+    }
+    method() {
+        this[_sym] = "yep";
+        const x = this[_sym];
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322 || *code == 7053)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322/TS7053 for Symbol-keyed constructor property, got: {errors:?}"
+    );
+}
+
+/// this[stringKey] = value in JS class constructor → no false TS7053
+#[test]
+fn test_js_constructor_element_access_string_key_no_false_error() {
+    let source = r#"
+const _key = "my-key";
+class MyClass {
+    constructor() {
+        this[_key] = "ok";
+    }
+    method() {
+        this[_key] = "yep";
+        const x = this[_key];
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053 || *code == 2322)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS7053/TS2322 for string-keyed constructor property, got: {errors:?}"
+    );
+}
+
+/// self[symbolKey] = value (this alias) in JS class constructor → no false error
+#[test]
+fn test_js_constructor_element_access_self_alias_no_false_error() {
+    let source = r#"
+const _sym = Symbol("_sym");
+class MyClass {
+    constructor() {
+        var self = this;
+        self[_sym] = "ok";
+    }
+    method() {
+        var self = this;
+        self[_sym] = "yep";
+        const x = self[_sym];
+    }
+}
+"#;
+    let diagnostics = check_js(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322 || *code == 7053)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322/TS7053 for self-alias element access, got: {errors:?}"
+    );
+}
+
 /// Plain function constructor: this.prop in prototype method should be accessible but nullable
 #[test]
 fn test_plain_function_constructor_prototype_this_prop_has_undefined() {
