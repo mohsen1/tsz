@@ -912,6 +912,17 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_single_or_union(self.interner, yield_types);
         }
 
+        // Handle Lazy, Mapped, and Conditional types by evaluating first
+        if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_generator_yield_type();
+            }
+        }
+
         // Generator<Y, R, N> — yield type is arg 0
         let mut extractor = ApplicationArgExtractor::new(self.interner, 0);
         extractor.extract(expected)
@@ -935,6 +946,17 @@ impl<'a> ContextualTypeContext<'a> {
                 .collect();
 
             return collect_single_or_union(self.interner, return_types);
+        }
+
+        // Handle Lazy, Mapped, and Conditional types by evaluating first
+        if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_generator_return_type();
+            }
         }
 
         // Generator<Y, R, N> — return type is arg 1
@@ -961,6 +983,17 @@ impl<'a> ContextualTypeContext<'a> {
                 .collect();
 
             return collect_single_or_union(self.interner, next_types);
+        }
+
+        // Handle Lazy, Mapped, and Conditional types by evaluating first
+        if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_generator_next_type();
+            }
         }
 
         // Generator<Y, R, N> — next type is arg 2

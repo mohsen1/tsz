@@ -613,6 +613,9 @@ impl<'a> CheckerState<'a> {
         let saved_uses_arguments = self.ctx.js_body_uses_arguments;
         self.ctx.js_body_uses_arguments = false;
         let mut has_contextual_return = false;
+        let mut early_yield_type: Option<TypeId> = None;
+        let mut early_gen_return_type: Option<TypeId> = None;
+        let mut early_gen_next_type: Option<TypeId> = None;
 
         // Push this_type BEFORE parameter initializer checks so that default
         // values like `a = this.getNumber()` see the correct `this` type and
@@ -699,15 +702,22 @@ impl<'a> CheckerState<'a> {
 
             // Push contextual yield type EARLY (before infer_return_type_from_body)
             // so yield expressions get contextual typing during inference.
-            let early_yield_type = if is_generator && !has_type_annotation {
-                ctx_helper.as_ref().and_then(|helper| {
+            // Also extract return and next types from contextual Generator<Y, R, N>.
+            if is_generator && !has_type_annotation {
+                if let Some(gen_types) = ctx_helper.as_ref().and_then(|helper| {
                     let ret_type = helper.get_return_type()?;
                     let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ret_type);
-                    ret_ctx.get_generator_yield_type()
-                })
-            } else {
-                None
-            };
+                    Some((
+                        ret_ctx.get_generator_yield_type(),
+                        ret_ctx.get_generator_return_type(),
+                        ret_ctx.get_generator_next_type(),
+                    ))
+                }) {
+                    early_yield_type = gen_types.0;
+                    early_gen_return_type = gen_types.1;
+                    early_gen_next_type = gen_types.2;
+                }
+            }
             if early_yield_type.is_some() {
                 self.ctx.push_yield_type(early_yield_type);
             }
@@ -1310,10 +1320,15 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.factory().lazy(def_id)
             });
             if let Some(base) = lazy_base {
+                // Use contextual generator type params when available, otherwise
+                // fall back to defaults (any/void/unknown).
+                let yield_t = early_yield_type.unwrap_or(TypeId::ANY);
+                let return_t = early_gen_return_type.unwrap_or(TypeId::VOID);
+                let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
                 self.ctx
                     .types
                     .factory()
-                    .application(base, vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN])
+                    .application(base, vec![yield_t, return_t, next_t])
             } else {
                 TypeId::ANY
             }
