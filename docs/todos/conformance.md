@@ -1,7 +1,36 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9938/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~9940/12570 (79.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04e — Union inference structural matching preference (+2 conf)
+
+### Fixed: Generic inference matches source against naked type param instead of structural target in unions
+
+**Area**: salsa (65.8%), compiler
+
+**Root cause**: When inferring type parameters from union-to-union matching (e.g., `U | Foo<U>` against
+`V | Foo<V>`), `target_contains_inference_param()` in `infer_matching.rs` only checked if a type was
+directly a type parameter — not recursively. This meant `Foo<V>` was classified as "fixed" rather than
+"parameterized", so `Foo<U>` was inferred against naked `V` instead of the structurally matching `Foo<V>`.
+Result: `V` got inferred as `U | Foo<U>` instead of just `U`.
+
+**Fix (2 files)**:
+1. **`inference/infer_matching.rs`**: Made `target_contains_inference_param` recursive — now walks
+   `Application`, `Union`, and `Intersection` types to find nested type parameters. Added
+   `types_share_outer_structure` helper to detect when a source member structurally matches a
+   parameterized target (same Application base, same Tuple/Array/Object shape). Rewrote `infer_unions`
+   to prefer structural matches over naked type params when both are parameterized.
+2. **`operations/constraints.rs`**: Applied same structural matching preference in the multi-placeholder
+   union branch. Added `types_share_outer_structure_for_constraint` helper.
+
+**Tests added**: 2 unit tests in `infer_tests.rs`:
+- `test_union_inference_prefers_structural_match_over_naked_type_param` — `V | Foo<V>` with `U | Foo<U>` infers `V = U`
+- `test_union_inference_naked_param_still_receives_unmatched_candidates` — `T | string` with `number` still infers `T = number`
+
+**Tests fixed** (conformance):
+- `unionTypeParameterInference` — false TS2322 removed (V correctly inferred as U, not U | Foo<U>)
+- `genericCallInferenceConditionalType2` — bonus fix from improved structural matching
 
 ## Session 2026-03-04d — Fresh object literal property inference widening (+4 conf)
 
