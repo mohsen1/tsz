@@ -1636,17 +1636,17 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    if let Some(&remote_is_method) = remote_members.get(&name) {
-                        if is_method != remote_is_method {
-                            // Property-vs-method conflict across files
-                            let message =
-                                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-                            self.error_at_node(
-                                sig.name,
-                                &message,
-                                diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            );
-                        }
+                    if let Some(&remote_is_method) = remote_members.get(&name)
+                        && is_method != remote_is_method
+                    {
+                        // Property-vs-method conflict across files
+                        let message =
+                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                        self.error_at_node(
+                            sig.name,
+                            &message,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
                     }
                 }
             }

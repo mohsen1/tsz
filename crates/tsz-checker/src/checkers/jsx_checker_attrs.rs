@@ -1080,6 +1080,67 @@ mod tests {
         );
     }
 
+    /// TS2786 should NOT fire for SFCs returning `Element | null`.
+    /// TSC allows null/undefined in SFC return types.
+    #[test]
+    fn jsx_sfc_returning_element_or_null_no_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface ElementClass { render(): any; }
+                interface IntrinsicElements { }
+            }
+            declare function MyComp(props: {}): JSX.Element | null;
+            <MyComp />;
+            "#,
+        );
+        assert!(
+            !diagnostics.contains(&2786),
+            "SFC returning Element | null should not emit TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2786 SHOULD fire for SFCs returning a type incompatible with JSX.Element
+    /// (even after null/undefined stripping).
+    #[test]
+    fn jsx_sfc_returning_incompatible_type_emits_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { type: 'element'; }
+                interface IntrinsicElements { }
+            }
+            declare function BadComp(props: {}): { type: string };
+            <BadComp />;
+            "#,
+        );
+        assert!(
+            diagnostics.contains(&2786),
+            "SFC returning incompatible type should emit TS2786, got: {diagnostics:?}"
+        );
+    }
+
+    /// TS2786 should NOT fire for call signatures returning `Element | null`.
+    #[test]
+    fn jsx_call_signature_returning_element_or_null_no_ts2786() {
+        let diagnostics = check_jsx_codes(
+            r#"
+            declare namespace JSX {
+                interface Element { }
+                interface IntrinsicElements { }
+            }
+            interface CompType { (props: {}): JSX.Element | null; }
+            declare var Comp: CompType;
+            <Comp />;
+            "#,
+        );
+        assert!(
+            !diagnostics.contains(&2786),
+            "Call signature returning Element | null should not emit TS2786, got: {diagnostics:?}"
+        );
+    }
+
     /// TS2607: When `ElementAttributesProperty` specifies a property name (e.g. `pr`)
     /// and the class component instance type doesn't have that property,
     /// emit "JSX element class does not support attributes".
