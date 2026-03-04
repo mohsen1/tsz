@@ -127,12 +127,33 @@ impl<'a> InferenceContext<'a> {
                 self.infer_unions(source_members, target_members, priority)?;
             }
 
-            // Intersection types
+            // Intersection types: both source and target are intersections
             (
                 Some(TypeData::Intersection(source_members)),
                 Some(TypeData::Intersection(target_members)),
             ) => {
                 self.infer_intersections(source_members, target_members, priority)?;
+            }
+
+            // Target is an intersection but source is not: decompose the intersection
+            // and infer against each member. This handles cases like:
+            //   source: {store: string}  target: {dispatch: number} & OwnProps
+            // We try each intersection member so that type parameters within the
+            // intersection (like OwnProps) can be inferred from the source.
+            (_, Some(TypeData::Intersection(target_members))) => {
+                let target_list: Vec<TypeId> = self.interner.type_list(target_members).to_vec();
+                for &target_member in &target_list {
+                    let _ = self.infer_from_types(source, target_member, priority);
+                }
+            }
+
+            // Source is an intersection but target is not: try inferring from
+            // each source member against the target.
+            (Some(TypeData::Intersection(source_members)), _) => {
+                let source_list: Vec<TypeId> = self.interner.type_list(source_members).to_vec();
+                for &source_member in &source_list {
+                    let _ = self.infer_from_types(source_member, target, priority);
+                }
             }
 
             // TypeApplication: recurse into instantiated type
