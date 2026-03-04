@@ -449,7 +449,25 @@ impl<'a> BinaryOpEvaluator<'a> {
             return any_valid;
         }
 
+        // tsc: typeHasCallOrConstructSignatures — types with call/construct
+        // signatures are valid instanceof RHS even if not assignable to Function.
+        if self.type_has_call_or_construct_signatures(type_id) {
+            return true;
+        }
+
         assignable_check(type_id, func_ty) || assignable_check(type_id, TypeId::FUNCTION)
+    }
+
+    /// Check if a type has call or construct signatures.
+    fn type_has_call_or_construct_signatures(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(crate::TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty()
+            }
+            Some(crate::TypeData::Function(_)) => true,
+            _ => false,
+        }
     }
 
     /// Check if a type is valid for arithmetic operations (number, bigint, enum, or any).

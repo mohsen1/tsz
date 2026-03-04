@@ -509,8 +509,23 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Convert member DefId to SymbolId
         let sym_id = self.def_to_symbol_id(member_def_id)?;
 
-        // Get the symbol
-        let symbol = self.binder.get_symbol(sym_id)?;
+        // Get the symbol — check local binder first, then cross-file binders.
+        // Cross-file enum members (e.g., `Foo.ConstFooEnum.Some` from an imported
+        // namespace) live in the source file's binder, not the current file's binder.
+        // Failing to find them here causes `get_enum_parent_def_id` to return `None`,
+        // which makes the compat checker's enum-member-to-enum check fall into the
+        // "different parents" branch and emit a false TS2678.
+        let symbol = self.binder.get_symbol(sym_id).or_else(|| {
+            self.lib_contexts
+                .iter()
+                .find_map(|lib| lib.binder.get_symbol(sym_id))
+        });
+        let symbol = symbol.or_else(|| {
+            self.all_binders
+                .as_ref()?
+                .iter()
+                .find_map(|b| b.get_symbol(sym_id))
+        })?;
 
         // Check if this is an enum member
         if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
@@ -520,15 +535,39 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Get the parent symbol (the enum itself)
         let parent_sym_id = symbol.parent;
 
-        // Convert parent SymbolId back to DefId
-        // The parent should have a DefId from when it was bound
-        let parent_ref = tsz_solver::SymbolRef(parent_sym_id.0);
-        if let Some(parent_def_id) = self.symbol_to_def_id(parent_ref) {
+        // Convert parent SymbolId back to DefId.
+        //
+        // We cannot use `symbol_to_def_id` here because `symbol_to_def` is a per-file
+        // (local) map that is NOT merged across checker contexts (see cross_file.rs comment).
+        // The parent enum may live in a different file (e.g., `foo.ts`'s binder), so its
+        // SymbolId is absent from the current file's `symbol_to_def`.
+        //
+        // Instead, we use `def_to_symbol`, which IS merged from child checkers into the
+        // parent during cross-file type analysis (see cross_file.rs lines 326-330).
+        // By scanning it for the parent's SymbolId, we can find the parent's DefId
+        // regardless of which file it originates from.
+        //
+        // Prefer this merged map over scanning `definition_store` (which lacks direct
+        // reverse lookup and would be O(n) on the global store).
+        let parent_def_id = self
+            .def_to_symbol
+            .borrow()
+            .iter()
+            .find_map(|(&def_id, &sym_id)| {
+                if sym_id == parent_sym_id {
+                    Some(def_id)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(parent_def_id) = parent_def_id {
             return Some(parent_def_id);
         }
 
-        // Fallback: If the parent doesn't have a DefId mapping yet,
-        // we can't provide one. This shouldn't happen in well-formed code.
+        // Final fallback: if the parent's DefId is not in the merged def_to_symbol map
+        // (which can happen when the parent was not yet processed), we can't provide
+        // the mapping. This shouldn't happen in well-formed code.
         None
     }
 
