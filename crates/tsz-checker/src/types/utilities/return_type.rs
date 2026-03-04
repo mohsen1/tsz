@@ -342,6 +342,15 @@ impl<'a> CheckerState<'a> {
 
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
 
+        // Fix Lazy class return types: when a method body returns a class reference
+        // (e.g., `static getClass() { return A; }`) and the class is still being
+        // constructed, the return type is captured as Lazy(DefId). But Lazy types
+        // for classes resolve to the INSTANCE type in the solver (for type-position
+        // semantics), whereas value-position class references should resolve to the
+        // CONSTRUCTOR type (typeof A). Replace Lazy(DefId) for class symbols with
+        // TypeQuery(SymbolRef), which correctly resolves to the constructor type.
+        let result = self.resolve_lazy_class_to_constructor(result);
+
         self.ctx.diagnostics.truncate(diag_count);
         self.ctx.emitted_diagnostics = emitted_before;
         self.ctx.emitted_ts2454_errors = emitted_ts2454_before;
@@ -443,6 +452,41 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.union(return_types)
+    }
+
+    /// Resolve a Lazy class type to a `TypeQuery` (constructor/value-position type).
+    ///
+    /// When a class references itself during construction (e.g., `return A`
+    /// inside class A, or `static s = C.#method()`), the type is captured as
+    /// `Lazy(DefId)`. The solver's `resolve_lazy` resolves this to the INSTANCE
+    /// type, but value-position class references should be `typeof A` (the
+    /// constructor type). This method replaces `Lazy(DefId)` for CLASS symbols
+    /// with `TypeQuery(SymbolRef)`, which correctly resolves to the constructor
+    /// type in both relation checks and property access resolution.
+    pub(crate) fn resolve_lazy_class_to_constructor(&self, type_id: TypeId) -> TypeId {
+        use tsz_solver::SymbolRef;
+        use tsz_solver::lazy_def_id;
+
+        let Some(def_id) = lazy_def_id(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        // Check if this DefId corresponds to a CLASS symbol
+        let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+        let Some(sym_id) = sym_id_opt else {
+            return type_id;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return type_id;
+        };
+
+        if symbol.flags & tsz_binder::symbol_flags::CLASS == 0 {
+            return type_id;
+        }
+
+        // Replace Lazy(DefId) with TypeQuery(SymbolRef) for value-position semantics
+        self.ctx.types.factory().type_query(SymbolRef(sym_id.0))
     }
 
     /// Get the type of a return expression with optional contextual typing.
