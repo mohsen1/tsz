@@ -382,14 +382,20 @@ impl<'a> CheckerState<'a> {
         // Note: we do NOT return ERROR on failure — the diagnostic is already emitted,
         // and tsc continues resolving the property type so that subsequent expressions
         // on the same line are still checked (e.g., `new A().priv + new A().prot`).
+        // When accessibility fails, we suppress subsequent TS2339/TS2551 "not found"
+        // errors, since the property *does* exist — it's just not accessible.
+        let mut accessibility_error_emitted = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
-            self.check_property_accessibility(
+            let accessible = self.check_property_accessibility(
                 access.expression,
                 property_name,
                 access.name_or_argument,
                 object_type,
             );
+            if !accessible {
+                accessibility_error_emitted = true;
+            }
         }
 
         // Check for merged class/enum/function + namespace symbols
@@ -535,7 +541,10 @@ impl<'a> CheckerState<'a> {
             if self.is_namespace_value_type(object_type)
                 && !self.is_enum_instance_property_access(object_type, access.expression)
             {
-                if !access.question_dot_token && !property_name.starts_with('#') {
+                if !access.question_dot_token
+                    && !property_name.starts_with('#')
+                    && !accessibility_error_emitted
+                {
                     // Report at the property name node, not the full expression (matches tsc behavior)
                     self.error_property_not_exist_at(
                         property_name,
@@ -742,8 +751,10 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
-                    if !property_name.starts_with('#') {
+                    // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere.
+                    // Also suppress when accessibility check already emitted TS2341/TS2445
+                    // (property exists but is private/protected — not truly "not found").
+                    if !property_name.starts_with('#') && !accessibility_error_emitted {
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.

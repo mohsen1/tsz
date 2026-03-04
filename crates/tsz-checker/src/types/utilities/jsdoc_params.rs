@@ -448,6 +448,59 @@ impl<'a> CheckerState<'a> {
         Self::extract_jsdoc_param_type_string(jsdoc, param_name).is_some()
     }
 
+    /// Returns true if the JSDoc contains a `@param` tag for `param_name` that
+    /// makes the parameter required (not optional).
+    ///
+    /// JSDoc optional param syntax (returns false for these):
+    /// - `@param {Type=} name` — optional type suffix
+    /// - `@param {Type} [name]` — brackets around name
+    /// - `@param {Type} [name=default]` — brackets with default
+    ///
+    /// Non-optional `@param` tags (returns true):
+    /// - `@param name` — name-only, no type
+    /// - `@param {Type} name` — standard typed param
+    pub(crate) fn jsdoc_has_required_param_tag(jsdoc: &str, param_name: &str) -> bool {
+        for chunk in jsdoc.split_inclusive('\n') {
+            let trimmed = chunk
+                .trim_end_matches('\n')
+                .trim()
+                .trim_start_matches('*')
+                .trim();
+
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            if let Some(rest) = effective.strip_prefix("@param") {
+                let rest = rest.trim();
+                if rest.starts_with('{') {
+                    // @param {type} name — extract type and name after the closing brace
+                    if let Some(close) = rest.find('}') {
+                        let type_expr = &rest[1..close];
+                        let after = rest[close + 1..].trim();
+                        let name_token = after.split_whitespace().next().unwrap_or("");
+                        // [name] or [name=default] means optional
+                        let is_bracket_optional = name_token.starts_with('[');
+                        let name = name_token.trim_start_matches('[');
+                        let name = name.split('=').next().unwrap_or(name);
+                        let name = name.trim_end_matches(']');
+                        // {Type=} means optional
+                        let is_type_optional = type_expr.ends_with('=');
+                        if name == param_name && !is_bracket_optional && !is_type_optional {
+                            return true;
+                        }
+                    }
+                } else {
+                    // @param name (no type) — always required
+                    let name = rest.split_whitespace().next().unwrap_or("");
+                    let name = name.trim_matches('`');
+                    if name == param_name {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Extract the type expression string from a `@param {type} name` JSDoc tag.
     ///
     /// Returns the type expression (e.g., "Object.<string, boolean>") for the given

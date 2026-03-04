@@ -253,6 +253,15 @@ impl<'a> CheckerState<'a> {
                 (arena, self.ctx.binder)
             };
 
+            // Use the target file's name so that file-type-sensitive checks
+            // (e.g. is_js_file() for optional JS parameters) use the declaring
+            // file's context rather than the calling file's context.
+            let delegate_file_name = symbol_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+                .unwrap_or_else(|| self.ctx.file_name.clone());
+
             // Box the child checker to keep it on the heap — nested delegations for
             // interdependent lib types (Array → ReadonlyArray → Iterator → ...) can
             // create deep call stacks, and CheckerState is too large to stack-allocate
@@ -261,7 +270,7 @@ impl<'a> CheckerState<'a> {
                 symbol_arena,
                 delegate_binder,
                 self.ctx.types,
-                self.ctx.file_name.clone(),
+                delegate_file_name,
                 self.ctx.compiler_options.clone(),
                 self, // Share parent's cache to fix Cache Isolation Bug
             ));
@@ -390,11 +399,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Use the target arena's file name for correct is_js_file() detection.
+        let delegate_file_name = symbol_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
         let mut checker = Box::new(CheckerState::with_parent_cache(
             symbol_arena,
             self.ctx.binder,
             self.ctx.types,
-            self.ctx.file_name.clone(),
+            delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
         ));
