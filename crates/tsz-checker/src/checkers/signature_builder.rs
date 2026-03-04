@@ -184,7 +184,13 @@ impl<'a> CheckerState<'a> {
                     && param.type_annotation.is_none()
                 {
                     let pname = self.parameter_name_for_error(param.name);
-                    if let Some(jsdoc_type) = self.resolve_jsdoc_param_type(&jsdoc, &pname) {
+                    if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(ctor_idx)
+                        && let Some(jsdoc_type) = self.resolve_jsdoc_param_type_with_pos(
+                            &jsdoc,
+                            &pname,
+                            Some(comment_start),
+                        )
+                    {
                         params[i].type_id = jsdoc_type;
                     }
                 }

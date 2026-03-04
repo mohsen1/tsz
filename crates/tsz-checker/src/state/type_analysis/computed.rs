@@ -1111,9 +1111,15 @@ impl<'a> CheckerState<'a> {
                                 && ext.parent.is_some()
                             {
                                 current = ext.parent;
-                                if let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
-                                    && let Some(jsdoc_type) =
-                                        self.resolve_jsdoc_param_type(&func_jsdoc, &pname)
+                                if let Some(comment_start) =
+                                    self.get_jsdoc_comment_pos_for_function(current)
+                                    && let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
+                                    && let Some(jsdoc_type) = self
+                                        .resolve_jsdoc_param_type_with_pos(
+                                            &func_jsdoc,
+                                            &pname,
+                                            Some(comment_start),
+                                        )
                                 {
                                     return (jsdoc_type, Vec::new());
                                 }

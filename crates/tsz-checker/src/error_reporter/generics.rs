@@ -34,6 +34,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2314 at an explicit source location.
+    pub fn error_generic_type_requires_type_arguments_at_span(
+        &mut self,
+        name: &str,
+        required_count: usize,
+        start: u32,
+        length: u32,
+    ) {
+        let message = format_message(
+            diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+            &[name, &required_count.to_string()],
+        );
+        self.ctx.error(
+            start,
+            length,
+            message,
+            diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+        );
+    }
+
     /// Report TS2344: Type does not satisfy constraint.
     pub fn error_type_constraint_not_satisfied(
         &mut self,
