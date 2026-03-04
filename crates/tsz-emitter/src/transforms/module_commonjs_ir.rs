@@ -79,13 +79,15 @@ impl<'a> CommonJsTransformContext<'a> {
         result.push(IRNode::UseStrict);
         result.push(IRNode::EsesModuleMarker);
 
-        // Initialize exports
+        // Initialize exports (chunked 50 per line, each chunk reversed, matching tsc)
         if !other_exports.is_empty() {
-            // Combined export initialization: exports.a = exports.b = ... = void 0;
-            result.push(IRNode::Raw(format!(
-                "exports.{} = void 0;",
-                other_exports.join(" = exports.")
-            )));
+            for chunk in other_exports.chunks(50) {
+                let reversed: Vec<&str> = chunk.iter().rev().map(|s| s.as_str()).collect();
+                result.push(IRNode::Raw(format!(
+                    "exports.{} = void 0;",
+                    reversed.join(" = exports.")
+                )));
+            }
         }
         result.extend(lowered_statements);
 

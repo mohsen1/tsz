@@ -606,18 +606,20 @@ impl<'a> Printer<'a> {
             // Track function exports so `export { f }` clauses can skip
             // duplicate inline emission (already handled in preamble).
             self.ctx.module_state.hoisted_func_exports = func_exports.clone();
-            // Emit other exports first: exports.X = void 0;
-            // TypeScript emits void 0 initialization before hoisted function exports
+            // Emit other exports: exports.X = exports.Y = void 0;
+            // tsc chunks into groups of 50 and reverses each chunk (reduceLeft).
             if !other_exports.is_empty() {
-                for (i, name) in other_exports.iter().enumerate() {
-                    if i > 0 {
-                        self.write(" = ");
+                for chunk in other_exports.chunks(50) {
+                    for (i, name) in chunk.iter().rev().enumerate() {
+                        if i > 0 {
+                            self.write(" = ");
+                        }
+                        self.write("exports.");
+                        self.write(name);
                     }
-                    self.write("exports.");
-                    self.write(name);
+                    self.write(" = void 0;");
+                    self.write_line();
                 }
-                self.write(" = void 0;");
-                self.write_line();
             }
             // Emit function exports: exports.compile = compile;
             // For aliased exports (export { bar as baz }), emit: exports.baz = bar;
