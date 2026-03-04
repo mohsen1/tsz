@@ -379,10 +379,13 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
-        let prev = self.suppress_commonjs_named_import_substitution;
+        let prev_import = self.suppress_commonjs_named_import_substitution;
+        let prev_ns = self.suppress_ns_qualification;
         self.suppress_commonjs_named_import_substitution = true;
+        self.suppress_ns_qualification = true;
         self.emit(node);
-        self.suppress_commonjs_named_import_substitution = prev;
+        self.suppress_commonjs_named_import_substitution = prev_import;
+        self.suppress_ns_qualification = prev_ns;
     }
 
     /// Try to inline a property access to a const enum member.
