@@ -1,8 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~7140/12570 (56.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
-> Note: Score regressed from 79.1% due to other sessions' commits (TS2300 cross-file interface, mapped type properties). This session's JSX fixes are clean.
+**Current score**: **~9953/12570 (79.2%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-04i — Generic JS constructor @template instantiation (+1 conf)
+
+### Fixed: `new Zet(1)` on `@template T` JS constructor functions now returns instantiated instance type
+
+**Area**: jsdoc (66.3% → 66.8%)
+
+**Root cause**: `synthesize_js_constructor_instance_type` was called at the `new` expression call site,
+but `collect_js_constructor_this_properties` re-evaluated property types in the call site context where
+the `@template T` type parameter scope was empty. This caused:
+- `@type {T}` annotations on bare `this.u` expressions to resolve to `any`
+- `this.t = t` (where `t` is a parameter with `@param {T} t`) to resolve to `any`
+- No TS2322 for `z.u = false` because instance properties were all `any`
+
+**Fix (2 files)**:
+1. **`types/computation/complex.rs`**: Added separate `collect_generic_constructor_this_properties`
+   method for generic constructors that:
+   - Uses the function shape's correctly-resolved parameter types (from `get_type_of_function`)
+   - Handles bare `this.prop` with `@type {T}` JSDoc annotations
+   - Maps `this.prop = param` to function shape param types instead of `get_type_of_node`
+   - Pushes/pops type params into `type_parameter_scope` for @type resolution
+   - After building the generic object type, infers type args by matching function params
+     against call arguments, widens literals, and instantiates via `instantiate_generic`
+2. **`tests/js_constructor_property_tests.rs`**: Added 2 unit tests
+
+**Tests fixed** (conformance): `jsdocTemplateConstructorFunction`
+
+### Remaining generic constructor function issues
+
+1. **`jsdocTemplateConstructorFunction2`**: Partially fixed (TS2322 now emitted), but still has
+   TS2304 missing ("Cannot find name 'T'" in `@typedef` outside template scope) and TS2339 extra
+   ("Property 'nested' does not exist on type 'object'" — `@param {object} o` with `@param {T} o.nested`
+   destructured nested parameter pattern not supported).
+
+2. **Prototype method type parameter propagation**: When a prototype method like
+   `Zet.prototype.add = function(v, id) { ... }` has parameters typed as `@param {T} v`,
+   the `T` refers to the constructor's template parameter. Currently the prototype method's
+   types are collected from the method itself (not the constructor's scope), so they resolve to `any`.
+   Need to thread constructor type params through prototype method scanning.
 
 ## Session 2026-03-04h — JSX class component validation diagnostics (+2 conf)
 
