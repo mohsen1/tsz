@@ -449,7 +449,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -754,7 +754,6 @@ FAIL TypeScript/tests/cases/compiler/longObjectInstantiationChain1.ts
 FAIL TypeScript/tests/cases/compiler/longObjectInstantiationChain2.ts
 FAIL TypeScript/tests/cases/compiler/longObjectInstantiationChain3.ts
 FAIL TypeScript/tests/cases/compiler/manyCompilerErrorsInTheTwoFiles.ts
-FAIL TypeScript/tests/cases/compiler/mapConstructor.ts
 FAIL TypeScript/tests/cases/compiler/mapGroupBy.ts
 FAIL TypeScript/tests/cases/compiler/mappedToToIndexSignatureInference.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeAsStringTemplate.ts
@@ -5007,7 +5006,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5836,6 +5835,7 @@ PASS TypeScript/tests/cases/compiler/localVariablesReturnedFromCatchBlocks.ts
 PASS TypeScript/tests/cases/compiler/logicalNotExpression1.ts
 PASS TypeScript/tests/cases/compiler/m7Bugs.ts
 PASS TypeScript/tests/cases/compiler/manyConstExports.ts
+PASS TypeScript/tests/cases/compiler/mapConstructor.ts
 PASS TypeScript/tests/cases/compiler/mapConstructorOnReadonlyTuple.ts
 PASS TypeScript/tests/cases/compiler/mapOnTupleTypes01.ts
 PASS TypeScript/tests/cases/compiler/mapOnTupleTypes02.ts
@@ -8325,6 +8325,7 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowInstanceOfGuardPr
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNullishCoalesce.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain2.ts
+PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowStringIndex.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowSuperPropertyAccess.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowTruthiness.ts

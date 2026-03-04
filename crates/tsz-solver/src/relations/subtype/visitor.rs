@@ -361,7 +361,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         // Readonly types have specific subtyping rules:
         // - Readonly<T> <: Readonly<U> if T <: U
-        // - Readonly<T> is NOT assignable to mutable T (safety)
+        // - Readonly<T> is NOT assignable to mutable T[] or [T] (safety)
+        // - Readonly<T> <: non-array interface (e.g. Iterable<T>) is allowed
         // - T <: Readonly<T> is allowed (can add readonly) - handled by target peeling in check_subtype_inner
 
         // Case: Readonly<S> <: Readonly<T>
@@ -370,10 +371,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return self.checker.check_subtype(inner_type, t_inner);
         }
 
-        // Case: Readonly<S> <: Mutable<T>
-        // Readonly source cannot be assigned to mutable target for safety reasons.
-        // Exception: target is any/unknown (handled by fast paths in check_subtype_inner).
-        SubtypeResult::False
+        // Case: Readonly<S> <: mutable Array<T> or Tuple
+        // Readonly source cannot be assigned to mutable array/tuple target for safety.
+        if array_element_type(self.checker.interner, self.target).is_some()
+            || tuple_list_id(self.checker.interner, self.target).is_some()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Case: Readonly<S> <: non-array target (e.g. Iterable<T>, object, etc.)
+        // The inner type (e.g. Array<T>) should be checked structurally against the target.
+        self.checker.check_subtype(inner_type, self.target)
     }
 
     fn visit_string_intrinsic(
