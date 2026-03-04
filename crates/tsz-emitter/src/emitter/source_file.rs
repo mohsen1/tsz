@@ -590,7 +590,7 @@ impl<'a> Printer<'a> {
 
             // Collect and emit exports initialization
             // Function exports get direct assignment (hoisted), others get void 0
-            let (func_exports, other_exports, default_func_export) =
+            let (func_exports, other_exports, default_func_exports) =
                 module_commonjs::collect_export_names_categorized(
                     self.arena,
                     &source.statements.nodes,
@@ -645,20 +645,21 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
-            // Emit hoisted default function export: exports.default = funcName;
+            // Emit hoisted default function exports: exports.default = funcName;
             // `export default function func() {}` is hoisted like named exports.
-            let default_func_export = if self.ctx.module_state.has_export_assignment {
-                None
+            // Multiple defaults can exist in error recovery (tsc emits all of them).
+            let default_func_exports = if self.ctx.module_state.has_export_assignment {
+                Vec::new()
             } else {
-                default_func_export
+                default_func_exports
             };
-            if let Some(ref name) = default_func_export {
+            for name in &default_func_exports {
                 self.write("exports.default = ");
                 self.write(name);
                 self.write(";");
                 self.write_line();
             }
-            self.ctx.module_state.default_func_export_hoisted = default_func_export.is_some();
+            self.ctx.module_state.default_func_export_hoisted = !default_func_exports.is_empty();
 
             // Emit CJS JSX runtime require() after exports preamble
             if let Some(ref jsx_import) = jsx_import_text {

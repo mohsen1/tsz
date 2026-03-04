@@ -268,10 +268,10 @@ pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
-) -> (Vec<(String, String)>, Vec<String>, Option<String>) {
+) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
     let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
-    let mut default_func_export: Option<String> = None;
+    let mut default_func_exports: Vec<String> = Vec::new();
     let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
 
     // First pass: collect all function declaration names in the file (including
@@ -339,9 +339,10 @@ pub fn collect_export_names_categorized(
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
             && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && func.body.is_some() // skip overload signatures (no body)
             && let Some(name) = get_identifier_text(arena, func.name)
         {
-            default_func_export = Some(name);
+            default_func_exports.push(name);
         }
         // Named export specifiers: export { f } where f is a function declaration
         // JS function declarations are hoisted, so `exports.f = f;` can appear
@@ -386,7 +387,7 @@ pub fn collect_export_names_categorized(
     // groups of 50, with each chunk reversed (via reduceLeft in tsc).
     // We keep source order here and let the emit code handle chunking+reversal.
 
-    (func_exports, other_exports, default_func_export)
+    (func_exports, other_exports, default_func_exports)
 }
 
 /// Collect names from inline-exported variable declarations (`export let/const/var`).
