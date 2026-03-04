@@ -199,14 +199,18 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
-        if self.class_has_private_members(class_data) {
-            // Compute whether we need the SET helper before taking the mutable borrow
-            let needs_set = self.class_has_private_field_writes(class_data);
+        // Auto-accessors always need both GET and SET helpers because
+        // the generated getter/setter access the backing private storage field.
+        let has_auto_accessors = self.class_has_auto_accessor_members(class_data);
+
+        if has_auto_accessors || self.class_has_private_members(class_data) {
+            // Compute which helpers are actually needed before taking the mutable borrow.
+            let needs_get = has_auto_accessors || self.class_has_private_field_reads(class_data);
+            let needs_set = has_auto_accessors || self.class_has_private_field_writes(class_data);
             let helpers = self.transforms.helpers_mut();
-            helpers.class_private_field_get = true;
-            // Only emit SET helper when the class has actual writes to private fields
-            // (assignments like `this.#field = value`), not just reads or initializers.
-            // WeakMap.set() in the constructor does NOT use __classPrivateFieldSet.
+            if needs_get {
+                helpers.class_private_field_get = true;
+            }
             if needs_set {
                 helpers.class_private_field_set = true;
             }
@@ -255,8 +259,102 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
+    /// Get the body node index of a class member (method, constructor, accessor).
+    fn get_member_body(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(member_node).and_then(|m| {
+                    let body = m.body;
+                    if body.0 != 0 { Some(body) } else { None }
+                })
+            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                self.arena.get_constructor(member_node).and_then(|c| {
+                    let body = c.body;
+                    if body.0 != 0 { Some(body) } else { None }
+                })
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(member_node).and_then(|a| {
+                    let body = a.body;
+                    if body.0 != 0 { Some(body) } else { None }
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a property access expression accesses a private identifier.
+    fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.arena
+            .get(access.name_or_argument)
+            .is_some_and(|name_n| name_n.kind == SyntaxKind::PrivateIdentifier as u16)
+    }
+
+    /// Unwrap parenthesized expressions to get the inner expression.
+    fn unwrap_parens(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(n) = self.arena.get(idx) else {
+                return idx;
+            };
+            if n.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return idx;
+            }
+            let Some(paren) = self.arena.get_parenthesized(n) else {
+                return idx;
+            };
+            idx = paren.expression;
+        }
+    }
+
+    /// Return true if a binary operator token is any assignment operator.
+    fn is_assignment_operator(op: u16) -> bool {
+        op == SyntaxKind::EqualsToken as u16
+            || op == SyntaxKind::PlusEqualsToken as u16
+            || op == SyntaxKind::MinusEqualsToken as u16
+            || op == SyntaxKind::AsteriskEqualsToken as u16
+            || op == SyntaxKind::SlashEqualsToken as u16
+            || op == SyntaxKind::PercentEqualsToken as u16
+            || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::AmpersandEqualsToken as u16
+            || op == SyntaxKind::BarEqualsToken as u16
+            || op == SyntaxKind::CaretEqualsToken as u16
+            || op == SyntaxKind::BarBarEqualsToken as u16
+            || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || op == SyntaxKind::QuestionQuestionEqualsToken as u16
+    }
+
+    /// Check if a class has any reads of private fields in its method bodies.
+    pub(super) fn class_has_private_field_reads(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if let Some(body) = self.get_member_body(member_node)
+                && self.subtree_has_private_field_read(body)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if a class has any writes to private fields in its method bodies.
-    /// This includes `this.#field = value` and compound assignments like `this.#field += value`.
     pub(super) fn class_has_private_field_writes(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
@@ -265,31 +363,7 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
-
-            // Scan method bodies, constructor body, accessor bodies
-            let body_idx = match member_node.kind {
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    self.arena.get_method_decl(member_node).and_then(|m| {
-                        let body = m.body;
-                        if body.0 != 0 { Some(body) } else { None }
-                    })
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    self.arena.get_constructor(member_node).and_then(|c| {
-                        let body = c.body;
-                        if body.0 != 0 { Some(body) } else { None }
-                    })
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    self.arena.get_accessor(member_node).and_then(|a| {
-                        let body = a.body;
-                        if body.0 != 0 { Some(body) } else { None }
-                    })
-                }
-                _ => None,
-            };
-
-            if let Some(body) = body_idx
+            if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
                 return true;
@@ -298,9 +372,8 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
-    /// Scan a subtree for binary expressions that assign to private fields.
-    /// Uses a position-range scan over all arena nodes within the subtree.
-    fn subtree_has_private_field_write(&self, idx: tsz_parser::parser::NodeIndex) -> bool {
+    /// Scan a subtree for expressions that write to private fields.
+    fn subtree_has_private_field_write(&self, idx: NodeIndex) -> bool {
         let Some(root) = self.arena.get(idx) else {
             return false;
         };
@@ -308,56 +381,90 @@ impl<'a> LoweringPass<'a> {
         let end = root.end;
 
         for i in 0..self.arena.len() {
-            let nidx = tsz_parser::parser::NodeIndex(i as u32);
+            let nidx = NodeIndex(i as u32);
             let Some(n) = self.arena.get(nidx) else {
                 continue;
             };
             if n.pos < start || n.end > end {
                 continue;
             }
-            if n.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
+            match n.kind {
+                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(bin) = self.arena.get_binary_expr(n) else {
+                        continue;
+                    };
+                    if !Self::is_assignment_operator(bin.operator_token) {
+                        continue;
+                    }
+                    let left = self.unwrap_parens(bin.left);
+                    if self.is_private_field_access(left) {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+                {
+                    let Some(unary) = self.arena.get_unary_expr(n) else {
+                        continue;
+                    };
+                    if unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16
+                    {
+                        let operand = self.unwrap_parens(unary.operand);
+                        if self.is_private_field_access(operand) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
             }
-            // Check if this binary expression is an assignment to a private field
-            let Some(bin) = self.arena.get_binary_expr(n) else {
+        }
+        false
+    }
+
+    /// Scan a subtree for expressions that read from private fields.
+    fn subtree_has_private_field_read(&self, idx: NodeIndex) -> bool {
+        let Some(root) = self.arena.get(idx) else {
+            return false;
+        };
+        let start = root.pos;
+        let end = root.end;
+
+        for i in 0..self.arena.len() {
+            let nidx = NodeIndex(i as u32);
+            let Some(n) = self.arena.get(nidx) else {
                 continue;
             };
-            let op = bin.operator_token;
-            // Check for any assignment operator
-            if !(op == SyntaxKind::EqualsToken as u16
-                || op == SyntaxKind::PlusEqualsToken as u16
-                || op == SyntaxKind::MinusEqualsToken as u16
-                || op == SyntaxKind::AsteriskEqualsToken as u16
-                || op == SyntaxKind::SlashEqualsToken as u16
-                || op == SyntaxKind::PercentEqualsToken as u16
-                || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || op == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || op == SyntaxKind::AmpersandEqualsToken as u16
-                || op == SyntaxKind::BarEqualsToken as u16
-                || op == SyntaxKind::CaretEqualsToken as u16
-                || op == SyntaxKind::BarBarEqualsToken as u16
-                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || op == SyntaxKind::QuestionQuestionEqualsToken as u16)
-            {
+            if n.pos < start || n.end > end {
                 continue;
             }
-            // Check if left side is a property access with private identifier
-            let Some(left_node) = self.arena.get(bin.left) else {
-                continue;
-            };
-            if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if !self.is_private_field_access(nidx) {
                 continue;
             }
-            let Some(access) = self.arena.get_access_expr(left_node) else {
-                continue;
-            };
-            if self
-                .arena
-                .get(access.name_or_argument)
-                .is_some_and(|name_n| name_n.kind == SyntaxKind::PrivateIdentifier as u16)
-            {
+            // Check if this access is exclusively a write target (LHS of plain `=`).
+            let mut is_write_only = false;
+            for j in 0..self.arena.len() {
+                let parent_idx = NodeIndex(j as u32);
+                let Some(parent) = self.arena.get(parent_idx) else {
+                    continue;
+                };
+                if parent.pos > n.pos || parent.end < n.end {
+                    continue;
+                }
+                if parent.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                    let Some(bin) = self.arena.get_binary_expr(parent) else {
+                        continue;
+                    };
+                    if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                        let left = self.unwrap_parens(bin.left);
+                        if left == nidx {
+                            is_write_only = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !is_write_only {
                 return true;
             }
         }
