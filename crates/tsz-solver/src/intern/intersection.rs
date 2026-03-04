@@ -189,11 +189,17 @@ impl TypeInterner {
         }
 
         // Distributivity: A & (B | C) → (A & B) | (A & C)
-        // This enables better normalization and is required for soundness
-        // Must be done before object/callable merging to ensure we operate on distributed members
-        if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
-            return distributed;
-        }
+        // Only distribute when there are non-union members to intersect with each
+        // union alternative. When ALL members are unions (e.g., `(A|B) & (C|D)`),
+        // TSC preserves the intersection form rather than distributing into
+        // `(A&C) | (A&D) | (B&C) | (B&D)`.
+        let has_non_union = flat
+            .iter()
+            .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
+        if has_non_union
+            && let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
+                return distributed;
+            }
 
         if flat.is_empty() {
             return TypeId::UNKNOWN;

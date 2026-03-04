@@ -642,3 +642,102 @@ fn test_required_property_no_undefined() {
         "Required properties should not include '| undefined'"
     );
 }
+
+#[test]
+fn test_format_union_of_intersections_parenthesized() {
+    // TSC parenthesizes intersection members inside unions: `(T & U) | (V & W)`
+    // Use TypeParameter + object to create intersections that don't merge
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let t = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    // T & { a: string } stays as intersection (can't merge TypeParam with object)
+    let intersection1 = interner.intersection(vec![t, obj1]);
+    let intersection2 = interner.intersection(vec![t, obj2]);
+    let union_of_intersections = interner.union(vec![intersection1, intersection2]);
+
+    let formatted = formatter.format(union_of_intersections);
+    // Each intersection member should be parenthesized when inside a union
+    assert!(
+        formatted.contains("(") && formatted.contains(")"),
+        "Intersection members in union should be parenthesized, got: {formatted}"
+    );
+    assert!(
+        formatted.contains(" | "),
+        "Should be formatted as union, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_intersection_of_unions_parenthesized() {
+    // TSC parenthesizes union members inside intersections: `(A | B) & (C | D)`
+    // With our conditional distribution, this is preserved when ALL members are unions
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    // Use string | number and boolean | symbol as union members
+    let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union2 = interner.union(vec![TypeId::BOOLEAN, TypeId::SYMBOL]);
+
+    // All members are unions → distribution is skipped, intersection preserved
+    let intersection_of_unions = interner.intersection(vec![union1, union2]);
+
+    let formatted = formatter.format(intersection_of_unions);
+    // Union members should be parenthesized when inside an intersection
+    assert!(
+        formatted.contains("(") && formatted.contains(")"),
+        "Union members in intersection should be parenthesized, got: {formatted}"
+    );
+    assert!(
+        formatted.contains(" & "),
+        "Should be formatted as intersection, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_intersection_distribution_skipped_for_all_union_members() {
+    // When ALL intersection members are unions, distribution should be skipped
+    // (A | B) & (C | D) stays as intersection, not distributed to (A&C)|(A&D)|(B&C)|(B&D)
+    let interner = TypeInterner::new();
+
+    let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union2 = interner.union(vec![TypeId::BOOLEAN, TypeId::SYMBOL]);
+    let result = interner.intersection(vec![union1, union2]);
+
+    // Should stay as Intersection, not be distributed to Union
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Intersection(_))),
+        "All-union intersection should preserve intersection form"
+    );
+}
+
+#[test]
+fn test_intersection_distribution_applied_with_non_union_member() {
+    // When there's a non-union member, distribution should apply
+    // string & (number | boolean) → (string & number) | (string & boolean) → never
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    let result = interner.intersection(vec![TypeId::STRING, union]);
+
+    // string & number = never, string & boolean = never → never | never = never
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "Distribution with non-union member should reduce disjoint types to never"
+    );
+}
