@@ -1637,10 +1637,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit deferred static block IIFEs as `(() => { ... })();`.
-    pub(in crate::emitter) fn emit_static_block_iifes(
-        &mut self,
-        blocks: Vec<(NodeIndex, usize)>,
-    ) {
+    pub(in crate::emitter) fn emit_static_block_iifes(&mut self, blocks: Vec<(NodeIndex, usize)>) {
         for (static_block_idx, saved_comment_idx) in blocks {
             self.write_line();
             self.write("(() => ");
