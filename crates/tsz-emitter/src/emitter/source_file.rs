@@ -547,7 +547,7 @@ impl<'a> Printer<'a> {
 
         // Use helpers from TransformContext (populated during lowering pass)
         // This eliminates O(N) arena scans - all helpers are detected in Phase 1
-        let helpers = if self.transforms.helpers_populated() {
+        let mut helpers = if self.transforms.helpers_populated() {
             self.transforms.helpers().clone()
         } else {
             // Fallback for non-transforming emits (should be rare)
@@ -556,6 +556,15 @@ impl<'a> Printer<'a> {
         };
 
         let has_es5_transforms = self.has_es5_transforms();
+
+        // When inside a module wrapper (AMD/UMD/System), import interop
+        // helpers are already emitted by `emit_wrapped_import_helpers`
+        // before the wrapper. Suppress them here to avoid double emission.
+        if inside_module_wrapper {
+            helpers.create_binding = false;
+            helpers.import_star = false;
+            helpers.import_default = false;
+        }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
         if !self.ctx.options.no_emit_helpers {
