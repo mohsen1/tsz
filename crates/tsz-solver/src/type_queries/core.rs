@@ -29,6 +29,20 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Get the number of elements in a fixed-length tuple type.
+///
+/// Returns `Some(len)` for tuple types with no rest elements, `None` otherwise
+/// (arrays, non-tuples, variadic tuples with rest elements).
+pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    if let Some(TypeData::Tuple(tuple_list_id)) = db.lookup(type_id) {
+        let elements = db.tuple_list(tuple_list_id);
+        if elements.iter().all(|e| !e.rest) {
+            return Some(elements.len());
+        }
+    }
+    None
+}
+
 /// Check if a type is invokable (has call signatures, not just construct signatures).
 ///
 /// This is more specific than `is_callable_type` - it ensures the type can be called
