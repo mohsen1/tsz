@@ -221,26 +221,24 @@ impl<'a> Printer<'a> {
                     if let Some(fep) = first_erased_stmt_pos
                         && first_erased_is_import_export
                         && c.end <= fep
+                        && let Some(text) = self.source_text
                     {
-                        if let Some(text) = self.source_text {
-                            let comment_text = c.get_text(text);
-                            let trimmed = comment_text.trim_start_matches('/');
-                            let trimmed = trimmed.trim_start();
-                            if trimmed.starts_with("<reference") {
-                                // Skip preserve="true" references — always keep them.
-                                if comment_text.contains("preserve=\"true\"") {
-                                    return true;
-                                }
-                                // Check for blank line between reference end and erased
-                                // stmt start. If there's a blank line, the reference is
-                                // "detached" (file-level) and should be preserved.
-                                let gap =
-                                    crate::safe_slice::slice(text, c.end as usize, fep as usize);
-                                if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
-                                    return true;
-                                }
-                                return false;
+                        let comment_text = c.get_text(text);
+                        let trimmed = comment_text.trim_start_matches('/');
+                        let trimmed = trimmed.trim_start();
+                        if trimmed.starts_with("<reference") {
+                            // Skip preserve="true" references — always keep them.
+                            if comment_text.contains("preserve=\"true\"") {
+                                return true;
                             }
+                            // Check for blank line between reference end and erased
+                            // stmt start. If there's a blank line, the reference is
+                            // "detached" (file-level) and should be preserved.
+                            let gap = crate::safe_slice::slice(text, c.end as usize, fep as usize);
+                            if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
+                                return true;
+                            }
+                            return false;
                         }
                     }
                     true

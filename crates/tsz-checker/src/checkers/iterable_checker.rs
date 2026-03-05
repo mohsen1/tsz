@@ -370,8 +370,13 @@ impl<'a> CheckerState<'a> {
         let iterator_type = self.get_call_return_type(iterator_fn_type);
 
         // If the iterator function returns `any` (e.g., `[Symbol.iterator]() { return this; }`
-        // where `this` type inference fails), fall back to using the original object type.
-        let iterator_type = if iterator_type == TypeId::ANY {
+        // where `this` type inference fails), or `ThisType` (polymorphic `this` from
+        // `return this` in class methods), fall back to the original iterable type.
+        // For `ThisType`, `this` in `[Symbol.iterator]()` refers to the iterable itself,
+        // so substituting with `type_id` gives us the concrete class instance type.
+        let iterator_type = if iterator_type == TypeId::ANY
+            || tsz_solver::type_queries::is_this_type(self.ctx.types, iterator_type)
+        {
             type_id
         } else {
             iterator_type
