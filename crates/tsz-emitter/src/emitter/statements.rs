@@ -1289,6 +1289,13 @@ impl<'a> Printer<'a> {
         self.map_token_after(label_end, node.end, b':');
         self.write(":");
 
+        // Emit trailing comments on the same source line as `case X:`
+        // e.g., `case 0: // Zero` should keep the comment on the same line
+        let colon_end = self
+            .find_char_after(label_end, node.end, b':')
+            .map_or(label_end, |p| p + 1);
+        self.emit_trailing_comments(colon_end);
+
         // Use expression end position for same-line detection
         self.emit_case_clause_body(&clause.statements, label_end);
     }
@@ -1299,6 +1306,12 @@ impl<'a> Printer<'a> {
         };
 
         self.write("default:");
+
+        // Emit trailing comments on the same source line as `default:`
+        let colon_end = self
+            .find_char_after(node.pos, node.end, b':')
+            .map_or(node.pos + 8, |p| p + 1);
+        self.emit_trailing_comments(colon_end);
 
         // Use node pos + "default" length for same-line detection
         self.emit_case_clause_body(&clause.statements, node.pos + 8);
