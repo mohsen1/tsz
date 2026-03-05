@@ -585,6 +585,21 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Build value declaration names for filtering type-only export specifiers.
+        // This is stored in module state so that `export { I }` handlers (both CJS
+        // and ESM) can skip specifiers that refer to interfaces/type-aliases/etc.
+        // Must be computed before any module-specific export handling.
+        {
+            use crate::transforms::module_commonjs;
+            self.ctx.module_state.value_declaration_names =
+                module_commonjs::build_value_declaration_names(
+                    self.arena,
+                    &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
+                );
+            self.ctx.module_state.value_decl_names_computed = true;
+        }
+
         // CommonJS: Emit __esModule and exports initialization (AFTER helpers)
         if self.ctx.is_commonjs() {
             use crate::transforms::module_commonjs;
@@ -599,16 +614,6 @@ impl<'a> Printer<'a> {
             // Function exports get direct assignment (hoisted), others get void 0
             let (func_exports, other_exports, default_func_exports) =
                 module_commonjs::collect_export_names_categorized(
-                    self.arena,
-                    &source.statements.nodes,
-                    self.ctx.options.preserve_const_enums,
-                );
-
-            // Build value declaration names for filtering type-only export specifiers.
-            // This is stored in module state so that `export { I }` handlers can
-            // skip specifiers that refer to interfaces/type-aliases/etc.
-            self.ctx.module_state.value_declaration_names =
-                module_commonjs::build_value_declaration_names(
                     self.arena,
                     &source.statements.nodes,
                     self.ctx.options.preserve_const_enums,

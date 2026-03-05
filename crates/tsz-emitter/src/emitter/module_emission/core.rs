@@ -336,9 +336,22 @@ impl<'a> Printer<'a> {
         if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
             && let Some(named_exports) = self.arena.get_named_imports(clause_node)
         {
-            let value_specs = self.collect_value_specifiers(&named_exports.elements);
+            // For local exports (`export { x }`), use syntactic value-name
+            // filtering to skip type-only specifiers (interfaces, type aliases,
+            // etc.). For re-exports (`export { x } from "mod"`), only use the
+            // checker-based filtering (type_only_nodes).
+            let value_specs = if export.module_specifier.is_none() {
+                self.collect_local_export_value_specifiers(&named_exports.elements)
+            } else {
+                self.collect_value_specifiers(&named_exports.elements)
+            };
             if value_specs.is_empty() && !named_exports.elements.nodes.is_empty() {
-                // All specifiers were type-only — skip the export entirely
+                // All specifiers were type-only — emit `export {}` marker for
+                // local exports (keeps file as module) or skip entirely for re-exports.
+                if export.module_specifier.is_none() {
+                    self.write("export {}");
+                    self.write_semicolon();
+                }
                 return;
             }
             // Emit `export { ... }` or `export {}` (when originally empty)
@@ -668,7 +681,7 @@ impl<'a> Printer<'a> {
         elements: &NodeList,
     ) -> Vec<NodeIndex> {
         let base = self.collect_value_specifiers(elements);
-        if self.ctx.module_state.value_declaration_names.is_empty() {
+        if !self.ctx.module_state.value_decl_names_computed {
             return base;
         }
         base.into_iter()

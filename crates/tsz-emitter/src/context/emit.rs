@@ -137,6 +137,10 @@ pub struct ModuleTransformState {
     /// interface/type-alias/non-instantiated-namespace — these are type-only
     /// and should not produce `exports.I = I;` at runtime.
     pub value_declaration_names: FxHashSet<String>,
+
+    /// Whether `value_declaration_names` has been computed. Distinguishes
+    /// "not yet computed" (false) from "computed but empty" (true with empty set).
+    pub value_decl_names_computed: bool,
 }
 
 impl ModuleTransformState {
