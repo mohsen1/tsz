@@ -156,9 +156,11 @@ impl<'a> Printer<'a> {
             let prev_in_generator = self.ctx.flags.in_generator;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
+            let prev_declared = std::mem::take(&mut self.declared_namespace_names);
             self.prepare_logical_assignment_value_temps(method.body);
             self.ctx.flags.in_generator = method.asterisk_token;
             self.emit(method.body);
+            self.declared_namespace_names = prev_declared;
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.ctx.flags.in_generator = prev_in_generator;

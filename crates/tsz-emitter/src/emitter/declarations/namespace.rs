@@ -211,11 +211,12 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(module.body) {
             if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 // Nested namespace (e.g., namespace X.Y.Z expands to nested IIFEs).
-                // Save/restore declared_namespace_names so names declared in nested
-                // IIFEs don't leak to sibling IIFEs at the same level.
+                // Save/restore declared_namespace_names so names from the outer scope
+                // don't suppress declarations inside the nested IIFE (each IIFE creates
+                // a new function scope), and names declared inside don't leak out.
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
-                    let prev_declared = self.declared_namespace_names.clone();
+                    let prev_declared = std::mem::take(&mut self.declared_namespace_names);
                     self.emit_namespace_iife(&inner_module, Some(&name));
                     self.declared_namespace_names = prev_declared;
                 }
@@ -224,9 +225,9 @@ impl<'a> Printer<'a> {
                 let prev = self.in_namespace_iife;
                 let prev_ns_name = self.current_namespace_name.clone();
                 // Save and restore declared_namespace_names for this IIFE scope.
-                // Each IIFE creates a new function scope, so `let` declarations
-                // inside don't conflict with those in other IIFEs for the same name.
-                let prev_declared = self.declared_namespace_names.clone();
+                // Use `take` so outer names don't suppress declarations inside (each
+                // IIFE creates a new function scope), and inner names don't leak out.
+                let prev_declared = std::mem::take(&mut self.declared_namespace_names);
                 self.in_namespace_iife = true;
                 self.current_namespace_name = Some(iife_param.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
