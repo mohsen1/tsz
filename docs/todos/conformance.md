@@ -1,7 +1,35 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10023/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10025/12570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05h — index signature precedence + TS7053 location + unique symbol union index (+2 conf)
+
+### Fixed: Index signature precedence for numeric keys
+
+**Area**: types/union (also affects general property access)
+
+**Root cause**: `property_visitor.rs` checked string index signatures BEFORE number index signatures for all property keys. tsc checks number index first when the key is numeric (e.g., `obj["0"]` on `{ [n: number]: number, [s: string]: string | number }` should resolve to `number`).
+
+**Fix**: Swapped order in `visit_object_with_index` and `visit_object_with_index_impl` to check number index first for numeric keys, then fall through to string index.
+
+### Fixed: TS7053 error location (column)
+
+**Root cause**: TS7053 was reported at the argument node (e.g., `1` in `both[1]`) but tsc reports at the full element access expression (e.g., `both[1]`).
+
+**Fix**: Pass both `expr_idx` (for TS7053) and `arg_idx` (for TS2551 "did you mean") to `error_no_index_signature_at`. Updated `is_element_access_on_this_or_super_with_any_base` to handle both node types.
+
+### Fixed: Missing TS7053 for unique symbol index on union types
+
+**Root cause**: When indexing a union type with a unique symbol, the solver's union visitor filtered UNDEFINED results from members that didn't have the symbol property. This meant no error was reported for `both[sym]` where `sym` is a unique symbol not present on all union members.
+
+**Fix**: Added explicit check in `access.rs` for unique symbol indices on union types — iterates all union members and sets `report_no_index = true` if any member returns ERROR/UNDEFINED.
+
+### Fixed: Unique symbol diagnostic formatting
+
+**Root cause**: Format was `"unique symbol varName"` but tsc uses just `"unique symbol"`.
+
+**Fix**: Changed `format.rs` to emit `"unique symbol"` without the variable name.
 
 ## Session 2026-03-05g — optional chain assignment checks + type predicate narrowing (+6 conf)
 
