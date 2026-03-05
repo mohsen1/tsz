@@ -1031,6 +1031,12 @@ impl<'a> Printer<'a> {
                     && !self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    // Auto-accessor properties (`accessor x = 1`) that are NOT being
+                    // lowered (e.g. at esnext target) must be preserved verbatim — they
+                    // are not regular field declarations.
+                    && !self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                 // Private fields (#name) are emitted verbatim at ES2022+ — they
                 // use native private field syntax and are unaffected by
                 // useDefineForClassFields.  Only skip them for lowering when the
