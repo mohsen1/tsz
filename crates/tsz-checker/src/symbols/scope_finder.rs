@@ -178,6 +178,105 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// TS2816: Check if `this` is in a static property initializer of a decorated class
+    /// (with `experimentalDecorators` enabled).
+    ///
+    /// Walks up the AST from `this`. Arrow functions are transparent (they don't bind `this`).
+    /// If a regular function/method/constructor/accessor is found first, returns false
+    /// (that function creates its own `this`). If a static `PropertyDeclaration` is found,
+    /// checks whether the enclosing class has a decorator modifier.
+    #[allow(dead_code)]
+    pub(crate) fn is_this_in_decorated_class_static_initializer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, DECORATOR,
+            FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION,
+            PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    k if k == ARROW_FUNCTION => {
+                        // Arrow functions are transparent to `this` — keep walking up.
+                    }
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR =>
+                    {
+                        // Regular function creates its own `this` binding — TS2816 doesn't apply.
+                        return false;
+                    }
+                    k if k == PROPERTY_DECLARATION => {
+                        // Found a property declaration — check if it's static.
+                        if let Some(prop) = self.ctx.arena.get_property_decl(node)
+                            && self.has_static_modifier(&prop.modifiers)
+                        {
+                            // Walk up one more level to find the enclosing class.
+                            if let Some(ext) = self.ctx.arena.get_extended(current)
+                                && ext.parent.is_some()
+                            {
+                                // The parent should be the class members list, then the class itself.
+                                // Walk up to find CLASS_DECLARATION or CLASS_EXPRESSION.
+                                let mut class_search = ext.parent;
+                                let mut cls_iter = 0;
+                                while class_search.is_some() {
+                                    cls_iter += 1;
+                                    if cls_iter > 5 {
+                                        break;
+                                    }
+                                    if let Some(cls_node) = self.ctx.arena.get(class_search)
+                                        && (cls_node.kind == CLASS_DECLARATION
+                                            || cls_node.kind == CLASS_EXPRESSION)
+                                    {
+                                        // Check if the class has a decorator modifier.
+                                        if let Some(cls_data) = self.ctx.arena.get_class(cls_node)
+                                            && let Some(ref mods) = cls_data.modifiers
+                                        {
+                                            return mods.nodes.iter().any(|&mod_idx| {
+                                                self.ctx
+                                                    .arena
+                                                    .get(mod_idx)
+                                                    .is_some_and(|n| n.kind == DECORATOR)
+                                            });
+                                        }
+                                        return false;
+                                    }
+                                    if let Some(ext2) = self.ctx.arena.get_extended(class_search) {
+                                        class_search = ext2.parent;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                    k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => {
+                        // Reached class boundary without hitting a static property — not in one.
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Check if `this` is inside a top-level arrow function that captures `globalThis`.

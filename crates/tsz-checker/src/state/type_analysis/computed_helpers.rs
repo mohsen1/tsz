@@ -328,18 +328,29 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate for type checking but preserve original for error messages
         // This preserves nominal identity (e.g., D<string>) in error messages
+        let is_original_unknown = object_type == TypeId::UNKNOWN;
         let original_object_type = object_type;
         let object_type = self.evaluate_application_type(object_type);
+        let emit_unknown_on_expression = if is_original_unknown && saw_class_scope {
+            self.error_is_of_type_unknown(access.expression)
+        } else {
+            false
+        };
 
         // NOTE: Do NOT resolve Lazy class types to constructor type here.
         // Static private member access (e.g., `C.#method()`) is handled later at the
         // member_is_static check below, which correctly only converts to constructor
         // type when the accessed member is actually static.
 
+        if emit_unknown_on_expression && !symbols.is_empty() {
+            return TypeId::ERROR;
+        }
+
         // Property access on `never` returns `never` (bottom type propagation).
         // TSC does not emit TS18050 for property access on `never` — the result is
         // simply `never`, which allows exhaustive narrowing patterns to work correctly.
         if object_type == TypeId::NEVER {
+            self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
             return TypeId::NEVER;
         }
 
@@ -364,6 +375,20 @@ impl<'a> CheckerState<'a> {
                 || resolved_type == TypeId::ERROR;
 
             if is_any_like {
+                if emit_unknown_on_expression {
+                    // TSC can still emit TS2339 for undeclared private names even when
+                    // `unknown` diagnostics are emitted (e.g., `x.#bar` where x: unknown).
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        name_idx,
+                        &format!("Property '{property_name}' does not exist on type 'any'."),
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    if resolved_type == TypeId::ERROR {
+                        return TypeId::ANY;
+                    }
+                    return TypeId::ERROR;
+                }
                 // TSC special case: for any-like types, private names can't be looked up
                 // dynamically. If we're outside any class body, emit TS18016. If inside a class
                 // body (but the private name isn't declared there), emit TS2339.
@@ -474,7 +499,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
         if object_type_for_check == TypeId::UNKNOWN {
-            return TypeId::ANY; // UNKNOWN remains ANY for now (could be stricter)
+            if self.error_is_of_type_unknown(access.expression) {
+                return TypeId::ERROR;
+            }
+            return TypeId::ANY;
         }
 
         // Resolve Lazy class references to their constructor types for STATIC private members.
