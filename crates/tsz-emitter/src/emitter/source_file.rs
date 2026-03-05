@@ -132,6 +132,10 @@ impl<'a> Printer<'a> {
         // non-erased statements before it). This prevents suppressing header
         // comments that belong to early non-erased statements.
         let mut first_erased_stmt_pos: Option<u32> = None;
+        // Track if the first erased statement is an import/export (not an interface/type).
+        // Reference directives in leading trivia should only be stripped when attached
+        // to an erased import/export, not to an erased interface/type alias.
+        let mut first_erased_is_import_export = false;
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_erased_end: Option<u32> = None;
@@ -177,6 +181,11 @@ impl<'a> Printer<'a> {
                             let actual_start =
                                 self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                             first_erased_stmt_pos = Some(actual_start);
+                            first_erased_is_import_export = matches!(
+                                stmt_node.kind,
+                                syntax_kind_ext::IMPORT_DECLARATION
+                                    | syntax_kind_ext::EXPORT_DECLARATION
+                            );
                             actual_start
                         } else {
                             stmt_node.pos
@@ -190,10 +199,51 @@ impl<'a> Printer<'a> {
                 }
             }
             if !erased_ranges.is_empty() {
+                // Also strip `/// <reference ...>` directives that are "attached" to
+                // an erased import/export (immediately preceding it, no blank line gap).
+                // tsc preserves detached references (file-level) and preserve="true".
+                // We look at the leading trivia of the first erased statement (position 0
+                // up to the token start) and strip reference directives that are
+                // immediately adjacent (no blank line before the erased token).
                 self.all_comments.retain(|c| {
-                    !erased_ranges
+                    // Filter comments inside erased ranges
+                    if erased_ranges
                         .iter()
                         .any(|&(start, end)| c.pos >= start && c.end <= end)
+                    {
+                        return false;
+                    }
+                    // Strip reference directives in leading trivia before the first
+                    // erased statement, but only when:
+                    // 1. The first erased statement is an import/export (not interface/type)
+                    // 2. No blank line between reference and erased statement
+                    // 3. The reference doesn't have preserve="true"
+                    if let Some(fep) = first_erased_stmt_pos
+                        && first_erased_is_import_export
+                        && c.end <= fep
+                    {
+                        if let Some(text) = self.source_text {
+                            let comment_text = c.get_text(text);
+                            let trimmed = comment_text.trim_start_matches('/');
+                            let trimmed = trimmed.trim_start();
+                            if trimmed.starts_with("<reference") {
+                                // Skip preserve="true" references — always keep them.
+                                if comment_text.contains("preserve=\"true\"") {
+                                    return true;
+                                }
+                                // Check for blank line between reference end and erased
+                                // stmt start. If there's a blank line, the reference is
+                                // "detached" (file-level) and should be preserved.
+                                let gap =
+                                    crate::safe_slice::slice(text, c.end as usize, fep as usize);
+                                if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
+                                    return true;
+                                }
+                                return false;
+                            }
+                        }
+                    }
+                    true
                 });
             }
         }
