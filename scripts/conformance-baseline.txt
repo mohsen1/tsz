@@ -439,6 +439,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -841,7 +842,6 @@ FAIL TypeScript/tests/cases/compiler/narrowingNoInfer1.ts
 FAIL TypeScript/tests/cases/compiler/narrowingOfQualifiedNames.ts
 FAIL TypeScript/tests/cases/compiler/narrowingPastLastAssignment.ts
 FAIL TypeScript/tests/cases/compiler/narrowingRestGenericCall.ts
-FAIL TypeScript/tests/cases/compiler/narrowingTypeofDiscriminant.ts
 FAIL TypeScript/tests/cases/compiler/narrowingTypeofUndefined1.ts
 FAIL TypeScript/tests/cases/compiler/narrowingTypeofUndefined2.ts
 FAIL TypeScript/tests/cases/compiler/narrowingWithNonNullExpression.ts
@@ -1233,9 +1233,6 @@ FAIL TypeScript/tests/cases/compiler/typePredicateFreshLiteralWidening.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateInherit.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateInLoop.ts
 FAIL TypeScript/tests/cases/compiler/typePredicatesInUnion3.ts
-FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining1.ts
-FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining2.ts
-FAIL TypeScript/tests/cases/compiler/typePredicatesOptionalChaining3.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateStructuralMatch.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives11.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives2.ts
@@ -1740,9 +1737,7 @@ FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/c
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChainInference.ts
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChainWithSuper.ts
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/delete/deleteChain.ts
-FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/elementAccessChain/elementAccessChain.3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/privateIdentifierChain/privateIdentifierChain.1.ts
-FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/taggedTemplateChain/taggedTemplateChain.ts
 FAIL TypeScript/tests/cases/conformance/expressions/propertyAccess/propertyAccessNumericLiterals.ts
 FAIL TypeScript/tests/cases/conformance/expressions/propertyAccess/propertyAccessStringIndexSignature.ts
@@ -4964,7 +4959,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
@@ -6106,6 +6100,7 @@ PASS TypeScript/tests/cases/compiler/narrowingOrderIndependent.ts
 PASS TypeScript/tests/cases/compiler/narrowingPastLastAssignmentInModule.ts
 PASS TypeScript/tests/cases/compiler/narrowingPlainJsNoCrash1.ts
 PASS TypeScript/tests/cases/compiler/narrowingTruthyObject.ts
+PASS TypeScript/tests/cases/compiler/narrowingTypeofDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofFunction.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofObject.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofParenthesized1.ts
@@ -7448,6 +7443,9 @@ PASS TypeScript/tests/cases/compiler/typePredicatesCanNarrowByDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion_noMatch.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion.ts
 PASS TypeScript/tests/cases/compiler/typePredicatesInUnion2.ts
+PASS TypeScript/tests/cases/compiler/typePredicatesOptionalChaining1.ts
+PASS TypeScript/tests/cases/compiler/typePredicatesOptionalChaining2.ts
+PASS TypeScript/tests/cases/compiler/typePredicatesOptionalChaining3.ts
 PASS TypeScript/tests/cases/compiler/typePredicateTopLevelTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/typePredicateWithThisParameter.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives1.ts
@@ -9739,6 +9737,7 @@ PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/p
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/superMethodCall.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/thisMethodCall.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/elementAccessChain/elementAccessChain.2.ts
+PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/elementAccessChain/elementAccessChain.3.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/elementAccessChain/elementAccessChain.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/optionalChainingInArrow.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/optionalChainingInference.ts
@@ -9749,6 +9748,7 @@ PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/optionalCha
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/optionalChainingInParameterInitializer.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/optionalChainingInTypeAssertions.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.2.ts
+PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.3.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.ts
 PASS TypeScript/tests/cases/conformance/expressions/propertyAccess/propertyAccess.ts
 PASS TypeScript/tests/cases/conformance/expressions/superCalls/superCalls.ts
