@@ -1,7 +1,25 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10025/12570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10026/12570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05i — evaluate Application types in rest params for contextual typing (+3 conf)
+
+### Fixed: False TS2345 for mapped tuple rest spread in contextual typing
+
+**Area**: types/literal (also affects classes/privateNames)
+
+**Root cause**: When a generic function has a rest parameter whose type is a mapped type Application (e.g., `...values: UnwrapContainers<T>`), the Application was not evaluated before contextual parameter extraction or function subtype comparison. Each callback parameter got the whole tuple type instead of individual elements.
+
+Two issues:
+1. Solver's `ParameterExtractor` uses `evaluate_type()` with `NoopResolver` which cannot resolve `Lazy(DefId)` references needed for type alias expansion.
+2. Solver's function subtype checker (`check_function_subtype`) didn't evaluate Application types in rest params before calling `unpack_tuple_rest_parameter`.
+
+**Fix** (two parts):
+1. **Checker** (`function_type.rs`): Added `evaluate_contextual_rest_param_applications()` to evaluate Application types in rest params of contextual function types before creating `ContextualTypeContext`. Uses the checker's `TypeEnvironment` which can resolve `Lazy(DefId)`.
+2. **Solver** (`functions.rs`): Evaluate Application types in rest params during function subtype checking before tuple unpacking, using `SubtypeChecker::evaluate_type()` which has a proper resolver.
+
+**Tests fixed**: numericStringLiteralTypes, privateNamesConstructorChain-1, privateNamesConstructorChain-2
 
 ## Session 2026-03-05h — index signature precedence + TS7053 location + unique symbol union index (+2 conf)
 
