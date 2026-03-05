@@ -170,10 +170,52 @@ Two snapshot files contain everything needed for analysis:
 - **`scripts/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
 - **`scripts/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
 
+### Preferred strategy: campaign-first, not whack-a-mole
+- Default to **root-cause campaigns**, not individual test chasing.
+- Start conformance work with:
+  ```bash
+  ./scripts/conformance.sh analyze --campaigns
+  ```
+- Deep-dive one campaign before choosing code changes:
+  ```bash
+  ./scripts/conformance.sh analyze --campaign big3
+  ./scripts/conformance.sh analyze --campaign contextual-typing
+  ./scripts/conformance.sh analyze --campaign property-resolution
+  ./scripts/conformance.sh analyze --campaign narrowing-flow
+  ./scripts/conformance.sh analyze --campaign parser-recovery
+  ./scripts/conformance.sh analyze --campaign jsdoc-jsx-salsa
+  ```
+- Treat **`TS2322` / `TS2339` / `TS2345` / `TS7006` / `TS2769`** as symptom families, not isolated bug buckets.
+- Do **not** pick work solely from:
+  - top failing tests,
+  - lowest pass-rate areas,
+  - `--close` lists,
+  - single diagnostic codes.
+- Use quick-win views only after selecting a campaign, to build a representative basket:
+  ```bash
+  ./scripts/conformance.sh analyze --one-missing
+  ./scripts/conformance.sh analyze --one-extra
+  ./scripts/conformance.sh analyze --code TS2322
+  ./scripts/conformance.sh analyze --extra-code TS2339
+  ./scripts/conformance.sh analyze --close 2
+  ```
+- For each campaign:
+  1. Pick 8-15 representative failures spanning both missing and extra diagnostics.
+  2. Write the shared semantic invariant first.
+  3. Fix the invariant in Solver or a boundary helper, not in checker-local heuristics.
+  4. Use targeted filtered runs only after code changes.
+- `JSDoc`, `JSX`, and `Salsa` are usually **regression baskets**, not first-choice root causes.
+
 **Query tool** (`python3 scripts/query-conformance.py`):
 ```bash
 # Overview: what to work on next
 python3 scripts/query-conformance.py
+
+# Recommended root-cause campaigns
+python3 scripts/query-conformance.py --campaigns
+
+# Deep-dive one campaign
+python3 scripts/query-conformance.py --campaign big3
 
 # Tests fixable by adding 1 missing code (highest impact)
 python3 scripts/query-conformance.py --one-missing
