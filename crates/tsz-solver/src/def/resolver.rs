@@ -4,8 +4,11 @@
 //! (both legacy `SymbolRef` and modern `DefId`), and `TypeEnvironment` — the
 //! standard implementation that maps identifiers to their resolved types.
 
+use std::sync::Arc;
+
 use crate::TypeDatabase;
 use crate::def::DefId;
+use crate::def::core::DefinitionStore;
 use crate::types::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -328,6 +331,9 @@ pub struct TypeEnvironment {
     class_extends: FxHashMap<u32, DefId>,
     /// Reverse map: instance `TypeId` → class `DefId` (for nominal instanceof narrowing).
     instance_type_to_class: FxHashMap<u32, DefId>,
+    /// Shared `DefinitionStore` for fallback lookups (e.g., `DefKind` when `def_kinds`
+    /// map wasn't populated due to `RefCell` borrow conflicts during recursive resolution).
+    definition_store: Option<Arc<DefinitionStore>>,
 }
 
 impl TypeEnvironment {
@@ -349,7 +355,13 @@ impl TypeEnvironment {
             boxed_def_ids: FxHashMap::default(),
             class_extends: FxHashMap::default(),
             instance_type_to_class: FxHashMap::default(),
+            definition_store: None,
         }
+    }
+
+    /// Set the shared `DefinitionStore` for fallback `DefKind` lookups.
+    pub fn set_definition_store(&mut self, store: Arc<DefinitionStore>) {
+        self.definition_store = Some(store);
     }
 
     /// Register a symbol's resolved type.
@@ -509,8 +521,16 @@ impl TypeEnvironment {
     }
 
     /// Get a `DefId`'s `DefKind`.
+    ///
+    /// First checks the local `def_kinds` map, then falls back to the shared
+    /// `DefinitionStore` if available. The fallback is needed because
+    /// `insert_def_kind` can fail during recursive type resolution when the
+    /// `TypeEnvironment` is behind a `RefCell` that's already borrowed.
     pub fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
-        self.def_kinds.get(&def_id.0).copied()
+        self.def_kinds
+            .get(&def_id.0)
+            .copied()
+            .or_else(|| self.definition_store.as_ref()?.get_kind(def_id))
     }
 
     // =========================================================================
