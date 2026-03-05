@@ -318,9 +318,10 @@ impl<'a> CheckerState<'a> {
             let source_count = arr.elements.nodes.len();
             if let Some(target_count) =
                 tsz_solver::type_queries::get_fixed_tuple_length(self.ctx.types, declared_type)
-                && source_count > target_count {
-                    return false;
-                }
+                && source_count > target_count
+            {
+                return false;
+            }
         }
 
         // Delegate to array literal element elaboration
