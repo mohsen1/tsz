@@ -193,7 +193,8 @@ impl<'a> CheckerState<'a> {
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
 
         // Include synthesized children from JSX element body
-        if let Some((_child_count, _has_text, synthesized_type)) = self.ctx.jsx_children_info.take()
+        if let Some((_child_count, _has_text, synthesized_type, _text_indices)) =
+            self.ctx.jsx_children_info.take()
         {
             attrs_info.attrs.push(JsxAttrInfo {
                 name: "children".to_string(),
@@ -580,7 +581,7 @@ impl<'a> CheckerState<'a> {
 
         // Include synthesized children prop if body children exist
         let children_info = self.ctx.jsx_children_info.take();
-        if let Some((_child_count, _has_text, synthesized_type)) = children_info {
+        if let Some((_child_count, _has_text, synthesized_type, _text_indices)) = children_info {
             provided_attrs.push(("children".to_string(), synthesized_type));
         }
 
@@ -965,6 +966,46 @@ impl<'a> CheckerState<'a> {
         // Look for "JSX" in the root entity's exports (namespace members)
         let exports = root_symbol.exports.as_ref()?;
         exports.get("JSX")
+    }
+
+    /// Check TS2747: component doesn't accept text as child elements.
+    /// When JSX children include text nodes but the `children` prop type doesn't
+    /// include `string`, emit TS2747 at each text child position.
+    pub(crate) fn check_jsx_text_children_accepted(
+        &mut self,
+        props_type: TypeId,
+        tag_name_idx: NodeIndex,
+        text_child_indices: &[NodeIndex],
+    ) {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let resolved = self.resolve_type_for_property_access(props_type);
+        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return,
+        };
+        let children_type = self.evaluate_type_with_env(children_type);
+        if children_type == TypeId::ANY || children_type == TypeId::ERROR {
+            return;
+        }
+
+        // Check if `string` is assignable to the children type.
+        if self.is_assignable_to(TypeId::STRING, children_type) {
+            return;
+        }
+
+        // Get component name for the diagnostic message.
+        let component_name = self.get_jsx_tag_name_text(tag_name_idx);
+        let children_type_str = self.format_type(children_type);
+
+        use crate::diagnostics::diagnostic_codes;
+        for &text_idx in text_child_indices {
+            self.error_at_node_msg(
+                text_idx,
+                diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
+                &[&component_name, "children", &children_type_str],
+            );
+        }
     }
 }
 
