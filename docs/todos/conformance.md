@@ -1,7 +1,41 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10013/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10014/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05e — TS2747, TS2710 location, JSX whitespace fix (+2 conf)
+
+### Implemented: TS2747 (text children not accepted)
+
+**Area**: jsx
+
+**Root cause**: When a JSX component's `children` prop type doesn't include `string`, text children
+(JsxText nodes) should emit TS2747 ("'{0}' components don't accept text as child elements"). This
+diagnostic was not implemented.
+
+**Fix**:
+- **`jsx_checker_attrs.rs`**: Added `check_jsx_text_children_accepted()` — resolves the `children`
+  property type, checks if `string` is assignable to it, and emits TS2747 at each JsxText position.
+- **`dispatch.rs`**: Track `text_child_indices` (Vec<NodeIndex>) for accurate TS2747 location reporting.
+- **`context/mod.rs`**: Extended `jsx_children_info` tuple to include text child indices.
+- **Note**: TS2747 matches at error-code level but fails fingerprint-level on `checkJsxChildrenProperty7`
+  due to union member ordering difference (`Element[] | Element` vs `Element | Element[]`).
+
+### Fixed: TS2710 error location
+
+**Root cause**: TS2710 ("children are specified twice") was reported at `tag_name_idx` instead of the
+`JsxAttributes` node. tsc reports the error spanning from the first attribute to the closing `>`.
+
+**Fix**: Changed error location from `tag_name_idx` to `attributes_idx`. Our parser's `parse_jsx_attributes`
+sets `start_pos = self.token_pos()` which points to the first attribute token, matching tsc's behavior.
+This fixed `checkJsxChildrenProperty2` and `checkJsxChildrenProperty13` (+2 tests).
+
+### Fixed: JSX whitespace detection
+
+**Root cause**: We skipped all whitespace-only JsxText, but tsc only skips whitespace containing newlines
+(formatting indentation). Same-line whitespace (e.g., between `<A />  <B />`) is preserved.
+
+**Fix**: Changed condition from `is_all_whitespace` to `is_all_whitespace && has_newline`.
 
 ## Session 2026-03-05d — TS2416 type-level base class + TS2426 fallthrough (+2 conf)
 
