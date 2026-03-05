@@ -944,10 +944,9 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Check if a type is a valid mapped type constraint key type (TS2322).
     ///
-    /// Like `is_valid_computed_property_name_type` but treats deferred types
-    /// (Application, Lazy, Conditional, `IndexAccess`) as valid, since they
-    /// cannot be fully resolved in generic context and will be checked at
-    /// instantiation time.
+    /// Like `is_valid_computed_property_name_type` but treats most deferred types
+    /// as valid, since they cannot be fully resolved in generic context and will
+    /// be checked at instantiation time.
     pub fn is_valid_mapped_type_key_type(&self, type_id: TypeId) -> bool {
         self.is_valid_key_type_impl(type_id, true)
     }
@@ -979,15 +978,35 @@ impl<'a> BinaryOpEvaluator<'a> {
                     .iter()
                     .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
             }
-            // Deferred types (generic applications, lazy refs, conditionals, indexed access)
-            // cannot be fully resolved without instantiation context. When checking mapped
-            // type constraints, assume valid to avoid false positives.
-            Some(
-                TypeData::Application(_)
-                | TypeData::Lazy(_)
-                | TypeData::Conditional(_)
-                | TypeData::IndexAccess(_, _),
-            ) if defer_unresolved => true,
+            // Deferred types (generic applications, lazy refs, conditionals) cannot be fully
+            // resolved without instantiation context. When checking mapped type constraints,
+            // assume valid to avoid false positives.
+            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_))
+                if defer_unresolved =>
+            {
+                true
+            }
+
+            // For indexed access, try resolving first. If it remains unresolved in generic
+            // context, only defer when the index constraint is compatible with the object's
+            // key space; otherwise it can become `... | undefined` and is not key-like.
+            Some(TypeData::IndexAccess(object_type, index_type)) if defer_unresolved => {
+                let evaluated = self.interner.evaluate_type(type_id);
+                if let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(evaluated) {
+                    if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
+                        self.interner.lookup(index_type)
+                        && let Some(constraint) = info.constraint
+                    {
+                        return self
+                            .interner
+                            .is_assignable_to(constraint, self.interner.keyof(object_type));
+                    }
+
+                    true
+                } else {
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                }
+            }
             _ => {
                 self.is_string_like(type_id)
                     || self.is_number_like(type_id)
