@@ -135,9 +135,10 @@ fn collect_export_name_from_declaration(
 /// Names with at least one value declaration are considered "has value".
 ///
 /// Value declarations: variables, functions, classes, non-const enums,
-/// instantiated namespaces, import-equals.
+/// instantiated namespaces, import-equals, import bindings.
+/// Also includes `declare` value declarations (ambient values exist at runtime).
 /// Type-only: interfaces, type aliases, const enums (when not preserving),
-/// non-instantiated namespaces, `declare` items.
+/// non-instantiated namespaces.
 pub fn build_value_declaration_names(
     arena: &NodeArena,
     statements: &[NodeIndex],
@@ -151,10 +152,9 @@ pub fn build_value_declaration_names(
         };
 
         match node.kind {
+            // Variables (including `declare const x`) are value declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = arena.get_variable(node)
-                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-                {
+                if let Some(var_stmt) = arena.get_variable(node) {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         let mut names = Vec::new();
                         collect_declaration_names(arena, decl_idx, &mut names);
@@ -162,17 +162,17 @@ pub fn build_value_declaration_names(
                     }
                 }
             }
+            // Functions (including `declare function f()`) are value declarations
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
-                    && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                     && let Some(name) = get_identifier_text(arena, func.name)
                 {
                     value_names.insert(name);
                 }
             }
+            // Classes (including `declare class C`) are value declarations
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node)
-                    && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                     && let Some(name) = get_identifier_text(arena, class.name)
                 {
                     value_names.insert(name);
@@ -180,7 +180,6 @@ pub fn build_value_declaration_names(
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
-                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                     && (preserve_const_enums
                         || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
                     && let Some(name) = get_identifier_text(arena, enum_decl.name)
@@ -190,7 +189,6 @@ pub fn build_value_declaration_names(
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node)
-                    && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                     && super::emit_utils::is_instantiated_module_ext(
                         arena,
                         module.body,
@@ -223,6 +221,44 @@ pub fn build_value_declaration_names(
                     value_names.insert(name);
                 }
             }
+            // Import bindings create value names (unless `import type`)
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(node)
+                    && !import_decl.is_type_only
+                    && let Some(clause_node) = arena.get(import_decl.import_clause)
+                    && let Some(clause) = arena.get_import_clause(clause_node)
+                    && !clause.is_type_only
+                {
+                    // Default import: `import d from "mod"` → d is a value
+                    if let Some(name) = get_identifier_text(arena, clause.name) {
+                        value_names.insert(name);
+                    }
+                    // Named/namespace bindings
+                    if let Some(nb_node) = arena.get(clause.named_bindings) {
+                        if nb_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                            // `import * as M from "mod"` → M is a value
+                            // NAMESPACE_IMPORT uses NamedImportsData with the name field
+                            if let Some(ns) = arena.get_named_imports(nb_node)
+                                && let Some(name) = get_identifier_text(arena, ns.name)
+                            {
+                                value_names.insert(name);
+                            }
+                        } else if nb_node.kind == syntax_kind_ext::NAMED_IMPORTS {
+                            // `import { a, b } from "mod"` → a, b are values
+                            if let Some(named) = arena.get_named_imports(nb_node) {
+                                for &spec_idx in &named.elements.nodes {
+                                    if let Some(spec) = arena.get_specifier_at(spec_idx)
+                                        && !spec.is_type_only
+                                        && let Some(name) = get_identifier_text(arena, spec.name)
+                                    {
+                                        value_names.insert(name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -239,9 +275,7 @@ fn collect_value_names_from_declaration(
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-            if let Some(var_stmt) = arena.get_variable(decl_node)
-                && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-            {
+            if let Some(var_stmt) = arena.get_variable(decl_node) {
                 for &decl_idx in &var_stmt.declarations.nodes {
                     let mut names = Vec::new();
                     collect_declaration_names(arena, decl_idx, &mut names);
@@ -251,7 +285,6 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
             if let Some(func) = arena.get_function(decl_node)
-                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                 && let Some(name) = get_identifier_text(arena, func.name)
             {
                 value_names.insert(name);
@@ -259,7 +292,6 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             if let Some(class) = arena.get_class(decl_node)
-                && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                 && let Some(name) = get_identifier_text(arena, class.name)
             {
                 value_names.insert(name);
@@ -267,7 +299,6 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(decl_node)
-                && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                 && (preserve_const_enums
                     || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
                 && let Some(name) = get_identifier_text(arena, enum_decl.name)
@@ -277,7 +308,6 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module) = arena.get_module(decl_node)
-                && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                 && super::emit_utils::is_instantiated_module_ext(
                     arena,
                     module.body,
