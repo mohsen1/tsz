@@ -76,11 +76,7 @@ impl<'a> CheckerState<'a> {
         // This prevents stack overflow from infinite recursion in get_class_instance_type
         // Must be done BEFORE any type checking to catch cycles early
         let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
-        if checker.check_class_inheritance_cycle(stmt_idx, class) {
-            self.ctx.checking_classes.remove(&stmt_idx);
-            self.ctx.checked_classes.insert(stmt_idx);
-            return; // Cycle detected - error already emitted, skip all type checking
-        }
+        let _has_inheritance_cycle = checker.check_class_inheritance_cycle(stmt_idx, class);
 
         // TS1212: Check class name for strict mode reserved words
         self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
