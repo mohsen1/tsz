@@ -67,6 +67,8 @@ interface TestCase {
   jsxImportSource?: string;
   moduleDetection?: string;
   preserveConstEnums: boolean;
+  verbatimModuleSyntax: boolean;
+  isolatedModules: boolean;
   removeComments: boolean;
   stripInternal: boolean;
   outFile?: string;
@@ -146,6 +148,8 @@ function getCacheKey(
   jsxImportSource: string = '',
   moduleDetection: string = '',
   preserveConstEnums: boolean = false,
+  verbatimModuleSyntax: boolean = false,
+  isolatedModules: boolean = false,
   removeComments: boolean = false,
   stripInternal: boolean = false,
   outFile: string = '',
@@ -161,7 +165,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -432,6 +436,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const preserveConstEnums = variant.preserveconstenums !== undefined
       ? variant.preserveconstenums === 'true'
       : directives.preserveconstenums === true;
+    const verbatimModuleSyntax = directives.verbatimmodulesyntax === true;
+    const isolatedModules = directives.isolatedmodules === true;
     const removeComments = directives.removecomments === true;
     const stripInternal = directives.stripinternal === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
@@ -481,6 +487,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       jsxImportSource,
       moduleDetection,
       preserveConstEnums,
+      verbatimModuleSyntax,
+      isolatedModules,
       removeComments,
       stripInternal,
       outFile,
@@ -533,6 +541,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.jsxImportSource ?? '',
       testCase.moduleDetection ?? '',
       testCase.preserveConstEnums,
+      testCase.verbatimModuleSyntax,
+      testCase.isolatedModules,
       testCase.removeComments,
       testCase.stripInternal,
       testCase.outFile ?? '',
@@ -568,6 +578,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         jsxImportSource: testCase.jsxImportSource,
         moduleDetection: testCase.moduleDetection,
         preserveConstEnums: testCase.preserveConstEnums,
+        verbatimModuleSyntax: testCase.verbatimModuleSyntax,
+        isolatedModules: testCase.isolatedModules,
         removeComments: testCase.removeComments,
         stripInternal: testCase.stripInternal,
         outFile: testCase.outFile,

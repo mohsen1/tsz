@@ -1911,6 +1911,12 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.isolated_modules {
         options.printer.preserve_const_enums = true;
     }
+    // verbatimModuleSyntax implies preserveConstEnums (tsc 5.0+): import/export
+    // syntax is preserved verbatim, so const enums must be emitted as regular
+    // enums rather than erased+inlined.
+    if args.verbatim_module_syntax {
+        options.printer.preserve_const_enums = true;
+    }
     if let Some(jsx) = args.jsx {
         let jsx_emit = match jsx {
             crate::args::JsxEmit::Preserve => crate::config::JsxEmit::Preserve,
