@@ -238,6 +238,45 @@ impl<'a> Printer<'a> {
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
             // Emit leading comments before this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // When a statement is erased (interface, type alias, declare, etc.),
+                // tsc also erases the comments in its leading trivia. Skip both
+                // leading and trailing comments so they don't leak to the next
+                // non-erased statement.
+                if self.is_erased_statement(stmt_node) {
+                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                    // Skip leading comments (before the statement's token start)
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        if self.all_comments[self.comment_emit_idx].end <= actual_start {
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    // Skip trailing same-line comments (on the same line as the erased
+                    // statement's last token), matching tsc behavior.
+                    let scan_end = stmts
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map_or(stmt_node.end, |next_node| next_node.pos);
+                    let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
+                    if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut pos = stmt_token_end as usize;
+                        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                            pos += 1;
+                        }
+                        let line_end = pos as u32;
+                        while self.comment_emit_idx < self.all_comments.len() {
+                            if self.all_comments[self.comment_emit_idx].end <= line_end {
+                                self.comment_emit_idx += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                     && self.should_defer_for_of_comments(stmt_node);
                 // Skip past ALL trivia (whitespace + comments) to find the
