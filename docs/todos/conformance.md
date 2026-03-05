@@ -1,7 +1,82 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10014/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10018/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05f — for-of array destructuring false positives (+3 conf)
+
+### Fixed: False positive TS2322 on for-of array destructuring assignment targets
+
+**Area**: es6/for-ofStatements
+
+**Root cause**: `check_for_in_of_expression_initializer` in `for_loop.rs` performed a
+whole-type assignability check (`element_type` vs `get_type_of_assignment_target(pattern_type)`)
+for ALL non-declaration for-of initializers, including array destructuring patterns. For
+`for ([k, v] of map)` where `map` is `Map<string, boolean>`, this compared the iteration
+element type against the inferred pattern type (e.g., `(string | boolean)[]`), producing
+spurious TS2322.
+
+tsc handles array destructuring assignment targets element-by-element via
+`checkDestructuringAssignment(varExpr, iteratedType)`. Individual element mismatches (like
+wrong default values `[k = false]` where k is string) are caught by the assignment expression
+checker on each `BinaryExpression(=)` element.
+
+**Fix (1 file, +3 tests)**:
+- **`for_loop.rs`**: Added `is_array_destructuring_target` check — skips the whole-type
+  TS2322 check when the initializer is `ARRAY_LITERAL_EXPRESSION`. Object destructuring
+  still uses the whole-type check because individual property bindings don't go through
+  the assignment expression checker.
+- **`ts2322_tests.rs`**: Added 2 tests:
+  - `test_ts2322_for_of_array_destructuring_assignment_no_false_positive`
+  - `test_ts2322_for_of_array_destructuring_wrong_default_still_errors`
+
+**Conformance tests fixed**: `for-of45` (+1), `for-of46` (+1), `for-of49` (+1)
+
+### Remaining es6/for-ofStatements analysis (16 failures)
+
+**TS7022/TS7023 — Circular implicit any (5 tests, MEDIUM-HIGH impact)**:
+- `for-of32`: `for (var v of v)` — self-referencing iterable
+- `for-of33`: Class `[Symbol.iterator]()` returns `v`, which is the loop variable
+- `for-of34`: Class `next()` returns `v`
+- `for-of35`: Class `next()` returns `{done: true, value: v}`
+- `for-of55`: `for (let v of v)` — block-scoped TDZ + TS2448
+
+**Root cause**: TS7022 detection in `check_variable_declaration` (core.rs:1019) requires
+`var_decl.initializer.is_some()`, but for-of variables don't have an initializer field.
+Additionally, `assign_for_in_of_initializer_types` pre-caches the symbol type before
+`check_variable_declaration` runs, causing `sym_already_cached = true` which blocks
+the `sym_cached_as_error` circular reference detection mechanism.
+
+**Fix path**: Either:
+1. Add circular reference detection in `assign_for_in_of_initializer_types` by checking
+   if the symbol was cached as ERROR during expression evaluation before overwriting
+2. Or implement a "being-resolved" flag for for-of variables to detect when the iterable
+   references the loop variable during expression evaluation
+
+For for-of33-35, TS7023 on class methods requires tracking circular return type references
+through the iterator protocol chain. This is a deeper infrastructure change.
+
+**Custom iterator class element type (3 tests, MEDIUM impact)**:
+- `for-of15`: Missing TS2490 — iterator `next()` must have `value` property
+- `for-of16`: Missing TS2488 — must have `[Symbol.iterator]()` method
+- `for-of17`: Missing TS2322 — iterator yields `number` but variable is `string`
+
+**Root cause**: `resolve_iterator_element_type_via_property_access` may not correctly
+resolve the iterator protocol chain for custom class types. The solver-level
+`get_iterator_info` likely fails for these custom classes, and the checker fallback
+through `resolve_property_access_with_env("[Symbol.iterator]")` doesn't find the
+computed property. Needs investigation of how `[Symbol.iterator]` is exposed on
+class instance types in the property access resolver.
+
+**Other individual failures**:
+- `for-of3`: Missing TS2487 — for-of LHS check
+- `for-of22`: Missing TS2454 — variable used before being assigned
+- `for-of29`: TS2488 fingerprint mismatch (error code matches)
+- `for-of30`: Missing TS2767 — iterator `return` must be a method
+- `for-of39`: Missing TS2769 — no overload matches
+- `for-of-excess-declarations`: Missing TS2538 — `any` as index type
+- `for-of47`, `for-of48`: TS2322 fingerprint mismatch (error code matches) — object
+  destructuring individual property type errors reported at wrong location/message
 
 ## Session 2026-03-05e — TS2747, TS2710 location, JSX whitespace fix (+2 conf)
 
