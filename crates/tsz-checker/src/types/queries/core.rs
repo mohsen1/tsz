@@ -635,11 +635,63 @@ impl<'a> CheckerState<'a> {
             let prop_name_type = self.get_type_of_node(computed.expression);
             self.ctx.checking_computed_property_name = prev_checking;
             self.ctx.preserve_literal_types = prev;
-            crate::query_boundaries::type_computation::access::literal_property_name(
-                self.ctx.types,
+
+            let evaluated_prop_name_type = self.evaluate_type_with_env(prop_name_type);
+            let resolved_for_property_access =
+                self.resolve_type_for_property_access(evaluated_prop_name_type);
+            let resolved_prop_name_type = self.resolve_lazy_type(resolved_for_property_access);
+            let application_prop_name_type =
+                self.evaluate_application_type(resolved_prop_name_type);
+            let assignability_prop_name_type =
+                self.evaluate_type_for_assignability(prop_name_type);
+
+            for candidate in [
                 prop_name_type,
-            )
-            .map(|atom| self.ctx.types.resolve_atom(atom))
+                evaluated_prop_name_type,
+                resolved_prop_name_type,
+                application_prop_name_type,
+                assignability_prop_name_type,
+            ] {
+                if let Some(atom) = crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    candidate,
+                ) {
+                    tracing::trace!(
+                        name_idx = name_idx.0,
+                        expr_idx = computed.expression.0,
+                        prop_name_type = prop_name_type.0,
+                        prop_name_type_str = %self.format_type(prop_name_type),
+                        evaluated_prop_name_type = evaluated_prop_name_type.0,
+                        evaluated_prop_name_type_str = %self.format_type(evaluated_prop_name_type),
+                        resolved_prop_name_type = resolved_prop_name_type.0,
+                        resolved_prop_name_type_str = %self.format_type(resolved_prop_name_type),
+                        application_prop_name_type = application_prop_name_type.0,
+                        application_prop_name_type_str = %self.format_type(application_prop_name_type),
+                        assignability_prop_name_type = assignability_prop_name_type.0,
+                        assignability_prop_name_type_str = %self.format_type(assignability_prop_name_type),
+                        chosen_candidate = candidate.0,
+                        chosen_name = %self.ctx.types.resolve_atom(atom),
+                        "get_property_name_resolved: computed property resolved"
+                    );
+                    return Some(self.ctx.types.resolve_atom(atom));
+                }
+            }
+            tracing::trace!(
+                name_idx = name_idx.0,
+                expr_idx = computed.expression.0,
+                prop_name_type = prop_name_type.0,
+                prop_name_type_str = %self.format_type(prop_name_type),
+                evaluated_prop_name_type = evaluated_prop_name_type.0,
+                evaluated_prop_name_type_str = %self.format_type(evaluated_prop_name_type),
+                resolved_prop_name_type = resolved_prop_name_type.0,
+                resolved_prop_name_type_str = %self.format_type(resolved_prop_name_type),
+                application_prop_name_type = application_prop_name_type.0,
+                application_prop_name_type_str = %self.format_type(application_prop_name_type),
+                assignability_prop_name_type = assignability_prop_name_type.0,
+                assignability_prop_name_type_str = %self.format_type(assignability_prop_name_type),
+                "get_property_name_resolved: computed property unresolved"
+            );
+            None
         } else {
             None
         }

@@ -1091,7 +1091,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let arg_ty = arg_types[0];
-        let inferred_ty = if tp.is_const {
+        let inferred_ty = if tp.is_const || preserve_literal_arg {
+        let preserve_literal_arg = matches!(
+            self.interner.lookup(arg_ty),
+            Some(TypeData::Literal(_) | TypeData::TemplateLiteral(_) | TypeData::UniqueSymbol(_))
+        );
             arg_ty
         } else {
             let widened =
