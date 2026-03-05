@@ -221,13 +221,15 @@ impl<'a> CheckerState<'a> {
 
     /// Check override members against a type-level base class (when AST resolution fails).
     /// Used for complex heritage expressions: function calls, intersection constructors, etc.
+    /// Also checks property type compatibility (TS2416) when `base_instance_type` is provided.
     fn check_override_members_against_type(
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
-        _derived_class_name: &str,
+        derived_class_name: &str,
         base_class_name: &str,
         base_member_names: &rustc_hash::FxHashSet<String>,
         no_implicit_override: bool,
+        base_instance_type: Option<TypeId>,
     ) {
         for &member_idx in &class_data.members.nodes {
             let Some(info) = self.extract_class_member_info(member_idx, false) else {
@@ -289,6 +291,63 @@ impl<'a> CheckerState<'a> {
                     ),
                     diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
                 );
+            }
+
+            // Check property type compatibility with base (TS2416)
+            if let Some(base_type_id) = base_instance_type
+                && base_member_names.contains(&info.name)
+                && !info.is_static
+            {
+                let member_type = info.type_id;
+                // Skip if either type is ANY
+                if member_type != TypeId::ANY {
+                    use tsz_solver::operations::property::PropertyAccessResult;
+                    let base_prop_result =
+                        self.resolve_property_access_with_env(base_type_id, &info.name);
+                    if let PropertyAccessResult::Success {
+                        type_id: base_type, ..
+                    } = base_prop_result
+                        && base_type != TypeId::ANY {
+                            let resolved_member_type = self.resolve_type_query_type(member_type);
+                            let resolved_base_type = self.resolve_type_query_type(base_type);
+
+                            let should_report = if info.is_method {
+                                should_report_member_type_mismatch_bivariant(
+                                    self,
+                                    resolved_member_type,
+                                    resolved_base_type,
+                                    info.name_idx,
+                                )
+                            } else {
+                                should_report_member_type_mismatch(
+                                    self,
+                                    resolved_member_type,
+                                    resolved_base_type,
+                                    info.name_idx,
+                                )
+                            };
+
+                            if should_report {
+                                let member_type_str = self.format_type(member_type);
+                                let base_type_str = self.format_type(base_type);
+
+                                self.error_at_node(
+                                    info.name_idx,
+                                    &format!(
+                                        "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
+                                        info.name, derived_class_name, base_class_name
+                                    ),
+                                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                                );
+                                self.report_type_not_assignable_detail(
+                                    info.name_idx,
+                                    &member_type_str,
+                                    &base_type_str,
+                                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                                );
+                            }
+                        }
+                }
             }
         }
 
@@ -891,6 +950,7 @@ impl<'a> CheckerState<'a> {
                         &type_base_name,
                         &base_member_names,
                         no_implicit_override,
+                        Some(instance_type),
                     );
                     return;
                 }
@@ -970,6 +1030,7 @@ impl<'a> CheckerState<'a> {
                         &type_base_name,
                         &base_member_names,
                         no_implicit_override,
+                        Some(instance_type),
                     );
                     return;
                 }
@@ -1341,6 +1402,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2426: Base has accessor, derived has method
+                // Note: do NOT `continue` here — tsc also emits TS2416 for type incompatibility
+                // alongside the kind mismatch error, so the type check below must still run.
                 if is_method && base_info.is_accessor {
                     self.error_at_node(
                         member_name_idx,
@@ -1349,7 +1412,6 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_ACCESSOR_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
                     );
-                    continue;
                 }
             }
 
