@@ -266,6 +266,66 @@ pub fn build_value_declaration_names(
     value_names
 }
 
+/// Build a set of names that are only type-level declarations (interface, type alias)
+/// in the current file. Used to distinguish "confirmed type-only" from "cross-file
+/// reference" when deciding whether to skip `export { X }` from void 0 initialization.
+pub fn build_type_only_declaration_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+) -> rustc_hash::FxHashSet<String> {
+    let mut type_only_names = rustc_hash::FxHashSet::default();
+
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                if let Some(iface) = arena.get_interface(node)
+                    && let Some(name) = get_identifier_text(arena, iface.name)
+                {
+                    type_only_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                if let Some(type_alias) = arena.get_type_alias(node)
+                    && let Some(name) = get_identifier_text(arena, type_alias.name)
+                {
+                    type_only_names.insert(name);
+                }
+            }
+            // Also handle wrapped export declarations
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = arena.get_export_decl(node)
+                    && export_decl.module_specifier.is_none()
+                    && let Some(clause_node) = arena.get(export_decl.export_clause)
+                {
+                    match clause_node.kind {
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            if let Some(iface) = arena.get_interface(clause_node)
+                                && let Some(name) = get_identifier_text(arena, iface.name)
+                            {
+                                type_only_names.insert(name);
+                            }
+                        }
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                            if let Some(type_alias) = arena.get_type_alias(clause_node)
+                                && let Some(name) = get_identifier_text(arena, type_alias.name)
+                            {
+                                type_only_names.insert(name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    type_only_names
+}
+
 /// Helper: collect value names from a declaration node inside an export.
 fn collect_value_names_from_declaration(
     arena: &NodeArena,
@@ -345,12 +405,13 @@ pub fn collect_export_names_with_options(
 ) -> Vec<String> {
     let mut exports = Vec::new();
 
-    // Build value declaration names lazily — only needed when we see named exports.
-    // Used to filter out type-only export specifiers (interface, type alias, const enum, etc.)
-    // from void 0 initialization. Without checker data we can't distinguish cross-file
-    // type refs from value refs, so we conservatively skip unknown names (they won't be
-    // in value_names and won't get void 0). This is correct for most cases.
+    // Build declaration name sets lazily — only needed when we see named export specifiers.
+    // `value_names`: names with runtime value (var, function, class, enum, namespace, import)
+    // `type_only_names`: names that are ONLY interfaces/type aliases (no value binding)
+    // We skip export specifiers only when the local name is confirmed type-only in the
+    // current file.  Cross-file references (not in either set) get void 0 by default.
     let mut value_names: Option<rustc_hash::FxHashSet<String>> = None;
+    let mut type_only_names: Option<rustc_hash::FxHashSet<String>> = None;
 
     for &stmt_idx in statements {
         let Some(node) = arena.get(stmt_idx) else {
@@ -385,6 +446,9 @@ pub fn collect_export_names_with_options(
                                     preserve_const_enums,
                                 )
                             });
+                            let ton = type_only_names.get_or_insert_with(|| {
+                                build_type_only_declaration_names(arena, statements)
+                            });
                             for &spec_idx in &named_exports.elements.nodes {
                                 if let Some(spec) = arena.get_specifier_at(spec_idx) {
                                     if spec.is_type_only {
@@ -396,11 +460,12 @@ pub fn collect_export_names_with_options(
                                     } else {
                                         get_identifier_text(arena, spec.name)
                                     };
-                                    // Skip specifiers that refer to type-only declarations
-                                    // (not in value_names). This covers local interfaces,
-                                    // type aliases, const enums, non-instantiated namespaces,
-                                    // and cross-file type refs (conservatively correct).
+                                    // Skip specifiers that refer to confirmed type-only
+                                    // declarations (interface / type alias) in the current
+                                    // file with NO value binding.  Cross-file references
+                                    // (not in either set) get void 0 by default.
                                     if let Some(ref local) = local_name
+                                        && ton.contains(local)
                                         && !vn.contains(local)
                                     {
                                         continue;
@@ -644,40 +709,30 @@ pub fn collect_export_names_categorized(
                 let Some(node) = arena.get(stmt_idx) else {
                     return false;
                 };
-                // Check if a VARIABLE_STATEMENT (non-declare) contains `name`
-                let var_has_name = |n: &Node| -> bool {
-                    if n.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                        if let Some(var_stmt) = arena.get_variable(n)
-                            && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-                        {
-                            let mut names = Vec::new();
-                            for &decl_idx in &var_stmt.declarations.nodes {
-                                collect_declaration_names(arena, decl_idx, &mut names);
-                            }
-                            return names.contains(&name);
+                // Check direct VARIABLE_STATEMENT with export modifier
+                let check_var = |n: &Node| -> bool {
+                    if n.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        && let Some(var_stmt) = arena.get_variable(n)
+                        && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        let mut names = Vec::new();
+                        for &decl_idx in &var_stmt.declarations.nodes {
+                            collect_declaration_names(arena, decl_idx, &mut names);
                         }
+                        return names.contains(&name);
                     }
                     false
                 };
                 match node.kind {
-                    // Direct `export var a = ...;` (with ExportKeyword modifier)
-                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                        if let Some(var_stmt) = arena.get_variable(node)
-                            && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                        {
-                            var_has_name(node)
-                        } else {
-                            false
-                        }
-                    }
-                    // EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => check_var(node),
+                    // Also handle EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                         if let Some(export_decl) = arena.get_export_decl(node)
                             && !export_decl.is_type_only
                             && export_decl.module_specifier.is_none()
                             && let Some(clause_node) = arena.get(export_decl.export_clause)
                         {
-                            var_has_name(clause_node)
+                            check_var(clause_node)
                         } else {
                             false
                         }

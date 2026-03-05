@@ -97,6 +97,16 @@ pub fn get_iterator_info(
         iterator_method_type
     };
 
+    // If the iterator method returns ThisType (polymorphic `this` from `return this`),
+    // substitute with the original type since `this` refers to the iterable itself.
+    let iterator_type = if matches!(db.lookup(iterator_type), Some(TypeData::ThisType))
+        || iterator_type == TypeId::ANY
+    {
+        type_id
+    } else {
+        iterator_type
+    };
+
     // Step 3: Find the next() method on the iterator
     let next_method_type = evaluator
         .resolve_property_access(iterator_type, "next")

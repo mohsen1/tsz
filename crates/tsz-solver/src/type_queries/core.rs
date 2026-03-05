@@ -157,6 +157,14 @@ pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
+/// Check if a type is the polymorphic `this` type.
+///
+/// `ThisType` represents `this` in class methods and needs to be resolved
+/// to the concrete class type before property access.
+pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeData::ThisType))
+}
+
 /// Check if a type is `symbol` or a `unique symbol` type.
 ///
 /// Returns true for the built-in `symbol` type and for `TypeData::UniqueSymbol`.

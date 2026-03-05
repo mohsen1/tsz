@@ -439,7 +439,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1586,8 +1586,6 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/restElementWithInitial
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of-excess-declarations.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of15.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of16.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of17.ts
-FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of22.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of29.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of3.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of30.ts
@@ -1613,8 +1611,6 @@ FAIL TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLi
 FAIL TypeScript/tests/cases/conformance/es6/spread/arraySpreadInCall.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray10.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts
-FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray6.ts
-FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall6.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall7.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall8.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall9.ts
@@ -4951,7 +4947,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -8890,11 +8886,13 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of11.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of12.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of13.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of14.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of17.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of18.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of19.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of2.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of20.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of21.ts
+PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of22.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of23.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of24.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of25.ts
@@ -9036,6 +9034,7 @@ PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray11.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray2.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray3.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray4.ts
+PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray6.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray7.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray8.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray9.ts
@@ -9047,6 +9046,7 @@ PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall2.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall3.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall4.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall5.ts
+PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall6.ts
 PASS TypeScript/tests/cases/conformance/es6/Symbols/symbolDeclarationEmit1.ts
 PASS TypeScript/tests/cases/conformance/es6/Symbols/symbolDeclarationEmit10.ts
 PASS TypeScript/tests/cases/conformance/es6/Symbols/symbolDeclarationEmit11.ts
