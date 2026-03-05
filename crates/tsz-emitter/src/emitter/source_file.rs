@@ -1079,14 +1079,23 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.exit_scope();
     }
 
-    /// Pre-pass: scan top-level statements for const enum declarations and
-    /// evaluate their member values. The results are stored in `const_enum_values`
-    /// so that property/element access expressions referencing const enum members
-    /// can be inlined during emit.
+    /// Pre-pass: scan all statements (recursively) for const enum declarations
+    /// and evaluate their member values. The results are stored in
+    /// `const_enum_values` so that property/element access expressions
+    /// referencing const enum members can be inlined during emit.
     fn collect_const_enum_values(&mut self, statements: &NodeList) {
         self.const_enum_values.clear();
         let mut evaluator = EnumEvaluator::new(self.arena);
+        self.collect_const_enums_recursive(&mut evaluator, statements);
+    }
 
+    /// Recursively scan a statement list for const enum declarations,
+    /// descending into function bodies, blocks, namespaces, etc.
+    fn collect_const_enums_recursive(
+        &mut self,
+        evaluator: &mut EnumEvaluator,
+        statements: &NodeList,
+    ) {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -1094,7 +1103,7 @@ impl<'a> Printer<'a> {
 
             // Direct const enum declarations
             if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                self.try_register_const_enum(&mut evaluator, stmt_idx);
+                self.try_register_const_enum(evaluator, stmt_idx);
                 continue;
             }
 
@@ -1107,7 +1116,47 @@ impl<'a> Printer<'a> {
                 if let Some(clause_node) = self.arena.get(clause_idx)
                     && clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
                 {
-                    self.try_register_const_enum(&mut evaluator, clause_idx);
+                    self.try_register_const_enum(evaluator, clause_idx);
+                }
+            }
+
+            // Recurse into function/method/constructor bodies
+            if let Some(func) = self.arena.get_function(stmt_node) {
+                if let Some(body_node) = self.arena.get(func.body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                }
+                continue;
+            }
+
+            // Recurse into blocks (if/else/try/catch/while/for bodies)
+            if let Some(block) = self.arena.get_block(stmt_node) {
+                self.collect_const_enums_recursive(evaluator, &block.statements);
+                continue;
+            }
+
+            // Recurse into namespace/module bodies
+            if let Some(module_data) = self.arena.get_module(stmt_node) {
+                if let Some(body_node) = self.arena.get(module_data.body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                }
+                continue;
+            }
+
+            // Recurse into if statement branches
+            if let Some(if_data) = self.arena.get_if_statement(stmt_node) {
+                if let Some(then_node) = self.arena.get(if_data.then_statement)
+                    && let Some(block) = self.arena.get_block(then_node)
+                {
+                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                }
+                if let Some(else_node) = self.arena.get(if_data.else_statement)
+                    && let Some(block) = self.arena.get_block(else_node)
+                {
+                    self.collect_const_enums_recursive(evaluator, &block.statements);
                 }
             }
         }
