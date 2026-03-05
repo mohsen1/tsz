@@ -247,6 +247,18 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Build a getter function IR from an accessor node
     fn build_getter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_getter_function_ir_impl(accessor_idx, false)
+    }
+
+    fn build_getter_function_ir_static(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_getter_function_ir_impl(accessor_idx, true)
+    }
+
+    fn build_getter_function_ir_impl(
+        &self,
+        accessor_idx: NodeIndex,
+        is_static: bool,
+    ) -> Option<IRNode> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
@@ -257,7 +269,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let body = if accessor_data.body.is_none() {
             vec![]
         } else {
-            let mut body = self.convert_block_body(accessor_data.body);
+            let mut body = if is_static {
+                self.convert_block_body_static(accessor_data.body)
+            } else {
+                self.convert_block_body(accessor_data.body)
+            };
 
             // Check if getter needs `var _this = this;` capture
             let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
@@ -280,6 +296,18 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Build a setter function IR from an accessor node
     fn build_setter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_setter_function_ir_impl(accessor_idx, false)
+    }
+
+    fn build_setter_function_ir_static(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_setter_function_ir_impl(accessor_idx, true)
+    }
+
+    fn build_setter_function_ir_impl(
+        &self,
+        accessor_idx: NodeIndex,
+        is_static: bool,
+    ) -> Option<IRNode> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
@@ -290,7 +318,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {
-            let mut body = self.convert_block_body(accessor_data.body);
+            let mut body = if is_static {
+                self.convert_block_body_static(accessor_data.body)
+            } else {
+                self.convert_block_body(accessor_data.body)
+            };
 
             // Check if setter needs `var _this = this;` capture
             let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
@@ -468,7 +500,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 } else {
                     // Check if this static method has arrow functions with class_alias
                     let class_alias = self.get_class_alias_for_static_method(method_data.body);
-                    self.convert_block_body_with_alias(method_data.body, class_alias)
+                    self.convert_block_body_with_alias_static(method_data.body, class_alias)
                 };
 
                 // Capture body source range for single-line detection
@@ -561,7 +593,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     // ClassName.prop = value;
                     body.push(IRNode::expr_stmt(IRNode::assign(
                         target,
-                        self.convert_expression(prop_data.initializer),
+                        self.convert_expression_static(prop_data.initializer),
                     )));
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
@@ -571,7 +603,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         .statements
                         .nodes
                         .iter()
-                        .map(|&stmt_idx| self.convert_statement(stmt_idx))
+                        .map(|&stmt_idx| self.convert_statement_static(stmt_idx))
                         .collect();
 
                     let iife = IRNode::StaticBlockIIFE { statements };
@@ -613,13 +645,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     if let Some(&(getter_idx, setter_idx)) = static_accessor_map.get(&accessor_name)
                     {
                         let get_fn = if let Some(getter_idx) = getter_idx {
-                            self.build_getter_function_ir(getter_idx)
+                            self.build_getter_function_ir_static(getter_idx)
                         } else {
                             None
                         };
 
                         let set_fn = if let Some(setter_idx) = setter_idx {
-                            self.build_setter_function_ir(setter_idx)
+                            self.build_setter_function_ir_static(setter_idx)
                         } else {
                             None
                         };
