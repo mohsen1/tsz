@@ -1132,4 +1132,42 @@ mod tests {
         let sigs = get_call_signatures(&interner, intersection);
         assert!(sigs.is_none());
     }
+
+    #[test]
+    fn construct_sig_with_application_return_type_is_extractable() {
+        // Simulates the JSX class component scenario where:
+        // interface ComponentClass<P> { new(props: P): Component<P, any>; }
+        // interface TestClass extends ComponentClass<{reqd: any}> {}
+        //
+        // The construct signature return type is Application(Component, [props, any])
+        // which needs evaluation. The checker should evaluate it before bailing out.
+        let interner = TypeInterner::new();
+
+        // Create an Application type (simulating Component<{reqd: any}, any>)
+        let inner_obj = interner.object(vec![]);
+        let app_type = interner.application(inner_obj, vec![TypeId::STRING, TypeId::ANY]);
+
+        // Create a callable with construct sig returning the Application type
+        let callable = make_callable_with_construct_sig(&interner, app_type, vec![]);
+
+        // Verify we CAN extract construct signatures
+        let sigs = get_construct_signatures(&interner, callable);
+        assert!(sigs.is_some(), "Should extract construct signatures");
+        let sigs = sigs.unwrap();
+        assert_eq!(sigs.len(), 1);
+
+        // The return type IS an Application (needs evaluation)
+        let return_type = sigs[0].return_type;
+        assert!(
+            crate::type_queries::needs_evaluation_for_merge(&interner, return_type),
+            "Application return type needs evaluation"
+        );
+
+        // But the type itself does NOT contain type parameters
+        // (all args are concrete: STRING, ANY)
+        assert!(
+            !crate::contains_type_parameters(&interner, return_type),
+            "Concrete application should not contain type parameters"
+        );
+    }
 }

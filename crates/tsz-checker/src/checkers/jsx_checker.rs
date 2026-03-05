@@ -10,11 +10,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Get the type of a JSX opening element.
-    ///
-    /// Rule #36 (JSX Intrinsic Lookup): This implements the case-sensitive tag lookup:
-    /// - Lowercase tags (e.g., `<div>`) look up `JSX.IntrinsicElements['div']`
-    /// - Uppercase tags (e.g., `<MyComponent>`) resolve as variable expressions
+    /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
@@ -327,11 +323,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the global JSX namespace type (resolves `JSX` namespace for intrinsic elements).
-    ///
-    /// When a custom `jsxFactory` is configured (e.g., `@jsxFactory: X.jsx`),
-    /// tsc resolves the JSX namespace from the factory's parent entity (e.g., `X.JSX`)
-    /// before falling back to the global JSX namespace.
+    /// Get the global JSX namespace type (resolves factory-scoped then global `JSX`).
     pub(crate) fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
         if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
             return Some(jsx_sym);
@@ -457,11 +449,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Emit TS2604 if the component type has no call or construct signatures.
-    ///
-    /// TSC emits this when a JSX element references a value that is neither:
-    /// - A function (SFC) with call signatures, nor
-    /// - A class with construct signatures, nor
-    /// - `any`/error/unknown/type parameter (which are silently allowed).
     fn check_jsx_element_has_signatures(
         &mut self,
         component_type: TypeId,
@@ -692,10 +679,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the text of a JSX tag name for error messages.
-    ///
-    /// Handles simple identifiers (`FunctionComponent`), property access
-    /// expressions (`obj.MemberFunctionComponent`), and keywords (`this`).
-    /// tsc uses the exact source text for property access paths (preserving spaces).
     fn get_jsx_tag_name_text(&self, tag_name_idx: NodeIndex) -> String {
         let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
             return "unknown".to_string();
@@ -747,10 +730,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    /// Get JSX.Element type for return type checking (without emitting factory diagnostics).
-    ///
-    /// Unlike `get_jsx_element_type()` which also checks factory-in-scope,
-    /// this just resolves the type for assignability checking.
+    /// Get JSX.Element type for return type checking (no factory diagnostics).
     fn get_jsx_element_type_for_check(&mut self) -> Option<TypeId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
@@ -776,10 +756,7 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(element_class_sym_id))
     }
 
-    /// Extract props type from a Stateless Function Component (SFC).
-    ///
-    /// SFCs are functions where the first parameter is the props type:
-    /// `function Comp(props: { x: number }) { return <div/>; }`
+    /// Extract props type from a Stateless Function Component (first param of call sig).
     fn get_sfc_props_type(&mut self, component_type: TypeId) -> Option<(TypeId, bool)> {
         // Check Function type (single signature)
         if let Some(shape) =
@@ -839,9 +816,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a component type is an overloaded SFC (>= 2 non-generic call signatures).
-    ///
-    /// Used to suppress fallback checks (TS2604, intrinsic attributes) for overloaded
-    /// SFCs where `get_jsx_props_type_for_component` returned `None` due to the G4 bail-out.
     fn is_overloaded_sfc(&self, component_type: TypeId) -> bool {
         let Some(sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
@@ -877,11 +851,25 @@ impl<'a> CheckerState<'a> {
         if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
             return None;
         }
-        // Skip when the instance type is an unresolved Application/Lazy
-        // (e.g. Component<P, State> with outer type parameter P)
-        if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, instance_type) {
-            return None;
-        }
+
+        // Evaluate Application/Lazy instance types to their structural form.
+        // e.g. `Component<{reqd: any}, any>` is an Application that evaluates
+        // to a concrete object. Only skip if evaluation still yields a type
+        // with unresolved type parameters (outer generic context).
+        let instance_type = if tsz_solver::type_queries::needs_evaluation_for_merge(
+            self.ctx.types,
+            instance_type,
+        ) {
+            let evaluated = self.evaluate_type_with_env(instance_type);
+            // After evaluation, if the type still contains type parameters,
+            // we can't resolve it further — bail out.
+            if tsz_solver::contains_type_parameters(self.ctx.types, evaluated) {
+                return None;
+            }
+            evaluated
+        } else {
+            instance_type
+        };
 
         // Look up ElementAttributesProperty to know which instance property is props
         // Pass element_idx so TS2608 can be emitted if >1 property
@@ -941,14 +929,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the property name from `JSX.ElementAttributesProperty`.
-    ///
-    /// Returns:
-    /// - `None` if `ElementAttributesProperty` doesn't exist
-    /// - `Some("")` if it exists but has no members (empty interface)
-    /// - `Some("props")` if it has a member (e.g., `{ props: {} }`)
-    ///
-    /// When `element_idx` is provided, emits TS2608 if `ElementAttributesProperty`
-    /// has more than one property.
+    /// Returns None/Some("")/Some("name"); emits TS2608 if >1 property.
     fn get_element_attributes_property_name_with_check(
         &mut self,
         element_idx: Option<NodeIndex>,
