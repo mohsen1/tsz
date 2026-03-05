@@ -205,6 +205,8 @@ export class CliTranspiler {
       jsxImportSource?: string;
       moduleDetection?: string;
       preserveConstEnums?: boolean;
+      verbatimModuleSyntax?: boolean;
+      isolatedModules?: boolean;
       removeComments?: boolean;
       stripInternal?: boolean;
       outFile?: string;
@@ -234,6 +236,8 @@ export class CliTranspiler {
       jsxImportSource,
       moduleDetection,
       preserveConstEnums = false,
+      verbatimModuleSyntax = false,
+      isolatedModules = false,
       removeComments = false,
       stripInternal = false,
       outFile,
@@ -335,6 +339,8 @@ export class CliTranspiler {
       if (jsxImportSource) args.push('--jsxImportSource', jsxImportSource);
       if (moduleDetection) args.push('--moduleDetection', moduleDetection);
       if (preserveConstEnums) args.push('--preserveConstEnums');
+      if (verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
+      if (isolatedModules) args.push('--isolatedModules');
       if (removeComments) args.push('--removeComments');
       if (stripInternal) args.push('--stripInternal');
       if (outFile) args.push('--outFile', outFile);
@@ -403,6 +409,8 @@ export class CliTranspiler {
           if (jsxImportSource) retryArgs.push('--jsxImportSource', jsxImportSource);
           if (moduleDetection) retryArgs.push('--moduleDetection', moduleDetection);
           if (preserveConstEnums) retryArgs.push('--preserveConstEnums');
+          if (verbatimModuleSyntax) retryArgs.push('--verbatimModuleSyntax');
+          if (isolatedModules) retryArgs.push('--isolatedModules');
           if (removeComments) retryArgs.push('--removeComments');
           if (stripInternal) retryArgs.push('--stripInternal');
           if (outFile) retryArgs.push('--outFile', outFile);
