@@ -208,20 +208,20 @@ impl<'a> CheckerState<'a> {
         // conditions and running the flow analyzer on it.
         if narrowed == initial_type
             && let Some(sym_id) = self.get_symbol_for_identifier(idx)
-                && let Some((source_expr, prop_name)) =
-                    self.ctx.destructured_binding_sources.get(&sym_id).cloned()
-            {
-                let narrowed_via_source = self.narrow_destructured_binding_via_source(
-                    &analyzer,
-                    source_expr,
-                    &prop_name,
-                    declared_type,
-                    flow_node,
-                );
-                if narrowed_via_source != declared_type {
-                    return narrowed_via_source;
-                }
+            && let Some((source_expr, prop_name)) =
+                self.ctx.destructured_binding_sources.get(&sym_id).cloned()
+        {
+            let narrowed_via_source = self.narrow_destructured_binding_via_source(
+                &analyzer,
+                source_expr,
+                &prop_name,
+                declared_type,
+                flow_node,
+            );
+            if narrowed_via_source != declared_type {
+                return narrowed_via_source;
             }
+        }
 
         narrowed
     }
@@ -325,41 +325,39 @@ impl<'a> CheckerState<'a> {
 
         // Binary expression: `aFoo.bar && ...` or `aFoo.bar !== undefined`
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node) {
-                if let Some(found) =
-                    self.find_matching_property_access(binary.left, source_expr, prop_name)
-                {
-                    return Some(found);
-                }
-                if let Some(found) =
-                    self.find_matching_property_access(binary.right, source_expr, prop_name)
-                {
-                    return Some(found);
-                }
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            if let Some(found) =
+                self.find_matching_property_access(binary.left, source_expr, prop_name)
+            {
+                return Some(found);
             }
+            if let Some(found) =
+                self.find_matching_property_access(binary.right, source_expr, prop_name)
+            {
+                return Some(found);
+            }
+        }
 
         // Prefix unary: `!aFoo.bar`
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
-                return self.find_matching_property_access(
-                    unary.expression,
-                    source_expr,
-                    prop_name,
-                );
-            }
+            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node)
+        {
+            return self.find_matching_property_access(unary.expression, source_expr, prop_name);
+        }
 
         // Call expression: `isNonNull(aFoo.bar)`
         if node.kind == syntax_kind_ext::CALL_EXPRESSION
             && let Some(call) = self.ctx.arena.get_call_expr(node)
-                && let Some(args) = &call.arguments {
-                    for &arg in &args.nodes {
-                        if let Some(found) =
-                            self.find_matching_property_access(arg, source_expr, prop_name)
-                        {
-                            return Some(found);
-                        }
-                    }
+            && let Some(args) = &call.arguments
+        {
+            for &arg in &args.nodes {
+                if let Some(found) = self.find_matching_property_access(arg, source_expr, prop_name)
+                {
+                    return Some(found);
                 }
+            }
+        }
 
         None
     }
@@ -458,24 +456,24 @@ impl<'a> CheckerState<'a> {
         if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && node_b.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access_a) = self.ctx.arena.get_access_expr(node_a)
-                && let Some(access_b) = self.ctx.arena.get_access_expr(node_b)
-            {
-                // Both must have same property name and same base expression
-                let names_match = self
-                    .ctx
-                    .arena
-                    .get(access_a.name_or_argument)
-                    .zip(self.ctx.arena.get(access_b.name_or_argument))
-                    .and_then(|(na, nb)| {
-                        let ia = self.ctx.arena.get_identifier(na)?;
-                        let ib = self.ctx.arena.get_identifier(nb)?;
-                        Some(ia.escaped_text == ib.escaped_text)
-                    })
-                    .unwrap_or(false);
-                if names_match {
-                    return self.is_same_reference(access_a.expression, access_b.expression);
-                }
+            && let Some(access_b) = self.ctx.arena.get_access_expr(node_b)
+        {
+            // Both must have same property name and same base expression
+            let names_match = self
+                .ctx
+                .arena
+                .get(access_a.name_or_argument)
+                .zip(self.ctx.arena.get(access_b.name_or_argument))
+                .and_then(|(na, nb)| {
+                    let ia = self.ctx.arena.get_identifier(na)?;
+                    let ib = self.ctx.arena.get_identifier(nb)?;
+                    Some(ia.escaped_text == ib.escaped_text)
+                })
+                .unwrap_or(false);
+            if names_match {
+                return self.is_same_reference(access_a.expression, access_b.expression);
             }
+        }
 
         a == b
     }
