@@ -47,8 +47,10 @@ use tsz_scanner::SyntaxKind;
 /// Enum ES5 transformer - produces IR for enum declarations
 pub struct EnumES5Transformer<'a> {
     arena: &'a NodeArena,
-    /// Track last numeric value for auto-incrementing
+    /// Track last numeric value for auto-incrementing (integer path)
     last_value: Option<i64>,
+    /// Track last float value for auto-incrementing (float path, e.g., 0.1 → 1.1)
+    last_float_value: Option<f64>,
     /// Source text for extracting raw expressions
     source_text: Option<&'a str>,
     /// Names of all enum members declared so far (for qualifying self-references)
@@ -70,6 +72,7 @@ impl<'a> EnumES5Transformer<'a> {
         EnumES5Transformer {
             arena,
             last_value: None,
+            last_float_value: None,
             source_text: None,
             member_names: HashSet::new(),
             string_members: HashSet::new(),
@@ -93,6 +96,7 @@ impl<'a> EnumES5Transformer<'a> {
     /// Returns None for const enums (they are erased)
     pub fn transform_enum(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
         self.last_value = Some(-1); // Start at -1 so first increment is 0
+        self.last_float_value = None;
 
         let enum_node = self.arena.get(enum_idx)?;
 
@@ -291,6 +295,7 @@ impl<'a> EnumES5Transformer<'a> {
                     IRNode::NumericLiteral(next_val.to_string())
                 };
                 self.last_value = None; // Can't auto-increment after computed
+                self.last_float_value = None;
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
                         object: Box::new(IRNode::Identifier(enum_name.to_string())),
@@ -332,20 +337,33 @@ impl<'a> EnumES5Transformer<'a> {
                         right: Box::new(value_ir),
                     };
                     self.last_value = None; // Reset auto-increment
+                    self.last_float_value = None;
                     IRNode::ExpressionStatement(Box::new(assign))
                 } else {
                     // Numeric/Computed: E[E["A"] = val] = "A";
                     // Try to evaluate the constant expression for auto-increment tracking
                     // and constant folding (tsc emits evaluated values, not source expressions)
                     let evaluated = self.evaluate_constant_expression(member_data.initializer);
+                    let evaluated_float = if evaluated.is_none() {
+                        self.evaluate_constant_float_expression(member_data.initializer)
+                    } else {
+                        None
+                    };
                     if let Some(val) = evaluated {
                         self.last_value = Some(val);
+                        self.last_float_value = None;
+                    } else if let Some(fval) = evaluated_float {
+                        self.last_float_value = Some(fval);
+                        self.last_value = None;
                     } else {
-                        self.last_value = None; // Can't evaluate, reset auto-increment
+                        self.last_value = None;
+                        self.last_float_value = None;
                     }
                     // Use the evaluated value if available, otherwise emit the source expression
                     let inner_value = if let Some(val) = evaluated {
                         Self::format_numeric_literal(val)
+                    } else if let Some(fval) = evaluated_float {
+                        Self::format_float_literal(fval)
                     } else {
                         self.transform_expression(member_data.initializer)
                     };
@@ -367,6 +385,41 @@ impl<'a> EnumES5Transformer<'a> {
                     };
                     IRNode::ExpressionStatement(Box::new(outer_assign))
                 }
+            } else if let Some(fval) = self.last_float_value {
+                // Float auto-increment: E[E["b"] = 1.1] = "b";
+                let next = fval + 1.0;
+                // Check if result became an exact integer
+                if next == (next as i64) as f64
+                    && next >= i64::MIN as f64
+                    && next <= i64::MAX as f64
+                {
+                    self.last_float_value = None;
+                    self.last_value = Some(next as i64);
+                } else {
+                    self.last_float_value = Some(next);
+                }
+                let value_node = if self.last_float_value.is_some() {
+                    Self::format_float_literal(next)
+                } else {
+                    Self::format_numeric_literal(next as i64)
+                };
+                let inner_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(value_node),
+                };
+                let outer_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(inner_assign),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                };
+                IRNode::ExpressionStatement(Box::new(outer_assign))
             } else {
                 // Auto-increment: E[E["A"] = 0] = "A";
                 let next_val = self.last_value.map_or(0, |v| v + 1);
@@ -643,6 +696,77 @@ impl<'a> EnumES5Transformer<'a> {
     /// Format an i64 value as an `IRNode` numeric literal, matching tsc's output format.
     fn format_numeric_literal(val: i64) -> IRNode {
         IRNode::NumericLiteral(val.to_string())
+    }
+
+    /// Format a float value as an IR node.
+    /// Handles special values: Infinity, -Infinity, NaN.
+    fn format_float_literal(val: f64) -> IRNode {
+        if val.is_nan() {
+            IRNode::Identifier("NaN".to_string())
+        } else if val.is_infinite() {
+            if val.is_sign_positive() {
+                IRNode::Identifier("Infinity".to_string())
+            } else {
+                IRNode::PrefixUnaryExpr {
+                    operator: "-".to_string(),
+                    operand: Box::new(IRNode::Identifier("Infinity".to_string())),
+                }
+            }
+        } else {
+            // Format with enough precision to round-trip
+            let s = format!("{}", val);
+            IRNode::NumericLiteral(s)
+        }
+    }
+
+    /// Try to evaluate a constant expression as a float value.
+    /// Used as fallback when integer evaluation fails (e.g., 0.1, 1/0).
+    fn evaluate_constant_float_expression(&self, idx: NodeIndex) -> Option<f64> {
+        let node = self.arena.get(idx)?;
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.arena.get_literal(node)?;
+                lit.text.parse::<f64>().ok()
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                let id = self.arena.get_identifier(node)?;
+                // Check integer members first, promote to f64
+                if let Some(&val) = self.member_values.get(id.escaped_text.as_str()) {
+                    return Some(val as f64);
+                }
+                None
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.arena.get_binary_expr(node)?;
+                let left = self.evaluate_constant_float_expression(bin.left)?;
+                let right = self.evaluate_constant_float_expression(bin.right)?;
+                let op = bin.operator_token;
+                match op {
+                    o if o == SyntaxKind::PlusToken as u16 => Some(left + right),
+                    o if o == SyntaxKind::MinusToken as u16 => Some(left - right),
+                    o if o == SyntaxKind::AsteriskToken as u16 => Some(left * right),
+                    o if o == SyntaxKind::SlashToken as u16 => Some(left / right),
+                    o if o == SyntaxKind::PercentToken as u16 => Some(left % right),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(node)?;
+                let operand = self.evaluate_constant_float_expression(unary.operand)?;
+                match unary.operator {
+                    o if o == SyntaxKind::MinusToken as u16 => Some(-operand),
+                    o if o == SyntaxKind::PlusToken as u16 => Some(operand),
+                    o if o == SyntaxKind::TildeToken as u16 => Some(!(operand as i64) as f64),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                self.evaluate_constant_float_expression(paren.expression)
+            }
+            _ => None,
+        }
     }
 
     /// Try to evaluate a constant expression to its numeric value.
