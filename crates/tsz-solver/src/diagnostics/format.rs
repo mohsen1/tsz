@@ -205,6 +205,7 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Union(_)
                 | TypeData::Intersection(_)
+                | TypeData::Tuple(_)
         ) && let Some(def_store) = self.def_store
             && let Some(def_id) = def_store.find_type_alias_by_body(type_id)
             && let Some(def) = def_store.get(def_id)
@@ -1047,6 +1048,49 @@ mod tests {
         assert!(super::needs_property_name_quotes("aria-label"));
         assert!(super::needs_property_name_quotes("my name"));
         assert!(super::needs_property_name_quotes(""));
+    }
+
+    #[test]
+    fn tuple_type_alias_preserved_in_format() {
+        let db = TypeInterner::new();
+        let def_store = crate::def::DefinitionStore::new();
+
+        // Create a tuple type: [number, string, boolean]
+        let tuple_id = db.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::BOOLEAN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // Register a type alias T1 = [number, string, boolean]
+        let name = db.intern_string("T1");
+        let info = crate::def::DefinitionInfo::type_alias(name, vec![], tuple_id);
+        let _def_id = def_store.register(info);
+
+        // Without def_store: should show structural form
+        let mut fmt = TypeFormatter::new(&db);
+        let without_alias = fmt.format(tuple_id);
+        assert_eq!(without_alias, "[number, string, boolean]");
+
+        // With def_store: should show alias name
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        let with_alias = fmt.format(tuple_id);
+        assert_eq!(with_alias, "T1");
     }
 
     #[test]
