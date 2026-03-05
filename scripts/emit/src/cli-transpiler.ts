@@ -207,6 +207,8 @@ export class CliTranspiler {
       preserveConstEnums?: boolean;
       verbatimModuleSyntax?: boolean;
       isolatedModules?: boolean;
+      importsNotUsedAsValues?: string;
+      preserveValueImports?: boolean;
       removeComments?: boolean;
       stripInternal?: boolean;
       outFile?: string;
@@ -238,6 +240,8 @@ export class CliTranspiler {
       preserveConstEnums = false,
       verbatimModuleSyntax = false,
       isolatedModules = false,
+      importsNotUsedAsValues,
+      preserveValueImports = false,
       removeComments = false,
       stripInternal = false,
       outFile,
@@ -341,6 +345,8 @@ export class CliTranspiler {
       if (preserveConstEnums) args.push('--preserveConstEnums');
       if (verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
       if (isolatedModules) args.push('--isolatedModules');
+      if (importsNotUsedAsValues) args.push('--importsNotUsedAsValues', importsNotUsedAsValues);
+      if (preserveValueImports) args.push('--preserveValueImports');
       if (removeComments) args.push('--removeComments');
       if (stripInternal) args.push('--stripInternal');
       if (outFile) args.push('--outFile', outFile);
@@ -411,6 +417,8 @@ export class CliTranspiler {
           if (preserveConstEnums) retryArgs.push('--preserveConstEnums');
           if (verbatimModuleSyntax) retryArgs.push('--verbatimModuleSyntax');
           if (isolatedModules) retryArgs.push('--isolatedModules');
+          if (importsNotUsedAsValues) retryArgs.push('--importsNotUsedAsValues', importsNotUsedAsValues);
+          if (preserveValueImports) retryArgs.push('--preserveValueImports');
           if (removeComments) retryArgs.push('--removeComments');
           if (stripInternal) retryArgs.push('--stripInternal');
           if (outFile) retryArgs.push('--outFile', outFile);
