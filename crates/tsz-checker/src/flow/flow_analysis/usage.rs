@@ -88,6 +88,17 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Mark `any`-declared nodes so `get_type_of_node` won't apply a second
+        // round of flow narrowing.  Double-narrowing corrupts `any` types:
+        // `any` → `string` (typeof), then re-narrowing `string` through an
+        // instanceof guard produces `string & Object` instead of `string`.
+        // Only `any` is affected because its narrowing semantics differ from
+        // other types (instanceof returns `any` unchanged, but narrowing `string`
+        // through instanceof produces an intersection).
+        if declared_type == TypeId::ANY && narrowed_type != declared_type {
+            self.ctx.flow_narrowed_nodes.insert(idx.0);
+        }
+
         trace!(?narrowed_type, "check_flow_usage result");
         narrowed_type
     }

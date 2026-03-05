@@ -285,6 +285,11 @@ pub struct CheckerContext<'a> {
     /// otherwise the declared type gets overridden with the narrowed type.
     pub daa_error_nodes: FxHashSet<u32>,
 
+    /// Nodes where `check_flow_usage` already applied flow narrowing.
+    /// The second narrowing pass in `get_type_of_node` must skip these to avoid
+    /// double-narrowing (e.g., `any` → `string` → `string & Object`).
+    pub flow_narrowed_nodes: FxHashSet<u32>,
+
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
