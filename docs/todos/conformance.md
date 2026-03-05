@@ -1,7 +1,54 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10011/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10013/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05d — TS2416 type-level base class + TS2426 fallthrough (+2 conf)
+
+### Fixed: TS2416 not emitted for type-level base classes
+
+**Area**: classes/members, compiler
+
+**Root cause**: When a class extends a non-class entity (e.g., `declare var A: { prototype: A; new(): A }`),
+the checker falls back to type-level base resolution via `base_instance_type_from_expression`. This path
+called `check_override_members_against_type`, which only checked `override` modifier errors (TS4112/TS4113)
+but never checked property type compatibility (TS2416). The base instance type was resolved but its
+property types were never compared against derived class member types.
+
+**Fix (1 file, +2 tests)**:
+- **`class_checker.rs`**: Extended `check_override_members_against_type` to accept `base_instance_type`
+  parameter. When provided, for each derived member overlapping with a base property, resolves the base
+  property type via `resolve_property_access_with_env` and checks assignability using the standard
+  `should_report_member_type_mismatch` / `should_report_member_type_mismatch_bivariant` helpers.
+  Reports TS2416 with type detail elaboration on mismatch.
+
+### Fixed: TS2416 not emitted alongside TS2426 (accessor/method kind mismatch)
+
+**Root cause**: When a derived class method overrides a base class accessor (TS2426), the code had a
+`continue` after emitting TS2426, skipping the type compatibility check. tsc emits BOTH TS2426 and
+TS2416 when types are also incompatible.
+
+**Fix**: Removed the `continue` after TS2426 emission so the type compatibility check still runs.
+
+**Conformance tests fixed**: `staticMismatchBecauseOfPrototype` (+1),
+`derivedClassFunctionOverridesBaseClassAccessor` (+1)
+
+### Remaining TS2416 analysis
+
+**Missing TS2416 — 12 tests total (10 remaining)**:
+- 6 tests involve `implements` clauses (TS2416 reporting exists in `class_implements_checker.rs` but
+  the type comparison isn't detecting incompatibility for generic methods):
+  - `genericSpecializations1`, `genericSpecializations2`, `interfaceClassMerging`,
+    `interfaceExtendsClassWithPrivate2`, `interfaceExtendsObjectIntersectionErrors`,
+    `classCanExtendConstructorFunction`
+- 2 JSX tests (`tsxGenericAttributesType5`, `tsxGenericAttributesType6`) where `React.Component`
+  resolves to an AST class but generic type parameter comparison doesn't detect incompatibility
+- `builtinIterator` and `elaboratedErrors` have other missing/extra codes alongside TS2416
+
+**Extra TS2416 — 6 tests (4 false positives)**:
+- `classImplementsMethodWIthTupleArgs`, `customAsyncIterator`, `genericArrayExtenstions`,
+  `performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures` — all only have
+  extra TS2416 with no missing codes
 
 ## Session 2026-03-05c — Tuple alias preservation + initializer element elaboration (+7 conf)
 
