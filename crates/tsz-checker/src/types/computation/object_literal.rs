@@ -15,9 +15,172 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
+        let union_member_property_type =
+            |this: &mut Self, union_type: TypeId, property_name: &str| -> Option<TypeId> {
+                let members = tsz_solver::type_queries::get_union_members(this.ctx.types, union_type)
+                    .or_else(|| match crate::query_boundaries::assignability::classify_for_excess_properties(
+                        this.ctx.types,
+                        union_type,
+                    ) {
+                        crate::query_boundaries::assignability::ExcessPropertiesKind::Union(
+                            members,
+                        ) => Some(members),
+                        _ => None,
+                    })?;
+                let mut property_types = Vec::new();
+
+                for &member in &members {
+                    let resolved_member = this.resolve_type_for_property_access(member);
+                    let evaluated_member = this.evaluate_type_with_env(member);
+                    let evaluated_member_for_property_access =
+                        this.resolve_type_for_property_access(evaluated_member);
+                    let evaluated_member_for_property_access =
+                        this.resolve_lazy_type(evaluated_member_for_property_access);
+                    let evaluated_member_for_property_access =
+                        this.evaluate_application_type(evaluated_member_for_property_access);
+                    let mut property_type = this
+                        .ctx
+                        .types
+                        .contextual_property_type(member, property_name);
+
+                    if property_type.is_none() {
+                        property_type = this
+                            .ctx
+                            .types
+                            .contextual_property_type(resolved_member, property_name);
+                    }
+
+                    if property_type.is_none() {
+                        property_type = this
+                            .ctx
+                            .types
+                            .contextual_property_type(
+                                evaluated_member_for_property_access,
+                                property_name,
+                            );
+                    }
+
+                    let mut alternate_member_for_property_access = None;
+                    if property_type.is_none() {
+                        use tsz_solver::TypeEvaluator;
+
+                        let mut evaluator = TypeEvaluator::with_resolver(this.ctx.types, &this.ctx);
+                        let alternate_member = evaluator.evaluate(member);
+                        let alternate_member =
+                            this.resolve_type_for_property_access(alternate_member);
+                        let alternate_member = this.resolve_lazy_type(alternate_member);
+                        let alternate_member = this.evaluate_application_type(alternate_member);
+                        alternate_member_for_property_access = Some(alternate_member);
+                        property_type = this
+                            .ctx
+                            .types
+                            .contextual_property_type(alternate_member, property_name);
+                    }
+
+                    let property_type = property_type;
+                    if property_type.is_none() {
+                        tracing::trace!(
+                            union_type = union_type.0,
+                            union_type_str = %this.format_type(union_type),
+                            property_name,
+                            member = member.0,
+                            member_str = %this.format_type(member),
+                            resolved_member = resolved_member.0,
+                            resolved_member_str = %this.format_type(resolved_member),
+                            evaluated_member = evaluated_member.0,
+                            evaluated_member_str = %this.format_type(evaluated_member),
+                            evaluated_member_for_property_access = evaluated_member_for_property_access.0,
+                            evaluated_member_for_property_access_str = %this.format_type(evaluated_member_for_property_access),
+                            alternate_member_for_property_access = alternate_member_for_property_access.map(|id| id.0),
+                            alternate_member_for_property_access_str = alternate_member_for_property_access
+                                .map(|id| this.format_type(id))
+                                .unwrap_or_default(),
+                            "contextual_object_literal_property_type: union-member miss"
+                        );
+                    }
+                    if let Some(property_type) = property_type {
+                        property_types.push(property_type);
+                    }
+                }
+
+                if property_types.is_empty() {
+                    None
+                } else {
+                    Some(this.ctx.types.factory().union(property_types))
+                }
+            };
+        let original_contextual_type = contextual_type;
+
+        if let Some(property_type) = self
+            .ctx
+            .types
+            .contextual_property_type(original_contextual_type, property_name)
+        {
+            tracing::trace!(
+                contextual_type = original_contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: pre-eval extracted"
+            );
+            return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
+        if let Some(property_type) =
+            union_member_property_type(self, original_contextual_type, property_name)
+        {
+            tracing::trace!(
+                contextual_type = original_contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: union-member extracted"
+            );
+            return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
+        let resolved_original_contextual_type =
+            self.resolve_type_for_property_access(original_contextual_type);
+        if resolved_original_contextual_type != original_contextual_type
+            && let Some(property_type) = self
+                .ctx
+                .types
+                .contextual_property_type(resolved_original_contextual_type, property_name)
+        {
+            tracing::trace!(
+                original_contextual_type = original_contextual_type.0,
+                resolved_original_contextual_type = resolved_original_contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: resolved-original extracted"
+            );
+            return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
+        if resolved_original_contextual_type != original_contextual_type
+            && let Some(property_type) = union_member_property_type(
+                self,
+                resolved_original_contextual_type,
+                property_name,
+            )
+        {
+            tracing::trace!(
+                original_contextual_type = original_contextual_type.0,
+                resolved_original_contextual_type = resolved_original_contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: resolved-union-member extracted"
+            );
+            return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
         let contextual_type = self.evaluate_contextual_type(contextual_type);
+        let after_evaluate_contextual_type = contextual_type;
+
         let contextual_type = self.evaluate_type_with_env(contextual_type);
+        let after_evaluate_type_with_env = contextual_type;
+        let contextual_type = self.resolve_type_for_property_access(contextual_type);
+        let after_resolve_type_for_property_access = contextual_type;
         let contextual_type = self.resolve_lazy_type(contextual_type);
+        let after_resolve_lazy_type = contextual_type;
         let contextual_type = self.evaluate_application_type(contextual_type);
 
         if contextual_type == TypeId::UNKNOWN {
@@ -29,16 +192,69 @@ impl<'a> CheckerState<'a> {
             .types
             .contextual_property_type(contextual_type, property_name)
         {
+            tracing::trace!(
+                contextual_type = contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: extracted"
+            );
             return Some(self.sanitize_contextual_property_type(property_type));
+        }
+
+        let alternate_contextual_type = {
+            use tsz_solver::TypeEvaluator;
+
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
+            evaluator.evaluate(original_contextual_type)
+        };
+        if alternate_contextual_type != contextual_type {
+            let alternate_contextual_type = self.resolve_type_for_property_access(alternate_contextual_type);
+            let alternate_contextual_type = self.resolve_lazy_type(alternate_contextual_type);
+            let alternate_contextual_type = self.evaluate_application_type(alternate_contextual_type);
+            if let Some(property_type) = self
+                .ctx
+                .types
+                .contextual_property_type(alternate_contextual_type, property_name)
+            {
+                tracing::trace!(
+                    original_contextual_type = original_contextual_type.0,
+                    alternate_contextual_type = alternate_contextual_type.0,
+                    property_name,
+                    property_type = property_type.0,
+                    "contextual_object_literal_property_type: alternate extracted"
+                );
+                return Some(self.sanitize_contextual_property_type(property_type));
+            }
         }
 
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
         if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type) {
+            tracing::trace!(
+                contextual_type = contextual_type.0,
+                property_name,
+                "contextual_object_literal_property_type: deferred unknown"
+            );
             return Some(TypeId::UNKNOWN);
         }
 
+        tracing::trace!(
+            original_contextual_type = original_contextual_type.0,
+            original_contextual_type_str = %self.format_type(original_contextual_type),
+            after_evaluate_contextual_type = after_evaluate_contextual_type.0,
+            after_evaluate_contextual_type_str = %self.format_type(after_evaluate_contextual_type),
+            after_evaluate_type_with_env = after_evaluate_type_with_env.0,
+            after_evaluate_type_with_env_str = %self.format_type(after_evaluate_type_with_env),
+            after_resolve_type_for_property_access = after_resolve_type_for_property_access.0,
+            after_resolve_type_for_property_access_str = %self.format_type(after_resolve_type_for_property_access),
+            after_resolve_lazy_type = after_resolve_lazy_type.0,
+            after_resolve_lazy_type_str = %self.format_type(after_resolve_lazy_type),
+            contextual_type = contextual_type.0,
+            contextual_type_str = %self.format_type(contextual_type),
+            property_name,
+            "contextual_object_literal_property_type: no property type"
+        );
         None
     }
 
@@ -145,22 +361,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let accessor = self.ctx.arena.get_accessor(elem_node)?;
-                self.get_property_name(accessor.name).or_else(|| {
-                    let prop_name_node = self.ctx.arena.get(accessor.name)?;
-                    if prop_name_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                    {
-                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
-                        let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation::access::literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                    } else {
-                        None
-                    }
-                })
+                self.get_property_name_resolved(accessor.name)
             })
             .collect();
 
@@ -195,22 +396,7 @@ impl<'a> CheckerState<'a> {
                                 expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
                             })
                 });
-                let name_opt = self.get_property_name(prop.name).or_else(|| {
-                    let prop_name_node = self.ctx.arena.get(prop.name)?;
-                    if prop_name_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                    {
-                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
-                        let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation::access::literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                    } else {
-                        None
-                    }
-                });
+                let name_opt = self.get_property_name_resolved(prop.name);
                 if let Some(name) = name_opt.clone() {
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
@@ -393,18 +579,24 @@ impl<'a> CheckerState<'a> {
                     self.check_computed_property_name(prop.name);
 
                     let mut prop_name_type = TypeId::ANY;
+                    let mut resolved_computed_name = None;
                     if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
                         && prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
+                        resolved_computed_name = self.get_property_name_resolved(prop.name);
                         if let Some(atom) =
                             crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
                         {
+                            if resolved_computed_name.is_none() {
+                                resolved_computed_name =
+                                    Some(self.ctx.types.resolve_atom(atom).to_string());
+                            }
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
@@ -425,9 +617,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        // Use a synthetic name that won't match any named property,
-                        // causing contextual_property_type to fall back to the index signature.
-                        self.contextual_object_literal_property_type(ctx_type, "__@computed")
+                        self.contextual_object_literal_property_type(
+                            ctx_type,
+                            resolved_computed_name.as_deref().unwrap_or("__@computed"),
+                        )
                     } else {
                         None
                     };
@@ -650,22 +843,7 @@ impl<'a> CheckerState<'a> {
                                     expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
                                 })
                     });
-                let name_opt = self.get_property_name(method.name).or_else(|| {
-                    let prop_name_node = self.ctx.arena.get(method.name)?;
-                    if prop_name_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                    {
-                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
-                        let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation::access::literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                    } else {
-                        None
-                    }
-                });
+                let name_opt = self.get_property_name_resolved(method.name);
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
@@ -789,18 +967,24 @@ impl<'a> CheckerState<'a> {
                     self.check_computed_property_name(method.name);
 
                     let mut prop_name_type = TypeId::ANY;
+                    let mut resolved_computed_name = None;
                     if let Some(prop_name_node) = self.ctx.arena.get(method.name)
                         && prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
+                        resolved_computed_name = self.get_property_name_resolved(method.name);
                         if let Some(atom) =
                             crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
                         {
+                            if resolved_computed_name.is_none() {
+                                resolved_computed_name =
+                                    Some(self.ctx.types.resolve_atom(atom).to_string());
+                            }
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
@@ -822,8 +1006,10 @@ impl<'a> CheckerState<'a> {
                     }
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        self.ctx.contextual_type =
-                            self.contextual_object_literal_property_type(ctx_type, "__@computed");
+                        self.ctx.contextual_type = self.contextual_object_literal_property_type(
+                            ctx_type,
+                            resolved_computed_name.as_deref().unwrap_or("__@computed"),
+                        );
                     }
                     let method_type = self.get_type_of_function(elem_idx);
                     self.ctx.contextual_type = prev_context;
@@ -925,22 +1111,7 @@ impl<'a> CheckerState<'a> {
                                     expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
                                 })
                     });
-                let name_opt = self.get_property_name(accessor.name).or_else(|| {
-                    let prop_name_node = self.ctx.arena.get(accessor.name)?;
-                    if prop_name_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                    {
-                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
-                        let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation::access::literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        )
-                        .map(|atom| self.ctx.types.resolve_atom(atom))
-                    } else {
-                        None
-                    }
-                });
+                let name_opt = self.get_property_name_resolved(accessor.name);
                 if let Some(name) = name_opt.clone() {
                     // For non-contextual object literals, TypeScript treats `this` inside
                     // accessors as the object literal under construction. Provide a

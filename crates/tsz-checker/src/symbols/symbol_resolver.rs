@@ -446,6 +446,25 @@ impl<'a> CheckerState<'a> {
             true
         };
 
+        if let Some(local_sym_id) =
+            self.ctx
+                .binder
+                .resolve_identifier_with_filter(self.ctx.arena, idx, &[], |sym_id| {
+                    if self.ctx.symbol_is_from_lib(sym_id) {
+                        return false;
+                    }
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                        if is_class_member {
+                            return false;
+                        }
+                    }
+                    accept_type_symbol(sym_id)
+                })
+        {
+            return TypeSymbolResolution::Type(local_sym_id);
+        }
+
         let resolved = self.ctx.binder.resolve_identifier_with_filter(
             self.ctx.arena,
             idx,
