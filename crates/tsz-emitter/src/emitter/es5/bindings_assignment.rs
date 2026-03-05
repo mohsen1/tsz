@@ -565,7 +565,10 @@ impl<'a> Printer<'a> {
             self.write("var ");
             if let Some(decl_list) = self.arena.get_variable(init_node) {
                 let mut first = true;
-                for &decl_idx in &decl_list.declarations.nodes {
+                // `for...of` allows only a single declaration. If the source
+                // has multiple (`for (var a, b of X)`), that is a syntax error
+                // and tsc only processes the first declaration. Match that.
+                for &decl_idx in decl_list.declarations.nodes.iter().take(1) {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {

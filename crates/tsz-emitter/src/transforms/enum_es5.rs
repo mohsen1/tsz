@@ -261,7 +261,50 @@ impl<'a> EnumES5Transformer<'a> {
                 crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             let has_initializer = member_data.initializer.is_some();
 
-            let stmt = if has_initializer {
+            // Check if this is a computed property name: enum E { [expr] = value }
+            let is_computed = self
+                .arena
+                .get(member_data.name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+
+            // For computed property names, get the expression as an IR node
+            let computed_key = if is_computed {
+                self.arena
+                    .get(member_data.name)
+                    .and_then(|n| self.arena.get_computed_property(n))
+                    .map(|cp| self.transform_expression(cp.expression))
+            } else {
+                None
+            };
+
+            let stmt = if let Some(key_expr) = computed_key {
+                // Computed property: E[E[expr] = value] = expr;
+                let value = if has_initializer {
+                    self.transform_expression(member_data.initializer)
+                } else {
+                    let next_val = self.last_value.map_or(0, |v| v + 1);
+                    self.last_value = Some(next_val);
+                    IRNode::NumericLiteral(next_val.to_string())
+                };
+                self.last_value = None; // Can't auto-increment after computed
+                let inner_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(key_expr.clone()),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(value),
+                };
+                let outer_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(inner_assign),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(key_expr),
+                };
+                IRNode::ExpressionStatement(Box::new(outer_assign))
+            } else if has_initializer {
                 if self.is_syntactically_string(member_data.initializer) {
                     // String enum: E["A"] = "val";
                     // No reverse mapping for string enums
