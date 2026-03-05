@@ -534,20 +534,21 @@ impl<'a> FlowAnalyzer<'a> {
         };
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && let Some(access) = self.arena.get_access_expr(node) {
-                // Check if the base expression matches target
-                if self.is_matching_reference(access.expression, target) {
-                    return true;
-                }
-                // Also check: does the current chain node (e.g. animal?.breed) match
-                // the target (e.g. animal.breed) when ignoring the optional dot?
-                // This handles the case where the chain has `?.` but the target uses `.`.
-                if self.is_matching_optional_access_reference(chain_node, target) {
-                    return true;
-                }
-                // Recurse into the base expression
-                return self.is_optional_chain_prefix(access.expression, target);
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            // Check if the base expression matches target
+            if self.is_matching_reference(access.expression, target) {
+                return true;
             }
+            // Also check: does the current chain node (e.g. animal?.breed) match
+            // the target (e.g. animal.breed) when ignoring the optional dot?
+            // This handles the case where the chain has `?.` but the target uses `.`.
+            if self.is_matching_optional_access_reference(chain_node, target) {
+                return true;
+            }
+            // Recurse into the base expression
+            return self.is_optional_chain_prefix(access.expression, target);
+        }
         false
     }
 
@@ -611,12 +612,13 @@ impl<'a> FlowAnalyzer<'a> {
         };
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && let Some(access) = self.arena.get_access_expr(node) {
-                if access.question_dot_token {
-                    return true;
-                }
-                return self.contains_optional_chain(access.expression);
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if access.question_dot_token {
+                return true;
             }
+            return self.contains_optional_chain(access.expression);
+        }
         false
     }
 
@@ -632,9 +634,10 @@ impl<'a> FlowAnalyzer<'a> {
         // Handle `typeof x?.y?.z` — check the typeof operand
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
             if let Some(unary) = self.arena.get_unary_expr(node)
-                && unary.operator == SyntaxKind::TypeOfKeyword as u16 {
-                    return self.is_optional_chain_containing_target(unary.operand, target);
-                }
+                && unary.operator == SyntaxKind::TypeOfKeyword as u16
+            {
+                return self.is_optional_chain_containing_target(unary.operand, target);
+            }
             return false;
         }
         self.contains_optional_chain(expr) && self.is_optional_chain_prefix(expr, target)
