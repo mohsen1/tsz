@@ -1081,6 +1081,10 @@ impl<'a> CheckerState<'a> {
                         let _ =
                             self.check_argument_assignable_or_report(actual, expected, last_arg);
                     }
+                } else {
+                    // No arguments at all (e.g. f1() where f1 expects variadic
+                    // tuple rest param). Report TS2345 on the call expression.
+                    let _ = self.check_argument_assignable_or_report(actual, expected, call_idx);
                 }
 
                 if fallback_return != TypeId::ERROR {
