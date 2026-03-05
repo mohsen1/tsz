@@ -560,34 +560,32 @@ impl<'a> Printer<'a> {
         // Check property access: EnumName.Member
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
-                && let Some(expr) = self.arena.get(access.expression)
-                    && let Some(name) = self.arena.get(access.name_or_argument)
-                    && expr.kind == SyntaxKind::Identifier as u16
-                    && name.kind == SyntaxKind::Identifier as u16
-                    && let Some(enum_ident) = self.arena.get_identifier(expr)
-                    && let Some(member_ident) = self.arena.get_identifier(name)
-                    && let Some(members) =
-                        self.const_enum_values.get(enum_ident.escaped_text.as_str())
-                    && let Some(value) = members.get(member_ident.escaped_text.as_str())
-                {
-                    return value.needs_double_dot();
-                }
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(name) = self.arena.get(access.name_or_argument)
+            && expr.kind == SyntaxKind::Identifier as u16
+            && name.kind == SyntaxKind::Identifier as u16
+            && let Some(enum_ident) = self.arena.get_identifier(expr)
+            && let Some(member_ident) = self.arena.get_identifier(name)
+            && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+            && let Some(value) = members.get(member_ident.escaped_text.as_str())
+        {
+            return value.needs_double_dot();
+        }
         // Check element access: EnumName["Member"] or EnumName[`Member`]
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
-                && let Some(expr) = self.arena.get(access.expression)
-                    && let Some(arg) = self.arena.get(access.name_or_argument)
-                    && expr.kind == SyntaxKind::Identifier as u16
-                    && (arg.kind == SyntaxKind::StringLiteral as u16
-                        || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                    && let Some(enum_ident) = self.arena.get_identifier(expr)
-                    && let Some(lit) = self.arena.get_literal(arg)
-                    && let Some(members) =
-                        self.const_enum_values.get(enum_ident.escaped_text.as_str())
-                    && let Some(value) = members.get(lit.text.as_str())
-                {
-                    return value.needs_double_dot();
-                }
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(arg) = self.arena.get(access.name_or_argument)
+            && expr.kind == SyntaxKind::Identifier as u16
+            && (arg.kind == SyntaxKind::StringLiteral as u16
+                || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            && let Some(enum_ident) = self.arena.get_identifier(expr)
+            && let Some(lit) = self.arena.get_literal(arg)
+            && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+            && let Some(value) = members.get(lit.text.as_str())
+        {
+            return value.needs_double_dot();
+        }
         let _ = idx; // suppress unused warning
         false
     }
