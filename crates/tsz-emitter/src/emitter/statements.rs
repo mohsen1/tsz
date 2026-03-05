@@ -20,6 +20,16 @@ impl<'a> Printer<'a> {
         // are not treated as function body blocks.
         self.emitting_function_body_block = false;
 
+        // For non-function-body blocks (bare `{}`, if/for/while bodies),
+        // save/restore declared_namespace_names so that block-scoped `let`
+        // declarations for enums/namespaces in sibling blocks don't leak.
+        // Function body blocks already get this from emit_function_declaration etc.
+        let prev_declared_ns = if !is_function_body_block {
+            Some(self.declared_namespace_names.clone())
+        } else {
+            None
+        };
+
         // Check if this block needs `var _this = this;` injection
         let this_capture_name: Option<String> = self
             .transforms
@@ -328,6 +338,11 @@ impl<'a> Printer<'a> {
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
         self.ctx.block_scope_state.exit_scope();
+        // Restore declared_namespace_names for non-function blocks to prevent
+        // block-scoped let declarations from leaking to sibling blocks.
+        if let Some(prev) = prev_declared_ns {
+            self.declared_namespace_names = prev;
+        }
         // Trailing comments after the block's closing brace are handled by
         // the calling context (class member loop, statement loop, etc.)
     }

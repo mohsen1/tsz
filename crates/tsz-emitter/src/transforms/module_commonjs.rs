@@ -103,7 +103,11 @@ fn collect_export_name_from_declaration(
                 if arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
-                if !super::emit_utils::is_instantiated_module(arena, module.body) {
+                if !super::emit_utils::is_instantiated_module_ext(
+                    arena,
+                    module.body,
+                    preserve_const_enums,
+                ) {
                     return;
                 }
                 if let Some(name) = get_identifier_text(arena, module.name) {
@@ -238,7 +242,11 @@ pub fn collect_export_names_with_options(
                 if let Some(module) = arena.get_module(node)
                     && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
                     && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                    && super::emit_utils::is_instantiated_module(arena, module.body)
+                    && super::emit_utils::is_instantiated_module_ext(
+                        arena,
+                        module.body,
+                        preserve_const_enums,
+                    )
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     exports.push(name);
