@@ -604,6 +604,16 @@ impl<'a> Printer<'a> {
                     self.ctx.options.preserve_const_enums,
                 );
 
+            // Build value declaration names for filtering type-only export specifiers.
+            // This is stored in module state so that `export { I }` handlers can
+            // skip specifiers that refer to interfaces/type-aliases/etc.
+            self.ctx.module_state.value_declaration_names =
+                module_commonjs::build_value_declaration_names(
+                    self.arena,
+                    &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
+                );
+
             // Collect inline-exported variable names for read substitution.
             // In CJS, tsc rewrites all references to `export let/const/var` names
             // as `exports.X` (both reads and writes).

@@ -128,6 +128,179 @@ fn collect_export_name_from_declaration(
     }
 }
 
+/// Build a set of names that have runtime value declarations in the file.
+///
+/// This is used to syntactically determine whether `export { x }` refers to
+/// a runtime value or a type-only declaration (interface, type alias, etc.).
+/// Names with at least one value declaration are considered "has value".
+///
+/// Value declarations: variables, functions, classes, non-const enums,
+/// instantiated namespaces, import-equals.
+/// Type-only: interfaces, type aliases, const enums (when not preserving),
+/// non-instantiated namespaces, `declare` items.
+pub fn build_value_declaration_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> rustc_hash::FxHashSet<String> {
+    let mut value_names = rustc_hash::FxHashSet::default();
+
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(node)
+                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        let mut names = Vec::new();
+                        collect_declaration_names(arena, decl_idx, &mut names);
+                        value_names.extend(names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(node)
+                    && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                    && let Some(name) = get_identifier_text(arena, func.name)
+                {
+                    value_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(node)
+                    && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+                    && let Some(name) = get_identifier_text(arena, class.name)
+                {
+                    value_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = arena.get_enum(node)
+                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    && (preserve_const_enums
+                        || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+                    && let Some(name) = get_identifier_text(arena, enum_decl.name)
+                {
+                    value_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(node)
+                    && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                    && super::emit_utils::is_instantiated_module_ext(
+                        arena,
+                        module.body,
+                        preserve_const_enums,
+                    )
+                    && let Some(name) = get_identifier_text(arena, module.name)
+                {
+                    value_names.insert(name);
+                }
+            }
+            // Also handle wrapped export declarations (export class C {}, etc.)
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = arena.get_export_decl(node)
+                    && !export_decl.is_type_only
+                    && export_decl.module_specifier.is_none()
+                    && let Some(clause_node) = arena.get(export_decl.export_clause)
+                {
+                    collect_value_names_from_declaration(
+                        arena,
+                        clause_node,
+                        &mut value_names,
+                        preserve_const_enums,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(node)
+                    && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+                {
+                    value_names.insert(name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    value_names
+}
+
+/// Helper: collect value names from a declaration node inside an export.
+fn collect_value_names_from_declaration(
+    arena: &NodeArena,
+    decl_node: &Node,
+    value_names: &mut rustc_hash::FxHashSet<String>,
+    preserve_const_enums: bool,
+) {
+    match decl_node.kind {
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+            if let Some(var_stmt) = arena.get_variable(decl_node)
+                && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                for &decl_idx in &var_stmt.declarations.nodes {
+                    let mut names = Vec::new();
+                    collect_declaration_names(arena, decl_idx, &mut names);
+                    value_names.extend(names);
+                }
+            }
+        }
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+            if let Some(func) = arena.get_function(decl_node)
+                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                && let Some(name) = get_identifier_text(arena, func.name)
+            {
+                value_names.insert(name);
+            }
+        }
+        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            if let Some(class) = arena.get_class(decl_node)
+                && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+                && let Some(name) = get_identifier_text(arena, class.name)
+            {
+                value_names.insert(name);
+            }
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            if let Some(enum_decl) = arena.get_enum(decl_node)
+                && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                && (preserve_const_enums
+                    || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+                && let Some(name) = get_identifier_text(arena, enum_decl.name)
+            {
+                value_names.insert(name);
+            }
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            if let Some(module) = arena.get_module(decl_node)
+                && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                && super::emit_utils::is_instantiated_module_ext(
+                    arena,
+                    module.body,
+                    preserve_const_enums,
+                )
+                && let Some(name) = get_identifier_text(arena, module.name)
+            {
+                value_names.insert(name);
+            }
+        }
+        k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+            if let Some(import_decl) = arena.get_import_decl(decl_node)
+                && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+            {
+                value_names.insert(name);
+            }
+        }
+        _ => {
+            // Interface, Type Alias → type-only, no value
+        }
+    }
+}
+
 /// Collect all export names from a source file for the exports initialization
 ///
 /// Returns a list of exported names (e.g., ["foo", "bar"])
@@ -141,6 +314,9 @@ pub fn collect_export_names_with_options(
     preserve_const_enums: bool,
 ) -> Vec<String> {
     let mut exports = Vec::new();
+
+    // Build value declaration names lazily — only needed when we see named exports.
+    let mut value_names: Option<rustc_hash::FxHashSet<String>> = None;
 
     for &stmt_idx in statements {
         let Some(node) = arena.get(stmt_idx) else {
@@ -167,10 +343,30 @@ pub fn collect_export_names_with_options(
                         && let Some(clause_node) = arena.get(export_decl.export_clause)
                     {
                         if let Some(named_exports) = arena.get_named_imports(clause_node) {
+                            // Lazily build value names set on first use
+                            let vn = value_names.get_or_insert_with(|| {
+                                build_value_declaration_names(
+                                    arena,
+                                    statements,
+                                    preserve_const_enums,
+                                )
+                            });
                             for &spec_idx in &named_exports.elements.nodes {
                                 if let Some(spec) = arena.get_specifier_at(spec_idx) {
                                     if spec.is_type_only {
                                         continue;
+                                    }
+                                    // The local name is property_name if present, otherwise name
+                                    let local_name = if spec.property_name.is_some() {
+                                        get_identifier_text(arena, spec.property_name)
+                                    } else {
+                                        get_identifier_text(arena, spec.name)
+                                    };
+                                    // Skip specifiers that refer to type-only declarations
+                                    if let Some(ref local) = local_name {
+                                        if !vn.contains(local) {
+                                            continue;
+                                        }
                                     }
                                     // Use the exported name (name), not the local name (property_name)
                                     if let Some(name) = get_identifier_text(arena, spec.name) {

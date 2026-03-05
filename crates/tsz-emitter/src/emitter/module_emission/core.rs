@@ -659,6 +659,41 @@ impl<'a> Printer<'a> {
         specs
     }
 
+    /// Like `collect_value_specifiers` but also filters specifiers that refer
+    /// to type-only declarations using the syntactic `value_declaration_names`
+    /// set. This is only appropriate for local exports (`export { x }` without
+    /// `from`), NOT for re-exports or imports.
+    pub(in crate::emitter) fn collect_local_export_value_specifiers(
+        &self,
+        elements: &NodeList,
+    ) -> Vec<NodeIndex> {
+        let base = self.collect_value_specifiers(elements);
+        if self.ctx.module_state.value_declaration_names.is_empty() {
+            return base;
+        }
+        base.into_iter()
+            .filter(|&spec_idx| {
+                if let Some(spec_node) = self.arena.get(spec_idx)
+                    && let Some(spec) = self.arena.get_specifier(spec_node)
+                {
+                    let local_name = if spec.property_name.is_some() {
+                        self.get_identifier_text_idx(spec.property_name)
+                    } else {
+                        self.get_identifier_text_idx(spec.name)
+                    };
+                    if !local_name.is_empty() {
+                        return self
+                            .ctx
+                            .module_state
+                            .value_declaration_names
+                            .contains(&local_name);
+                    }
+                }
+                true
+            })
+            .collect()
+    }
+
     pub(in crate::emitter) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
         crate::transforms::emit_utils::export_clause_is_type_only(
             self.arena,
