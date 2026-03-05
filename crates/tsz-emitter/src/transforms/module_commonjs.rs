@@ -394,9 +394,10 @@ pub fn collect_export_names_with_options(
                                     };
                                     // Skip specifiers that refer to type-only declarations
                                     if let Some(ref local) = local_name
-                                        && !vn.contains(local) {
-                                            continue;
-                                        }
+                                        && !vn.contains(local)
+                                    {
+                                        continue;
+                                    }
                                     // Use the exported name (name), not the local name (property_name)
                                     if let Some(name) = get_identifier_text(arena, spec.name) {
                                         exports.push(name);
