@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10,028 / 12,570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10,049 / 12,570 (79.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ---
 
@@ -14,7 +14,9 @@
 | Mar 3 23:29 | 9,920 (78.9%) | — | Sprint start |
 | Mar 4 12:00 | 9,958 (79.2%) | +38 | Emitter + checker fixes |
 | Mar 4 22:08 | 10,002 (79.6%) | +44 | Crossed 10k |
-| Mar 5 06:49 | 10,025 (79.8%) | +23 | Current |
+| Mar 5 06:49 | 10,025 (79.8%) | +23 | — |
+| Mar 5 15:45 | 10,045 (79.9%) | +20 | TS18013 declaring class + TS2416 type args |
+| Mar 5 16:20 | 10,049 (79.9%) | +4 | Fix private name instance access (remove bad lazy-to-ctor) |
 
 **Velocity**: ~2.8 tests/hour over 37 hours. 74 fix commits, 100+ sessions, 3.0 tests/session average.
 
