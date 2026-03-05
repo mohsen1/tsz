@@ -1468,16 +1468,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // and validates it against the component's `children` prop type.
                     let mut child_types: Vec<TypeId> = Vec::new();
                     let mut has_text_child = false;
+                    let mut text_child_indices: Vec<NodeIndex> = Vec::new();
                     for &child in &jsx.children.nodes {
                         if let Some(child_node) = self.checker.ctx.arena.get(child) {
-                            // Skip whitespace-only JsxText children — tsc ignores them
-                            // for children prop synthesis (only significant text counts).
+                            // Skip trivial whitespace JsxText — tsc ignores whitespace-only
+                            // text that contains newlines (formatting indentation). But
+                            // same-line whitespace (e.g., `<A />  <B />`) is preserved.
                             if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
                                 && let Some(text) = self.checker.ctx.arena.get_jsx_text(child_node)
                             {
-                                let is_whitespace_only =
+                                let is_all_whitespace =
                                     text.text.chars().all(|c| c.is_ascii_whitespace());
-                                if is_whitespace_only {
+                                let has_newline = text.text.contains('\n');
+                                if is_all_whitespace && has_newline {
                                     continue;
                                 }
                             }
@@ -1496,6 +1499,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             && child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
                         {
                             has_text_child = true;
+                            text_child_indices.push(child);
                         }
                         child_types.push(child_type);
                     }
@@ -1517,8 +1521,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker.ctx.types.factory().union(child_types.clone());
                             self.checker.ctx.types.factory().array(element_type)
                         };
-                        self.checker.ctx.jsx_children_info =
-                            Some((child_types.len(), has_text_child, synthesized_type));
+                        self.checker.ctx.jsx_children_info = Some((
+                            child_types.len(),
+                            has_text_child,
+                            synthesized_type,
+                            text_child_indices,
+                        ));
                     }
 
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)

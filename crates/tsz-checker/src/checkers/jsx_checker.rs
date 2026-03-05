@@ -679,7 +679,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the text of a JSX tag name for error messages.
-    fn get_jsx_tag_name_text(&self, tag_name_idx: NodeIndex) -> String {
+    pub(crate) fn get_jsx_tag_name_text(&self, tag_name_idx: NodeIndex) -> String {
         let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
             return "unknown".to_string();
         };
@@ -1159,31 +1159,31 @@ impl<'a> CheckerState<'a> {
     /// Check if a specific attribute name exists as an EXPLICIT JSX attribute
     /// (not from a spread). Used for TS2710 double-specification detection.
     fn has_explicit_jsx_attribute(&self, attributes_idx: NodeIndex, name: &str) -> bool {
-        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
-            return false;
-        };
-        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
-            return false;
-        };
+        self.find_explicit_jsx_attribute(attributes_idx, name)
+            .is_some()
+    }
+
+    /// Find an explicit JSX attribute by name, returning the attribute's name node index.
+    fn find_explicit_jsx_attribute(
+        &self,
+        attributes_idx: NodeIndex,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let attrs_node = self.ctx.arena.get(attributes_idx)?;
+        let attrs = self.ctx.arena.get_jsx_attributes(attrs_node)?;
         for &attr_idx in &attrs.properties.nodes {
-            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
-                continue;
-            };
+            let attr_node = self.ctx.arena.get(attr_idx)?;
             if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
-                    continue;
-                };
+                let attr_data = self.ctx.arena.get_jsx_attribute(attr_node)?;
+                let name_node = self.ctx.arena.get(attr_data.name)?;
                 if let Some(attr_name) = self.get_jsx_attribute_name(name_node)
                     && attr_name == name
                 {
-                    return true;
+                    return Some(attr_data.name);
                 }
             }
         }
-        false
+        None
     }
 
     /// Check JSX attributes against an already-evaluated props type.
@@ -1552,14 +1552,20 @@ impl<'a> CheckerState<'a> {
         }
 
         // JSX children synthesis: incorporate body children into provided props.
-        if let Some((child_count, _has_text_child, synthesized_type)) = children_info {
+        if let Some((child_count, has_text_child, synthesized_type, text_child_indices)) =
+            children_info
+        {
             // TS2710: explicit children attr + body children = double specification.
+            // Error location: the first JSX attribute (matching tsc's span).
             let has_explicit_children_attr =
                 self.has_explicit_jsx_attribute(attributes_idx, "children");
             if has_explicit_children_attr && !skip_prop_checks {
+                // tsc reports TS2710 on the JsxAttributes node, which spans from
+                // the first attribute to the closing >. Our parser sets JsxAttributes.pos
+                // to the first token after the tag name, matching tsc's behavior.
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
-                    tag_name_idx,
+                    attributes_idx,
                     diagnostic_codes::ARE_SPECIFIED_TWICE_THE_ATTRIBUTE_NAMED_WILL_BE_OVERWRITTEN,
                     &["children"],
                 );
@@ -1569,6 +1575,14 @@ impl<'a> CheckerState<'a> {
             // TS2746: single child expected but multiple provided.
             if child_count > 1 && !skip_prop_checks {
                 self.check_jsx_children_count(props_type, tag_name_idx);
+            }
+            // TS2747: text children not accepted by component.
+            if has_text_child && !skip_prop_checks {
+                self.check_jsx_text_children_accepted(
+                    props_type,
+                    tag_name_idx,
+                    &text_child_indices,
+                );
             }
         }
 

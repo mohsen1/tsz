@@ -454,11 +454,12 @@ pub struct CheckerContext<'a> {
     /// Temporarily holds information about children of the current JSX element
     /// being checked. Set in dispatch.rs before calling `get_type_of_jsx_opening_element`,
     /// consumed in `check_jsx_attributes_against_props` for children validation.
-    /// Contains (`child_count`, `has_text_child`, `synthesized_children_type`).
-    /// - `child_count`: number of non-whitespace children in the JSX body
+    /// Contains (`child_count`, `has_text_child`, `synthesized_children_type`, `text_child_indices`).
+    /// - `child_count`: number of children in the JSX body
     /// - `has_text_child`: whether any `JsxText` children exist
     /// - `synthesized_children_type`: the type to use as the `children` prop value
-    pub jsx_children_info: Option<(usize, bool, TypeId)>,
+    /// - `text_child_indices`: node indices of `JsxText` children (for TS2747 location reporting)
+    pub jsx_children_info: Option<(usize, bool, TypeId, Vec<NodeIndex>)>,
 
     /// The callable type of the current call expression being checked.
     /// Set before `collect_call_argument_types_with_context` so spread-handling
