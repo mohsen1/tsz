@@ -973,10 +973,10 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(module.name) != name {
                     return None;
                 }
-                let runtime = !self
-                    .arena
-                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                    && self.is_instantiated_module(module.body);
+                // `declare namespace` with instantiated content (classes, functions,
+                // enums) has runtime value — the `declare` keyword means the value
+                // exists elsewhere, not that there is no runtime value.
+                let runtime = self.is_instantiated_module(module.body);
                 Some((runtime, if runtime { Some(module.body) } else { None }))
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
