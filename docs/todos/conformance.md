@@ -1,7 +1,71 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10007/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10011/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05c — Tuple alias preservation + initializer element elaboration (+7 conf)
+
+### Fixed: Tuple type alias names not preserved in diagnostic messages
+
+**Area**: types/tuple (diagnostic formatting)
+
+**Root cause**: `TypeFormatter.format()` in `diagnostics/format.rs` only checked `Object`,
+`ObjectWithIndex`, `Union`, and `Intersection` types against the `DefinitionStore` for alias
+name reverse-lookup. `Tuple` types were excluded from this guard, so diagnostics like TS2493
+showed expanded tuple forms (`[string, number]`) instead of alias names (`T1`).
+
+**Fix (1 file, +1 test)**:
+- **`diagnostics/format.rs`**: Added `TypeData::Tuple(_)` to the alias body lookup match.
+- **Test**: `tuple_type_alias_preserved_in_format` verifying both with and without def_store.
+
+**Conformance tests fixed**: `unionsOfTupleTypes1` (+1)
+
+### Fixed: Variable initializer element-level error elaboration
+
+**Area**: types/tuple, compiler, types/intersection
+
+**Root cause**: When a variable initializer like `var [a, b]: [number, any] = [undefined, undefined]`
+failed assignability, the checker reported a generic whole-assignment TS2322 error. TSC instead
+elaborates by checking each array element individually and reporting errors on the specific
+mismatching element. The element elaboration already existed for function call arguments
+(`try_elaborate_array_literal_elements` in `call_errors.rs`) but was not invoked for variable
+declarations.
+
+**Fix (3 files)**:
+- **`call_errors.rs`**: Added `try_elaborate_initializer_elements()` that checks assignability
+  first, then delegates to `try_elaborate_array_literal_elements()`. Also added arity guard:
+  when source array has more elements than target fixed tuple, skips elaboration (arity
+  mismatches should produce whole-assignment errors, not element-level errors).
+- **`variable_checking/core.rs`**: Added elaboration call in both destructuring and
+  non-destructuring variable declaration paths, before the generic TS2322 fallback.
+- **`type_queries/core.rs`**: Added `get_fixed_tuple_length()` solver query to avoid
+  checker-level TypeData inspection (architecture guardrail compliance).
+
+**Conformance tests fixed**: `tupleElementTypes1` (+1), `implicitAnyWidenToAny` (+1),
+`targetTypeTest3` (+1), `genericCallInferenceConditionalType1` (+1),
+`genericCallInferenceConditionalType2` (+1), `intersectionTypeInference3` (+1)
+
+### Remaining types/tuple analysis
+
+**Error-code failures** (2 tests):
+- **contextualTypeTupleEnd**: Extra TS7006 from generic variadic tuple inference
+- **restTupleElements1**: Parser issue — `[...string?]` triggers TS1005 instead of TS17019+TS2574
+
+**Fingerprint-only failures** (7 tests remaining):
+- **arityAndOrderCompatibility01**: Extra TS2322 for StrNum (interface-extends-array) assignability to tuple
+- **contextualTypeWithTuple**: Extra TS2322 for intersection-tuple assignability (`test1 & { length: 2 }`)
+- **optionalTupleElements1**: Extra TS2322 for tuple literal element assignments with optional elements
+- **strictTupleLength**: Wrong target tuple type in error message
+- **typeInferenceWithTupleType**: Nested tuple elaboration not recursive (only 1 level deep)
+- **variadicTuples1**: Many extra TS2322/TS2345 from variadic tuple assignability being too strict
+- **variadicTuples2**: Similar variadic tuple issues
+
+### Potential follow-ups
+
+- **Recursive element elaboration**: `typeInferenceWithTupleType` needs elaboration to recurse
+  into nested array literals (currently only 1 level deep)
+- **Function type alias preservation**: Adding `TypeData::Function(_)` and `TypeData::Callable(_)`
+  to the alias lookup guard could improve more fingerprint-only tests
 
 ## Session 2026-03-05b — Variadic tuple rest param minimum arity + TS2345 emission (+3 conf)
 
