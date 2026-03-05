@@ -286,19 +286,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     variadic = true;
                 }
                 // Count tail elements from nested tuple spreads.
-                // Once a variadic rest is encountered, trailing elements
-                // don't count toward min (tsc only counts leading Required
-                // elements up to the first Rest/Variadic element).
+                // Required tail elements always count toward min, even
+                // after a variadic rest. E.g. [...T[], Required] has min=1.
                 for tail_elem in expansion.tail {
                     max += 1;
-                    if !tail_elem.optional && !variadic {
+                    if !tail_elem.optional {
                         min += 1;
                     }
                 }
                 continue;
             }
             max += 1;
-            if !elem.optional && !variadic {
+            if !elem.optional {
                 min += 1;
             }
         }

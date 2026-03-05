@@ -1101,6 +1101,104 @@ fn test_call_tuple_rest_with_fixed_tail() {
     }
 }
 
+/// Calling a variadic tuple rest param function with too few args should produce
+/// `ArgumentTypeMismatch` (TS2345), not `ArgumentCountMismatch` (TS2555).
+/// E.g. `f1(...args: [...T[], Required])` called as `f1()` → TS2345.
+#[test]
+fn test_call_variadic_tuple_rest_empty_args_produces_type_mismatch() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // Build tuple type: [...((arg: number) => void)[], (arg: string) => void]
+    let num_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let str_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let rest_array = interner.array(num_fn);
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: rest_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: str_fn,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: tuple_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with 0 args — should get ArgumentTypeMismatch (TS2345), not ArgumentCountMismatch
+    let result = evaluator.resolve_call(func, &[]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            expected, actual, ..
+        } => {
+            // Expected: the variadic tuple type
+            assert_eq!(expected, tuple_type);
+            // Actual: an empty tuple []
+            assert!(
+                matches!(interner.lookup(actual), Some(TypeData::Tuple(elems)) if interner.tuple_list(elems).is_empty()),
+                "Expected empty tuple for actual, got {:?}",
+                interner.lookup(actual)
+            );
+        }
+        _ => panic!(
+            "Expected ArgumentTypeMismatch for empty args to variadic tuple rest, got {result:?}"
+        ),
+    }
+
+    // Call with 1 arg (the required trailing element) — should succeed
+    let result = evaluator.resolve_call(func, &[str_fn]);
+    match result {
+        CallResult::Success(ret) => assert_eq!(ret, TypeId::VOID),
+        _ => panic!("Expected success with 1 arg to variadic tuple rest, got {result:?}"),
+    }
+}
+
 #[test]
 fn test_property_access_on_never_returns_never() {
     // never is the bottom type — all property accesses are vacuously valid

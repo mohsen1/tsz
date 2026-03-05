@@ -2,7 +2,7 @@ use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind,
-    LiteralValue, ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
+    LiteralValue, ParamInfo, TupleElement, TypeData, TypeId, TypeListId, TypePredicate,
 };
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
@@ -1633,6 +1633,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
 
         if arg_types.len() < min_args {
+            // For variadic tuple rest params (e.g. `...args: [...T[], Required]`),
+            // TSC checks assignability of the args-as-tuple against the rest param
+            // type, producing TS2345 instead of TS2555. Detect this case and return
+            // ArgumentTypeMismatch so the checker emits TS2345.
+            if let Some(rest_param) = func.params.last().filter(|p| p.rest) {
+                let rest_type = self.unwrap_readonly(rest_param.type_id);
+                if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
+                    let elems = self.interner.tuple_list(elements);
+                    let has_variadic = elems.iter().any(|e| e.rest);
+                    if has_variadic {
+                        // Build tuple type from actual args
+                        let args_tuple_elems: Vec<TupleElement> = arg_types
+                            .iter()
+                            .map(|&t| TupleElement {
+                                type_id: t,
+                                name: None,
+                                optional: false,
+                                rest: false,
+                            })
+                            .collect();
+                        let args_tuple = self.interner.tuple(args_tuple_elems);
+                        return CallResult::ArgumentTypeMismatch {
+                            index: 0,
+                            expected: rest_type,
+                            actual: args_tuple,
+                            fallback_return: func.return_type,
+                        };
+                    }
+                }
+            }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_args,
                 expected_max: max_args,

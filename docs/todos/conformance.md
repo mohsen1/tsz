@@ -1,7 +1,109 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~9995/12570 (79.5%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10007/12570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05b — Variadic tuple rest param minimum arity + TS2345 emission (+3 conf)
+
+### Fixed: Required tail elements after variadic rest not counted in minimum arity
+
+**Area**: types/tuple, compiler, classes/members
+
+**Root cause (two issues)**:
+
+1. **`tuple_length_bounds` excluded required tail elements from minimum count**: In
+   `call_args.rs`, the `tuple_length_bounds` function set a `variadic` flag when encountering
+   a variadic rest element (e.g., `...T[]`). This flag then caused ALL subsequent required
+   elements to be excluded from the minimum count. For `[...T[], Required]`, the computed
+   min was 0 instead of 1. The fix removes the `&& !variadic` guard from the min-count
+   conditions — required elements always count toward minimum regardless of position.
+
+2. **Variadic tuple rest params produced TS2555 instead of TS2345**: When a function like
+   `f1(...args: [...T[], Required])` was called with too few args, the solver returned
+   `ArgumentCountMismatch` → checker emitted TS2555. TSC instead checks assignability of
+   the args-as-tuple against the rest param tuple type, producing TS2345. The fix adds
+   detection of variadic tuple rest params in `resolve_function_call`: when the arity check
+   fails and the rest param has a variadic tuple type, it builds a tuple from the actual
+   args and returns `ArgumentTypeMismatch` instead. The checker was also extended to handle
+   `ArgumentTypeMismatch` when `args.is_empty()` by pointing the error at the call expression.
+
+**Fix (3 files, +1 test)**:
+- **`call_args.rs`**: Removed `&& !variadic` from both min-count conditions in
+  `tuple_length_bounds`. Required elements always contribute to minimum arity.
+- **`core.rs`**: Added variadic tuple detection in `resolve_function_call` arity check.
+  When rest param is a variadic tuple and args are too few, returns `ArgumentTypeMismatch`
+  with args-as-tuple type vs rest param tuple type.
+- **`call.rs` (checker)**: Added `else` branch for empty args in `ArgumentTypeMismatch`
+  handling, reporting TS2345 on the call expression.
+- **Test**: `test_call_variadic_tuple_rest_empty_args_produces_type_mismatch` in
+  `operations_tests.rs`
+
+**Conformance tests fixed**: `genericCallInferenceConditionalType1` (+1),
+`privateNamesConstructorChain-1` (+1), `privateNamesConstructorChain-2` (+1)
+
+### Remaining types/tuple analysis
+
+**Error-code failures** (2 tests):
+- **contextualTypeTupleEnd**: Error codes match after fix (TS2322, TS2339, TS2345), but
+  still has extra TS7006 from generic inference not flowing through variadic tuple type
+  parameters in `createSelector` pattern. Deep solver issue requiring variadic tuple
+  inference through generic constraints.
+- **restTupleElements1**: Parser issue — `[...string?]` triggers TS1005 instead of
+  TS17019 + TS2574. Needs parser-level fix for optional types in rest tuple positions.
+
+**Fingerprint-only failures** (9 tests): arityAndOrderCompatibility01,
+contextualTypeWithTuple, optionalTupleElements1, strictTupleLength,
+tupleElementTypes1, typeInferenceWithTupleType, unionsOfTupleTypes1,
+variadicTuples1, variadicTuples2
+
+## Session 2026-03-05a — Tuple rest element contextual type extraction (+4 conf)
+
+### Fixed: Rest elements in tuples returned array type instead of element type for contextual typing
+
+**Area**: types/tuple, compiler, classes/members
+
+**Root cause**: `TupleElementExtractor::visit_tuple()` and `extract_param_type_at_inner()` in
+`contextual/extractors.rs` returned the raw `type_id` of rest tuple elements without unwrapping.
+Rest elements store the full array type (e.g., `((x: string) => number)[]` for
+`...((x: string) => number)[]`), but contextual typing of individual positions needs the element
+type (e.g., `(x: string) => number`). This caused callbacks at rest positions to receive an array
+type as their contextual type, which doesn't provide parameter types → false TS7006.
+
+The `variadic_tuple_element_type` path (used when there are tail elements after the rest) correctly
+handled this via `expand_tuple_rest()`, but the simpler path (rest at end, no tail) used direct
+indexing without unwrapping.
+
+**Fix (1 file, +2 tests)**:
+- **`contextual/extractors.rs`**: Added `rest_element_contextual_type()` helper that extracts the
+  element type from array types (`TypeData::Array(elem) → elem`) and variadic tuple expansions.
+  Applied in `TupleElementExtractor::visit_tuple` (array literal contextual typing) and
+  `extract_param_type_at_inner` (rest parameter contextual typing for function calls).
+- **Tests**: 2 unit tests in `contextual_tests.rs` covering both tuple element extraction and
+  rest parameter call contextual typing with `[A, ...B[]]` patterns.
+
+**Conformance tests fixed**: `genericCallInferenceConditionalType1` (+1),
+`genericCallInferenceConditionalType2` (+1), `privateNamesConstructorChain-1` (+1),
+`privateNamesConstructorChain-2` (+1)
+
+### Remaining types/tuple failures (11 tests, mostly fingerprint-only)
+
+**Error-code failures**:
+- **contextualTypeTupleEnd**: Missing TS2345 (empty args to variadic rest), extra TS7006
+  (generic variadic tuple `createSelector` — needs generic inference through variadic tuples)
+- **restTupleElements1**: Missing TS17019+TS2574 (parser issue: `[...string?]` triggers TS1005
+  instead of semantic errors), extra TS7006 reduced but generic case remains
+
+**Fingerprint-only failures** (error codes match, locations/messages differ):
+- arityAndOrderCompatibility01, contextualTypeWithTuple, optionalTupleElements1,
+  strictTupleLength, tupleElementTypes1, typeInferenceWithTupleType,
+  unionsOfTupleTypes1, variadicTuples1, variadicTuples2
+
+### Broader TS7006 false positive analysis
+44 tests had extra TS7006 before this fix. The fix addresses cases where callbacks are in
+non-variadic tuple rest positions. Many remaining TS7006 false positives are from:
+- Generic inference failures (contextual types not flowing through type parameters)
+- Module augmentation (TS2454/TS2339 often co-occurring with TS7006)
+- Overload resolution (contextual type not selected from correct overload)
 
 ## Session 2026-03-04u — Import type TS2307 for unresolved modules (+3 conf)
 
