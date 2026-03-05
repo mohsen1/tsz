@@ -142,11 +142,11 @@ impl<'a> EnumEvaluator<'a> {
             self.set_current_enum(&ident.escaped_text);
         }
 
-        // Track the last numeric value for auto-increment
-        // None means we haven't seen any numeric value yet (start at 0)
-        // Some(-1) sentinel would mean previous was non-numeric (string/computed)
+        // Track the last numeric value for auto-increment.
+        // tsc uses f64 arithmetic internally, so float values auto-increment correctly:
+        //   enum E { a = 0.1, b } → b = 1.1
         let mut last_numeric_value: Option<i64> = None;
-        // Track if we've seen a non-numeric initializer (string or computed)
+        let mut last_float_value: Option<f64> = None;
         let mut had_non_numeric = false;
 
         for &member_idx in &enum_data.members.nodes {
@@ -172,8 +172,23 @@ impl<'a> EnumEvaluator<'a> {
                     // Previous member was non-numeric (string/computed)
                     // This is a TypeScript error - member needs explicit initializer
                     EnumValue::Computed
+                } else if let Some(f) = last_float_value {
+                    // Previous was a float - auto-increment in f64 space
+                    let next = f + 1.0;
+                    last_float_value = Some(next);
+                    // Check if result is an exact integer
+                    if next == (next as i64) as f64
+                        && next >= i64::MIN as f64
+                        && next <= i64::MAX as f64
+                    {
+                        last_float_value = None;
+                        last_numeric_value = Some(next as i64);
+                        EnumValue::Number(next as i64)
+                    } else {
+                        EnumValue::Float(next)
+                    }
                 } else {
-                    // Either first member or previous was numeric
+                    // Either first member or previous was integer
                     let next_val = last_numeric_value.map_or(0, |v| v + 1);
                     last_numeric_value = Some(next_val);
                     EnumValue::Number(next_val)
@@ -184,16 +199,18 @@ impl<'a> EnumEvaluator<'a> {
                 match &evaluated {
                     EnumValue::Number(n) => {
                         last_numeric_value = Some(*n);
+                        last_float_value = None;
                         had_non_numeric = false;
                     }
                     EnumValue::Float(f) => {
-                        // Float values: auto-increment uses truncated integer
-                        last_numeric_value = Some(*f as i64);
+                        last_float_value = Some(*f);
+                        last_numeric_value = None;
                         had_non_numeric = false;
                     }
                     _ => {
                         // String or computed - can't auto-increment after
                         last_numeric_value = None;
+                        last_float_value = None;
                         had_non_numeric = true;
                     }
                 }
