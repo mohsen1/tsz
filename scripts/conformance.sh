@@ -35,7 +35,7 @@ Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
 Commands:
   generate    Generate TSC cache locally (if not checked in)
   run         Run conformance tests against TSC cache (auto-diffs vs baseline)
-  analyze     Analyze failures: categorize, rank by impact, find easy wins
+  analyze     Analyze snapshot offline: root-cause campaigns, quick wins, code families
   areas       Analyze pass/fail rates by test directory area
   diff        Show regressions/improvements vs last snapshot baseline
   all         Generate cache (if needed) and run tests (default)
@@ -54,8 +54,17 @@ Run options:
   --no-cache        Force cache regeneration even if cache exists
 
 Analyze options:
-  --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
-  --top N           Show top N items per section (default: 20)
+  --campaigns       Show recommended root-cause campaigns
+  --campaign NAME   Show one campaign in detail
+  --category CAT    Legacy alias: false-positive, close, one-missing, one-extra, campaigns
+  --one-missing     Show tests fixable by adding one missing code
+  --one-extra       Show tests fixable by removing one extra code
+  --false-positives Show codes/tests emitted incorrectly
+  --code TSXXXX     Show tests involving a specific diagnostic code
+  --extra-code TSX  Show tests where a code is emitted as extra
+  --close N         Show tests within diff <= N of passing
+  --paths-only      Output only test paths for code queries
+  --top N           Show top N rows in detailed views (default: 20)
 
 Areas options:
   --depth N         Grouping depth: 1=top-level, 2=sub-areas (default: 1)
@@ -66,12 +75,15 @@ Examples:
   ./scripts/conformance.sh run --max 100              # Quick smoke test
   ./scripts/conformance.sh run --max 20 --verbose     # Verbose with file bodies
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
-  ./scripts/conformance.sh analyze                    # Full failure analysis
+  ./scripts/conformance.sh analyze                    # Offline strategy overview
+  ./scripts/conformance.sh analyze --campaigns        # Ranked root-cause campaigns
+  ./scripts/conformance.sh analyze --campaign big3    # Deep dive one campaign
   ./scripts/conformance.sh areas --depth 2            # Sub-area breakdown
 
 Note: Fingerprint comparison (code + location + message) is always enabled.
       Binaries are automatically built if not found.
       Cache: scripts/tsc-cache-full.json
+      Offline analysis reads scripts/conformance-detail.json from the last snapshot.
 EOF
 }
 
@@ -406,51 +418,13 @@ run_tests() {
 }
 
 analyze_tests() {
-    local category_filter=""
-    local top_n=20
-    local extra_args=()
-
-    # Parse analyze-specific args
-    local args=("$@")
-    local i=0
-    while [ $i -lt ${#args[@]} ]; do
-        case "${args[$i]}" in
-            --category)
-                i=$((i + 1))
-                category_filter="${args[$i]}"
-                ;;
-            --top)
-                i=$((i + 1))
-                top_n="${args[$i]}"
-                ;;
-            *)
-                extra_args+=("${args[$i]}")
-                ;;
-        esac
-        i=$((i + 1))
-    done
-
-    echo -e "${GREEN}Running conformance tests for analysis...${NC}"
+    echo -e "${GREEN}Analyzing saved conformance snapshot...${NC}"
+    echo "Source: scripts/conformance-detail.json"
+    echo "Method: root-cause campaigns first, quick wins second"
+    echo ""
 
     cd "$REPO_ROOT"
-
-    # Run with --print-test to get expected/actual per test
-    local tmpfile
-    tmpfile=$(mktemp)
-    trap "rm -f '$tmpfile'" EXIT
-
-    $RUNNER_BIN \
-        --test-dir "$TEST_DIR" \
-        --cache-file "$CACHE_FILE" \
-        --tsz-binary "$TSZ_BIN" \
-        --workers $WORKERS \
-        --print-test \
-        "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
-
-    # Use python to analyze the output
-    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" \
-        ${category_filter:+--category "$category_filter"} \
-        --top "$top_n"
+    python3 "$REPO_ROOT/scripts/query-conformance.py" "$@"
 }
 
 areas_analysis() {
@@ -800,13 +774,6 @@ case "$COMMAND" in
         run_tests "${REMAINING_ARGS[@]}"
         ;;
     analyze)
-        check_submodule_clean
-        ensure_binaries
-        if [ "$NO_CACHE" = "true" ]; then
-            generate_cache "true"
-        else
-            ensure_cache
-        fi
         analyze_tests "${REMAINING_ARGS[@]}"
         ;;
     areas)

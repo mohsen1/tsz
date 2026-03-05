@@ -7,6 +7,10 @@ Usage:
   # Show overview of what to work on next
   python3 scripts/query-conformance.py
 
+  # Show root-cause campaigns instead of one-off quick wins
+  python3 scripts/query-conformance.py --campaigns
+  python3 scripts/query-conformance.py --campaign contextual-typing
+
   # Show tests fixable by adding a single missing code (highest impact)
   python3 scripts/query-conformance.py --one-missing
 
@@ -37,6 +41,127 @@ from pathlib import Path
 
 DETAIL_FILE = Path(__file__).parent / "conformance-detail.json"
 
+CAMPAIGNS = {
+    "big3": {
+        "title": "Big 3 assignability/property/call compatibility",
+        "description": "Shared root causes behind TS2322/TS2339/TS2345 in both missing and extra form.",
+        "codes": ["TS2322", "TS2339", "TS2345", "TS7006", "TS2769"],
+        "keywords": [
+            "contextual",
+            "inference",
+            "correlated",
+            "contravariant",
+            "intersection",
+            "union",
+            "generic",
+            "mapped",
+            "indexed",
+            "property",
+        ],
+        "areas": ["types", "expressions", "controlFlow", "classes", "jsx", "jsdoc", "salsa"],
+        "focus": [
+            "Route TS2322/TS2345-family checks through one assignability boundary and remove checker-local forks.",
+            "Audit any-propagation, union/intersection compatibility, and contextual inference before relation checks.",
+            "Prefer fixes that reduce both missing and extra diagnostics in the same family.",
+        ],
+    },
+    "contextual-typing": {
+        "title": "Contextual typing and inference transport",
+        "description": "Contextual types fail to reach callbacks, object literals, rest tuples, and instantiated applications.",
+        "codes": ["TS2322", "TS2345", "TS7006", "TS2769", "TS2416"],
+        "keywords": [
+            "contextual",
+            "inference",
+            "instantiate",
+            "overload",
+            "callback",
+            "tuple",
+            "rest",
+            "application",
+            "readonly",
+        ],
+        "areas": ["expressions", "types", "jsx"],
+        "focus": [
+            "Ensure Lazy/Application/ThisType wrappers are evaluated before extracting contextual parameter or prop types.",
+            "Keep contextual information flowing through tuple-rest, overload selection, and callback inference.",
+            "Treat TS7006 and TS2769 as secondary signals of the same transport bug, not separate work items.",
+        ],
+    },
+    "property-resolution": {
+        "title": "Property and index resolution on unions/intersections",
+        "description": "Property lookup and index access diverge from tsc on merged shapes, symbols, and partial member presence.",
+        "codes": ["TS2339", "TS7053", "TS2538", "TS7017", "TS2304"],
+        "keywords": [
+            "property",
+            "index",
+            "computed",
+            "symbol",
+            "intersection",
+            "union",
+            "member",
+            "indexed",
+        ],
+        "areas": ["types", "expressions", "classes", "externalModules"],
+        "focus": [
+            "Centralize property/index lookup semantics in solver visitors instead of checker-side shape matching.",
+            "Match tsc precedence rules for numeric vs string index signatures and partial union member absence.",
+            "Use one path for property lookup so TS2339/TS7053/TS7017 move together.",
+        ],
+    },
+    "narrowing-flow": {
+        "title": "Control-flow and narrowing transport",
+        "description": "Narrowing information is lost across aliases, predicates, optional chains, and assignment edges.",
+        "codes": ["TS2339", "TS18048", "TS2454", "TS7022", "TS1360", "TS2322", "TS2345"],
+        "keywords": [
+            "controlflow",
+            "discriminant",
+            "predicate",
+            "optional",
+            "alias",
+            "narrow",
+            "catch",
+            "finally",
+        ],
+        "areas": ["controlFlow", "expressions/typeGuards", "types/literal"],
+        "focus": [
+            "Transport narrowing through optional-chain prefixes, aliases, and destructuring targets.",
+            "Unify predicate, equality, and nullish narrowing so intermediate references narrow consistently.",
+            "Treat TS2454/TS18048/TS2339 clusters as one CFA problem, not isolated diagnostics.",
+        ],
+    },
+    "parser-recovery": {
+        "title": "Parser recovery diagnostic selection",
+        "description": "Catch-all recovery emits the wrong TS1xxx code and cascades into secondary parser noise.",
+        "codes": ["TS1005", "TS1128", "TS1109", "TS1434", "TS1003", "TS1134"],
+        "keywords": [
+            "parser",
+            "modifier",
+            "async",
+            "export",
+            "import",
+            "class",
+        ],
+        "areas": [],
+        "focus": [
+            "Reduce TS1005 catch-all usage and choose the most specific recovery code first.",
+            "Fix recovery boundaries in import/export/class-member contexts to collapse cascaded parser errors.",
+            "Measure parser fixes by code-family deltas, not by individual malformed test files.",
+        ],
+    },
+    "jsdoc-jsx-salsa": {
+        "title": "Semantic integration areas: JSDoc, JSX, Salsa",
+        "description": "These areas are broad consumers of the same solver/checker mechanics and should be worked as campaigns.",
+        "codes": ["TS2322", "TS2339", "TS2345", "TS7006", "TS2353", "TS2786"],
+        "keywords": ["jsdoc", "jsx", "salsa", "defaultprops", "component", "typedef", "callback"],
+        "areas": ["jsdoc", "jsx", "salsa"],
+        "focus": [
+            "Do not chase these by area-only pass rate; bucket failures by shared semantics first.",
+            "Use these suites as regression baskets for contextual typing, assignability, and property lookup fixes.",
+            "Reserve area-local fixes for true syntax or feature-surface gaps after semantic root causes are addressed.",
+        ],
+    },
+}
+
 
 def load_detail():
     if not DETAIL_FILE.exists():
@@ -47,10 +172,88 @@ def load_detail():
         return json.load(f)
 
 
+def basename(path):
+    return path.rsplit("/", 1)[-1] if "/" in path else path
+
+
+def area_of(path):
+    marker = "/cases/compiler/"
+    if marker in path:
+        rest = path.split(marker, 1)[1]
+        parts = rest.split("/")
+        if len(parts) >= 2:
+            return "/".join(parts[:-1])
+        return parts[0]
+    return ""
+
+
+def count_codes(failure):
+    counts = Counter()
+    for code in failure.get("m", []):
+        counts[code] += 1
+    for code in failure.get("x", []):
+        counts[code] += 1
+    return counts
+
+
+def match_campaign(path, failure, config):
+    low = path.lower()
+    area = area_of(path)
+    score = 0
+    matched_codes = []
+    for code in config.get("codes", []):
+        if code in failure.get("m", []) or code in failure.get("x", []):
+            score += 3
+            matched_codes.append(code)
+
+    for keyword in config.get("keywords", []):
+        if keyword.lower() in low:
+            score += 1
+
+    area_match = False
+    for prefix in config.get("areas", []):
+        if area == prefix or area.startswith(prefix + "/"):
+            score += 2
+            area_match = True
+
+    matched = bool(matched_codes) or area_match
+    return matched, score, matched_codes, area
+
+
+def build_campaign_result(data, name):
+    config = CAMPAIGNS[name]
+    failures = data["failures"]
+    matched_tests = []
+    code_counts = Counter()
+    area_counts = Counter()
+    for path, failure in failures.items():
+        matched, score, matched_codes, area = match_campaign(path, failure, config)
+        if not matched:
+            continue
+        diff = len(failure.get("m", [])) + len(failure.get("x", []))
+        matched_tests.append((score, diff, path, failure))
+        code_counts.update(count_codes(failure))
+        if area:
+            area_counts[area] += 1
+
+    matched_tests.sort(key=lambda item: (-item[0], item[1], basename(item[2]).lower(), item[2]))
+    return {
+        "name": name,
+        "config": config,
+        "tests": matched_tests,
+        "code_counts": code_counts,
+        "area_counts": area_counts,
+    }
+
+
 def show_overview(data):
     s = data["summary"]
     a = data["aggregates"]
     print(f"Conformance: {s['passed']}/{s['total']} ({s['passed']/s['total']*100:.1f}%)")
+    print()
+
+    print("Recommended campaigns (root-cause first):")
+    show_campaigns(data, top_n=5, sample_n=4, include_header=False)
     print()
 
     cats = a["categories"]
@@ -225,8 +428,72 @@ def show_close(data, max_diff):
         print(f"  ... and {len(close) - 40} more")
 
 
+def show_campaigns(data, top_n=5, sample_n=5, include_header=True):
+    if include_header:
+        print("Recommended campaigns (root-cause first):")
+    results = []
+    for name in CAMPAIGNS:
+        result = build_campaign_result(data, name)
+        results.append(result)
+
+    results.sort(key=lambda item: (-len(item["tests"]), item["name"]))
+    for index, result in enumerate(results[:top_n], start=1):
+        config = result["config"]
+        print(f"{index}. {result['name']} - {config['title']}")
+        print(f"   impact: {len(result['tests'])} failing tests")
+        top_codes = ", ".join(
+            f"{code}={count}" for code, count in result["code_counts"].most_common(5)
+        )
+        if top_codes:
+            print(f"   codes: {top_codes}")
+        print(f"   why: {config['description']}")
+        samples = [basename(path) for _, _, path, _ in result["tests"][:sample_n]]
+        if samples:
+            print(f"   samples: {', '.join(samples)}")
+
+
+def show_campaign(data, name, top_n=15):
+    if name not in CAMPAIGNS:
+        print(f"Unknown campaign '{name}'.")
+        print("Available campaigns:")
+        for key in CAMPAIGNS:
+            print(f"  {key}")
+        return
+
+    result = build_campaign_result(data, name)
+    config = result["config"]
+    print(f"Campaign: {name}")
+    print(f"Title: {config['title']}")
+    print(f"Impact: {len(result['tests'])} failing tests")
+    print(f"Why: {config['description']}")
+    print()
+    print("Focus:")
+    for item in config["focus"]:
+        print(f"  - {item}")
+    print()
+    if result["code_counts"]:
+        print("Top codes in this campaign:")
+        for code, count in result["code_counts"].most_common(10):
+            print(f"  {code:>8s}: {count:>3d}")
+        print()
+    if result["area_counts"]:
+        print("Most affected areas:")
+        for area, count in result["area_counts"].most_common(10):
+            print(f"  {area}: {count}")
+        print()
+    print("Representative failing tests:")
+    for score, diff, path, failure in result["tests"][:top_n]:
+        m = ",".join(failure.get("m", []))
+        x = ",".join(failure.get("x", []))
+        print(f"  [score={score} diff={diff}] {basename(path)}  missing=[{m}]  extra=[{x}]")
+    if len(result["tests"]) > top_n:
+        print(f"  ... and {len(result['tests']) - top_n} more")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Query conformance snapshot offline")
+    parser.add_argument("--campaigns", action="store_true", help="Show root-cause campaigns")
+    parser.add_argument("--campaign", type=str, help="Show one root-cause campaign in detail")
     parser.add_argument("--one-missing", action="store_true", help="Show 1-missing-0-extra tests")
     parser.add_argument("--one-extra", action="store_true", help="Show 1-extra-0-missing tests")
     parser.add_argument("--false-positives", action="store_true", help="Show false positive breakdown")
@@ -234,11 +501,31 @@ def main():
     parser.add_argument("--extra-code", type=str, help="Show tests where a code is emitted as extra")
     parser.add_argument("--close", type=int, help="Show tests within diff <= N of passing")
     parser.add_argument("--paths-only", action="store_true", help="Output only test paths (for piping)")
+    parser.add_argument("--top", type=int, default=20, help="Limit rows shown in detailed views")
+    parser.add_argument(
+        "--category",
+        type=str,
+        help="Legacy alias: false-positive, close, one-missing, one-extra, campaigns",
+    )
     args = parser.parse_args()
 
     data = load_detail()
 
-    if args.one_missing:
+    if args.category == "false-positive":
+        show_false_positives(data)
+    elif args.category == "close":
+        show_close(data, 2)
+    elif args.category == "one-missing":
+        show_one_missing(data)
+    elif args.category == "one-extra":
+        show_one_extra(data)
+    elif args.category == "campaigns":
+        show_campaigns(data, top_n=min(args.top, len(CAMPAIGNS)), sample_n=4)
+    elif args.campaigns:
+        show_campaigns(data, top_n=min(args.top, len(CAMPAIGNS)), sample_n=4)
+    elif args.campaign:
+        show_campaign(data, args.campaign, top_n=args.top)
+    elif args.one_missing:
         show_one_missing(data)
     elif args.one_extra:
         show_one_extra(data)
