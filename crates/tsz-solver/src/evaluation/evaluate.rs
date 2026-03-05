@@ -824,22 +824,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         };
 
-        matches!(
-            key,
+        match key {
             TypeData::TypeParameter(_)
-                | TypeData::Infer(_) // Type parameter for conditional types
-                | TypeData::Conditional(_)
-                | TypeData::Mapped(_)
-                | TypeData::IndexAccess(_, _)
-                | TypeData::KeyOf(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::TemplateLiteral(_)
-                | TypeData::ReadonlyType(_)
-                | TypeData::StringIntrinsic { .. }
-                | TypeData::ThisType // Context-dependent polymorphic type
-                                     // Note: Lazy and Application are REMOVED (Task #37)
-                                     // They are now handled by the Canonicalizer (Task #32)
-        )
+            | TypeData::Infer(_)
+            | TypeData::Conditional(_)
+            | TypeData::Mapped(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::KeyOf(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::TemplateLiteral(_)
+            | TypeData::ReadonlyType(_)
+            | TypeData::StringIntrinsic { .. }
+            | TypeData::ThisType => true,
+            // Intersection/union types containing complex members are also complex.
+            // Without this, the evaluator's subtype-based simplification can incorrectly
+            // collapse union members like `(T&U&1) | (T&U&2) | (T&U&3)` to just `T&U&2`
+            // because the constraint fallback determines some branches are always `never`.
+            // TSC does not perform such simplification on unions with type parameters.
+            TypeData::Intersection(list_id) | TypeData::Union(list_id) => {
+                let members = self.interner.type_list(list_id);
+                members.iter().any(|&m| self.is_complex_type(m))
+            }
+            _ => false,
+        }
     }
 
     /// Evaluate an intersection type by recursively evaluating members and re-interning.
