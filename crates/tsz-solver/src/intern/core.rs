@@ -279,6 +279,14 @@ pub struct TypeInterner {
     /// Registered alongside `boxed_types` so subtype checking can identify boxed
     /// types even when `TypeEnvironment` is unavailable.
     boxed_def_ids: DashMap<IntrinsicKind, Vec<DefId>, FxBuildHasher>,
+    /// Global allocation counter for deterministic type ordering.
+    /// The sharded interner embeds shard index in TypeId low bits, so raw TypeId
+    /// comparison is hash-dependent. This counter provides allocation-order
+    /// comparison that approximates tsc's source-order type ID allocation.
+    alloc_counter: AtomicU32,
+    /// Maps TypeId -> allocation order for types that need ordering.
+    /// Only populated for non-intrinsic types. Used by `compare_union_members`.
+    alloc_order: DashMap<TypeId, u32, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -316,6 +324,8 @@ impl TypeInterner {
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
+            alloc_counter: AtomicU32::new(0),
+            alloc_order: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -599,7 +609,11 @@ impl TypeInterner {
                 e.insert(local_index);
                 let key_arc = Arc::new(key);
                 inner.index_to_key.insert(local_index, key_arc);
-                self.make_id(local_index, shard_idx as u32)
+                let id = self.make_id(local_index, shard_idx as u32);
+                // Record allocation order for deterministic union member sorting.
+                let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
+                self.alloc_order.insert(id, order);
+                id
             }
             Entry::Occupied(e) => {
                 // Another thread inserted first, use their ID
@@ -1061,8 +1075,8 @@ impl TypeInterner {
 
         // Both are non-built-in types. Use semantic identity for ordering
         // where TypeId creation order doesn't match tsc's source-order allocation.
-        // For literals, TypeId creation order already approximates tsc's order,
-        // so we skip to the final TypeId fallback.
+        // The sharded interner embeds shard index in TypeId, making raw TypeId
+        // comparison hash-dependent. Semantic comparison ensures deterministic order.
         if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
             match (&data_a, &data_b) {
                 // Lazy type references and Enum types: sort by DefId (source declaration order)
@@ -1131,7 +1145,16 @@ impl TypeInterner {
                 _ => {}
             }
         }
-        a.0.cmp(&b.0)
+        // Fallback: compare by allocation order (monotonic counter).
+        // This approximates tsc's type ID allocation order, unlike raw TypeId
+        // comparison which is hash-dependent due to the sharded interner.
+        let order_a = self.alloc_order.get(&a).map(|r| *r.value());
+        let order_b = self.alloc_order.get(&b).map(|r| *r.value());
+        match (order_a, order_b) {
+            (Some(oa), Some(ob)) => oa.cmp(&ob),
+            // Intrinsic types have no alloc_order entry; use raw TypeId
+            _ => a.0.cmp(&b.0),
+        }
     }
 
     pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
