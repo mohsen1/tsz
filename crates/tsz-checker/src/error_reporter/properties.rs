@@ -381,11 +381,16 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report no index signature error.
+    ///
+    /// `expr_idx` is the element access expression node (for TS7053 error span).
+    /// `arg_idx` is the argument/index node inside brackets (for TS2551 "did you mean" span).
+    /// tsc reports TS7053 at the full expression, but TS2551 at the argument.
     pub(crate) fn error_no_index_signature_at(
         &mut self,
         index_type: TypeId,
         object_type: TypeId,
-        idx: NodeIndex,
+        expr_idx: NodeIndex,
+        arg_idx: NodeIndex,
     ) {
         // Honor removed-but-still-effective suppressImplicitAnyIndexErrors flag
         if self.ctx.compiler_options.suppress_implicit_any_index_errors {
@@ -407,7 +412,7 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if self.is_element_access_on_this_or_super_with_any_base(idx) {
+        if self.is_element_access_on_this_or_super_with_any_base(expr_idx) {
             return;
         }
 
@@ -426,8 +431,9 @@ impl<'a> CheckerState<'a> {
             };
 
             if suggestion.is_some() {
-                // If there's a suggestion, TypeScript emits TS2551 instead of TS7053
-                self.error_property_not_exist_at(prop_name_str, object_type, idx);
+                // If there's a suggestion, TypeScript emits TS2551 instead of TS7053.
+                // TS2551 is reported at the argument node (e.g., "foo" in i["foo"]).
+                self.error_property_not_exist_at(prop_name_str, object_type, arg_idx);
                 return;
             }
         }
@@ -439,28 +445,43 @@ impl<'a> CheckerState<'a> {
             "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
         );
 
-        self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
+        // TS7053 is reported at the full element access expression.
+        self.error_at_node(expr_idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
     }
 
     /// TypeScript suppresses TS7053 for `this[...]`/`super[...]` when the class extends an `any` base.
     fn is_element_access_on_this_or_super_with_any_base(&mut self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+        // idx may be the element access expression itself or its argument node.
+        let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
-        let Some(parent) = self.ctx.arena.get(ext.parent) else {
+
+        let access = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            // idx IS the element access expression
+            self.ctx.arena.get_access_expr(node)
+        } else {
+            // idx is the argument — find parent element access
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                return false;
+            };
+            let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                return false;
+            };
+            if parent.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                return false;
+            }
+            let access = self.ctx.arena.get_access_expr(parent);
+            if access.as_ref().is_some_and(|a| a.name_or_argument != idx) {
+                return false;
+            }
+            access
+        };
+
+        let Some(access) = access else {
             return false;
         };
-        if parent.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return false;
-        }
-        let Some(access) = self.ctx.arena.get_access_expr(parent) else {
-            return false;
-        };
-        if access.name_or_argument != idx {
-            return false;
-        }
         let Some(expr_node) = self.ctx.arena.get(access.expression) else {
             return false;
         };

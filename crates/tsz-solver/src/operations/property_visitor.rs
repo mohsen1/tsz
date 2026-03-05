@@ -207,18 +207,20 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             return Some(result);
         }
 
-        // Check string index signature
-        if let Some(ref idx) = shape.string_index {
+        // Check numeric index signature FIRST if property name looks numeric.
+        // Number index signatures take precedence over string index signatures
+        // for numeric keys (e.g., obj["0"] or obj[0] prefers [n: number] over [s: string]).
+        let resolver = IndexSignatureResolver::new(self.interner());
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(ref idx) = shape.number_index
+        {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
             ));
         }
 
-        // Check numeric index signature if property name looks numeric
-        let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name)
-            && let Some(ref idx) = shape.number_index
-        {
+        // Check string index signature
+        if let Some(ref idx) = shape.string_index {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
             ));
@@ -423,18 +425,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return Some(result);
         }
 
-        // Check string index signature
-        if let Some(ref idx) = shape.string_index {
+        // Check numeric index signature FIRST if property name looks numeric.
+        // Number index signatures take precedence over string index signatures
+        // for numeric keys (e.g., obj["0"] or obj[0] prefers [n: number] over [s: string]).
+        let resolver = IndexSignatureResolver::new(self.interner());
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(ref idx) = shape.number_index
+        {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
             ));
         }
 
-        // Check numeric index signature if property name looks numeric
-        let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name)
-            && let Some(ref idx) = shape.number_index
-        {
+        // Check string index signature
+        if let Some(ref idx) = shape.string_index {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
             ));

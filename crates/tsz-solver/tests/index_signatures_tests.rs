@@ -388,3 +388,61 @@ fn test_readonly_array_has_readonly_number_index() {
         "readonly array should have readonly number index"
     );
 }
+
+/// When an object has both string and number index signatures, property access
+/// for a numeric key name (e.g., "0") should prefer the number index signature.
+/// This matches tsc behavior: `obj["0"]` on `{ [n: number]: number, [s: string]: string | number }`
+/// resolves to `number`, not `string | number`.
+#[test]
+fn test_numeric_key_prefers_number_index_over_string_index() {
+    use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+
+    let db = TypeInterner::new();
+
+    // { [n: number]: number, [s: string]: string | number }
+    let string_or_number = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let obj = db.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: string_or_number,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let evaluator = PropertyAccessEvaluator::new(&db);
+
+    // Access with numeric key "0" should use number index → number
+    let result = evaluator.resolve_property_access(obj, "0");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            assert_eq!(
+                type_id,
+                TypeId::NUMBER,
+                "numeric key '0' should resolve via number index to NUMBER, not string index"
+            );
+        }
+        other => panic!("expected Success, got {other:?}"),
+    }
+
+    // Access with non-numeric key "foo" should use string index → string | number
+    let result = evaluator.resolve_property_access(obj, "foo");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            assert_eq!(
+                type_id, string_or_number,
+                "non-numeric key 'foo' should resolve via string index"
+            );
+        }
+        other => panic!("expected Success, got {other:?}"),
+    }
+}
