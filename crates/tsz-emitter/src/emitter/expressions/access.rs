@@ -160,37 +160,48 @@ impl<'a> Printer<'a> {
             }
             break;
         }
-        if let Some(inner_node) = self.arena.get(idx)
-            && inner_node.kind == SyntaxKind::NumericLiteral as u16
-        {
-            // Check the source text of the numeric literal to see if it already
-            // contains a decimal point or exponent.  If not, we need "..".
-            let needs_extra_dot = if let Some(text) = self.source_text {
-                let start = inner_node.pos as usize;
-                let end = inner_node.end as usize;
-                if end <= text.len() && start < end {
-                    let lit = &text[start..end];
-                    let num_text = lit.trim();
-                    // Only plain decimal integers need `..`.
-                    // Hex (0x/0X), octal (0o/0O), and binary (0b/0B) never
-                    // need it because their prefix already disambiguates.
-                    let is_prefixed = num_text.starts_with("0x")
-                        || num_text.starts_with("0X")
-                        || num_text.starts_with("0o")
-                        || num_text.starts_with("0O")
-                        || num_text.starts_with("0b")
-                        || num_text.starts_with("0B");
-                    !is_prefixed
-                        && !num_text.contains('.')
-                        && !num_text.contains('e')
-                        && !num_text.contains('E')
+        if let Some(inner_node) = self.arena.get(idx) {
+            if inner_node.kind == SyntaxKind::NumericLiteral as u16 {
+                // Check the source text of the numeric literal to see if it already
+                // contains a decimal point or exponent.  If not, we need "..".
+                let needs_extra_dot = if let Some(text) = self.source_text {
+                    let start = inner_node.pos as usize;
+                    let end = inner_node.end as usize;
+                    if end <= text.len() && start < end {
+                        let lit = &text[start..end];
+                        let num_text = lit.trim();
+                        // Only plain decimal integers need `..`.
+                        // Hex (0x/0X), octal (0o/0O), and binary (0b/0B) never
+                        // need it because their prefix already disambiguates.
+                        let is_prefixed = num_text.starts_with("0x")
+                            || num_text.starts_with("0X")
+                            || num_text.starts_with("0o")
+                            || num_text.starts_with("0O")
+                            || num_text.starts_with("0b")
+                            || num_text.starts_with("0B");
+                        !is_prefixed
+                            && !num_text.contains('.')
+                            && !num_text.contains('e')
+                            && !num_text.contains('E')
+                    } else {
+                        false
+                    }
                 } else {
                     false
+                };
+                if needs_extra_dot {
+                    self.write("..");
+                    return;
                 }
-            } else {
-                false
-            };
-            if needs_extra_dot {
+            }
+            // After const enum inlining, the expression is still a PropertyAccess/
+            // ElementAccess AST node but the output is a plain integer like `100`.
+            // We need `100..toString()`, not `100.toString()` (syntax error).
+            // Only needed when comments are removed — with comments the inline
+            // comment `/* Foo.X */` separates the number from the dot.
+            if self.ctx.options.remove_comments
+                && self.resolve_const_enum_needs_double_dot(idx, inner_node)
+            {
                 self.write("..");
                 return;
             }
@@ -434,9 +445,10 @@ impl<'a> Printer<'a> {
         // Look up in const enum values
         let members = self.const_enum_values.get(enum_name.as_str())?;
 
-        // The argument must be a string literal (the member name)
+        // The argument must be a string literal or no-substitution template literal
         let arg_node = self.arena.get(access.name_or_argument)?;
-        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
+        let is_template = arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 && !is_template {
             return None;
         }
         let member_name = &self.arena.get_literal(arg_node)?.text;
@@ -445,12 +457,49 @@ impl<'a> Printer<'a> {
         if self.ctx.options.remove_comments {
             Some(value.to_js_literal())
         } else {
-            Some(format!(
-                "{} /* {}[\"{}\"] */",
-                value.to_js_literal(),
-                enum_name,
-                member_name
-            ))
+            // Use the original source text for the argument to preserve escape
+            // sequences (e.g., "\u{44}") and quote style (backticks vs quotes).
+            let arg_text = self
+                .source_text
+                .and_then(|text| {
+                    let start = arg_node.pos as usize;
+                    let end = arg_node.end as usize;
+                    if end <= text.len() && start < end {
+                        Some(text[start..end].trim())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if is_template {
+                        // Can't get source text; fall back
+                        ""
+                    } else {
+                        ""
+                    }
+                });
+            if !arg_text.is_empty() {
+                Some(format!(
+                    "{} /* {}[{}] */",
+                    value.to_js_literal(),
+                    enum_name,
+                    arg_text
+                ))
+            } else if is_template {
+                Some(format!(
+                    "{} /* {}[`{}`] */",
+                    value.to_js_literal(),
+                    enum_name,
+                    member_name
+                ))
+            } else {
+                Some(format!(
+                    "{} /* {}[\"{}\"] */",
+                    value.to_js_literal(),
+                    enum_name,
+                    member_name
+                ))
+            }
         }
     }
 
@@ -481,7 +530,7 @@ impl<'a> Printer<'a> {
                 return value.is_negative();
             }
         }
-        // Check element access: EnumName["Member"]
+        // Check element access: EnumName["Member"] or EnumName[`Member`]
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
         {
@@ -489,7 +538,8 @@ impl<'a> Printer<'a> {
             let arg_node = self.arena.get(access.name_or_argument);
             if let (Some(expr), Some(arg)) = (expr_node, arg_node)
                 && expr.kind == SyntaxKind::Identifier as u16
-                && arg.kind == SyntaxKind::StringLiteral as u16
+                && (arg.kind == SyntaxKind::StringLiteral as u16
+                    || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
                 && let Some(enum_ident) = self.arena.get_identifier(expr)
                 && let Some(lit) = self.arena.get_literal(arg)
                 && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
@@ -498,6 +548,51 @@ impl<'a> Printer<'a> {
                 return value.is_negative();
             }
         }
+        false
+    }
+
+    /// Check if a const enum access expression resolves to a non-negative integer,
+    /// which would need double-dot for property access (e.g., `100..toString()`).
+    fn resolve_const_enum_needs_double_dot(&self, idx: NodeIndex, node: &Node) -> bool {
+        if self.const_enum_values.is_empty() {
+            return false;
+        }
+        // Check property access: EnumName.Member
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                if let Some(expr) = self.arena.get(access.expression)
+                    && let Some(name) = self.arena.get(access.name_or_argument)
+                    && expr.kind == SyntaxKind::Identifier as u16
+                    && name.kind == SyntaxKind::Identifier as u16
+                    && let Some(enum_ident) = self.arena.get_identifier(expr)
+                    && let Some(member_ident) = self.arena.get_identifier(name)
+                    && let Some(members) =
+                        self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                    && let Some(value) = members.get(member_ident.escaped_text.as_str())
+                {
+                    return value.needs_double_dot();
+                }
+            }
+        }
+        // Check element access: EnumName["Member"] or EnumName[`Member`]
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                if let Some(expr) = self.arena.get(access.expression)
+                    && let Some(arg) = self.arena.get(access.name_or_argument)
+                    && expr.kind == SyntaxKind::Identifier as u16
+                    && (arg.kind == SyntaxKind::StringLiteral as u16
+                        || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                    && let Some(enum_ident) = self.arena.get_identifier(expr)
+                    && let Some(lit) = self.arena.get_literal(arg)
+                    && let Some(members) =
+                        self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                    && let Some(value) = members.get(lit.text.as_str())
+                {
+                    return value.needs_double_dot();
+                }
+            }
+        }
+        let _ = idx; // suppress unused warning
         false
     }
 
