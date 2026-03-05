@@ -918,6 +918,11 @@ impl<'a> CheckerState<'a> {
             self.check_flow_usage(left_idx, declared_type, sym_id);
         }
 
+        // Compound assignments also read the LHS value. For private setter-only
+        // accessors, this triggers TS2806 ("Private accessor was defined without
+        // a getter"). Evaluate in read context first.
+        let _ = self.get_type_of_node(left_idx);
+
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
@@ -1453,6 +1458,89 @@ mod tests {
             errors.len(),
             1,
             "expected 1 TS2322 for `c = false`, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn private_setter_only_no_false_ts2322() {
+        // A class with a set-only private accessor should not emit TS2322
+        // when assigning to it. The write type (setter param) is `number`,
+        // not the read type (`undefined`).
+        let source = r#"
+            class C {
+                set #foo(a: number) {}
+                bar() {
+                    let x = (this.#foo = 42 * 2);
+                }
+            }
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322,
+            0,
+            "setter-only private accessor should not produce TS2322, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn private_setter_only_read_emits_ts2806() {
+        // Reading from a private setter-only accessor should emit TS2806
+        // ("Private accessor was defined without a getter"), not cascade
+        // into TS2532/TS2488 from the `undefined` read type.
+        let source = r#"
+            class C {
+                set #foo(a: number) {}
+                bar() {
+                    console.log(this.#foo);
+                }
+            }
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2806 = diagnostics.iter().filter(|d| d.code == 2806).count();
+        assert_eq!(
+            ts2806,
+            1,
+            "expected 1 TS2806 for reading setter-only private accessor, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+        // Should NOT produce cascading TS2532 (possibly undefined)
+        let ts2532 = diagnostics.iter().filter(|d| d.code == 2532).count();
+        assert_eq!(ts2532, 0, "should not cascade into TS2532");
+    }
+
+    #[test]
+    fn private_setter_only_compound_assignment_emits_ts2806() {
+        // Compound assignments (`+=`) read the LHS, so setter-only accessors
+        // should trigger TS2806 for the read part.
+        let source = r#"
+            class C {
+                set #val(a: number) {}
+                bar() {
+                    this.#val += 3;
+                }
+            }
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2806 = diagnostics.iter().filter(|d| d.code == 2806).count();
+        assert_eq!(
+            ts2806,
+            1,
+            "expected 1 TS2806 for compound assignment to setter-only private accessor, got: {:?}",
             diagnostics
                 .iter()
                 .map(|d| (d.code, &d.message_text))

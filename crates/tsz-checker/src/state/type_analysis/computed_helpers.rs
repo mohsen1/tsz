@@ -557,8 +557,8 @@ impl<'a> CheckerState<'a> {
         {
             PropertyAccessResult::Success {
                 type_id,
+                write_type,
                 from_index_signature,
-                ..
             } => {
                 if from_index_signature {
                     // Private fields can't come from index signatures
@@ -570,7 +570,27 @@ impl<'a> CheckerState<'a> {
                     );
                     return TypeId::ERROR;
                 }
-                type_id
+                // In write context (assignment target), use the setter parameter type
+                // instead of the read type. For setter-only accessors (no getter),
+                // the read type is `undefined` but assignments should check against
+                // the setter's parameter type.
+                if self.ctx.skip_flow_narrowing {
+                    write_type.unwrap_or(type_id)
+                } else if type_id == TypeId::UNDEFINED && write_type.is_some() {
+                    // TS2806: Reading from a private setter-only accessor.
+                    // The property has a setter but no getter, so reading is invalid.
+                    // Report at the full property access expression (idx), not just the name,
+                    // to match tsc's error location.
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::PRIVATE_ACCESSOR_WAS_DEFINED_WITHOUT_A_GETTER,
+                        diagnostic_codes::PRIVATE_ACCESSOR_WAS_DEFINED_WITHOUT_A_GETTER,
+                    );
+                    return TypeId::ERROR;
+                } else {
+                    type_id
+                }
             }
             PropertyAccessResult::PropertyNotFound { .. } => {
                 // If we got here, we already resolved the symbol, so the private field exists.
