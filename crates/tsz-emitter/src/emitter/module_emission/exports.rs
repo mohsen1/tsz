@@ -530,7 +530,8 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::NAMED_EXPORTS => {
                     // Emit exports.x = x; for each name
                     if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
-                        let value_specs = self.collect_value_specifiers(&named_exports.elements);
+                        let value_specs =
+                            self.collect_local_export_value_specifiers(&named_exports.elements);
                         if value_specs.is_empty() {
                             // `export {}` or all type-only → no-op in CommonJS
                             return;

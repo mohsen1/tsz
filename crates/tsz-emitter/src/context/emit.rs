@@ -131,6 +131,12 @@ pub struct ModuleTransformState {
     /// whether `export default x` should emit `exports.default = exports.x;`
     /// (inlined) or `exports.default = x;` (local declaration exists).
     pub inlined_var_exports: FxHashSet<String>,
+
+    /// Names that have runtime value declarations in the file (syntactically
+    /// determined). Used to filter `export { I }` specifiers where `I` is an
+    /// interface/type-alias/non-instantiated-namespace — these are type-only
+    /// and should not produce `exports.I = I;` at runtime.
+    pub value_declaration_names: FxHashSet<String>,
 }
 
 impl ModuleTransformState {
