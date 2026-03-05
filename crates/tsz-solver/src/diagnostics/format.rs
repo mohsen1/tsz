@@ -343,14 +343,7 @@ impl<'a> TypeFormatter<'a> {
             TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
             TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
-            TypeData::UniqueSymbol(sym) => {
-                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
-                    name
-                } else {
-                    format!("symbol({})", sym.0)
-                };
-                format!("unique symbol {name}")
-            }
+            TypeData::UniqueSymbol(_) => "unique symbol".to_string(),
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)),
             TypeData::ThisType => "this".to_string(),
             TypeData::StringIntrinsic { kind, type_arg } => {

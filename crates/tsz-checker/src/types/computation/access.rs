@@ -704,6 +704,31 @@ impl<'a> CheckerState<'a> {
             report_no_index = true;
         }
 
+        // For unique symbol indices on union types, check that ALL members
+        // support the symbol property. The solver's index access evaluator
+        // silently drops UNDEFINED results from union members, which is correct
+        // for string/number indices (covered by index signatures) but wrong for
+        // unique symbols that can't fall through to index signatures.
+        if !report_no_index
+            && use_index_signature_check
+            && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            && let Some(members) = tsz_solver::type_queries::data::get_union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+        {
+            for member in &members {
+                let member_result = self
+                    .ctx
+                    .types
+                    .resolve_element_access_type(*member, index_type, None);
+                if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+                    report_no_index = true;
+                    break;
+                }
+            }
+        }
+
         if report_no_index {
             // Suppress TS7053 for expando bracket assignments on function types.
             // When `func["prop"] = value` and the object is callable, tsc does not emit
@@ -718,7 +743,12 @@ impl<'a> CheckerState<'a> {
                             object_type_for_access,
                         )));
             if !is_expando_write {
-                self.error_no_index_signature_at(index_type, object_type, access.name_or_argument);
+                self.error_no_index_signature_at(
+                    index_type,
+                    object_type,
+                    idx,
+                    access.name_or_argument,
+                );
             }
         }
 
