@@ -90,13 +90,16 @@ impl<'a> CheckerContext<'a> {
         };
         let name = self.types.intern_string(&symbol.escaped_name);
 
-        // Determine DefKind from symbol flags
+        // Determine DefKind from symbol flags.
+        // CLASS is checked before INTERFACE because declaration merging can give
+        // a symbol both flags (e.g., `class Component<P,S>` + interface augmentation).
+        // A class-with-interface-merge is semantically still a class.
         let kind = if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0 {
             tsz_solver::def::DefKind::TypeAlias
-        } else if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
-            tsz_solver::def::DefKind::Interface
         } else if (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0 {
             tsz_solver::def::DefKind::Class
+        } else if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
+            tsz_solver::def::DefKind::Interface
         } else if (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0 {
             tsz_solver::def::DefKind::Enum
         } else if (symbol.flags
@@ -140,7 +143,24 @@ impl<'a> CheckerContext<'a> {
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
+        // Propagate DefKind to TypeEnvironment so the solver can query it
+        // (e.g., to distinguish class Callables from interface Callables).
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_def_kind(def_id, kind);
+        }
+
         def_id
+    }
+
+    /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
+    ///
+    /// This enables `TypeEnvironment::get_def_kind` to fall back to the
+    /// `DefinitionStore` when the local `def_kinds` map is missing entries
+    /// (which happens when `insert_def_kind` fails due to `RefCell` borrow conflicts).
+    pub fn ensure_type_env_has_definition_store(&self) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.set_definition_store(std::sync::Arc::clone(&self.definition_store));
+        }
     }
 
     /// Create a Lazy type reference from a symbol.

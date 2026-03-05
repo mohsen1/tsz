@@ -239,6 +239,9 @@ impl<'a> CheckerState<'a> {
             let populated_env = self.build_type_environment();
             tracing::trace!(target: "wasm::perf", phase = "build_type_environment", ms = env_start.elapsed().as_secs_f64() * 1000.0);
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
+            // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
+            // back to it when the local def_kinds map is incomplete.
+            self.ctx.ensure_type_env_has_definition_store();
             // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
             // This ensures type alias narrowing works during control flow analysis
             *self.ctx.type_environment.borrow_mut() = populated_env;

@@ -389,7 +389,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             args = ?app.args.iter().map(|a| a.0).collect::<Vec<_>>(),
             "evaluate_application"
         );
-
         // If the base is a DefId (Lazy, Ref, or TypeQuery), try to resolve and instantiate
         if let Some(def_id) = def_id {
             // =======================================================================
@@ -423,7 +422,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 resolved_key = ?resolved.and_then(|r| self.interner.lookup(r)),
                 "evaluate_application resolve"
             );
-
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
@@ -489,9 +487,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                     }
 
+                    // CLASS INSTANCE TYPE EXTRACTION
+                    // When a class type (Callable with construct signatures) is used in
+                    // type position via Application (e.g., `Component<P, S>`), we need the
+                    // INSTANCE type, not the class constructor type. Extract the instance
+                    // type from the first construct signature's return type.
+                    // This handles cases where class_instance_types wasn't populated for
+                    // the DefId (e.g., lib types referenced indirectly via interfaces).
+                    //
+                    // Only apply for DefKind::Class, NOT for interfaces with construct
+                    // signatures (e.g., `ComponentClass<P>`). Interfaces should keep their
+                    // Callable shape with construct signatures intact.
+                    let is_class_def = matches!(
+                        self.resolver.get_def_kind(def_id),
+                        Some(crate::def::DefKind::Class)
+                    );
+                    let effective_body = if is_class_def
+                        && let Some(TypeData::Callable(cs_id)) = self.interner.lookup(resolved)
+                    {
+                        let shape = self.interner.callable_shape(cs_id);
+                        if let Some(construct_sig) = shape.construct_signatures.first() {
+                            construct_sig.return_type
+                        } else {
+                            resolved
+                        }
+                    } else {
+                        resolved
+                    };
+
                     // Instantiate the resolved type with the type arguments
-                    let instantiated =
-                        instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
+                    let instantiated = instantiate_generic(
+                        self.interner,
+                        effective_body,
+                        &type_params,
+                        &expanded_args,
+                    );
                     // Recursively evaluate the result
                     let evaluated = self.evaluate(instantiated);
                     if let Some(db) = self.query_db {
