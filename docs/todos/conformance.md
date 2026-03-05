@@ -1,7 +1,33 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10018/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10023/12570 (79.7%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+## Session 2026-03-05g — optional chain assignment checks + type predicate narrowing (+6 conf)
+
+### Fixed: TS2777-2781 optional chain assignment target checks
+
+**Area**: expressions/optionalChaining
+
+**Root cause**: tsz did not implement TS2777-2781 error codes for using optional property accesses as assignment targets.
+
+**Fix (4 files, +2 tests)**:
+- **`assignment_checker.rs`**: Added `is_optional_chain_access` helper that walks the left spine of property/element/call chains looking for `question_dot_token`. Added TS2777 in increment/decrement, TS2779 in simple and compound assignment.
+- **`for_loop.rs`**: Added TS2780/2781 for for-in/for-of with optional chain LHS.
+- **`object_literal.rs`**: Added TS2779 for destructuring property targets, TS2778 for spread in destructuring.
+- **`helpers.rs`**: Added TS2779 for array spread destructuring.
+
+### Fixed: Type predicate narrowing through optional chains (false positive removal)
+
+**Root cause**: When a type guard like `isNotNull(x?.y?.z)` proves the full chain non-nullish, tsc back-propagates this to narrow intermediates (`x.y`, `x`) to also exclude null/undefined. tsz had two issues: (1) `property_reference()` returns None for optional chains, so `is_matching_reference` couldn't match `x?.y` against `x.y`, and (2) no intermediate narrowing logic existed.
+
+**Fix (2 files, +4 tests)**:
+- **`condition_narrowing.rs`**: Added `is_optional_chain_prefix`, `contains_optional_chain`, `is_matching_optional_access_reference`, and `is_optional_chain_containing_target` helpers. Added intermediate narrowing in both call expression and binary expression paths. For binary expressions, compose non-nullish narrowing with `narrow_by_binary_expr` (fall-through, not early return) so discriminant narrowing still works for cases like `o?.x === 1`.
+- **`narrowing.rs`**: Added same intermediate narrowing in `narrow_by_call_predicate`.
+
+**Key insight**: NullishEquality guards have inverted semantics — `effective_sense=false` means "exclude nullish" (chain completed), while for other guards `effective_sense=true` means chain completed.
+
+**Bonus**: `narrowingTypeofDiscriminant.ts` also fixed by the `maybe_direct_guard_target` expansion enabling `extract_type_guard` for typeof+optional chain cases.
 
 ## Session 2026-03-05f — for-of array destructuring false positives (+3 conf)
 
