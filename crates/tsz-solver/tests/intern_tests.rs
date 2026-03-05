@@ -1303,3 +1303,58 @@ fn test_union_application_types_same_base_sort_by_args() {
         panic!("Expected Union type");
     }
 }
+
+#[test]
+fn test_union_member_order_uses_allocation_order() {
+    // The sharded interner embeds shard index in TypeId low bits, so raw
+    // TypeId comparison is hash-dependent. The allocation counter ensures
+    // union members are ordered by creation time, matching tsc's behavior.
+    let interner = TypeInterner::new();
+
+    // Create string literals in a specific order
+    let lit_d = interner.literal_string("d");
+    let lit_c = interner.literal_string("c");
+    let lit_a = interner.literal_string("a");
+
+    // Union should preserve allocation order (d, c, a), NOT alphabetical
+    let union_id = interner.union(vec![lit_a, lit_c, lit_d]);
+
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union_id) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 3);
+        // Allocation order: d was interned first, then c, then a
+        assert_eq!(
+            members[0], lit_d,
+            "First member should be 'd' (interned first)"
+        );
+        assert_eq!(
+            members[1], lit_c,
+            "Second member should be 'c' (interned second)"
+        );
+        assert_eq!(
+            members[2], lit_a,
+            "Third member should be 'a' (interned third)"
+        );
+    } else {
+        panic!("Expected Union type");
+    }
+}
+
+#[test]
+fn test_union_order_independent_of_input_order() {
+    // Unions constructed with different input orders should normalize
+    // to the same allocation-order-based result.
+    let interner = TypeInterner::new();
+
+    // Intern in order: x, y, z
+    let x = interner.literal_string("x");
+    let y = interner.literal_string("y");
+    let z = interner.literal_string("z");
+
+    let union1 = interner.union(vec![z, x, y]);
+    let union2 = interner.union(vec![y, z, x]);
+    let union3 = interner.union(vec![x, y, z]);
+
+    assert_eq!(union1, union2, "Union should be order-independent");
+    assert_eq!(union2, union3, "Union should be order-independent");
+}
