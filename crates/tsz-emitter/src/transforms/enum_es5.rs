@@ -714,7 +714,7 @@ impl<'a> EnumES5Transformer<'a> {
             }
         } else {
             // Format with enough precision to round-trip
-            let s = format!("{}", val);
+            let s = format!("{val}");
             IRNode::NumericLiteral(s)
         }
     }

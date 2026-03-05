@@ -367,6 +367,11 @@ pub struct CheckerContext<'a> {
     pub destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
     /// Counter for generating unique binding group IDs.
     pub next_binding_group_id: u32,
+    /// Maps destructured binding element symbols to (`source_expression`, `property_name`).
+    /// Used for flow narrowing: when `const { bar } = aFoo` and `aFoo.bar` has been
+    /// narrowed by a condition, `bar`'s type should use the narrowed property type.
+    /// Recorded for ALL destructured bindings, not just union sources.
+    pub destructured_binding_sources: FxHashMap<SymbolId, (NodeIndex, String)>,
 
     // --- Diagnostics ---
     /// Whether the source file has parse errors.

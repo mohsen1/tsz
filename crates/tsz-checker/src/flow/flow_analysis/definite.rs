@@ -201,7 +201,283 @@ impl<'a> CheckerState<'a> {
             return self.apply_correlated_narrowing(&analyzer, sym_id, &info, narrowed, flow_node);
         }
 
+        // Flow-based property narrowing for destructured bindings.
+        // When `const { bar } = aFoo` and `aFoo.bar` was narrowed by a prior condition
+        // (e.g., `if (aFoo.bar)`), the binding element `bar` should use the narrowed type.
+        // This works by finding a property access expression `source.prop` in the flow
+        // conditions and running the flow analyzer on it.
+        if narrowed == initial_type
+            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
+                && let Some((source_expr, prop_name)) =
+                    self.ctx.destructured_binding_sources.get(&sym_id).cloned()
+            {
+                let narrowed_via_source = self.narrow_destructured_binding_via_source(
+                    &analyzer,
+                    source_expr,
+                    &prop_name,
+                    declared_type,
+                    flow_node,
+                );
+                if narrowed_via_source != declared_type {
+                    return narrowed_via_source;
+                }
+            }
+
         narrowed
+    }
+
+    /// Narrow a destructured binding element's type using flow conditions on the source property.
+    ///
+    /// When `const { bar } = aFoo` and `aFoo.bar` was narrowed by `if (aFoo.bar)`, this
+    /// finds the `aFoo.bar` property access expression in the flow condition chain and
+    /// runs the flow analyzer on it to get the narrowed type.
+    fn narrow_destructured_binding_via_source(
+        &self,
+        analyzer: &FlowAnalyzer<'_>,
+        source_expr: NodeIndex,
+        prop_name: &str,
+        declared_type: TypeId,
+        flow_node: tsz_binder::FlowNodeId,
+    ) -> TypeId {
+        // Find a property access expression `source.prop` by walking flow condition
+        // antecedents. We look for CONDITION flow nodes whose associated AST node
+        // contains a property access on the source expression with the matching property name.
+        let prop_access_ref =
+            self.find_property_access_in_flow_conditions(source_expr, prop_name, flow_node);
+
+        let Some(prop_access_node) = prop_access_ref else {
+            return declared_type;
+        };
+
+        // Use the property access node as the reference for flow analysis.
+        // The flow analyzer will walk back through conditions and find the narrowing.
+        analyzer.get_flow_type(prop_access_node, declared_type, flow_node)
+    }
+
+    /// Walk the flow condition chain to find a property access expression `source.prop`
+    /// that matches the given source expression and property name.
+    fn find_property_access_in_flow_conditions(
+        &self,
+        source_expr: NodeIndex,
+        prop_name: &str,
+        flow_node: tsz_binder::FlowNodeId,
+    ) -> Option<NodeIndex> {
+        use tsz_binder::flow_flags;
+
+        let mut current = flow_node;
+        let mut visited = 0u32;
+
+        while visited < 64 {
+            visited += 1;
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                break;
+            };
+
+            if flow.has_any_flags(
+                flow_flags::CONDITION | flow_flags::TRUE_CONDITION | flow_flags::FALSE_CONDITION,
+            ) {
+                // Check if this condition's AST node contains a property access on source
+                if let Some(prop_access) =
+                    self.find_matching_property_access(flow.node, source_expr, prop_name)
+                {
+                    return Some(prop_access);
+                }
+            }
+
+            // Follow antecedents
+            if let Some(&ant) = flow.antecedent.first() {
+                if ant.is_none() {
+                    break;
+                }
+                current = ant;
+            } else {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Check if an AST node contains a property access expression matching `source.prop_path`.
+    /// The `prop_name` can be a dotted path like `"nested.b"` for nested destructuring,
+    /// which matches a chained access like `aFoo.nested.b`.
+    /// Walks into binary expressions, call expressions, and unary expressions to find it.
+    fn find_matching_property_access(
+        &self,
+        node_idx: NodeIndex,
+        source_expr: NodeIndex,
+        prop_name: &str,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(node_idx)?;
+
+        // Direct property access: `aFoo.bar` or chained `aFoo.nested.b`
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if !access.question_dot_token {
+                // For dotted paths like "nested.b", we need to match a chain of property accesses.
+                // The outermost access is the last segment ("b"), and we walk inward to match
+                // earlier segments ("nested") until we reach the source expression.
+                if self.matches_property_chain(node_idx, source_expr, prop_name) {
+                    return Some(node_idx);
+                }
+            }
+        }
+
+        // Binary expression: `aFoo.bar && ...` or `aFoo.bar !== undefined`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                if let Some(found) =
+                    self.find_matching_property_access(binary.left, source_expr, prop_name)
+                {
+                    return Some(found);
+                }
+                if let Some(found) =
+                    self.find_matching_property_access(binary.right, source_expr, prop_name)
+                {
+                    return Some(found);
+                }
+            }
+
+        // Prefix unary: `!aFoo.bar`
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                return self.find_matching_property_access(
+                    unary.expression,
+                    source_expr,
+                    prop_name,
+                );
+            }
+
+        // Call expression: `isNonNull(aFoo.bar)`
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(node)
+                && let Some(args) = &call.arguments {
+                    for &arg in &args.nodes {
+                        if let Some(found) =
+                            self.find_matching_property_access(arg, source_expr, prop_name)
+                        {
+                            return Some(found);
+                        }
+                    }
+                }
+
+        None
+    }
+
+    /// Check if a property access chain matches `source.seg1.seg2...segN`.
+    ///
+    /// Given `prop_path = "nested.b"` and `source_expr` pointing to `aFoo`,
+    /// this matches `aFoo.nested.b` by walking the chain from the outermost access inward:
+    /// 1. Outermost access property name must be "b" (last segment)
+    /// 2. Its base must be a property access with name "nested" (first segment)
+    /// 3. That base's expression must match `source_expr` (i.e., `aFoo`)
+    fn matches_property_chain(
+        &self,
+        access_node: NodeIndex,
+        source_expr: NodeIndex,
+        prop_path: &str,
+    ) -> bool {
+        // Split the dotted path into segments
+        let segments: Vec<&str> = prop_path.split('.').collect();
+        self.matches_property_chain_segments(access_node, source_expr, &segments)
+    }
+
+    fn matches_property_chain_segments(
+        &self,
+        node_idx: NodeIndex,
+        source_expr: NodeIndex,
+        segments: &[&str],
+    ) -> bool {
+        if segments.is_empty() {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        if access.question_dot_token {
+            return false;
+        }
+
+        // Check that the property name matches the last segment
+        let last_segment = segments[segments.len() - 1];
+        let name_matches = self
+            .ctx
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|ident| ident.escaped_text == last_segment)
+            .unwrap_or(false);
+
+        if !name_matches {
+            return false;
+        }
+
+        if segments.len() == 1 {
+            // Single segment: base must match source_expr
+            self.is_same_reference(access.expression, source_expr)
+        } else {
+            // Multiple segments: recurse into the base with remaining segments
+            self.matches_property_chain_segments(
+                access.expression,
+                source_expr,
+                &segments[..segments.len() - 1],
+            )
+        }
+    }
+
+    /// Check if two expression nodes refer to the same variable/reference.
+    fn is_same_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        let (Some(node_a), Some(node_b)) = (self.ctx.arena.get(a), self.ctx.arena.get(b)) else {
+            return a == b;
+        };
+
+        // Both are identifiers: compare symbols or names
+        if node_a.kind == SyntaxKind::Identifier as u16
+            && node_b.kind == SyntaxKind::Identifier as u16
+        {
+            if let Some(sym_a) = self.ctx.binder.get_node_symbol(a)
+                && let Some(sym_b) = self.ctx.binder.get_node_symbol(b)
+            {
+                return sym_a == sym_b;
+            }
+            if let Some(ident_a) = self.ctx.arena.get_identifier(node_a)
+                && let Some(ident_b) = self.ctx.arena.get_identifier(node_b)
+            {
+                return ident_a.escaped_text == ident_b.escaped_text;
+            }
+        }
+
+        // Both are property accesses: compare recursively
+        if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node_b.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access_a) = self.ctx.arena.get_access_expr(node_a)
+                && let Some(access_b) = self.ctx.arena.get_access_expr(node_b)
+            {
+                // Both must have same property name and same base expression
+                let names_match = self
+                    .ctx
+                    .arena
+                    .get(access_a.name_or_argument)
+                    .zip(self.ctx.arena.get(access_b.name_or_argument))
+                    .and_then(|(na, nb)| {
+                        let ia = self.ctx.arena.get_identifier(na)?;
+                        let ib = self.ctx.arena.get_identifier(nb)?;
+                        Some(ia.escaped_text == ib.escaped_text)
+                    })
+                    .unwrap_or(false);
+                if names_match {
+                    return self.is_same_reference(access_a.expression, access_b.expression);
+                }
+            }
+
+        a == b
     }
 
     /// Apply correlated narrowing for destructured bindings.

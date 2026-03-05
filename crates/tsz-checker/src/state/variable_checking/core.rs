@@ -1356,6 +1356,15 @@ impl<'a> CheckerState<'a> {
                 var_decl.type_annotation.is_some(),
             );
 
+            // Record source expression for flow-based property narrowing.
+            // When `const { bar } = aFoo` and `aFoo.bar` was narrowed by a condition,
+            // the binding element `bar` should use the narrowed property type.
+            if var_decl.initializer.is_some()
+                && name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            {
+                self.record_destructured_binding_sources(var_decl.name, var_decl.initializer);
+            }
+
             // Track destructured binding groups for correlated narrowing.
             // Only needed for union source types where narrowing one property affects others.
             let resolved_for_union = self.evaluate_type_for_assignability(pattern_type);
