@@ -57,6 +57,8 @@ pub struct EnumES5Transformer<'a> {
     string_members: HashSet<String>,
     /// Evaluated numeric values of enum members (for constant folding in subsequent member initializers)
     member_values: HashMap<String, i64>,
+    /// Evaluated string values of enum members (for constant folding in string concatenation)
+    string_member_values: HashMap<String, String>,
     /// The enum parameter name used inside the IIFE (for qualifying self-references)
     current_enum_name: String,
     /// When true, emit const enums instead of erasing them
@@ -72,6 +74,7 @@ impl<'a> EnumES5Transformer<'a> {
             member_names: HashSet::new(),
             string_members: HashSet::new(),
             member_values: HashMap::new(),
+            string_member_values: HashMap::new(),
             current_enum_name: String::new(),
             preserve_const_enums: false,
         }
@@ -234,6 +237,7 @@ impl<'a> EnumES5Transformer<'a> {
         self.member_names.clear();
         self.string_members.clear();
         self.member_values.clear();
+        self.string_member_values.clear();
         self.current_enum_name = enum_name.to_string();
 
         // Pre-populate member_names with ALL member names so that forward
@@ -309,13 +313,23 @@ impl<'a> EnumES5Transformer<'a> {
                     // String enum: E["A"] = "val";
                     // No reverse mapping for string enums
                     self.string_members.insert(member_name.clone());
+                    // Try to constant-fold the string expression (e.g. "1" + "2" → "12")
+                    let value_ir = if let Some(folded) =
+                        self.evaluate_string_expression(member_data.initializer)
+                    {
+                        self.string_member_values
+                            .insert(member_name.clone(), folded.clone());
+                        IRNode::StringLiteral(folded)
+                    } else {
+                        self.transform_expression(member_data.initializer)
+                    };
                     let assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
                             object: Box::new(IRNode::Identifier(enum_name.to_string())),
                             index: Box::new(IRNode::StringLiteral(member_name.clone())),
                         }),
                         operator: "=".to_string(),
-                        right: Box::new(self.transform_expression(member_data.initializer)),
+                        right: Box::new(value_ir),
                     };
                     self.last_value = None; // Reset auto-increment
                     IRNode::ExpressionStatement(Box::new(assign))
@@ -709,6 +723,99 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren = self.arena.get_parenthesized(node)?;
                 self.evaluate_constant_expression(paren.expression)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate a string enum member initializer at compile time.
+    /// Returns `Some(folded_string)` when the expression can be constant-folded.
+    /// Handles: string literals, string concatenation (`"a" + "b"` → `"ab"`),
+    /// mixed string+numeric (`"a" + 1` → `"a1"`), and references to
+    /// previously evaluated string or numeric enum members.
+    fn evaluate_string_expression(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.arena.get_literal(node)?;
+                Some(lit.text.clone())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.arena.get_literal(node)?;
+                // Parse and format to match tsc behavior
+                if let Ok(n) = lit.text.parse::<i64>() {
+                    Some(n.to_string())
+                } else if let Ok(f) = lit.text.parse::<f64>() {
+                    Some(f.to_string())
+                } else {
+                    None
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                // Template expression with substitutions: `head${expr}middle${expr}tail`
+                let tmpl = self.arena.get_template_expr(node)?;
+                let head_node = self.arena.get(tmpl.head)?;
+                let head_lit = self.arena.get_literal(head_node)?;
+                let mut result = head_lit.text.clone();
+                for &span_idx in &tmpl.template_spans.nodes {
+                    let span_node = self.arena.get(span_idx)?;
+                    let span = self.arena.get_template_span(span_node)?;
+                    // Evaluate the expression part
+                    let expr_val = self.evaluate_string_expression(span.expression)?;
+                    result.push_str(&expr_val);
+                    // Get the literal tail part
+                    let lit_node = self.arena.get(span.literal)?;
+                    let lit = self.arena.get_literal(lit_node)?;
+                    result.push_str(&lit.text);
+                }
+                Some(result)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.arena.get_binary_expr(node)?;
+                if bin.operator_token != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let left = self.evaluate_string_expression(bin.left)?;
+                let right = self.evaluate_string_expression(bin.right)?;
+                Some(format!("{left}{right}"))
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                self.evaluate_string_expression(paren.expression)
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                let id = self.arena.get_identifier(node)?;
+                // Check string members first, then numeric members
+                if let Some(s) = self.string_member_values.get(id.escaped_text.as_str()) {
+                    Some(s.clone())
+                } else if let Some(&n) = self.member_values.get(id.escaped_text.as_str()) {
+                    Some(n.to_string())
+                } else {
+                    None
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let obj_node = self.arena.get(access.expression)?;
+                if obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
+                    && obj_id.escaped_text == self.current_enum_name
+                {
+                    let prop_node = self.arena.get(access.name_or_argument)?;
+                    if let Some(prop_id) = self.arena.get_identifier(prop_node) {
+                        if let Some(s) =
+                            self.string_member_values.get(prop_id.escaped_text.as_str())
+                        {
+                            return Some(s.clone());
+                        }
+                        if let Some(&n) = self.member_values.get(prop_id.escaped_text.as_str()) {
+                            return Some(n.to_string());
+                        }
+                    }
+                }
+                None
             }
             _ => None,
         }
