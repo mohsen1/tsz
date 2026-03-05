@@ -88,11 +88,13 @@ pub fn strip_type_only_content(source: &str) -> String {
             // imports should not count as value usages of *this* import
             || trimmed.starts_with("import ")
             || trimmed.starts_with("import{")
-            // Re-export statements (but NOT value-level export declarations
-            // like `export var/let/const/function/class/default/enum/abstract/async`)
-            || trimmed.starts_with("export{")
-            || trimmed.starts_with("export {")
+            // Direct re-exports from other modules (`export { x } from "mod"`,
+            // `export * from "mod"`) don't reference local bindings, so strip them.
+            // But `export { a }` (without `from`) re-exports a local binding —
+            // it IS a value usage and must be kept in the haystack.
             || trimmed.starts_with("export *")
+            || (trimmed.starts_with("export{") && is_reexport_from(trimmed))
+            || (trimmed.starts_with("export {") && is_reexport_from(trimmed))
             || trimmed.starts_with("export import ");
 
         if is_type_only_start {
@@ -343,6 +345,20 @@ fn strip_type_annotations_safe(line: &str) -> String {
     }
 
     result
+}
+
+/// Check if an `export { ... }` line is a re-export from another module
+/// (contains `from "..."` or `from '...'`).
+fn is_reexport_from(trimmed: &str) -> bool {
+    // Look for `from` keyword followed by a string literal after the closing `}`
+    if let Some(brace_end) = trimmed.find('}') {
+        let after_brace = trimmed[brace_end + 1..].trim();
+        after_brace.starts_with("from ")
+            || after_brace.starts_with("from\"")
+            || after_brace.starts_with("from'")
+    } else {
+        false
+    }
 }
 
 /// Check if a `:` at position `colon_pos` in a const/let/var line is a type
