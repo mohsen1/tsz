@@ -322,6 +322,29 @@ impl<'a> IRPrinter<'a> {
         printer.output
     }
 
+    /// Check whether a property access on `node` needs `..` instead of `.`.
+    /// Plain decimal integer literals need `..` because `0.x` would be
+    /// parsed as the float `0.` followed by identifier `x`.
+    fn ir_node_needs_double_dot(node: &IRNode) -> bool {
+        match node {
+            IRNode::NumericLiteral(n) => {
+                let num_text = n.trim();
+                let is_prefixed = num_text.starts_with("0x")
+                    || num_text.starts_with("0X")
+                    || num_text.starts_with("0o")
+                    || num_text.starts_with("0O")
+                    || num_text.starts_with("0b")
+                    || num_text.starts_with("0B");
+                !is_prefixed
+                    && !num_text.contains('.')
+                    && !num_text.contains('e')
+                    && !num_text.contains('E')
+            }
+            IRNode::Parenthesized(inner) => Self::ir_node_needs_double_dot(inner),
+            _ => false,
+        }
+    }
+
     fn emit_node(&mut self, node: &IRNode) {
         match node {
             // Literals
@@ -402,7 +425,11 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::PropertyAccess { object, property } => {
                 self.emit_node(object);
-                self.write(".");
+                if Self::ir_node_needs_double_dot(object) {
+                    self.write("..");
+                } else {
+                    self.write(".");
+                }
                 self.write(property);
             }
             IRNode::ElementAccess { object, index } => {

@@ -781,14 +781,14 @@ impl<'a> Printer<'a> {
             self.write_identifier_text(elem.name);
             self.write(" = ");
             self.emit_for_property_access(initializer);
-            self.write(".");
+            self.write_dot_token(initializer);
             self.write(&key_text);
         } else {
             let value_name = self.get_temp_var_name();
             self.write(&value_name);
             self.write(" = ");
             self.emit_for_property_access(initializer);
-            self.write(".");
+            self.write_dot_token(initializer);
             self.write(&key_text);
             self.write(", ");
             self.write_identifier_text(elem.name);

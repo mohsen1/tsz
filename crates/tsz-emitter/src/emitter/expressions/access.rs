@@ -132,7 +132,7 @@ impl<'a> Printer<'a> {
     /// expression is a numeric literal without a decimal point or exponent.
     /// Without this, `0.toString()` would be parsed as the float `0.` followed
     /// by `toString()`, which is a syntax error.  tsc emits `0..toString()`.
-    fn write_dot_token(&mut self, expr_idx: NodeIndex) {
+    pub(in crate::emitter) fn write_dot_token(&mut self, expr_idx: NodeIndex) {
         // Unwrap parentheses, type assertions, and `as` expressions to find the
         // innermost expression. After type erasure, `(<any>1)` becomes just `1`.
         let mut idx = expr_idx;
