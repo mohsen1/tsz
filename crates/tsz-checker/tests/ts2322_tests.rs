@@ -1344,6 +1344,50 @@ fn test_ts2322_for_of_uses_declared_type_for_predeclared_identifier() {
 }
 
 #[test]
+fn test_ts2322_for_of_array_destructuring_assignment_no_false_positive() {
+    // for ([k, v] of map) should not produce TS2322 when types match.
+    // The iteration element type flows through the destructuring pattern
+    // element-by-element, not as a whole-type assignability check.
+    let source = r"
+        var k: string, v: number;
+        var arr: [string, number][] = [['a', 1]];
+        for ([k, v] of arr) {
+            k;
+            v;
+        }
+    ";
+
+    let diagnostics = get_all_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for array destructuring in for-of with matching types, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_for_of_array_destructuring_wrong_default_still_errors() {
+    // for ([k = false] of arr) where k is string should still produce TS2322
+    // because the default value `false` is not assignable to `string`.
+    let source = r"
+        var k: string;
+        var arr: [string][] = [['a']];
+        for ([k = false] of arr) {
+            k;
+        }
+    ";
+
+    let diagnostics = get_all_diagnostics(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for wrong default value type in array destructuring for-of"
+    );
+}
+
+#[test]
 fn test_ts2322_object_destructuring_default_not_checked_for_required_property() {
     let source = r#"
         const data = { param: "value" };
