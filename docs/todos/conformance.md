@@ -1,7 +1,109 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10026/12570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10,028 / 12,570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+
+---
+
+## Strategic Analysis (2026-03-05)
+
+### Trajectory
+
+| Date | Score | Δ | Milestone |
+|------|-------|---|-----------|
+| Mar 3 23:29 | 9,920 (78.9%) | — | Sprint start |
+| Mar 4 12:00 | 9,958 (79.2%) | +38 | Emitter + checker fixes |
+| Mar 4 22:08 | 10,002 (79.6%) | +44 | Crossed 10k |
+| Mar 5 06:49 | 10,025 (79.8%) | +23 | Current |
+
+**Velocity**: ~2.8 tests/hour over 37 hours. 74 fix commits, 100+ sessions, 3.0 tests/session average.
+
+### Failure Anatomy (~2,541 failing tests)
+
+| Category | Count | % | Description |
+|----------|------:|--:|-------------|
+| **Type-only diff** | 1,531 | 60% | Core type system gaps (inference, assignability, narrowing) |
+| **All missing** | 439 | 17% | We emit 0 errors, tsc expects some |
+| **False positives** | 253 | 10% | We emit errors, tsc expects none |
+| **Mixed parser+type** | 185 | 7% | Both layers wrong |
+| **Parser-only** | 133 | 5% | Scanner/parser differences (TS1xxx) |
+
+### Quick Win Ceiling
+
+| Action | Tests | Projected Score |
+|--------|------:|-----------------|
+| Current | — | ~10,028 (79.8%) |
+| Fix 602 one-code-off tests | +602 | **~10,630 (84.6%)** |
+| Fix all diff≤2 tests | +1,388 | **~11,416 (90.8%)** |
+| Fix everything | +2,541 | 12,570 (100%) |
+
+### The Big 3 Codes
+
+TS2322/TS2339/TS2345 dominate both false positives AND missing codes:
+
+| Code | Missing in | Extra in | Net issue |
+|------|--------:|--------:|-----------|
+| TS2322 (not assignable) | 100 | 145 | Solver assignability too strict + gaps |
+| TS2339 (prop not found) | 87 | 127 | Property resolution, narrowing, generics |
+| TS2345 (arg not assignable) | 56 | 98 | Same root causes as TS2322 at call sites |
+
+These aren't "implement error X" fixes — they're symptoms of deeper inference/narrowing/assignability
+gaps producing both false positives AND false negatives simultaneously.
+
+### TS5107 False Positive Problem (59 tests)
+
+TS5107 (deprecated option warning) is extra in 59 tests. Root cause: when tests specify `@strict: false`,
+the conformance wrapper expands to `alwaysStrict: false` which is deprecated in tsc 6.0. Our driver's
+TS5107 suppression logic (which drops TS5107 when "reliable grammar errors" exist) is misaligned with
+tsc's behavior — we suppress when we shouldn't, or don't suppress when we should. Fixing the TS5107
+suppression heuristic alone could recover up to 59 tests.
+
+### Parser Code Analysis (133 parser-only failures)
+
+| Code | Missing | Clean Quick Wins | Root Issue |
+|------|---------|------------------|------------|
+| TS1005 (`'X' expected`) | 80 | 33 | Over-eager catch-all recovery; emitted instead of context-specific codes |
+| TS1128 (`Declaration expected`) | 37 | 2 | Co-occurs with TS1005/TS1434; recovery at wrong statement level |
+| TS1109 (`Expression expected`) | 36 | 14 | Missing in complex async/arrow/default param contexts |
+| TS1434 (`Duplicate modifier`) | 27 | 7 | Duplicate modifier detection not triggered; TS1005 emitted instead |
+
+**Key insight**: TS1005 is the root — fixing its over-eager emission in import/export/class member
+recovery would cascade-fix many TS1128 and TS1434 cases.
+
+### Projections at Current Velocity (2.8 tests/hour)
+
+| Target | Tests Needed | Hours | Feasibility |
+|--------|-------------|-------|-------------|
+| **80%** (10,056) | +31 | ~11h | Practically achieved |
+| **85%** (10,685) | +660 | ~232h | Requires strategy shift |
+| **90%** (11,313) | +1,288 | ~454h | Requires systemic solver fixes |
+| **95%** (11,941) | +1,916 | ~675h | Long-term goal |
+
+### Recommended Strategy Shifts for 85%+
+
+1. **TS5107 suppression fix**: Single conformance wrapper change could recover up to 59 tests
+2. **Big 3 root causes**: Focus on solver-level assignability/narrowing fixes that affect 40+ tests
+   each rather than individual test fixes
+3. **Parser TS1005 recovery**: Fix diagnostic selection in parser error recovery to cascade-fix
+   TS1128/TS1434 (potential ~50 tests)
+4. **Unimplemented codes**: TS2323 (8), TS7017 (6), TS2742 (5), TS2550 (5) — batch implement
+5. **False positive reduction**: TS2322 (66 FP), TS2345 (47 FP), TS2339 (40 FP) — solver strictness
+
+### Lowest Pass Rate Areas (biggest concentration of failures)
+
+| Pass Rate | Failed | Area |
+|-----------|-------:|------|
+| 57.7% | 11 | types/mapped |
+| 68.2% | 14 | types/literal |
+| 68.2% | 20 | expressions/typeGuards |
+| 68.3% | 79 | jsdoc |
+| 68.4% | 18 | controlFlow |
+| 68.7% | 61 | jsx |
+| 69.5% | 58 | salsa |
+| 69.9% | 22 | node |
+| 70.0% | 59 | classes/members |
+
+---
 
 ## Session 2026-03-05i — evaluate Application types in rest params for contextual typing (+3 conf)
 

@@ -1,98 +1,214 @@
 # Architectural Plan: Hard Conformance Problems
 
-This document outlines the strategic approach to solving three major architectural challenges identified in the TSZ conformance test suite (Track B). These problems require foundational changes to the type system, symbol resolution, and project orchestration.
+This document outlines the strategic approach to solving the remaining conformance gaps in the TSZ
+compiler. Updated 2026-03-05 with current implementation status and data-driven prioritization.
+
+**Current score**: 10,025 / 12,570 (79.8%)
+**Remaining**: 2,541 failing tests
 
 ---
 
-## 1. The `TypeId::UNKNOWN` Dual-Use Problem (TS18046)
+## Implementation Status of Original Plan
 
-### Context & Problem
-Currently, the type solver uses `TypeId::UNKNOWN` for two distinct purposes:
-1. **Explicit Unknown:** The user explicitly annotated a variable with `: unknown`.
-2. **Resolution Failure Fallback:** The checker couldn't resolve a type (e.g., missing import, broken heritage clause) and fell back to a default type to prevent compiler panics.
+### 1. `TypeId::ERROR` — COMPLETE ✓
 
-This dual-use prevents accurate diagnostic emission. If the compiler tries to access a property on an unresolved type, it emits TS18046 ("'x' is of type 'unknown'"). This creates cascading false-positive errors because the root cause (the missing import) already generated an error, and downstream usage should be silently suppressed (acting like `any`), not treated as a strict `unknown` type.
+The error type is fully implemented as a first-class type primitive at index 1 in the solver.
 
-### Proposed Architecture: `TypeId::ERROR` (Error Type)
-We need to mirror TypeScript's internal `errorType` concept.
+- **Assignability**: bi-directionally assignable to/from everything (like `ANY`)
+- **Property access**: returns `PropertyResult::IsError` silently
+- **Diagnostic suppression**: checker checks for `ERROR` before emitting TS18046 and other diagnostics
+- **Propagation**: contagious through evaluation, narrowing, and operations
 
-1. **New Type Primitive:** Introduce `TypeId::ERROR` (or `TypeId::UNRESOLVED`) alongside `UNKNOWN`, `ANY`, `NEVER`, etc., in the `tsz-solver`'s `TypeInterner`.
-2. **Behavioral Semantics:**
-   - **Assignability:** `TypeId::ERROR` should be bi-directionally assignable to/from *any* type (just like `TypeId::ANY`). This prevents "Type X is not assignable to type Error" cascades.
-   - **Property Access:** Accessing *any* property on `TypeId::ERROR` should return `TypeId::ERROR` silently.
-   - **Call/Construct:** Calling `TypeId::ERROR` should return `TypeId::ERROR` silently.
-3. **Diagnostic Suppression:** The checker must check for `TypeId::ERROR` before emitting type-related diagnostics and bail out. TS18046 should *only* trigger for the genuine `TypeId::UNKNOWN`.
+**Key files**: `tsz-solver/src/types.rs`, `relations/judge.rs`, `relations/subtype/rules/intrinsics.rs`
 
-### Implementation Steps
-1. Add `TypeId::ERROR` to `tsz-solver/src/primitives.rs` and `TypeInterner`.
-2. Update the `assignability`/`subtype` rules in the solver to treat `ERROR` identically to `ANY` structurally.
-3. Audit `tsz-checker` for fallback usages. Replace `return TypeId::UNKNOWN` with `return TypeId::ERROR` in error-recovery paths (e.g., failed identifier resolution, missing properties).
-4. Update TS18046 emission logic to ensure it strictly checks for `TypeId::UNKNOWN` and ignores `TypeId::ERROR`.
-5. Run the conformance suite and measure the reduction in cascading false positives.
+### 2. Cross-File SymbolId — PARTIALLY IMPLEMENTED ⚠️
 
----
+Addressed via runtime `cross_file_symbol_targets` map rather than the proposed `QualifiedSymbolId` struct.
 
-## 2. Cross-File SymbolId Collisions (TS2506)
+- **`CheckerContext.cross_file_symbol_targets`**: `FxHashMap<SymbolId, usize>` mapping symbols to source
+  file indices, populated during cross-file export resolution
+- **`get_cross_file_symbol()`**: checks the map FIRST to find correct file, avoiding collision
+- **`delegate_cross_arena_symbol_resolution()`**: creates child checkers with correct arena
 
-### Context & Problem
-The binder currently operates on a per-file basis, resulting in isolated `BinderState` instances for each file. Within a file, symbols are tracked via a `SymbolId` (which is typically just a local index like `u32`).
-When the checker resolves a heritage clause across files (e.g., `class A extends imported.B`), it pulls a `SymbolId` from File A's binder, but subsequently attempts to look up members or exports using File B's binder. Because `SymbolId`s are local, `SymbolId(5)` in File A corresponds to "MyClass", but `SymbolId(5)` in File B corresponds to an entirely unrelated symbol (e.g., "SomeOtherVar"), causing bizarre false positives.
+**Remaining risk**: The runtime map approach handles known cross-file paths but may miss edge cases
+where symbols cross file boundaries through unexpected paths. The original `QualifiedSymbolId` proposal
+would provide compile-time guarantees. Consider adopting if cross-file symbol bugs persist.
 
-### Proposed Architecture: `QualifiedSymbolId` (or Global Symbol Arena)
-To fix this, the system must know *which* binder a `SymbolId` belongs to whenever passing symbol boundaries.
+**Key files**: `tsz-checker/src/context/mod.rs`, `tsz-checker/src/cross_file.rs`
 
-**Option A: Scoped Identifiers (Recommended)**
-Instead of passing around raw `SymbolId`s, the cross-file boundary APIs should use a `QualifiedSymbolId`:
-```rust
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct QualifiedSymbolId {
-    pub file_id: FileId,    // or ModuleId / BinderId
-    pub symbol_id: SymbolId,
-}
-```
+### 3. Project References / `--build` — PARTIALLY IMPLEMENTED ⚠️
 
-**Option B: Global Symbol Arena**
-Transition the binder to mutate a shared, workspace-wide `SymbolArena`. This would make all `SymbolId`s globally unique. *Note: This is a heavier refactor and may impact parallel binding performance if lock contention occurs.*
+- **Phase 1 (Config Parsing)**: ✓ Complete — `TsConfigWithReferences`, `composite`, `references` supported
+- **Phase 2 (Graph Construction)**: ✓ Complete — `ProjectReferenceGraph` with BFS loading, cycle detection
+- **Phase 3 (Build Orchestration)**: ⚠️ Partial — up-to-date checking implemented (`is_project_up_to_date`),
+  but full multi-project topological compilation may be incomplete
 
-### Implementation Steps (Assuming Option A)
-1. Introduce `QualifiedSymbolId` in `tsz-binder` or `tsz-common`.
-2. Update `ExportSymbol` and related structures to store the `file_id` alongside the exported `symbol_id`.
-3. Refactor `resolve_heritage_symbol` and `resolve_export` in the checker to require and return `QualifiedSymbolId`.
-4. Update the `CheckerState` symbol lookup utilities so that when a cross-file symbol is queried, it correctly loads the target file's binder and queries using the local `SymbolId` portion.
-5. Add rigorous unit tests simulating circular references and cross-file heritage collision to prevent regressions (like `commentOnAmbientModule.ts`).
+**Key files**: `tsz-cli/src/driver/project_refs.rs`, `tsz-cli/src/driver/build.rs`
 
 ---
 
-## 3. Project References & `--build` (TS5057)
+## Current Conformance Landscape
 
-### Context & Problem
-The compiler currently lacks support for composite projects (`"references": [{ "path": "./foo" }]` in `tsconfig.json`). The conformance suite includes 52 tests specifically for composite project orchestration (TS5057). 
+### Failure Breakdown (2,541 tests)
 
-### Proposed Architecture
-Implementing `tsc --build` requires a multi-phase orchestration system above the standard compiler driver. It requires:
-1. **Config Graph Parsing:** Reading `tsconfig.json`, extracting `references`, and building a Directed Acyclic Graph (DAG) of project dependencies.
-2. **Up-to-date Checks:** Determining if a project needs rebuilding based on `.tsbuildinfo` files and source file mtimes.
-3. **Orchestrated Compilation:** Compiling projects in topological order, using the `.d.ts` outputs of upstream projects as inputs for downstream projects.
+| Category | Count | % | Description |
+|----------|------:|--:|-------------|
+| Type-only diff | 1,531 | 60% | Core type system — inference, assignability, narrowing |
+| All missing | 439 | 17% | We emit 0 errors, tsc expects some |
+| False positives | 253 | 10% | We emit errors, tsc expects none |
+| Mixed parser+type | 185 | 7% | Both layers wrong |
+| Parser-only | 133 | 5% | Scanner/parser TS1xxx differences |
 
-### Implementation Steps (Phased)
+### Proximity to Passing
 
-**Phase 1: Config Parsing & Validation**
-1. Add `composite` and `references` properties to the TSConfig parser models.
-2. Implement validation (TS5057): If a project has references, ensure the referenced `tsconfig.json` exists.
-3. Implement `tsc --build` CLI flag parsing in `tsz-cli`.
+| Diff | Tests | Cumulative |
+|------|------:|-----------|
+| 1 (single code off) | 911 (35.9%) | — |
+| 2 (two codes off) | 477 (18.8%) | 1,388 (54.6% of failures) |
 
-**Phase 2: Project Graph Construction**
-1. Create a `ProjectGraph` builder that walks references and detects cycles (emitting appropriate TS errors for circular dependencies).
-2. Implement a topological sort to determine build order.
+**602 tests are quick wins** (1-missing-0-extra or 0-missing-1-extra) → would reach **84.5%** if all fixed.
 
-**Phase 3: Execution & Output (Future Work)**
-1. Implement the up-to-date checker (reading `.d.ts` mtimes).
-2. Orchestrate isolated `tsz_server/driver` runs per project, ensuring the `program` state leverages the declaration outputs of its upstream dependencies rather than re-compiling them from source.
+---
+
+## Priority Problems (Ranked by Impact)
+
+### P0: The Big 3 Error Codes (TS2322 / TS2339 / TS2345)
+
+These three codes account for the majority of both false positives AND missing diagnostics:
+
+| Code | Missing in | Extra in | Quick wins (add) | Quick wins (remove) |
+|------|--------:|--------:|--------:|--------:|
+| TS2322 | 100 | 145 | 48 | 59 |
+| TS2339 | 87 | 127 | 43 | 47 |
+| TS2345 | 56 | 98 | 37 | 40 |
+| **Total** | **243** | **370** | **128** | **146** |
+
+**Root causes** (shared across all three):
+1. **Solver assignability too strict** — missing `any` propagation paths, variance mode gaps,
+   intersection/union compatibility holes → false positives
+2. **Narrowing gaps** — control flow analysis not narrowing through certain patterns (optional chains,
+   type predicates, discriminated unions) → false negatives
+3. **Generic inference failures** — contextual types not flowing through type parameters, constraint
+   evaluation gaps → both directions
+4. **Property resolution gaps** — module augmentation, namespace merging, computed properties
+   not fully resolved → false TS2339
+
+**Strategy**: These are NOT "implement error code X" fixes. They require solver-level root cause
+analysis where a single fix affects 10-40+ tests simultaneously. Priority should be on finding
+high-leverage solver changes, not chasing individual test failures.
+
+### P1: TS5107 Deprecation Warning Misalignment (59 tests extra)
+
+TS5107 ("Option X is deprecated") is falsely emitted in 59 tests. Root cause is in the conformance
+wrapper and driver:
+
+1. `@strict: false` expands to `alwaysStrict: false` which is deprecated in tsc 6.0
+2. Our driver's TS5107 suppression logic (drop TS5107 when "reliable grammar errors" exist) is
+   misaligned with tsc's behavior
+3. Fix: align the TS5107 suppression heuristic in `driver/core.rs` with tsc 6.0's actual behavior
+
+**Impact**: Single fix could recover up to 59 tests.
+
+### P2: Parser Recovery Diagnostic Selection (133 parser-only failures)
+
+| Code | Missing | Clean Quick Wins | Root Issue |
+|------|---------|------------------|------------|
+| TS1005 (`'X' expected`) | 80 | 33 | Over-eager catch-all; emitted instead of context-specific codes |
+| TS1128 (`Declaration expected`) | 37 | 2 | TS1005 emitted instead at wrong recovery level |
+| TS1109 (`Expression expected`) | 36 | 14 | Missing in async/arrow/default param contexts |
+| TS1434 (`Duplicate modifier`) | 27 | 7 | Duplicate modifier detection not triggered |
+
+**Key insight**: TS1005 is the root problem. It's used as a catch-all in import/export/class member
+error recovery. Fixing TS1005's diagnostic selection would cascade-fix many TS1128/TS1434 cases.
+
+### P3: Unimplemented Diagnostic Codes (batch implementation)
+
+These codes are never emitted by tsz and affect multiple tests:
+
+| Code | Tests | Description |
+|------|------:|-------------|
+| TS2323 | 8 | Cannot redeclare exported variable |
+| TS7017 | 6 | Element implicitly has 'any' type (index signature) |
+| TS2742 | 5 | Module augmentation inferred type |
+| TS2550 | 5 | Property does not exist (did you mean?) |
+| TS17019 | 5 | Rest tuple optional element |
+| TS1181 | 5 | Nested mapped type |
+| TS2657 | 5 | JSX member expression |
+| TS17020 | 4 | Rest tuple labeled element |
+| TS2833 | 4 | typeof import |
+| TS7014 | 4 | Construct signature |
+
+Implementing these from scratch is lower-risk than modifying Big 3 behavior and provides
+guaranteed test gains.
+
+### P4: False Positive Heavy Hitters
+
+| Code | False Positive Tests | Description |
+|------|--------------------:|-------------|
+| TS2322 | 66 | Type not assignable (solver too strict) |
+| TS2345 | 47 | Arg not assignable (same root) |
+| TS2339 | 40 | Property doesn't exist (resolution gaps) |
+| TS7006 | 20 | Implicit any (contextual type not flowing) |
+| TS2769 | 8 | No overload matches |
+| TS2307 | 7 | Module not found |
+| TS7053 | 6 | Element has implicit any (index) |
+| TS2693 | 6 | Type used as value |
+| TS2365 | 6 | Operator cannot be applied |
+
+### P5: Lowest Pass Rate Areas
+
+| Pass Rate | Failed | Area | Key Issues |
+|-----------|-------:|------|------------|
+| 57.7% | 11 | types/mapped | Mapped type evaluation, template literal keys |
+| 68.2% | 14 | types/literal | Literal narrowing, template literal inference |
+| 68.2% | 20 | expressions/typeGuards | CFA narrowing through assignments |
+| 68.3% | 79 | jsdoc | @constructor, @typedef scope, @callback |
+| 68.4% | 18 | controlFlow | Narrowing, unreachable code detection |
+| 68.7% | 61 | jsx | Class component props, children type |
+| 69.5% | 58 | salsa | JS prototype patterns, constructor synthesis |
+| 70.0% | 59 | classes/members | Override checks, heritage resolution |
 
 ---
 
 ## Recommended Order of Operations
 
-1. **Phase 1: `TypeId::ERROR` Refactor.** This is highly localized to the solver/checker, provides immediate accuracy wins across the whole codebase by stopping false positive cascades, and is a prerequisite for cleaning up complex inference bugs.
-2. **Phase 2: Cross-File `SymbolId`.** This touches the boundary between Binder and Checker. It is critical for the correctness of external module resolution and heritage clauses.
-3. **Phase 3: Project References.** This is a large feature scoped primarily to `tsz-cli` and `tsconfig` orchestration. It can be built iteratively in parallel with core checker fixes.
+### Phase 1: Low-Risk High-Return (target: 82-84%)
+
+1. **Fix TS5107 suppression** (P1) — single conformance wrapper / driver fix, up to +59 tests
+2. **Implement missing codes** (P3) — TS2323, TS7017, TS2742, etc., ~30-40 tests
+3. **Parser TS1005 recovery** (P2) — fix diagnostic selection, ~30-50 cascading tests
+
+### Phase 2: Solver Depth Work (target: 85-88%)
+
+4. **Big 3 false positive reduction** (P0) — solver assignability strictness audit
+5. **Contextual type flowing** (P4/TS7006) — generic inference, callback parameter typing
+6. **Narrowing improvements** (P0) — discriminated unions, optional chains, type predicates
+
+### Phase 3: Area-Focused Campaigns (target: 88-92%)
+
+7. **JSDoc area** (68.3%, 79 failures) — @constructor prototype, @typedef scope
+8. **JSX area** (68.7%, 61 failures) — class component validation, children
+9. **Salsa/JS area** (69.5%, 58 failures) — constructor synthesis, expando types
+10. **Control flow** (68.4%, 18 failures) — narrowing edge cases
+
+### Phase 4: Long Tail (target: 92%+)
+
+11. **Mapped types** (57.7%) — deep solver evaluation
+12. **Cross-file patterns** — module augmentation, namespace merging
+13. **Generic inference** — variadic tuples, conditional types, higher-order patterns
+14. **Project references** — complete Phase 3 build orchestration
+
+---
+
+## Architectural Principles for Remaining Work
+
+1. **Favor solver-level fixes over checker heuristics** — a single solver change that corrects
+   assignability for a pattern class affects dozens of tests simultaneously
+2. **Avoid ad-hoc suppressions** — each false positive should be traced to the root solver/binder
+   cause rather than adding checker-level exception paths
+3. **Measure before and after** — always run `./scripts/conformance.sh run --filter "pattern"` to
+   verify fixes don't introduce regressions before running the full suite
+4. **Use offline analysis first** — `python3 scripts/query-conformance.py` provides instant analysis
+   without running the suite; reserve full runs for verification only
+5. **Batch related fixes** — group fixes by root cause (e.g., "narrowing through optional chains"
+   affects multiple error codes) rather than by individual error code
