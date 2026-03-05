@@ -5,20 +5,51 @@
 //! 2. TS2304 is NOT emitted when lib.d.ts is loaded and provides the name
 //! 3. The "Any poisoning" effect is eliminated
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
+use std::path::Path;
 use std::sync::Arc;
-use tsz_binder::BinderState;
+use tsz_binder::state::LibContext as BinderLibContext;
+use tsz_binder::{BinderState, lib_loader::LibFile};
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext as CheckerLibContext;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+
+fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
+    format!("{diagnostic:?}").contains(fragment)
+}
+
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+    ];
+
+    let mut lib_files = Vec::new();
+    for lib_path in &lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
+            let lib_file = LibFile::from_source(file_name, content);
+            lib_files.push(Arc::new(lib_file));
+        }
+    }
+    lib_files
+}
 
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
 /// Loads lib files to avoid TS2318 errors for missing global types.
 /// Creates the checker with the parser's arena directly to ensure proper node resolution.
-fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<Diagnostic> {
     // We still need lib files to avoid TS2318 errors for global types
     // The "without lib" name is a misnomer - we need basic global types
-    let lib_files = crate::test_fixtures::load_lib_files_for_test();
+    let lib_files = load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -27,7 +58,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnosti
     if !lib_files.is_empty() {
         let lib_contexts: Vec<_> = lib_files
             .iter()
-            .map(|lib| tsz_binder::state::LibContext {
+            .map(|lib| BinderLibContext {
                 arena: std::sync::Arc::clone(&lib.arena),
                 binder: std::sync::Arc::clone(&lib.binder),
             })
@@ -49,7 +80,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnosti
     if !lib_files.is_empty() {
         let lib_contexts: Vec<_> = lib_files
             .iter()
-            .map(|lib| crate::checker::context::LibContext {
+            .map(|lib| CheckerLibContext {
                 arena: std::sync::Arc::clone(&lib.arena),
                 binder: std::sync::Arc::clone(&lib.binder),
             })
@@ -63,9 +94,9 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnosti
 }
 
 /// Helper function to check source WITH lib.es5.d.ts and return diagnostics.
-fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<Diagnostic> {
     // Load lib.es5.d.ts which contains actual type definitions
-    let lib_files = crate::test_fixtures::load_lib_files_for_test();
+    let lib_files = load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -86,9 +117,9 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> 
 
     // Set lib contexts for global symbol resolution
     if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = lib_files
+        let lib_contexts: Vec<CheckerLibContext> = lib_files
             .iter()
-            .map(|lib| crate::checker::context::LibContext {
+            .map(|lib| CheckerLibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -357,7 +388,7 @@ function A(): (public B) => C {
         diagnostics.len()
     );
     // Should find 'C' is undefined
-    let has_c_error = ts2304_errors.iter().any(|d| d.message_text.contains("'C'"));
+    let has_c_error = ts2304_errors.iter().any(|d| diagnostic_contains(d, "'C'"));
     assert!(
         has_c_error,
         "Should report 'C' as undefined, errors: {ts2304_errors:?}",
@@ -376,5 +407,66 @@ function A(): (x: B) => C {
         ts2304_errors.len(),
         2,
         "Should have TS2304 for both 'B' and 'C', got: {ts2304_errors:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2591_for_private_name_access_base() {
+    let source = r#"exports.#nope = 1;"#;
+    let diagnostics = check_without_lib(source);
+
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'exports'"))
+        .collect();
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for 'exports' with private-name access base, got: {diagnostics:?}"
+    );
+
+    let has_ts2591 = diagnostics
+        .iter()
+        .any(|d| d.code == 2591 && diagnostic_contains(d, "'exports'"));
+    assert!(
+        !has_ts2591,
+        "Expected no TS2591 for 'exports' in private-name base access, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2591_for_private_name_access_base_in_class_related_case() {
+    let source = r#"// @target: es2015
+
+exports.#nope = 1;           // Error (outside class body)
+function A() { }
+A.prototype.#no = 2;         // Error (outside class body)
+
+class B {}
+B.#foo = 3;                  // Error (outside class body)
+
+class C {
+    #bar = 6;
+    constructor () {
+        exports.#bar = 6;    // Error
+        this.#foo = 3;       // Error (undeclared)
+    }
+}"#;
+    let diagnostics = check_without_lib(source);
+
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'exports'"))
+        .collect();
+    assert!(
+        ts2304_errors.len() >= 2,
+        "Expected TS2304 for all exported private-name accesses, got: {diagnostics:?}"
+    );
+
+    let has_ts2591 = diagnostics
+        .iter()
+        .any(|d| d.code == 2591 && diagnostic_contains(d, "'exports'"));
+    assert!(
+        !has_ts2591,
+        "Expected no TS2591 for 'exports' in private-name base access, got: {diagnostics:?}"
     );
 }

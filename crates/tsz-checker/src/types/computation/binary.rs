@@ -1093,6 +1093,13 @@ impl<'a> CheckerState<'a> {
                     {
                         // Number op enum => number
                         TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && self
+                            .resolve_indexed_access_binary_op(eval_left, eval_right, op, &evaluator)
+                    {
+                        // IndexAccess types (T[K]) resolved through assignability
+                        // e.g., T[K] where T extends Record<K, number> is number-like
+                        TypeId::NUMBER
                     } else {
                         // For equality operators (==, !=, ===, !==), tsc allows comparison
                         // when the types are comparable (assignable in either direction).
@@ -1245,6 +1252,49 @@ impl<'a> CheckerState<'a> {
         }
         // Check if the declared type overlaps with the other operand
         !self.types_have_no_overlap(declared_type, other_type)
+    }
+
+    /// Check if a binary operation with `IndexAccess` operands is valid through assignability.
+    ///
+    /// When the solver's `BinaryOpEvaluator` returns `TypeError` for an operation like
+    /// `number + T[K]`, the `IndexAccess` type may not have been resolved through its
+    /// constraint chain (e.g., T extends Record<K, number> means T[K] is number-like).
+    /// This method uses the checker's assignability infrastructure to validate such cases,
+    /// matching tsc's behavior of using `isTypeAssignableTo` for binary operator validation.
+    fn resolve_indexed_access_binary_op(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+        op: &str,
+        evaluator: &tsz_solver::BinaryOpEvaluator,
+    ) -> bool {
+        let left_is_index_access =
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);
+        let right_is_index_access =
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, right);
+
+        if !left_is_index_access && !right_is_index_access {
+            return false;
+        }
+
+        match op {
+            "+" => {
+                // For +, both operands must be number-like, string-like, or bigint-like
+                let left_ok = evaluator.is_arithmetic_operand(left)
+                    || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
+                let right_ok = evaluator.is_arithmetic_operand(right)
+                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                left_ok && right_ok
+            }
+            "-" | "*" | "/" | "%" | "**" => {
+                let left_ok = evaluator.is_arithmetic_operand(left)
+                    || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
+                let right_ok = evaluator.is_arithmetic_operand(right)
+                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                left_ok && right_ok
+            }
+            _ => false,
+        }
     }
 }
 

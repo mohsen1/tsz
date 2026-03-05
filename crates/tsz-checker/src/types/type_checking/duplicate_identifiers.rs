@@ -6,6 +6,9 @@
 //! - Overload signature consistency (TS2383, TS2385, TS2386)
 //! - Built-in global identifier conflicts (TS2397)
 
+#[path = "duplicate_identifiers_merge.rs"]
+mod duplicate_identifiers_merge;
+
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
@@ -588,6 +591,29 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
+                }
+            }
+
+            let class_interface_decls: Vec<NodeIndex> = declarations
+                .iter()
+                .filter(|(_, flags, is_local, _)| {
+                    *is_local && (flags & (symbol_flags::CLASS | symbol_flags::INTERFACE)) != 0
+                })
+                .map(|(decl_idx, _, _, _)| *decl_idx)
+                .collect();
+            if class_interface_decls.len() > 1 {
+                use tsz_binder::SymbolId;
+                let mut decls_by_scope: FxHashMap<SymbolId, Vec<NodeIndex>> = FxHashMap::default();
+                for &decl_idx in &class_interface_decls {
+                    let scope = self.get_enclosing_namespace_symbol(decl_idx);
+                    decls_by_scope.entry(scope).or_default().push(decl_idx);
+                }
+
+                for (_, decls_in_scope) in decls_by_scope {
+                    if decls_in_scope.len() <= 1 {
+                        continue;
+                    }
+                    self.check_merged_class_interface_declaration_diagnostics(&decls_in_scope);
                 }
             }
 

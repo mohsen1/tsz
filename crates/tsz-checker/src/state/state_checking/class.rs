@@ -1062,7 +1062,6 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::query_boundaries::common::call_signatures_for_type;
-        use tsz_solver::type_queries::get_function_shape;
 
         // Skip validation for error types or any — these won't produce meaningful diagnostics
         if decorator_type == TypeId::ERROR
@@ -1085,7 +1084,7 @@ impl<'a> CheckerState<'a> {
         // Check if the decorator type is callable.
         // TypeData::Function has a single call signature (function declarations/expressions).
         // TypeData::Callable has overloaded call/construct signatures (interfaces).
-        let has_call_signatures = get_function_shape(self.ctx.types, resolved).is_some()
+        let has_call_signatures = class_query::has_function_shape(self.ctx.types, resolved)
             || call_signatures_for_type(self.ctx.types, resolved)
                 .is_some_and(|sigs| !sigs.is_empty());
 

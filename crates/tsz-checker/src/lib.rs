@@ -155,6 +155,9 @@ mod ts1501_tests;
 #[path = "../tests/ts2300_tests.rs"]
 mod ts2300_tests;
 #[cfg(test)]
+#[path = "../tests/ts2304_tests.rs"]
+mod ts2304_tests;
+#[cfg(test)]
 #[path = "../tests/ts2320_tests.rs"]
 mod ts2320_tests;
 #[cfg(test)]

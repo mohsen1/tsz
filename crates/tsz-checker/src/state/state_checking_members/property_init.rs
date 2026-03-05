@@ -49,12 +49,28 @@ impl<'a> CheckerState<'a> {
         // Collect all `this.X` property accesses in the initializer
         let accesses = self.collect_this_property_accesses(initializer_idx);
 
+        // When useDefineForClassFields is true (target >= ES2022), class field
+        // initializers run via Object.defineProperty BEFORE the constructor body.
+        // Parameter properties (public/private/protected/readonly constructor params)
+        // are assigned in the constructor body, so they are uninitialized during
+        // field definition. We need to check for this case.
+        let use_define = self.ctx.compiler_options.target.supports_es2022();
+
+        // Pre-collect parameter property names if useDefineForClassFields is active
+        let param_prop_names: Vec<String> = if use_define {
+            self.collect_constructor_parameter_property_names(&class_info)
+        } else {
+            Vec::new()
+        };
+
         for (name, access_node_idx) in accesses {
+            let mut found_in_members = false;
             // Find if this name refers to another property in the class
             for (target_pos, &target_idx) in class_info.member_nodes.iter().enumerate() {
                 if let Some(member_name) = self.get_member_name(target_idx)
                     && member_name == name
                 {
+                    found_in_members = true;
                     // Check if target is an instance property (not static, not a method)
                     if self.is_instance_property(target_idx) {
                         // Report 2729 if:
@@ -74,7 +90,65 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
+
+            // If name wasn't found in class body members but matches a constructor
+            // parameter property, report TS2729 when useDefineForClassFields is true.
+            // Parameter properties are always assigned in the constructor body, which
+            // runs after field definitions with useDefineForClassFields semantics.
+            if !found_in_members && param_prop_names.contains(&name) {
+                self.error_at_node(
+                    access_node_idx,
+                    &format!("Property '{name}' is used before its initialization."),
+                    diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                );
+            }
         }
+    }
+
+    /// Collect the names of constructor parameter properties for the enclosing class.
+    ///
+    /// Parameter properties are constructor parameters with access modifiers
+    /// (public, private, protected, readonly, override) that create class properties.
+    fn collect_constructor_parameter_property_names(
+        &self,
+        class_info: &crate::context::EnclosingClassInfo,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+
+        // Find the constructor in the class members
+        for &member_idx in &class_info.member_nodes {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
+                continue;
+            };
+
+            // Check each parameter for parameter property modifiers
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if !self.has_parameter_property_modifier(&param.modifiers) {
+                    continue;
+                }
+                // Get the parameter name
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    names.push(ident.escaped_text.clone());
+                }
+            }
+            break; // Only one constructor per class
+        }
+
+        names
     }
 
     /// Check if a property declaration is abstract (has abstract modifier).

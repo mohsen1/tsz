@@ -860,6 +860,14 @@ impl<'a> CheckerState<'a> {
     /// Tries binder `file_locals` and lib binders, then falls back to error reporting.
     fn resolve_known_global(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         if self.is_nodejs_runtime_global(name) {
+            if self.is_private_name_access_base(idx) {
+                self.error_at_node_msg(
+                    idx,
+                    crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                    &[name],
+                );
+                return TypeId::ERROR;
+            }
             // In CommonJS module mode, these globals are implicitly available
             if self.ctx.compiler_options.module.is_commonjs() {
                 return TypeId::ANY;
@@ -887,6 +895,62 @@ impl<'a> CheckerState<'a> {
         }
 
         self.emit_global_not_found_error(idx, name)
+    }
+
+    /// Check whether an identifier is the base of a private-name access (`obj.#field`).
+    pub(crate) fn is_private_name_access_base(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let mut current = idx;
+        let mut guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                && let Some(member) = self.ctx.arena.get(access.name_or_argument)
+                && member.kind == SyntaxKind::PrivateIdentifier as u16
+            {
+                let mut chain_expr = access.expression;
+                let mut chain_guard = 0;
+                while chain_expr.is_some() {
+                    chain_guard += 1;
+                    if chain_guard > 256 {
+                        break;
+                    }
+                    if chain_expr == idx {
+                        return true;
+                    }
+                    let Some(chain_node) = self.ctx.arena.get(chain_expr) else {
+                        break;
+                    };
+                    if chain_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && chain_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        break;
+                    }
+                    let Some(chain_access) = self.ctx.arena.get_access_expr(chain_node) else {
+                        break;
+                    };
+                    chain_expr = chain_access.expression;
+                }
+            }
+            current = parent_idx;
+        }
+        false
     }
 
     /// Emit an appropriate error when a known global is not found.
