@@ -346,11 +346,11 @@ impl<'a> Printer<'a> {
                 self.collect_value_specifiers(&named_exports.elements)
             };
             if value_specs.is_empty() && !named_exports.elements.nodes.is_empty() {
-                // All specifiers were type-only — emit `export {}` marker for
-                // local exports (keeps file as module) or skip entirely for re-exports.
+                // All specifiers were type-only — track the elision for local exports
+                // so we can emit `export {};` at the end of the file if needed (when
+                // no other module syntax survived). Skip entirely for re-exports.
                 if export.module_specifier.is_none() {
-                    self.write("export {}");
-                    self.write_semicolon();
+                    self.ctx.module_state.had_elided_export_clause = true;
                 }
                 return;
             }
