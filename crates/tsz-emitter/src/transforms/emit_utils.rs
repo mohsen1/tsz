@@ -243,6 +243,25 @@ pub(crate) fn is_type_only_module_statement_ext(
                     return true;
                 }
                 if let Some(inner_node) = arena.get(export_decl.export_clause) {
+                    // `export import X = Y` — the inner IMPORT_EQUALS_DECLARATION has no
+                    // export modifier (it was consumed by the EXPORT_DECLARATION wrapper in
+                    // the tsz parser). Check it directly without recursing, treating it as
+                    // exported. tsc's AST attaches the export modifier directly to the
+                    // ImportEqualsDeclaration; tsz wraps it in ExportDeclaration instead.
+                    if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                        if let Some(import_decl) = arena.get_import_decl(inner_node) {
+                            // type-only: `export import type X = Y`
+                            if import_decl.is_type_only {
+                                return true;
+                            }
+                            // External module ref `require("...")` — does not instantiate.
+                            if let Some(ref_node) = arena.get(import_decl.module_specifier) {
+                                return ref_node.kind == SyntaxKind::StringLiteral as u16;
+                            }
+                        }
+                        // Unknown/unresolved — conservatively treat as instantiating.
+                        return false;
+                    }
                     return is_type_only_module_statement_ext(
                         arena,
                         inner_node,
