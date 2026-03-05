@@ -378,6 +378,28 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_expression(idx)
     }
 
+    /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
+    fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_static(true);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_statement(idx)
+    }
+
+    /// Convert an AST expression to IR in static context
+    fn convert_expression_static(&self, idx: NodeIndex) -> IRNode {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_static(true);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_expression(idx)
+    }
+
     /// Collect decorator `NodeIndex` list from a modifier list
     fn collect_decorators_from_modifiers(&self, modifiers: &Option<NodeList>) -> Vec<NodeIndex> {
         let Some(mods) = modifiers else {
@@ -536,11 +558,34 @@ impl<'a> ES5ClassTransformer<'a> {
         self.convert_block_body_with_alias(block_idx, None)
     }
 
+    /// Convert a block body to IR statements in static context
+    fn convert_block_body_static(&self, block_idx: NodeIndex) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_static(block_idx, None)
+    }
+
     /// Convert a block body to IR statements, optionally prepending a class alias declaration
     fn convert_block_body_with_alias(
         &self,
         block_idx: NodeIndex,
         class_alias: Option<String>,
+    ) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_impl(block_idx, class_alias, false)
+    }
+
+    /// Convert a block body to IR statements in static context
+    fn convert_block_body_with_alias_static(
+        &self,
+        block_idx: NodeIndex,
+        class_alias: Option<String>,
+    ) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_impl(block_idx, class_alias, true)
+    }
+
+    fn convert_block_body_with_alias_impl(
+        &self,
+        block_idx: NodeIndex,
+        class_alias: Option<String>,
+        is_static: bool,
     ) -> Vec<IRNode> {
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
@@ -549,7 +594,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 .statements
                 .nodes
                 .iter()
-                .map(|&s| self.convert_statement(s))
+                .map(|&s| {
+                    if is_static {
+                        self.convert_statement_static(s)
+                    } else {
+                        self.convert_statement(s)
+                    }
+                })
                 .collect()
         } else {
             vec![]

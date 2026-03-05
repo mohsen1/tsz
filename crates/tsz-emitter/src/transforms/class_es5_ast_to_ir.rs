@@ -16,6 +16,8 @@ pub struct AstToIr<'a> {
     current_class_alias: Cell<Option<String>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
+    /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
+    is_static: bool,
 }
 
 impl<'a> AstToIr<'a> {
@@ -26,12 +28,19 @@ impl<'a> AstToIr<'a> {
             transforms: None,
             current_class_alias: Cell::new(None),
             has_super: false,
+            is_static: false,
         }
     }
 
     /// Set whether we're inside a derived class (for super lowering)
     pub const fn with_super(mut self, has_super: bool) -> Self {
         self.has_super = has_super;
+        self
+    }
+
+    /// Set whether we're inside a static member (affects super property access)
+    pub const fn with_static(mut self, is_static: bool) -> Self {
+        self.is_static = is_static;
         self
     }
 
@@ -582,18 +591,27 @@ impl<'a> AstToIr<'a> {
         let callee_node = self.arena.get(callee_idx)?;
 
         // Check for super.method(args) → _super.prototype.method.call(this, args)
+        // In static context: super.method(args) → _super.method.call(this, args)
         if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(callee_node)?;
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let method_name = get_identifier_text(self.arena, access.name_or_argument)?;
-                // Build: _super.prototype.method.call(this, args...)
-                let super_proto_method = IRNode::PropertyAccess {
-                    object: Box::new(IRNode::PropertyAccess {
+                let super_proto_method = if self.is_static {
+                    // Static: _super.method
+                    IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: "prototype".to_string(),
-                    }),
-                    property: method_name,
+                        property: method_name,
+                    }
+                } else {
+                    // Instance: _super.prototype.method
+                    IRNode::PropertyAccess {
+                        object: Box::new(IRNode::PropertyAccess {
+                            object: Box::new(IRNode::id("_super")),
+                            property: "prototype".to_string(),
+                        }),
+                        property: method_name,
+                    }
                 };
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_method),
@@ -611,18 +629,22 @@ impl<'a> AstToIr<'a> {
         }
 
         // Check for super[expr](args) → _super.prototype[expr].call(this, args)
+        // In static context: super[expr](args) → _super[expr].call(this, args)
         if callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(callee_node)?;
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
-                // Build: _super.prototype[expr].call(this, args...)
-                let super_proto = IRNode::PropertyAccess {
-                    object: Box::new(IRNode::id("_super")),
-                    property: "prototype".to_string(),
+                let super_base = if self.is_static {
+                    IRNode::id("_super")
+                } else {
+                    IRNode::PropertyAccess {
+                        object: Box::new(IRNode::id("_super")),
+                        property: "prototype".to_string(),
+                    }
                 };
                 let super_proto_elem = IRNode::ElementAccess {
-                    object: Box::new(super_proto),
+                    object: Box::new(super_base),
                     index: Box::new(index_expr),
                 };
                 let call_method = IRNode::PropertyAccess {
@@ -670,18 +692,25 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
-            // Check for super.property → _super.prototype.property
+            // Check for super.property → _super.prototype.property (instance) or _super.property (static)
             if self.has_super
                 && let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
                 && let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
             {
-                return IRNode::PropertyAccess {
-                    object: Box::new(IRNode::PropertyAccess {
+                return if self.is_static {
+                    IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: "prototype".to_string(),
-                    }),
-                    property: name,
+                        property: name,
+                    }
+                } else {
+                    IRNode::PropertyAccess {
+                        object: Box::new(IRNode::PropertyAccess {
+                            object: Box::new(IRNode::id("_super")),
+                            property: "prototype".to_string(),
+                        }),
+                        property: name,
+                    }
                 };
             }
 
@@ -700,17 +729,22 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
-            // Check for super[expr] → _super.prototype[expr]
+            // Check for super[expr] → _super.prototype[expr] (instance) or _super[expr] (static)
             if self.has_super
                 && let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
             {
                 let index = self.convert_expression(access.name_or_argument);
-                return IRNode::ElementAccess {
-                    object: Box::new(IRNode::PropertyAccess {
+                let super_base = if self.is_static {
+                    IRNode::id("_super")
+                } else {
+                    IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
                         property: "prototype".to_string(),
-                    }),
+                    }
+                };
+                return IRNode::ElementAccess {
+                    object: Box::new(super_base),
                     index: Box::new(index),
                 };
             }
