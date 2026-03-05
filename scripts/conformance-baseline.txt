@@ -439,6 +439,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1955,7 +1956,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/overloadTag2.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/paramTagOnFunctionUsingArguments.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/paramTagTypeResolution.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/paramTagWrapping.ts
-FAIL TypeScript/tests/cases/conformance/jsdoc/returnTagTypeGuard.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/templateInsideCallback.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/thisTag3.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule2.ts
@@ -4947,7 +4947,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -10426,6 +10425,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/paramTagOnCallExpression.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/paramTagTypeResolution2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/parseLinkTag.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/parseThrowsTag.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/returnTagTypeGuard.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/seeTag1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/seeTag2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/seeTag3.ts

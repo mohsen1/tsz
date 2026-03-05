@@ -629,6 +629,19 @@ impl<'a> CheckerState<'a> {
             type_predicate = Some(predicate);
         }
 
+        // Check JSDoc @type {CallbackType} for type predicates (e.g., @callback with @return {x is number}).
+        if type_predicate.is_none()
+            && let Some(ref jsdoc) = func_jsdoc
+            && let Some(pred) = self.extract_type_predicate_from_jsdoc_type_tag(jsdoc)
+        {
+            return_type = if pred.asserts {
+                TypeId::VOID
+            } else {
+                TypeId::BOOLEAN
+            };
+            type_predicate = Some(pred);
+        }
+
         // Save the annotated return type before evaluation. evaluate_application_type()
         // expands Application types (like Promise<string>) into concrete object shapes,
         // which is useful for body checking but destroys type identity needed by callers
@@ -1427,8 +1440,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a type predicate from JSDoc `@returns {x is Type}` / `@return {this is Entry}`.
     ///
-    /// Parses the JSDoc comment for type predicate patterns in the return tag and
-    /// builds a `TypePredicate` with proper parameter index resolution.
+    /// Parse JSDoc `@return` for type predicates and build `TypePredicate` with parameter index.
     pub(crate) fn extract_jsdoc_return_type_predicate(
         &mut self,
         func_jsdoc: &Option<String>,

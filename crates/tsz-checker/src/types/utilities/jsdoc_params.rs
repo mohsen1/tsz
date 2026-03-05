@@ -1200,6 +1200,43 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Extract the type expression from a `@type {X}` JSDoc tag.
+    /// Returns the inner type expression string (e.g., "Cb" from `@type {Cb}`).
+    pub(crate) fn jsdoc_extract_type_tag_expr(jsdoc: &str) -> Option<String> {
+        for raw_line in jsdoc.lines() {
+            let trimmed = raw_line.trim().trim_start_matches('*').trim();
+            if let Some(rest) = trimmed.strip_prefix("@type") {
+                let rest = rest.trim();
+                if rest.starts_with('{')
+                    && let Some(end) = rest[1..].find('}')
+                {
+                    return Some(rest[1..1 + end].trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract a type predicate from a `@type {CallbackType}` JSDoc annotation.
+    /// Resolves the referenced type and checks both Function and Callable shapes.
+    pub(crate) fn extract_type_predicate_from_jsdoc_type_tag(
+        &mut self,
+        jsdoc: &str,
+    ) -> Option<tsz_solver::TypePredicate> {
+        let type_expr = Self::jsdoc_extract_type_tag_expr(jsdoc)?;
+        let resolved = self.resolve_jsdoc_type_str(&type_expr)?;
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, resolved)
+        {
+            return shape.type_predicate.clone();
+        }
+        if let Some(sigs) = tsz_solver::type_queries::get_call_signatures(self.ctx.types, resolved)
+            && let Some(sig) = sigs.first()
+        {
+            return sig.type_predicate.clone();
+        }
+        None
+    }
+
     /// Extract `@template` type parameter names from a `JSDoc` comment.
     ///
     /// Supports simple forms like:
