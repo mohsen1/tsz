@@ -346,6 +346,10 @@ pub fn collect_export_names_with_options(
     let mut exports = Vec::new();
 
     // Build value declaration names lazily — only needed when we see named exports.
+    // Used to filter out type-only export specifiers (interface, type alias, const enum, etc.)
+    // from void 0 initialization. Without checker data we can't distinguish cross-file
+    // type refs from value refs, so we conservatively skip unknown names (they won't be
+    // in value_names and won't get void 0). This is correct for most cases.
     let mut value_names: Option<rustc_hash::FxHashSet<String>> = None;
 
     for &stmt_idx in statements {
@@ -373,7 +377,7 @@ pub fn collect_export_names_with_options(
                         && let Some(clause_node) = arena.get(export_decl.export_clause)
                     {
                         if let Some(named_exports) = arena.get_named_imports(clause_node) {
-                            // Lazily build value names set on first use
+                            // Lazily build name sets on first use
                             let vn = value_names.get_or_insert_with(|| {
                                 build_value_declaration_names(
                                     arena,
@@ -393,6 +397,9 @@ pub fn collect_export_names_with_options(
                                         get_identifier_text(arena, spec.name)
                                     };
                                     // Skip specifiers that refer to type-only declarations
+                                    // (not in value_names). This covers local interfaces,
+                                    // type aliases, const enums, non-instantiated namespaces,
+                                    // and cross-file type refs (conservatively correct).
                                     if let Some(ref local) = local_name
                                         && !vn.contains(local)
                                     {
@@ -611,8 +618,77 @@ pub fn collect_export_names_categorized(
         }
     }
 
+    // `other_exports` is the set of names that get `exports.X = void 0;`
+    // initialization. Names that are ONLY function exports (hoisted) do not
+    // need void 0 because the hoisted `exports.f = f;` suffices. However,
+    // names that appear as BOTH a variable and function export (e.g.,
+    // `export var a = 10; export function a() {}`) still need void 0 for the
+    // variable binding, matching tsc behavior.
+    let func_only_names: rustc_hash::FxHashSet<&str> =
+        func_exports.iter().map(|(e, _)| e.as_str()).collect();
     for name in all {
-        if !func_exports.iter().any(|(e, _)| e == &name) {
+        // A name needs void 0 unless it ONLY appears as a function export
+        // (i.e., it was collected solely because of a function declaration).
+        // If it was collected from both a var statement AND a function, it
+        // appears in `all` from the var path and should get void 0.
+        if func_only_names.contains(name.as_str()) {
+            // Check if this name was also collected from a non-function source.
+            // Since `all` deduplicates, we can't tell from `all` alone.
+            // Instead, keep it if the name appears in func_exports AND was
+            // also listed by a non-function source (the name in `all` came
+            // from the function branch at line 434-443, but it could also
+            // come from variable/class/enum/namespace/specifier branches).
+            // The simplest approach: check if the file has a non-function
+            // declaration with this name.
+            let has_non_func_source = statements.iter().any(|&stmt_idx| {
+                let Some(node) = arena.get(stmt_idx) else {
+                    return false;
+                };
+                // Check if a VARIABLE_STATEMENT (non-declare) contains `name`
+                let var_has_name = |n: &Node| -> bool {
+                    if n.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        if let Some(var_stmt) = arena.get_variable(n)
+                            && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            let mut names = Vec::new();
+                            for &decl_idx in &var_stmt.declarations.nodes {
+                                collect_declaration_names(arena, decl_idx, &mut names);
+                            }
+                            return names.contains(&name);
+                        }
+                    }
+                    false
+                };
+                match node.kind {
+                    // Direct `export var a = ...;` (with ExportKeyword modifier)
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = arena.get_variable(node)
+                            && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                        {
+                            var_has_name(node)
+                        } else {
+                            false
+                        }
+                    }
+                    // EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT
+                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                        if let Some(export_decl) = arena.get_export_decl(node)
+                            && !export_decl.is_type_only
+                            && export_decl.module_specifier.is_none()
+                            && let Some(clause_node) = arena.get(export_decl.export_clause)
+                        {
+                            var_has_name(clause_node)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            });
+            if has_non_func_source {
+                other_exports.push(name);
+            }
+        } else {
             other_exports.push(name);
         }
     }
