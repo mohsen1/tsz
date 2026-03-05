@@ -359,8 +359,22 @@ impl<'a> CheckerState<'a> {
             self.check_const_assignment(initializer);
         }
 
-        // TS2322: Check element type is assignable to the variable's declared type
+        // TS2322: Check element type is assignable to the variable's declared type.
+        // Skip for destructuring patterns (array/object literal expressions) — those are
+        // checked element-by-element during destructuring assignment processing, not as
+        // a whole-type assignability check. Individual mismatches (e.g., wrong default
+        // values) are caught by the assignment expression checker on each element.
+        // Only skip for array destructuring — array literal elements like `k = false`
+        // are BinaryExpressions that trigger individual assignment checks.
+        // Object destructuring still needs the whole-type check because individual
+        // property bindings don't go through the assignment expression checker.
+        let is_array_destructuring_target = self
+            .ctx
+            .arena
+            .get(initializer)
+            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
         if is_for_of
+            && !is_array_destructuring_target
             && target_type != TypeId::ANY
             && element_type != TypeId::ANY
             && element_type != TypeId::ERROR
