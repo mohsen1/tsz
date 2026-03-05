@@ -1313,4 +1313,71 @@ const bad = tuple[-1];
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn private_name_access_unknown_reports_18046() {
+        let diags = check_source_with_default_libs(
+            r#"
+class A {
+    #foo = true;
+    static #baz = 10;
+    static #m() {}
+    method(thing: unknown) {
+        thing.#foo;
+        thing.#m();
+        thing.#baz;
+        thing.#bar;
+        thing.#foo();
+    }
+}
+"#,
+        );
+        let errors = semantic_errors(&diags);
+        assert_eq!(
+            errors.iter().filter(|code| **code == 18046).count(),
+            5,
+            "Expected 5 TS18046 diagnostics for private access on unknown, got: {errors:?}"
+        );
+        assert_eq!(
+            errors.iter().filter(|code| **code == 2339).count(),
+            1,
+            "Expected one TS2339 diagnostic for undeclared private name, got: {errors:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == 2339 && d.message_text.contains("#bar")),
+            "Expected the TS2339 diagnostic to mention '#bar': {diags:?}"
+        );
+    }
+
+    #[test]
+    fn private_name_access_never_reports_2339() {
+        let diags = check_source_with_default_libs(
+            r#"
+class A {
+    #foo = true;
+    static #baz = 10;
+    static #m() {}
+    method(thing: never) {
+        thing.#foo;
+        thing.#m();
+        thing.#baz;
+        thing.#bar;
+        thing.#foo();
+    }
+}
+"#,
+        );
+        let errors = semantic_errors(&diags);
+        assert_eq!(
+            errors.iter().filter(|code| **code == 2339).count(),
+            5,
+            "Expected 5 TS2339 diagnostics for private access on never, got: {errors:?}"
+        );
+        assert!(
+            errors.iter().all(|code| *code == 2339),
+            "Expected only TS2339 diagnostics, got: {errors:?}"
+        );
+    }
 }

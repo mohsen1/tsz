@@ -757,6 +757,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_THIS_IN_THE_CONSTRUCTOR_OF_A_DERIVED_CLASS,
                         );
                     }
+                    // TS2816: Cannot use 'this' in a static property initializer of a decorated class
+                    if self.checker.ctx.compiler_options.experimental_decorators
+                        && let Some(ref class_info) = self.checker.ctx.enclosing_class
+                        && class_info.in_static_property_initializer
+                        && !self.checker.is_this_in_nested_function_inside_class(idx)
+                        && let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
+                        && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
+                        && let Some(ref modifiers) = class_data.modifiers
+                    {
+                        let has_class_decorator = modifiers.nodes.iter().any(|&mod_idx| {
+                            self.checker.ctx.arena.get(mod_idx).is_some_and(|n| {
+                                n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR
+                            })
+                        });
+                        if has_class_decorator {
+                            self.checker.error_at_node(
+                                            idx,
+                                            diagnostic_messages::CANNOT_USE_THIS_IN_A_STATIC_PROPERTY_INITIALIZER_OF_A_DECORATED_CLASS,
+                                            diagnostic_codes::CANNOT_USE_THIS_IN_A_STATIC_PROPERTY_INITIALIZER_OF_A_DECORATED_CLASS,
+                                        );
+                        }
+                    }
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
                     // If `this` is inside a nested regular function, the this_type_stack
