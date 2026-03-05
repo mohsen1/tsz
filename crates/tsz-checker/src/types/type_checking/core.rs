@@ -1772,6 +1772,19 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
+            // TypeScript represents `keyof { 0: T; 1: U }` as numeric literal
+            // types `0 | 1`, but our `evaluate_keyof` emits string-atom literals
+            // for property names. This causes `is_assignable_to(0 | 1, "0" | "1")`
+            // to fail even though `0` and `1` are valid keys. Explicitly check if
+            // the (constraint of the) index type is a union of numeric literals all
+            // of which correspond to named properties of the object.
+            if tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+                self.ctx.types,
+                index_type_for_check,
+                object_type_for_check,
+            ) {
+                return;
+            }
             if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
                 && let Some(nested_indexed_access) =
                     self.ctx.arena.get_indexed_access_type(object_type_node)
