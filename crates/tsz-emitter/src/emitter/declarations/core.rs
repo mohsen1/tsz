@@ -292,7 +292,8 @@ impl<'a> Printer<'a> {
                 | syntax_kind_ext::CONSTRUCTOR
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
-                | syntax_kind_ext::MODULE_DECLARATION => return true,
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::BLOCK => return true,
                 _ => {
                     current = parent;
                 }

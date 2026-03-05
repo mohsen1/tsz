@@ -401,6 +401,9 @@ impl<'a> Printer<'a> {
         self.function_scope_depth += 1;
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
+        // Save/restore declared_namespace_names so enum/namespace names from
+        // outer scope don't leak into the constructor body.
+        let prev_declared = std::mem::take(&mut self.declared_namespace_names);
         if let Some(body_node) = self.arena.get(ctor.body) {
             let temp_count = self.estimate_assignment_destructuring_temps_in_constructor(body_node);
             if temp_count > 0 {
@@ -415,6 +418,7 @@ impl<'a> Printer<'a> {
             &field_inits,
             &auto_accessor_inits,
         );
+        self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
         self.function_scope_depth -= 1;
@@ -1011,9 +1015,12 @@ impl<'a> Printer<'a> {
             self.function_scope_depth += 1;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
+            // Save/restore declared_namespace_names for accessor body isolation.
+            let prev_declared = std::mem::take(&mut self.declared_namespace_names);
             self.prepare_logical_assignment_value_temps(body);
             self.write(" ");
             self.emit(body);
+            self.declared_namespace_names = prev_declared;
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.function_scope_depth -= 1;

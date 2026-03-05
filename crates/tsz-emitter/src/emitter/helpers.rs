@@ -1046,7 +1046,11 @@ impl<'a> Printer<'a> {
     /// (interfaces, type aliases, import type, etc.) or is empty.
     /// TypeScript skips emitting IIFE wrappers for non-instantiated modules.
     pub(super) fn is_instantiated_module(&self, module_body: NodeIndex) -> bool {
-        crate::transforms::emit_utils::is_instantiated_module(self.arena, module_body)
+        crate::transforms::emit_utils::is_instantiated_module_ext(
+            self.arena,
+            module_body,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     /// Scan forward from `pos` past whitespace and comments to find the actual

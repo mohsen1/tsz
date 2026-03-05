@@ -144,7 +144,19 @@ pub(crate) fn export_clause_is_type_only(
 ///
 /// Recursively walks dotted namespaces (e.g., `namespace Foo.Bar`) to find
 /// the innermost `MODULE_BLOCK` and checks each statement.
+#[allow(dead_code)]
 pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    is_instantiated_module_ext(arena, module_body, false)
+}
+
+/// Like `is_instantiated_module` but with `preserve_const_enums` awareness.
+/// When `preserve_const_enums` is true, `const enum` declarations count as
+/// runtime value declarations (they produce IIFE output).
+pub(crate) fn is_instantiated_module_ext(
+    arena: &NodeArena,
+    module_body: NodeIndex,
+    preserve_const_enums: bool,
+) -> bool {
     let Some(body_node) = arena.get(module_body) else {
         return false;
     };
@@ -153,7 +165,7 @@ pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) 
     // recurse into the inner module
     if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
         if let Some(inner_module) = arena.get_module(body_node) {
-            return is_instantiated_module(arena, inner_module.body);
+            return is_instantiated_module_ext(arena, inner_module.body, preserve_const_enums);
         }
         return false;
     }
@@ -164,7 +176,7 @@ pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) 
     {
         for &stmt_idx in &stmts.nodes {
             if let Some(stmt_node) = arena.get(stmt_idx)
-                && !is_type_only_module_statement(arena, stmt_node)
+                && !is_type_only_module_statement_ext(arena, stmt_node, preserve_const_enums)
             {
                 return true;
             }
@@ -177,7 +189,17 @@ pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) 
 /// Check if a statement inside a module body is purely a type declaration
 /// (interface, type alias, type-only import/export, const/declare enum,
 /// declare/non-instantiated module).
+#[allow(dead_code)]
 pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
+    is_type_only_module_statement_ext(arena, node, false)
+}
+
+/// Like `is_type_only_module_statement` but with `preserve_const_enums` awareness.
+pub(crate) fn is_type_only_module_statement_ext(
+    arena: &NodeArena,
+    node: &Node,
+    preserve_const_enums: bool,
+) -> bool {
     match node.kind {
         k if k == syntax_kind_ext::INTERFACE_DECLARATION
             || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
@@ -193,12 +215,18 @@ pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> b
             }
             false
         }
-        // `import x = require("...")` (external module reference) doesn't instantiate.
-        // But `import X = Namespace` (internal alias) DOES instantiate.
+        // Import-equals declarations: tsc treats non-exported import aliases as
+        // non-instantiating (they don't cause the namespace IIFE to be emitted).
+        // Only `export import X = Y` instantiates the module.
+        // `import x = require("...")` (external module reference) also doesn't instantiate.
         k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
             if let Some(import_decl) = arena.get_import_decl(node) {
-                // Check if it's type-only first
+                // Type-only imports never instantiate
                 if import_decl.is_type_only {
+                    return true;
+                }
+                // Non-exported import aliases don't instantiate (matches tsc binder.ts)
+                if !arena.has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword) {
                     return true;
                 }
                 // External module reference: `require("...")` produces a string literal
@@ -215,7 +243,11 @@ pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> b
                     return true;
                 }
                 if let Some(inner_node) = arena.get(export_decl.export_clause) {
-                    return is_type_only_module_statement(arena, inner_node);
+                    return is_type_only_module_statement_ext(
+                        arena,
+                        inner_node,
+                        preserve_const_enums,
+                    );
                 }
             }
             false
@@ -223,14 +255,15 @@ pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> b
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(node) {
                 return arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
+                    || (arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                        && !preserve_const_enums);
             }
             false
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module_decl) = arena.get_module(node) {
                 return arena.has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || !is_instantiated_module(arena, module_decl.body);
+                    || !is_instantiated_module_ext(arena, module_decl.body, preserve_const_enums);
             }
             true
         }

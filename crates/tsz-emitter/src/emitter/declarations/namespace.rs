@@ -178,7 +178,9 @@ impl<'a> Printer<'a> {
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
         let should_declare = !self.declared_namespace_names.contains(&name);
         if should_declare {
-            let keyword = if self.in_namespace_iife && !self.ctx.target_es5 {
+            let keyword = if (self.in_namespace_iife || self.function_scope_depth > 0)
+                && !self.ctx.target_es5
+            {
                 "let"
             } else {
                 "var"
