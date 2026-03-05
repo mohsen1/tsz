@@ -664,6 +664,13 @@ impl<'a> CheckerState<'a> {
                 && left_narrow != TypeId::NEVER
                 && right_narrow != TypeId::NEVER
                 && self.types_have_no_overlap(left_narrow, right_narrow)
+                // Suppress TS2367 when the DECLARED type of either operand has overlap
+                // with the other. This handles loop narrowing: e.g., `code: 0 | 1 = 0;
+                // while (...) { code = code === 1 ? 0 : 1; }` — flow narrows `code` to `0`
+                // but the declared type `0 | 1` overlaps with `1`. tsc widens at the loop
+                // boundary; we compensate by checking declared types here.
+                && !self.declared_type_has_overlap(left_idx, left_narrow, right_narrow)
+                && !self.declared_type_has_overlap(right_idx, right_narrow, left_narrow)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // TSC uses the narrow/literal types for the TS2367 message text,
@@ -1196,6 +1203,49 @@ impl<'a> CheckerState<'a> {
         ];
         Some(factory.union(members))
     }
+
+    /// Check if an identifier node's declared type overlaps with the given comparison type.
+    /// Returns true if the identifier's declared type is wider than `narrow_type` and
+    /// has overlap with `other_type`. This prevents false TS2367 when flow narrowing
+    /// inside loops makes the narrowed type too specific (e.g., `0` instead of `0 | 1`).
+    fn declared_type_has_overlap(
+        &mut self,
+        idx: NodeIndex,
+        narrow_type: TypeId,
+        other_type: TypeId,
+    ) -> bool {
+        let node = match self.ctx.arena.get(idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        // Only applies to identifiers
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        // Resolve the identifier to a symbol
+        let sym_id = match self.ctx.binder.resolve_identifier(self.ctx.arena, idx) {
+            Some(s) => s,
+            None => return false,
+        };
+        // Get the symbol's value_declaration and its type (the declared type)
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        if symbol.value_declaration.is_none() {
+            return false;
+        }
+        let declared_type = match self.ctx.node_types.get(&symbol.value_declaration.0) {
+            Some(&t) => t,
+            None => return false,
+        };
+        // Only relevant when the declared type is wider than the narrowed type
+        if declared_type == narrow_type {
+            return false;
+        }
+        // Check if the declared type overlaps with the other operand
+        !self.types_have_no_overlap(declared_type, other_type)
+    }
 }
 
 #[cfg(test)]
@@ -1718,6 +1768,59 @@ mod tests {
         assert!(
             !has_2362_or_2363,
             "Should NOT emit TS2362/TS2363 for `number * any`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    // =========================================================================
+    // TS2367: Declared-type overlap suppression for loop narrowing
+    // =========================================================================
+
+    #[test]
+    fn no_ts2367_for_loop_narrowed_union_variable() {
+        // When a variable is declared as `0 | 1`, initialized to `0`, and
+        // compared with `1` inside a loop, flow narrows it to `0`. tsc widens
+        // at the loop boundary; we suppress TS2367 by checking the declared type.
+        let diags = check_source_diagnostics(
+            "function f() { let code: 0 | 1 = 0; while (true) { code = code === 1 ? 0 : 1; } }",
+        );
+        let has_2367 = diags.iter().any(|d| d.code == 2367);
+        assert!(
+            !has_2367,
+            "Should NOT emit TS2367 for loop-narrowed union variable, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2367_still_emitted_for_genuinely_unrelated_types() {
+        // Genuine no-overlap: string vs number should still trigger TS2367.
+        let diags = check_source_diagnostics("declare var x: string; if (x === 1) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 2367),
+            "Expected TS2367 for string === number (no overlap), got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2367_for_three_member_union_narrowed_in_loop() {
+        // Three-member union `0 | 1 | 2` narrowed by control flow in a for-of loop.
+        // This matches the f1() case from controlFlowNoIntermediateErrors.
+        let diags = check_source_diagnostics(
+            "function f() {
+                let code: 0 | 1 | 2 = 0;
+                const arr: (0 | 1 | 2)[] = [2, 0, 1];
+                for (const c of arr) {
+                    if (c === 0) { code = code === 2 ? 1 : 0; }
+                    else { code = 2; }
+                }
+            }",
+        );
+        let has_2367 = diags.iter().any(|d| d.code == 2367);
+        assert!(
+            !has_2367,
+            "Should NOT emit TS2367 for 3-member union narrowed in loop, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
