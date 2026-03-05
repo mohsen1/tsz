@@ -355,6 +355,29 @@ type OldDiff<T extends keyof any, U extends keyof any> = (
 }
 
 #[test]
+fn test_element_access_mismatched_keyof_source_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+function f<T, U extends T>(x: T, y: U, k: keyof U) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+
+function g<T, U extends T, K extends keyof U>(x: T, y: U, k: K) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+        ",
+    );
+
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 4,
+        "Expected TS2536 for mismatched generic key source in element access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
     if load_lib_files_for_test().is_empty() {
         return;

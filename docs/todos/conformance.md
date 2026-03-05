@@ -5803,3 +5803,161 @@ All items below have been validated against the codebase (implementations + test
 | reverse-mapped tuple/Application templates | **Investigation only — no fix merged.** Root cause: `reverse_infer_through_template` in `constraints.rs` can't handle Application templates (e.g., `KeepLiteralStrings<T[K]>`) when the source doesn't share the same Application base. tsc solves this via `inferReverseMappedTypeWorker` which creates fresh inference variables for `T[K]` and runs general `inferTypes(source, template)`, allowing full structural decomposition through Applications. Our specialized manual reversal can't replicate this. Tuple element-wise reverse-mapping was attempted (following tsc's `createReverseMappedType` special case for tuples) but caused regression in `mappedTypesArraysTuples.ts` because post-inference assignability checks fail when the tuple is reconstructed. **Blocked on**: architectural gap — need a general "infer through any template" capability rather than case-by-case template reversal. Affects: `reverseMappedTupleContext.ts` (TS2322+TS2345 false positives), `partiallyNamedTuples2.ts` (TS2345 false positive), potentially others. Area: types/tuple (58.8% pass rate, 14 failures). | +0 tests |
 | diagnostic fingerprint parity: display ordering | Three display-ordering fixes that correct fingerprint-level mismatches across multiple areas. **(1) Abstract new constructor type display**: `format_signature()` in `format.rs` now accepts `is_abstract` parameter, rendering `abstract new (...)` instead of `new (...)` for abstract construct signatures. `CallableShape.is_abstract` was already tracked. **(2) Intersection member display order**: `format_intersection()` now sorts members by DefId for Lazy types (approximating declaration order) before display, matching tsc's output of `Foo & Bar` instead of `Bar & Foo`. **(3) Object property display order**: Fixed sentinel value collision where `prop_order` started at 0 in `object_literal.rs` but `intern/core.rs` treated `declaration_order == 0` as "unset". Changed start to 1. Added `sort_by_key(declaration_order)` after `FxHashMap.into_values().collect()` at all 3 collection points. Both `format_object()` and `format_object_with_index()` sort by `declaration_order` at display time as safety net. **Remaining**: TS2344 for infer type variable constraints — tsc derives implicit constraints from infer positions (e.g., `T72<infer U>` where T72 has `T extends number` → U gets constraint `number`). Our lowering creates infer with `constraint: None`. Needs positional constraint derivation during conditional type evaluation. Area: types/conditional 60%→80%. | +7 tests |
 | Lazy class → constructor type | When class methods return `this` class during construction, `Lazy(DefId)` placeholders resolve to instance type (correct for type position) but wrong for value position. Added `resolve_lazy_class_to_constructor()` that replaces `Lazy(DefId)` with `TypeQuery(SymbolRef)` for CLASS symbols at two sites: (1) after `infer_return_type_from_body` in `return_type.rs`, (2) in `get_type_of_private_property_access` in `computed_helpers.rs`. Fixes static private member access through class self-references (e.g., `A.getClass().#field`, `static s = C.#method()`). Area: classes/members 66.5%→69.0%. | +5 tests |
+
+## Session 2026-03-05j — classes/staticIndexSignature2 deep dive (investigation only, no code landed)
+
+### Locked area
+- **Assigned area (rank 2, fallback-applied)**: `classes`
+- Snapshot selection basis (`scripts/conformance-snapshot.json` @ `a2de619efddb8a95059040adfee20173342ff1c8`):
+  - No areas matched `<30% pass_rate && failed >= 15`
+  - No areas matched `<50% pass_rate && failed >= 15`
+  - Fallback to all areas sorted worst-first, index `1` => `classes`
+
+### Mandatory classification
+
+TEST FILE: `TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature2.ts`
+
+EXPECTED (fingerprint):
+- `TS2542` at `test.ts:7:1` — `Index signature in type 'typeof C' only permits reading.`
+- `TS2322` at `test.ts:10:1` — `Type '2' is not assignable to type '42'.`
+
+ACTUAL (fingerprint):
+- `TS2542` at `test.ts:7:3` — `Index signature in type 'typeof C' only permits reading.`
+- Missing `TS2322` at line 10.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST is wrong
+- [ ] Binder — symbols/scopes are wrong
+- [x] Solver — type evaluation/relation is wrong
+- [x] Checker — orchestration/diagnostic emission is wrong
+- [ ] Emitter — output formatting is wrong
+
+SPECIFIC GAP:
+1. Numeric element assignment (`C[2] = 2`) is not producing the numeric index target type `42` at assignment time, so TS2322 is skipped.
+2. TS2542 anchor is offset (`7:3` vs `7:1`) for string-index write diagnostic location.
+
+FIX BELONGS IN:
+- Primary: `crates/tsz-checker/src/types/computation/access.rs` (`get_type_of_element_access`, numeric literal write path)
+- Secondary: `crates/tsz-checker/src/state/state_checking/readonly.rs` (TS2542 emission/short-circuit policy for element-access assignment)
+- Potential supporting audit: `crates/tsz-solver/src/operations/property.rs` + `property_visitor.rs` parity between property access fallback and element access for numeric keys.
+
+ESTIMATED SCOPE:
+- ~60–120 LOC across checker access + readonly handling + small tests.
+
+OTHER TESTS AFFECTED:
+- Estimated 3–10 tests in `classes/staticIndexSignature` and nearby class element-access/index-signature cases.
+
+### Technical findings
+- Conformance-runner direct reproduction command:
+  - `./.target/dist-fast/tsz-conformance --test-dir ./TypeScript/tests/cases --cache-file ./scripts/tsc-cache-full.json --tsz-binary ./.target/dist-fast/tsz --workers 4 --print-test --print-fingerprints --verbose --filter staticIndexSignature2`
+- The missing TS2322 occurs specifically on numeric element write with dual string+number static index signatures on `typeof C`.
+- Attempts to bypass checker property-fallback path for numeric writes caused regressions (extra TS7053/TS2542), indicating the bug is not isolated to one branch; readonly short-circuit and write-target type computation must be changed together.
+
+### Recommended full fix plan (not implemented this session)
+1. In `get_type_of_element_access` write context, avoid treating numeric literal key as a string-property fallback when resolution source is index-signature-based; route through solver element-access evaluation for canonical numeric precedence.
+2. Preserve read-context behavior (do not alter TS7053 behavior for reads).
+3. In readonly checking, avoid terminal short-circuit that suppresses TS2322 when tsc prioritizes assignability on numeric index writes for callable/static-index contexts.
+4. Add focused checker unit tests for:
+   - numeric static index write mismatch -> TS2322
+   - string static index write readonly -> TS2542 with expression-span anchor
+   - no new TS7053 on `const bar = C[42]` in this case.
+5. Validate with:
+   - `cargo nextest run -p tsz-checker`
+   - targeted conformance:
+     - `./scripts/conformance.sh run --filter "staticIndexSignature" --verbose`
+     - `./scripts/conformance.sh run --filter "classes/staticIndexSignature"`
+
+### Outcome
+- No code changes kept.
+- No commit made.
+- Investigation documented to enable a clean follow-up fix without regressing fingerprint parity.
+
+## Session 2026-03-05k — types/mapped TS2536 gap deep dive (investigation only, no code landed)
+
+### Locked area
+- **Assigned area (rank 2, fallback-applied)**: `types/mapped`
+- Snapshot selection basis (`scripts/conformance-snapshot.json` @ `6cdaca7f32422e293b7d21df220d47601cff3cfc`):
+  - No areas matched `<30% pass_rate && failed >= 15`
+  - No areas matched `<50% pass_rate && failed >= 15`
+  - Fallback to all areas sorted worst-first, index `1` => `types/mapped` (`57.69%`, `11` failed)
+
+### Mandatory classification
+
+TEST FILE: `TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts`
+
+EXPECTED (fingerprint):
+- Includes `TS2536` at:
+  - `test.ts:21:5` (`keyof U` cannot index `T`)
+  - `test.ts:22:12` (`keyof U` cannot index `T`)
+  - `test.ts:26:5` (`K` cannot index `T`)
+  - `test.ts:27:12` (`K` cannot index `T`)
+
+ACTUAL (fingerprint):
+- Missing all above `TS2536` fingerprints.
+- Emits `TS2322` family mismatches instead (e.g. `T[K]` vs `U[K]`), meaning indexing was accepted/deferred and failed later in assignability.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST is wrong
+- [ ] Binder — symbols/scopes are wrong
+- [x] Solver — element/index access evaluation fallback behavior contributes
+- [x] Checker — orchestration chooses deferred index-access path too eagerly
+- [ ] Emitter — output formatting is wrong
+
+SPECIFIC GAP:
+- In expression-level element access (`obj[key]`) for type-parameter objects, checker path in `crates/tsz-checker/src/types/computation/access.rs` defers to `IndexAccess(T, K)` too aggressively when the object type parameter resolves to a concrete constraint.
+- For `K extends keyof U` with `U extends T`, tsc treats indexing `T[K]` as invalid and emits `TS2536`; tsz currently defers and later reports `TS2322`-only mismatches.
+
+FIX BELONGS IN:
+- Primary: `crates/tsz-checker/src/types/computation/access.rs`
+  - `get_type_of_element_access_expr` deferred-fallback branch (cases around generic index handling)
+  - helpers `is_generic_index_type` / `is_valid_index_for_type_param`
+- Secondary audit:
+  - `crates/tsz-checker/src/types/type_checking/core.rs::check_indexed_access_type` (type-position `T[K]` path)
+  - `crates/tsz-solver/src/evaluation/evaluate_rules/index_access.rs` (runtime of deferred `IndexAccess`)
+
+ESTIMATED SCOPE:
+- ~80–150 LOC + 2–4 focused unit tests.
+
+OTHER TESTS AFFECTED:
+- Estimated 2–6 tests in `types/mapped` and generic indexed-access/constrained-key families.
+
+### What was validated this session
+- Area drilldown and target test run:
+  - `./scripts/conformance.sh areas --depth 3 --drilldown types`
+  - `./.target/dist-fast/tsz-conformance --filter mappedTypeRelationships --print-fingerprints --verbose`
+- Area baseline remains unchanged after experiments:
+  - `./scripts/conformance.sh run --filter "conformance/types/mapped/"`
+  - Result unchanged: `15/26` (`57.7%`), `TS2536` still missing in mapped tests.
+
+### Attempted fixes and why they were reverted
+1. `check_indexed_access_type` suppression tightening (`core.rs`):
+   - Attempt: only suppress deferred TS2536 on raw/original index type, not constraint-substituted `keyof` type.
+   - Issue: did not fix expression-level `obj[key]` failures (the conformance gap is mostly runtime element access, not type-node indexed access).
+
+2. `access.rs` deferred fallback gating for `keyof` of other type params:
+   - Attempt: avoid deferring `T[K]` when key resembles `keyof U` where `U != T`.
+   - Issue: still failed target fingerprints; behavior remained `TS2322`-biased and `TS2536`-missing in mapped relationship tests.
+
+Both attempts were reverted to avoid leaving partial/non-improving behavior in the workspace.
+
+### TSC behavior notes (from conformance fingerprints)
+- For the mapped-relationship pattern, tsc emits `TS2536` at the indexing site before or alongside downstream assignability issues.
+- tsz currently allows/defer-evaluates those indices and only surfaces later relation failures (`TS2322`), which shifts both error code and location fingerprint parity.
+
+### Recommended next fix (clean follow-up)
+1. In `get_type_of_element_access_expr`, split generic-index defer policy into:
+   - `K extends keyof T` on same target type param: defer/allow.
+   - `K extends keyof U` where `U` is not the indexed type param: emit/index-error path (do not defer).
+2. Add an explicit checker-level compatibility predicate for “key type proven for this object type param” rather than using broad `is_generic_index_type`.
+3. Add targeted unit tests (checker module tests, not conformance fixtures):
+   - positive: `T[K]` with `K extends keyof T` should not emit TS2536.
+   - negative: `T[K]` with `K extends keyof U`, `U extends T` should emit TS2536.
+4. Re-run:
+   - `cargo nextest run -p tsz-checker`
+   - `./scripts/conformance.sh run --filter "conformance/types/mapped/"`
+   - `./.target/dist-fast/tsz-conformance --filter mappedTypeRelationships --print-fingerprints --verbose`
+
+### Outcome
+- No fix landed.
+- No commit made.
+- Investigation documented for a focused follow-up implementation.

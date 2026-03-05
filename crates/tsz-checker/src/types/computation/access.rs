@@ -599,6 +599,30 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 && self.is_generic_index_type(index_type)
             {
+                // When indexing a type parameter T with keys from a different type
+                // parameter (e.g., `keyof U` where `U extends T`), tsc emits TS2536.
+                // We should not defer this case to IndexAccess(T, ...).
+                if let Some(key_source) =
+                    self.keyof_source_type_param(index_type, pre_resolution_object_type)
+                    && !self.is_assignable_to(pre_resolution_object_type, key_source)
+                {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let index_type_str = self.format_type(index_type);
+                    let object_type_str = self.format_type(pre_resolution_object_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                        &[&index_type_str, &object_type_str],
+                    );
+                    self.error_at_node(
+                        access.expression,
+                        &message,
+                        diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                    );
+                    return TypeId::ERROR;
+                }
+
                 // Case 1: U resolved to a DIFFERENT type parameter T (its constraint).
                 // Produce a deferred IndexAccess(U, index) to preserve the distinction
                 // between U[K] and T[K] for assignability.
@@ -906,6 +930,34 @@ impl<'a> CheckerState<'a> {
             return keyof_inner == type_param;
         }
         false
+    }
+
+    /// Return the type parameter source when `index_type` is `keyof S` or `K extends keyof S`
+    /// for a type parameter `S` different from `type_param`.
+    ///
+    /// The caller can then decide whether indexing should be legal based on
+    /// type-parameter relation direction (e.g. `U[keyof T]` is legal when `U extends T`,
+    /// but `T[keyof U]` is not).
+    fn keyof_source_type_param(&self, index_type: TypeId, type_param: TypeId) -> Option<TypeId> {
+        use tsz_solver::visitor;
+
+        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type)
+            && visitor::is_type_parameter(self.ctx.types, keyof_inner)
+            && keyof_inner != type_param
+        {
+            return Some(keyof_inner);
+        }
+
+        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+            && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint)
+            && visitor::is_type_parameter(self.ctx.types, keyof_inner)
+            && keyof_inner != type_param
+        {
+            return Some(keyof_inner);
+        }
+
+        None
     }
 
     /// Get the type of the `super` keyword.
