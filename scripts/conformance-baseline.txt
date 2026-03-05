@@ -439,7 +439,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1353,7 +1352,6 @@ FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classImplement
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/declaredClassMergedwithSelf.ts
 FAIL TypeScript/tests/cases/conformance/classes/classExpressions/genericClassExpressionInFunction.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock16.ts
-FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock17.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock19.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock20.ts
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock22.ts
@@ -1403,12 +1401,9 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameHashCharName.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInLhsReceiverExpression.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameJsBadAssignment.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodAssignment.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodClassExpression.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassAccessorsShadowing.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassMethodShadowing.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameReadonly.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndGenericClasses-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
@@ -1418,7 +1413,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesNoDelete.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameStaticAccessorsAccess.ts
@@ -4940,6 +4934,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -7980,6 +7975,7 @@ PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBloc
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock13.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock14.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock15.ts
+PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock17.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock18.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock2.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock21.ts
@@ -8114,6 +8110,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldUnaryMutation.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameImplicitDeclaration.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpressionUnused.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInLhsReceiverExpression.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInObjectLiteral-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInObjectLiteral-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInObjectLiteral-3.ts
@@ -8126,7 +8123,9 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodCallExpression.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodInStaticFieldInit.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodsDerivedClasses.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassAccessorsShadowing.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassFieldShadowing.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassMethodShadowing.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassNameConflict.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedMethodAccess.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNotAccessibleOutsideDefiningClass.ts
@@ -8139,6 +8138,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInterfaceExtendingClass.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesNotAllowedAsParameters.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesNotAllowedInVariableDeclarations.ts

@@ -8,13 +8,13 @@
 //!
 //! See docs/conformance-*.md for full context.
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -146,9 +146,9 @@ fn compile_and_get_diagnostics_with_lib_and_options(
     );
 
     if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| tsz_checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -4617,5 +4617,77 @@ class Derived2 extends Base<{ bar: string; }> {
         "TS2416 should show instantiated base type 'Base<{{ bar: string; }}>', not 'Base<T>'.\n\
          Actual message: {}",
         ts2416_messages[0]
+    );
+}
+
+/// Verify that private name access works correctly for instance members accessed
+/// via parameters typed as the same class (e.g., `a.#x` where `a: A` inside class A).
+///
+/// Previously, `resolve_lazy_class_to_constructor` was incorrectly converting the
+/// parameter type to a constructor type (typeof A), causing TS2339 false positives.
+#[test]
+fn test_private_name_instance_access_via_parameter() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class A {
+    #x = 1;
+    test(a: A) {
+        a.#x;
+    }
+}
+class B {
+    #y() { return 1; };
+    test(b: B) {
+        b.#y;
+    }
+}
+        "#,
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Should NOT emit TS2339 for private member access within the declaring class.\n\
+         Private fields/methods accessed via a parameter of the same class type should be valid.\n\
+         Got: {ts2339:?}"
+    );
+}
+
+/// Verify that shadowed private names in nested classes produce TS18014 without
+/// spurious TS2339 for valid access on the inner class.
+#[test]
+fn test_private_name_nested_class_shadowing() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {
+    #x() { };
+    constructor() {
+        class Derived {
+            #x() { };
+            testBase(x: Base) {
+                console.log(x.#x);
+            }
+            testDerived(x: Derived) {
+                console.log(x.#x);
+            }
+        }
+    }
+}
+        "#,
+    );
+
+    let ts18014: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 18014).collect();
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+
+    assert!(
+        !ts18014.is_empty(),
+        "Should emit TS18014 for shadowed private name access (x.#x where x: Base).\n\
+         Actual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts2339.is_empty(),
+        "Should NOT emit TS2339 alongside TS18014 for shadowed private names.\n\
+         Derived.testDerived accessing x.#x (x: Derived) should be valid.\n\
+         Got: {ts2339:?}"
     );
 }
