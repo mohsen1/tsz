@@ -1385,6 +1385,77 @@ class Child extends Parent {
     );
 }
 
+/// TS2416 for class extending non-class (variable with constructor signature).
+///
+/// When a class extends a variable declared as `{ prototype: A; new(): A }`,
+/// the AST-level class resolution fails (variable, not class), so the checker
+/// falls back to type-level resolution. Property type compatibility must still
+/// be checked against the resolved instance type.
+#[test]
+fn test_ts2416_type_level_base_class_property_incompatibility() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface A {
+    n: number;
+}
+declare var A: {
+    prototype: A;
+    new(): A;
+};
+
+class B extends A {
+    n = '';
+}
+        ",
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2416),
+        "Should emit TS2416 when derived class property type is incompatible with base type.\nActual errors: {relevant_diagnostics:#?}"
+    );
+}
+
+/// TS2416 alongside TS2426 when method overrides accessor with incompatible type.
+///
+/// tsc emits both TS2426 (kind mismatch: accessor -> method) and TS2416 (type incompatibility)
+/// when a derived class method overrides a base class accessor.
+#[test]
+fn test_ts2416_emitted_alongside_ts2426_accessor_method_mismatch() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    get x() { return 1; }
+    set x(v) {}
+}
+
+class Derived extends Base {
+    x() { return 1; }
+}
+        ",
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2426),
+        "Should emit TS2426 for accessor/method kind mismatch.\nActual errors: {relevant_diagnostics:#?}"
+    );
+    assert!(
+        has_error(&relevant_diagnostics, 2416),
+        "Should also emit TS2416 for type incompatibility alongside TS2426.\nActual errors: {relevant_diagnostics:#?}"
+    );
+}
+
 /// Seam test: TS2430 should be reported for incompatible interface member types.
 ///
 /// Guards `class_checker` interface-extension compatibility after relation-helper refactors.
