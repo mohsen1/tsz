@@ -439,7 +439,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -499,7 +498,6 @@ FAIL TypeScript/tests/cases/compiler/illegalSuperCallsInConstructor.ts
 FAIL TypeScript/tests/cases/compiler/implementArrayInterface.ts
 FAIL TypeScript/tests/cases/compiler/implementGenericWithMismatchedTypes.ts
 FAIL TypeScript/tests/cases/compiler/implementsIncorrectlyNoAssertion.ts
-FAIL TypeScript/tests/cases/compiler/implicitAnyWidenToAny.ts
 FAIL TypeScript/tests/cases/compiler/importAliasFromNamespace.ts
 FAIL TypeScript/tests/cases/compiler/importAliasInModuleAugmentation.ts
 FAIL TypeScript/tests/cases/compiler/importAsBaseClass.ts
@@ -1159,7 +1157,6 @@ FAIL TypeScript/tests/cases/compiler/superWithTypeArgument3.ts
 FAIL TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults.ts
 FAIL TypeScript/tests/cases/compiler/tailRecursiveConditionalTypes.ts
 FAIL TypeScript/tests/cases/compiler/targetTypeBaseCalls.ts
-FAIL TypeScript/tests/cases/compiler/targetTypeTest3.ts
 FAIL TypeScript/tests/cases/compiler/templateLiteralEscapeSequence.ts
 FAIL TypeScript/tests/cases/compiler/templateLiteralIntersection2.ts
 FAIL TypeScript/tests/cases/compiler/templateLiteralIntersection3.ts
@@ -2329,7 +2326,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersectio
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -2429,9 +2425,7 @@ FAIL TypeScript/tests/cases/conformance/types/tuple/contextualTypeWithTuple.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/optionalTupleElements1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/restTupleElements1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/strictTupleLength.ts
-FAIL TypeScript/tests/cases/conformance/types/tuple/tupleElementTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/typeInferenceWithTupleType.ts
-FAIL TypeScript/tests/cases/conformance/types/tuple/unionsOfTupleTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/classDoesNotDependOnBaseTypes.ts
@@ -4977,6 +4971,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5158,6 +5153,7 @@ PASS TypeScript/tests/cases/compiler/implicitAnyGetAndSetAccessorWithAnyReturnTy
 PASS TypeScript/tests/cases/compiler/implicitAnyInAmbientDeclaration.ts
 PASS TypeScript/tests/cases/compiler/implicitAnyInCatch.ts
 PASS TypeScript/tests/cases/compiler/implicitAnyNewExprLackConstructorSignature.ts
+PASS TypeScript/tests/cases/compiler/implicitAnyWidenToAny.ts
 PASS TypeScript/tests/cases/compiler/implicitConstParameters.ts
 PASS TypeScript/tests/cases/compiler/implicitIndexSignatures.ts
 PASS TypeScript/tests/cases/compiler/impliedNodeFormatEmit1.ts
@@ -7244,6 +7240,7 @@ PASS TypeScript/tests/cases/compiler/targetTypeObjectLiteral.ts
 PASS TypeScript/tests/cases/compiler/targetTypeObjectLiteralToAny.ts
 PASS TypeScript/tests/cases/compiler/targetTypeTest1.ts
 PASS TypeScript/tests/cases/compiler/targetTypeTest2.ts
+PASS TypeScript/tests/cases/compiler/targetTypeTest3.ts
 PASS TypeScript/tests/cases/compiler/targetTypeVoidFunc.ts
 PASS TypeScript/tests/cases/compiler/targetTypingOnFunctions.ts
 PASS TypeScript/tests/cases/compiler/templateExpressionAsPossiblyDiscriminantValue.ts
@@ -11822,6 +11819,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
@@ -12117,10 +12115,12 @@ PASS TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples2.
 PASS TypeScript/tests/cases/conformance/types/tuple/named/partiallyNamedTuples3.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/readonlyArraysAndTuples.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/readonlyArraysAndTuples2.ts
+PASS TypeScript/tests/cases/conformance/types/tuple/tupleElementTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/tupleElementTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/tupleElementTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/tupleElementTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/tupleLengthCheck.ts
+PASS TypeScript/tests/cases/conformance/types/tuple/unionsOfTupleTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/variadicTuples3.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/wideningTuples1.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/wideningTuples2.ts
