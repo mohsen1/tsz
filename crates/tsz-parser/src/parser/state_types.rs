@@ -1536,14 +1536,17 @@ impl ParserState {
             | SyntaxKind::NoSubstitutionTemplateLiteral
             | SyntaxKind::TemplateHead => true,
 
-            // These never follow type arguments (ambiguous with relational)
+            // These never follow type arguments (ambiguous with relational or unary context)
             SyntaxKind::LessThanToken
             | SyntaxKind::GreaterThanToken
             | SyntaxKind::PlusToken
             | SyntaxKind::MinusToken => false,
 
             // Everything else: favor type arguments when followed by
-            // a line break, binary operator, or non-expression-starter
+            // a line break, binary operator, or non-expression-starter.
+            // Assignment operators like `=` are not expression starters,
+            // so `f<T> = x` correctly returns true here (tsc treats
+            // instantiation expression assignment as TS2364).
             _ => {
                 self.scanner.has_preceding_line_break()
                     || self.is_binary_operator()
