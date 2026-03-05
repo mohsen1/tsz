@@ -131,11 +131,16 @@ impl<'a> Printer<'a> {
         // Each function has its own scope for variable renaming/shadowing.
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
+        // Save/restore declared_namespace_names so enum/namespace names from the
+        // outer scope don't suppress declarations inside this function, and names
+        // declared inside don't leak to sibling functions at the outer scope.
+        let prev_declared = std::mem::take(&mut self.declared_namespace_names);
         self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
         self.ctx.flags.in_generator = prev_in_generator;
+        self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
         self.function_scope_depth -= 1;
