@@ -1757,11 +1757,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Fall back to constraint-based check for type parameters.
+        // Evaluate the constraint through the type environment so type aliases
+        // (e.g. `Boolean = 0 | 1`) resolve to their underlying union types.
         let index_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
             self.ctx.types,
             index_type_for_check,
         )
         .unwrap_or(index_type_for_check);
+        let index_type_for_check = self.evaluate_type_with_env(index_type_for_check);
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
             if let Some((wants_string, wants_number)) =
                 self.get_index_key_kind(index_type_for_check)
@@ -1834,13 +1837,23 @@ impl<'a> CheckerState<'a> {
             // Check BOTH the evaluated type AND the original (pre-evaluation) type,
             // because evaluation may partially resolve an Application into a
             // Conditional, or may produce ERROR.
-            let is_deferred_index = |ty: TypeId| -> bool {
+            let is_deferred_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
-            if is_deferred_index(index_type_for_check) || is_deferred_index(index_type) {
+            // Suppress TS2536 when either the index or the object type is
+            // deferred (conditional, application, keyof, error). TSC defers
+            // these checks to instantiation time.
+            // Check both pre-evaluation and post-evaluation forms: evaluation
+            // may partially resolve an Application into a union of conditionals,
+            // losing the top-level Application marker.
+            if is_deferred_type(index_type_for_check)
+                || is_deferred_type(index_type)
+                || is_deferred_type(object_type_for_check)
+                || is_deferred_type(object_type)
+            {
                 return;
             }
 

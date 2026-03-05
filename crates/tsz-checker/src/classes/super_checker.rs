@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
         });
 
         let in_constructor_parameter_context = self.is_in_constructor_parameter_context(idx);
-        let in_static_property_initializer = self
+        let _in_static_property_initializer = self
             .ctx
             .enclosing_class
             .as_ref()
