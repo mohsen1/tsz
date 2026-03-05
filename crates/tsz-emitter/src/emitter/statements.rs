@@ -600,15 +600,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // When a function expression appears as a statement, it needs wrapping parentheses
-        // to distinguish it from a function declaration. We unwrap type assertions since
-        // those are erased in JS output but the underlying expression still needs parens.
+        // When a function/object expression appears at the start of a statement, it needs
+        // wrapping parentheses: `function` would be parsed as a declaration, and `{` as a
+        // block. We use a leftmost-expression walker that follows the left chain through
+        // call/property-access/element-access and unwraps type assertions (which are erased
+        // in JS output) to find the actual leading token.
         // e.g., `<unknown>function() {}();` → `(function () { })();`
+        // e.g., `<unknown>{foo() {}}.foo();` → `({ foo() { } }.foo());`
         let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
-            let inner_kind = self
-                .unwrap_type_assertion_kind(expr_stmt.expression)
+            let leftmost = self
+                .leftmost_expression_kind_after_erasure(expr_stmt.expression)
                 .unwrap_or(expr_node.kind);
-            inner_kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
+                || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION)
         } else {
             false
