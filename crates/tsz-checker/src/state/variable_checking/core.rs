@@ -590,14 +590,21 @@ impl<'a> CheckerState<'a> {
                                 decl_idx,
                             );
                         } else if is_destructuring {
-                            // For destructuring patterns, keep emitting a generic TS2322 error
-                            // instead of detailed property mismatch errors (TS2326-style detail).
-                            let _ = checker.check_assignable_or_report_generic_at(
+                            // For destructuring patterns, try element-level elaboration first
+                            // (tsc reports TS2322 on each mismatching element), then fall back
+                            // to a generic TS2322 error.
+                            if !checker.try_elaborate_initializer_elements(
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
-                                decl_idx,
-                            );
+                            ) {
+                                let _ = checker.check_assignable_or_report_generic_at(
+                                    init_type,
+                                    declared_type,
+                                    var_decl.initializer,
+                                    decl_idx,
+                                );
+                            }
                         } else if checker.try_discriminated_union_excess_check(
                             init_type,
                             declared_type,
@@ -606,6 +613,13 @@ impl<'a> CheckerState<'a> {
                             // Discriminated union excess property check handled the error.
                             // tsc reports TS2353 against the narrowed member instead of
                             // a generic TS2322 for these cases.
+                        } else if checker.try_elaborate_initializer_elements(
+                            init_type,
+                            declared_type,
+                            var_decl.initializer,
+                        ) {
+                            // Elaboration emitted per-element TS2322 errors on the specific
+                            // mismatching array/tuple elements. Skip the generic TS2322.
                         } else if checker.check_assignable_or_report_at(
                             init_type,
                             declared_type,

@@ -283,6 +283,50 @@ impl<'a> CheckerState<'a> {
         elaborated
     }
 
+    /// Try to elaborate a variable initializer assignment failure with per-element errors.
+    ///
+    /// When a variable like `let x: [number, any] = [undefined, undefined]` fails assignability,
+    /// tsc reports TS2322 on each mismatching element instead of on the whole assignment.
+    /// This method first checks if the assignment would fail, then tries element-level elaboration.
+    ///
+    /// Returns `true` if elaboration handled the error (emitted element-level diagnostics),
+    /// meaning the caller should NOT emit a generic TS2322.
+    pub fn try_elaborate_initializer_elements(
+        &mut self,
+        init_type: TypeId,
+        declared_type: TypeId,
+        init_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Only elaborate when the overall assignment fails
+        if self.is_assignable_to(init_type, declared_type) {
+            return false;
+        }
+
+        // Check if initializer is an array literal
+        let init_node = match self.ctx.arena.get(init_idx) {
+            Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
+            _ => return false,
+        };
+
+        // When the source array has more elements than the target tuple,
+        // the arity mismatch should be reported at the whole-assignment level,
+        // not per-element. TSC reports "Type '[a, b, c, d]' is not assignable
+        // to type '[a, b, c]'" for arity mismatches.
+        if let Some(arr) = self.ctx.arena.get_literal_expr(init_node) {
+            let source_count = arr.elements.nodes.len();
+            if let Some(target_count) =
+                tsz_solver::type_queries::get_fixed_tuple_length(self.ctx.types, declared_type)
+                && source_count > target_count {
+                    return false;
+                }
+        }
+
+        // Delegate to array literal element elaboration
+        self.try_elaborate_array_literal_elements(init_idx, declared_type)
+    }
+
     /// Report an argument not assignable error using solver diagnostics with source tracking.
     /// When solver failure analysis identifies a specific reason (e.g. missing property),
     /// the detailed diagnostic is emitted as related information matching tsc's behavior.
