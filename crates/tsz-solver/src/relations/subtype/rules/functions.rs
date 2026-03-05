@@ -592,16 +592,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Unpack tuple rest parameters before comparison.
         // In TypeScript, `(...args: [A, B]) => R` is equivalent to `(a: A, b: B) => R`.
         // We unpack tuple rest parameters into individual fixed parameters for proper matching.
+        // Before unpacking, evaluate Application types in rest params (e.g., MappedType<T>
+        // that evaluates to a tuple) so unpack_tuple_rest_parameter can detect the tuple.
         use crate::type_queries::unpack_tuple_rest_parameter;
         let source_params_unpacked: Vec<ParamInfo> = source_instantiated
             .params
             .iter()
-            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .flat_map(|p| {
+                if p.rest
+                    && matches!(
+                        self.interner.lookup(p.type_id),
+                        Some(TypeData::Application(_))
+                    )
+                {
+                    let evaluated = self.evaluate_type(p.type_id);
+                    if evaluated != p.type_id {
+                        let mut ep = p.clone();
+                        ep.type_id = evaluated;
+                        return unpack_tuple_rest_parameter(self.interner, &ep);
+                    }
+                }
+                unpack_tuple_rest_parameter(self.interner, p)
+            })
             .collect();
         let target_params_unpacked: Vec<ParamInfo> = target_instantiated
             .params
             .iter()
-            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .flat_map(|p| {
+                if p.rest
+                    && matches!(
+                        self.interner.lookup(p.type_id),
+                        Some(TypeData::Application(_))
+                    )
+                {
+                    let evaluated = self.evaluate_type(p.type_id);
+                    if evaluated != p.type_id {
+                        let mut ep = p.clone();
+                        ep.type_id = evaluated;
+                        return unpack_tuple_rest_parameter(self.interner, &ep);
+                    }
+                }
+                unpack_tuple_rest_parameter(self.interner, p)
+            })
             .collect();
 
         // Check rest parameter handling (after unpacking)

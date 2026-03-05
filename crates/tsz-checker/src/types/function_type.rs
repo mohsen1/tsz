@@ -213,6 +213,13 @@ impl<'a> CheckerState<'a> {
                 evaluated_type
             };
 
+            // Evaluate Application types in rest parameters of contextual function types.
+            // When a generic function is instantiated (e.g., f<T>(..., cb: (...values: MappedType<T>) => void)),
+            // the rest param type may be an unevaluated Application (e.g., UnwrapContainers<[A, B]>).
+            // The solver's parameter extractor uses NoopResolver and cannot evaluate these.
+            // Resolve them here with the checker's TypeEnvironment which can resolve Lazy(DefId).
+            let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
+
             if suppress_for_incompatible_union {
                 None
             } else {
@@ -1799,6 +1806,56 @@ impl<'a> CheckerState<'a> {
         }
 
         updates
+    }
+
+    /// Evaluate Application types in rest parameters of contextual function types.
+    ///
+    /// When a generic function is instantiated, rest parameter types may remain as
+    /// unevaluated Application types (e.g., `UnwrapContainers<[Container<string>, Container<number>]>`).
+    /// The solver's contextual parameter extractor uses `NoopResolver` and cannot evaluate these,
+    /// so it returns the whole Application type for each callback parameter instead of individual
+    /// tuple elements. This method resolves Application types in rest params using the checker's
+    /// `TypeEnvironment`, which can resolve `Lazy(DefId)` references.
+    fn evaluate_contextual_rest_param_applications(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_solver::type_queries::get_function_shape;
+
+        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        let Some(last_param) = shape.params.last() else {
+            return type_id;
+        };
+
+        if !last_param.rest {
+            return type_id;
+        }
+
+        // Only try to evaluate if the rest param type is an Application
+        if !tsz_solver::is_generic_application(self.ctx.types, last_param.type_id) {
+            return type_id;
+        }
+
+        let evaluated_rest = self.evaluate_application_type(last_param.type_id);
+        if evaluated_rest == last_param.type_id {
+            return type_id;
+        }
+
+        // Create a new function shape with the evaluated rest param type
+        let mut new_params = shape.params.clone();
+        new_params.last_mut().unwrap().type_id = evaluated_rest;
+
+        let new_shape = tsz_solver::FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: new_params,
+            this_type: shape.this_type,
+            return_type: shape.return_type,
+            type_predicate: shape.type_predicate.clone(),
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        };
+
+        self.ctx.types.function(new_shape)
     }
 }
 
