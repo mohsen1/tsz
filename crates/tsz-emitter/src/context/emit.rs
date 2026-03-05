@@ -141,6 +141,12 @@ pub struct ModuleTransformState {
     /// Whether `value_declaration_names` has been computed. Distinguishes
     /// "not yet computed" (false) from "computed but empty" (true with empty set).
     pub value_decl_names_computed: bool,
+
+    /// Whether any local `export { ... }` clause was fully elided (all specifiers
+    /// were type-only). When true and the file has no other module syntax (no value
+    /// exports/imports survived), an `export {};` marker must be emitted at the end
+    /// to preserve module semantics.
+    pub had_elided_export_clause: bool,
 }
 
 impl ModuleTransformState {
