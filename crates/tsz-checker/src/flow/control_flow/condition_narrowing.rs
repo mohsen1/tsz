@@ -277,7 +277,9 @@ impl<'a> FlowAnalyzer<'a> {
                     let maybe_direct_guard_target = self.is_matching_reference(bin.left, target)
                         || self.is_matching_reference(bin.right, target)
                         || self.is_typeof_target(bin.left, target)
-                        || self.is_typeof_target(bin.right, target);
+                        || self.is_typeof_target(bin.right, target)
+                        || self.is_optional_chain_containing_target(bin.left, target)
+                        || self.is_optional_chain_containing_target(bin.right, target);
 
                     // CRITICAL: Use Solver-First architecture for direct binary guards
                     // when the guard target can actually match our reference.
@@ -300,6 +302,44 @@ impl<'a> FlowAnalyzer<'a> {
                             };
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
                             return narrowing.narrow_type(type_id, &guard, effective_sense);
+                        }
+
+                        // Optional chain intermediate narrowing for binary expressions:
+                        // `animal?.breed?.size != null` narrows target `animal.breed` to non-nullish
+                        // `typeof person?.name === 'string'` narrows target `person` to non-nullish
+                        //
+                        // Don't return early — fall through to narrow_by_binary_expr which may
+                        // apply additional narrowing (e.g., discriminant narrowing for `o?.x === 1`).
+                        if self.contains_optional_chain(guard_target)
+                            && self.is_optional_chain_prefix(guard_target, target)
+                        {
+                            let effective_sense = if bin.operator_token
+                                == SyntaxKind::ExclamationEqualsEqualsToken as u16
+                                || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16
+                            {
+                                !is_true_branch
+                            } else {
+                                is_true_branch
+                            };
+                            let chain_completed = match &guard {
+                                TypeGuard::NullishEquality => !effective_sense,
+                                _ => effective_sense,
+                            };
+                            if chain_completed {
+                                let narrowed =
+                                    narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                                let narrowed =
+                                    narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                                // Fall through to narrow_by_binary_expr with the pre-narrowed type
+                                return self.narrow_by_binary_expr(
+                                    narrowed,
+                                    bin,
+                                    target,
+                                    is_true_branch,
+                                    &narrowing,
+                                    antecedent_id,
+                                );
+                            }
                         }
                     }
 
@@ -345,6 +385,22 @@ impl<'a> FlowAnalyzer<'a> {
                         let result = narrowing.narrow_type(type_id, &guard, is_true_branch);
                         trace!(?result, "Guard application result");
                         return result;
+                    }
+
+                    // Optional chain intermediate narrowing:
+                    // When a type guard on `x?.y?.z` (guard_target) would make the full
+                    // chain non-nullish, intermediates `x` and `x.y` (target) must also be
+                    // non-nullish (because `?.` short-circuits to undefined otherwise).
+                    //
+                    // This applies in both branches:
+                    // - TRUE branch of `isNotNull(x?.y?.z)` → chain is non-nullish
+                    // - FALSE branch of `isNil(x?.y?.z)` → chain is non-nullish
+                    // Matches tsc's getFlowTypeOfReferenceInOptionalChain behavior.
+                    if self.contains_optional_chain(guard_target)
+                        && self.is_optional_chain_prefix(guard_target, target)
+                    {
+                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                        return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                     }
                 }
 
@@ -458,6 +514,130 @@ impl<'a> FlowAnalyzer<'a> {
         };
         node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node_data.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    /// Check if `target` is an intermediate segment in an optional chain `chain_node`.
+    ///
+    /// When a type guard narrows `x?.y?.z`, intermediate segments like `x.y` and `x`
+    /// should also be narrowed by removing null/undefined. This is because if
+    /// `x?.y?.z` is non-nullish, all intermediate accesses must also be non-nullish.
+    ///
+    /// Returns `true` if `target` matches any prefix of the optional chain.
+    pub(crate) fn is_optional_chain_prefix(
+        &self,
+        chain_node: NodeIndex,
+        target: NodeIndex,
+    ) -> bool {
+        let chain_node = self.arena.skip_parenthesized_and_assertions(chain_node);
+        let Some(node) = self.arena.get(chain_node) else {
+            return false;
+        };
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node) {
+                // Check if the base expression matches target
+                if self.is_matching_reference(access.expression, target) {
+                    return true;
+                }
+                // Also check: does the current chain node (e.g. animal?.breed) match
+                // the target (e.g. animal.breed) when ignoring the optional dot?
+                // This handles the case where the chain has `?.` but the target uses `.`.
+                if self.is_matching_optional_access_reference(chain_node, target) {
+                    return true;
+                }
+                // Recurse into the base expression
+                return self.is_optional_chain_prefix(access.expression, target);
+            }
+        false
+    }
+
+    /// Match a property/element access reference ignoring `?.` vs `.` differences.
+    ///
+    /// `is_matching_reference` can't match `x?.y` against `x.y` because
+    /// `property_reference` returns `None` for optional chains. This helper
+    /// compares the structure directly: same property name and matching base.
+    fn is_matching_optional_access_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        let a = self.arena.skip_parenthesized_and_assertions(a);
+        let b = self.arena.skip_parenthesized_and_assertions(b);
+        let (Some(node_a), Some(node_b)) = (self.arena.get(a), self.arena.get(b)) else {
+            return false;
+        };
+        // Both must be the same kind of access expression
+        if node_a.kind != node_b.kind {
+            return false;
+        }
+        if node_a.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node_a.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let (Some(access_a), Some(access_b)) = (
+            self.arena.get_access_expr(node_a),
+            self.arena.get_access_expr(node_b),
+        ) else {
+            return false;
+        };
+        // Compare property names
+        if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ident_a = self
+                .arena
+                .get_identifier_at(access_a.name_or_argument)
+                .map(|i| &i.escaped_text);
+            let ident_b = self
+                .arena
+                .get_identifier_at(access_b.name_or_argument)
+                .map(|i| &i.escaped_text);
+            if ident_a != ident_b || ident_a.is_none() {
+                return false;
+            }
+        } else {
+            // Element access - compare using literal values
+            let atom_a = self.literal_atom_from_node_or_type(access_a.name_or_argument);
+            let atom_b = self.literal_atom_from_node_or_type(access_b.name_or_argument);
+            if atom_a != atom_b || atom_a.is_none() {
+                return false;
+            }
+        }
+        // Base expressions must match (recursively, also ignoring optional dots)
+        self.is_matching_reference(access_a.expression, access_b.expression)
+            || self.is_matching_optional_access_reference(access_a.expression, access_b.expression)
+    }
+
+    /// Check if a node is part of an optional chain (has `?.` somewhere in its left spine).
+    pub(crate) fn contains_optional_chain(&self, idx: NodeIndex) -> bool {
+        let idx = self.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node) {
+                if access.question_dot_token {
+                    return true;
+                }
+                return self.contains_optional_chain(access.expression);
+            }
+        false
+    }
+
+    /// Check if `expr` is an optional chain (or typeof of one) that contains `target`
+    /// as an intermediate prefix. Used to let binary expression narrowing know that
+    /// guard extraction is worth attempting even though `target` doesn't directly match
+    /// either side of the comparison.
+    fn is_optional_chain_containing_target(&self, expr: NodeIndex, target: NodeIndex) -> bool {
+        let expr = self.arena.skip_parenthesized_and_assertions(expr);
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        // Handle `typeof x?.y?.z` — check the typeof operand
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(node)
+                && unary.operator == SyntaxKind::TypeOfKeyword as u16 {
+                    return self.is_optional_chain_containing_target(unary.operand, target);
+                }
+            return false;
+        }
+        self.contains_optional_chain(expr) && self.is_optional_chain_prefix(expr, target)
     }
 
     pub(crate) fn const_condition_initializer(

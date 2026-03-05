@@ -4,6 +4,7 @@ use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -84,6 +85,51 @@ impl<'a> CheckerState<'a> {
                 // Example: (x satisfies number) = 10
                 if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
                     self.is_valid_assignment_target(assertion.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a node is part of an optional chain (has `?.` somewhere in its left spine).
+    ///
+    /// Walks through property access, element access, and call expression chains looking
+    /// for any node with `question_dot_token: true` (for accesses) or the `OPTIONAL_CHAIN`
+    /// flag (for calls). For example, in `obj?.a.b`, both `obj?.a` and `obj?.a.b` are
+    /// considered part of the optional chain.
+    ///
+    /// Skips through transparent wrappers (parenthesized, non-null, type assertions, satisfies).
+    pub(crate) fn is_optional_chain_access(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    // This node itself is an optional chain root (has `?.`)
+                    if access.question_dot_token {
+                        return true;
+                    }
+                    // Check if the base expression is part of an optional chain
+                    self.is_optional_chain_access(access.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                // Call expressions get the OPTIONAL_CHAIN flag from the parser
+                if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                    return true;
+                }
+                // Check if the callee is part of an optional chain
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.is_optional_chain_access(call.expression)
                 } else {
                     false
                 }
@@ -206,6 +252,16 @@ impl<'a> CheckerState<'a> {
                 operand_idx,
                 diagnostic_messages::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MUST_BE_A_VARIABLE_OR_A_PROPER,
                 diagnostic_codes::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MUST_BE_A_VARIABLE_OR_A_PROPER,
+            );
+            return true;
+        }
+
+        // TS2777: The operand of an increment or decrement operator may not be an optional property access.
+        if self.is_optional_chain_access(inner) {
+            self.error_at_node(
+                operand_idx,
+                diagnostic_messages::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MAY_NOT_BE_AN_OPTIONAL_PROPERT,
+                diagnostic_codes::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MAY_NOT_BE_AN_OPTIONAL_PROPERT,
             );
             return true;
         }
@@ -427,6 +483,18 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_node(left_idx);
             self.get_type_of_node(right_idx);
             return TypeId::ANY;
+        }
+
+        // TS2779: The left-hand side of an assignment expression may not be an optional property access.
+        {
+            let inner = self.skip_assignment_transparent_wrappers(left_idx);
+            if self.is_optional_chain_access(inner) {
+                self.error_at_node(
+                    left_idx,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                );
+            }
         }
 
         // TS2588: Cannot assign to 'x' because it is a constant.
@@ -816,6 +884,18 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_node(left_idx);
             self.get_type_of_node(right_idx);
             return TypeId::ANY;
+        }
+
+        // TS2779: The left-hand side of an assignment expression may not be an optional property access.
+        {
+            let inner = self.skip_assignment_transparent_wrappers(left_idx);
+            if self.is_optional_chain_access(inner) {
+                self.error_at_node(
+                    left_idx,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                );
+            }
         }
 
         // TS2588: Cannot assign to 'x' because it is a constant.

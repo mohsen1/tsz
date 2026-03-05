@@ -248,6 +248,21 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node(prop.initializer)
                     };
 
+                    // TS2779: The left-hand side of an assignment expression may not be
+                    // an optional property access. Applies to destructuring targets like
+                    // `{ a: obj?.a } = source` where obj?.a is the assignment target.
+                    if self.ctx.in_destructuring_target
+                        && prop.initializer != prop.name
+                        && self.is_optional_chain_access(prop.initializer)
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            prop.initializer,
+                            diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                        );
+                    }
+
                     // In destructuring assignment targets with defaults
                     // (e.g. `{ a: target = default } = source`), the property type
                     // for the target object should be the target variable's type,
@@ -1248,6 +1263,18 @@ impl<'a> CheckerState<'a> {
                             .map(|unary| unary.expression)
                     });
                 if let Some(spread_expr) = spread_expr {
+                    // TS2778: The target of an object rest assignment may not be
+                    // an optional property access. E.g. `{ ...obj?.a } = source`
+                    if self.ctx.in_destructuring_target
+                        && self.is_optional_chain_access(spread_expr)
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            spread_expr,
+                            diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                            diagnostic_codes::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                        );
+                    }
                     let spread_type = self.get_type_of_node(spread_expr);
                     // TS2698: Spread types may only be created from object types
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);

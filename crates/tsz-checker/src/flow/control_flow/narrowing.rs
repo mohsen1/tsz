@@ -219,6 +219,17 @@ impl<'a> FlowAnalyzer<'a> {
             self.predicate_target_expression(call, &signature.predicate, &signature.params)?;
 
         if !self.is_matching_reference(predicate_target, target) {
+            // Optional chain intermediate narrowing:
+            // When a type predicate on `x?.y?.z` would make the chain non-nullish,
+            // intermediates `x` and `x.y` must also be non-nullish.
+            // Applies in both branches (TRUE of isNotNull, FALSE of isNil, etc.).
+            if self.contains_optional_chain(predicate_target)
+                && self.is_optional_chain_prefix(predicate_target, target)
+            {
+                let narrowing = NarrowingContext::new(self.interner);
+                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
+            }
             return None;
         }
 
