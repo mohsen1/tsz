@@ -4548,3 +4548,74 @@ function test(x: Dog | Cat) {
          Actual errors: {diagnostics:?}"
     );
 }
+
+/// TS18013 should report the declaring class name, not the object type's class name.
+/// When `#prop` is declared in `Base` and accessed via `Derived`, the error message
+/// should say "outside class 'Base'", not "outside class 'Derived'".
+#[test]
+fn test_ts18013_reports_declaring_class_name() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {
+    #prop: number = 123;
+    static method(x: Derived) {
+        console.log(x.#prop);
+    }
+}
+class Derived extends Base {
+    static method(x: Derived) {
+        console.log(x.#prop);
+    }
+}
+        "#,
+    );
+
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        1,
+        "Should emit exactly one TS18013.\nActual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts18013_messages[0].contains("'Base'"),
+        "TS18013 should reference the declaring class 'Base', not 'Derived'.\n\
+         Actual message: {}",
+        ts18013_messages[0]
+    );
+}
+
+/// TS2416 base type name should include type arguments from the extends clause,
+/// not the generic parameter names. E.g., `Base<{ bar: string; }>` instead of `Base<T>`.
+#[test]
+fn test_ts2416_base_type_name_includes_type_arguments() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> { foo: T; }
+class Derived2 extends Base<{ bar: string; }> {
+    foo: { bar?: string; }
+}
+        "#,
+    );
+
+    let ts2416_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2416)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert!(
+        !ts2416_messages.is_empty(),
+        "Should emit TS2416 for incompatible property type.\nActual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts2416_messages[0].contains("Base<{ bar: string; }>"),
+        "TS2416 should show instantiated base type 'Base<{{ bar: string; }}>', not 'Base<T>'.\n\
+         Actual message: {}",
+        ts2416_messages[0]
+    );
+}

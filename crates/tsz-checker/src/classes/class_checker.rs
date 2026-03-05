@@ -1066,6 +1066,20 @@ impl<'a> CheckerState<'a> {
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
+        // When the extends clause has explicit type arguments, rebuild the base class name
+        // with formatted type arguments (e.g., `Base<{ bar: string; }>`) instead of
+        // generic parameter names (`Base<T>`). tsc shows the supplied type arguments.
+        if base_type_argument_nodes.is_some() && !type_args.is_empty() {
+            // Strip the previously appended type params (e.g., remove "<T>" from "Base<T>")
+            if let Some(lt_pos) = base_class_name.find('<') {
+                base_class_name.truncate(lt_pos);
+            }
+            let arg_strs: Vec<String> = type_args.iter().map(|&t| self.format_type(t)).collect();
+            base_class_name.push('<');
+            base_class_name.push_str(&arg_strs.join(", "));
+            base_class_name.push('>');
+        }
+
         let mut base_instance_member_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
         let mut base_static_member_names: rustc_hash::FxHashSet<String> =

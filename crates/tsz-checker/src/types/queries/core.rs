@@ -1133,4 +1133,73 @@ impl<'a> CheckerState<'a> {
             *target = Some(incoming);
         }
     }
+
+    /// Find the class that declares a private member (e.g., `#prop`) by walking
+    /// the class hierarchy of the given type. Returns the declaring class name.
+    ///
+    /// tsc reports TS18013 with the class that **declares** the private member,
+    /// not the class of the object being accessed. For example, if `#prop` is
+    /// declared in `Base` and `x: Derived`, the error should say "outside class 'Base'".
+    pub(crate) fn get_declaring_class_name_for_private_member(
+        &self,
+        object_type: TypeId,
+        member_name: &str,
+    ) -> Option<String> {
+        let class_idx = self.get_class_decl_from_type(object_type)?;
+        let mut current = class_idx;
+        let mut visited = rustc_hash::FxHashSet::default();
+
+        while visited.insert(current) {
+            if self.class_directly_declares_member(current, member_name) {
+                return Some(self.get_class_name_from_decl(current));
+            }
+            match self.get_base_class_idx(current) {
+                Some(base) => current = base,
+                None => break,
+            }
+        }
+
+        // Fallback: use the object type's own class name
+        Some(self.get_class_name_from_decl(class_idx))
+    }
+
+    /// Check if a class directly declares a member with the given name.
+    fn class_directly_declares_member(&self, class_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        for &member_idx in &class.members.nodes {
+            if let Some(prop_name) = self.get_property_name_of_member(member_idx)
+                && prop_name == name
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the property name of a class member (property, method, accessor).
+    fn get_property_name_of_member(&self, member_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let member_node = self.ctx.arena.get(member_idx)?;
+        let name_idx = match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.ctx.arena.get_property_decl(member_node)?.name
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.ctx.arena.get_method_decl(member_node)?.name
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                self.ctx.arena.get_accessor(member_node)?.name
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                self.ctx.arena.get_accessor(member_node)?.name
+            }
+            _ => return None,
+        };
+        self.get_property_name(name_idx)
+    }
 }
