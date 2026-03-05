@@ -809,13 +809,10 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|info| info.in_static_property_initializer);
 
-        if in_static_property_initializer && is_super_property_access {
-            self.error_at_node(
-                idx,
-                diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-            );
-        }
+        // TS17011 ("super must be called before accessing a property of super in the
+        // constructor") applies only in constructor bodies, NOT in static property
+        // initializers. Static field uses of super are covered by TS2337 (super call)
+        // or TS2660 (super property access) instead.
 
         if !is_super_call && !is_super_property_access {
             if is_super_new && self.is_in_constructor(idx) {
