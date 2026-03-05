@@ -434,6 +434,19 @@ impl<'a> CheckerState<'a> {
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
                 }
 
+                // TS2779: Array spread target in destructuring may not be an optional chain.
+                // E.g. `[...obj?.a] = []` — obj?.a is the assignment target.
+                if self.ctx.in_destructuring_target
+                    && self.is_optional_chain_access(spread_data.expression)
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        spread_data.expression,
+                        diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
+                    );
+                }
+
                 // If it's a tuple type, expand its elements
                 if let Some(elems) =
                     tsz_solver::type_queries::get_tuple_elements(self.ctx.types, spread_expr_type)

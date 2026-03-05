@@ -262,6 +262,25 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2780/TS2781: The left-hand side of a 'for...in'/'for...of' statement
+        // may not be an optional property access.
+        if self.is_optional_chain_access(initializer) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            if is_for_of {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                );
+            } else {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                );
+            }
+        }
+
         // For-in specific LHS checks (TS2491, TS2406, TS2405)
         if !is_for_of && let Some(init_node) = self.ctx.arena.get(initializer) {
             let init_kind = init_node.kind;
