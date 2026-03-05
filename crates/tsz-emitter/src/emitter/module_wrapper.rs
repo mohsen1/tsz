@@ -683,13 +683,11 @@ impl<'a> Printer<'a> {
                     }
                 }
                 // Check namespace import name (`import * as React`)
-                if !is_factory {
-                    if let Some(ns) = &namespace_name {
-                        if ns == factory_root {
+                if !is_factory
+                    && let Some(ns) = &namespace_name
+                        && ns == factory_root {
                             is_factory = true;
                         }
-                    }
-                }
                 is_factory
             };
 

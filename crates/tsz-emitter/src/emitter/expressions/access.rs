@@ -470,7 +470,7 @@ impl<'a> Printer<'a> {
                         None
                     }
                 })
-                .unwrap_or_else(|| {
+                .unwrap_or({
                     if is_template {
                         // Can't get source text; fall back
                         ""
@@ -558,9 +558,9 @@ impl<'a> Printer<'a> {
             return false;
         }
         // Check property access: EnumName.Member
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                if let Some(expr) = self.arena.get(access.expression)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+                && let Some(expr) = self.arena.get(access.expression)
                     && let Some(name) = self.arena.get(access.name_or_argument)
                     && expr.kind == SyntaxKind::Identifier as u16
                     && name.kind == SyntaxKind::Identifier as u16
@@ -572,12 +572,10 @@ impl<'a> Printer<'a> {
                 {
                     return value.needs_double_dot();
                 }
-            }
-        }
         // Check element access: EnumName["Member"] or EnumName[`Member`]
-        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                if let Some(expr) = self.arena.get(access.expression)
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+                && let Some(expr) = self.arena.get(access.expression)
                     && let Some(arg) = self.arena.get(access.name_or_argument)
                     && expr.kind == SyntaxKind::Identifier as u16
                     && (arg.kind == SyntaxKind::StringLiteral as u16
@@ -590,8 +588,6 @@ impl<'a> Printer<'a> {
                 {
                     return value.needs_double_dot();
                 }
-            }
-        }
         let _ = idx; // suppress unused warning
         false
     }

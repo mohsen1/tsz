@@ -413,13 +413,11 @@ impl<'a> EnumES5Transformer<'a> {
                 if let Some(lit) = self.arena.get_literal(node) {
                     // tsc evaluates numeric literals and emits their JS representation.
                     // E.g., 1e999 → Infinity (not the source text "1e999").
-                    if lit.text.parse::<i64>().is_err() {
-                        if let Ok(val) = lit.text.parse::<f64>() {
-                            if val.is_infinite() {
+                    if lit.text.parse::<i64>().is_err()
+                        && let Ok(val) = lit.text.parse::<f64>()
+                            && val.is_infinite() {
                                 return IRNode::NumericLiteral("Infinity".to_string());
                             }
-                        }
-                    }
                     IRNode::NumericLiteral(lit.text.clone())
                 } else {
                     IRNode::NumericLiteral("0".to_string())

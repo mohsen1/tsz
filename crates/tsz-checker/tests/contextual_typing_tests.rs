@@ -80,6 +80,38 @@ class C {
     );
 }
 
+/// When a generic function has a rest parameter whose type is a mapped type Application
+/// (e.g., `...values: UnwrapContainers<T>`), the Application must be evaluated before
+/// contextual parameter extraction and function subtype comparison. Otherwise, each callback
+/// parameter gets the whole tuple type instead of individual elements, causing false TS2345.
+#[test]
+fn test_no_false_ts2345_for_mapped_tuple_rest_spread() {
+    let source = r#"
+type Container<T> = { value: T };
+type UnwrapContainers<T extends Container<unknown>[]> = { [K in keyof T]: T[K]['value'] };
+
+declare function createContainer<T extends unknown>(value: T): Container<T>;
+declare function f<T extends Container<unknown>[]>(
+    containers: [...T],
+    callback: (...values: UnwrapContainers<T>) => void
+): void;
+
+const c1 = createContainer('hi');
+const c2 = createContainer(2);
+
+f([c1, c2], (value1, value2) => {
+    value1;
+    value2;
+});
+"#;
+    let diagnostics = check_default(source);
+    let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345_errors.is_empty(),
+        "Mapped tuple rest spread should not produce false TS2345, got: {ts2345_errors:?}"
+    );
+}
+
 /// When a function HAS an explicit return type, the check should still work.
 /// This ensures we didn't disable return type checking entirely.
 #[test]

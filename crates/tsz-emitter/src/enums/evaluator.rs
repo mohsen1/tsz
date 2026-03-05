@@ -68,7 +68,7 @@ impl EnumValue {
     /// Returns true if this is a non-negative integer value.
     /// Used to determine if double-dot is needed for property access
     /// (e.g., `100..toString()` instead of `100.toString()`).
-    pub fn needs_double_dot(&self) -> bool {
+    pub const fn needs_double_dot(&self) -> bool {
         matches!(self, Self::Number(n) if *n >= 0)
     }
 

@@ -549,8 +549,8 @@ impl<'a> Printer<'a> {
 
     /// Walk the leftmost chain of an expression, unwrapping type assertions,
     /// and return the kind of the deepest leftmost expression after erasure.
-    /// This traces through CallExpression, PropertyAccessExpression,
-    /// ElementAccessExpression, TaggedTemplateExpression, NonNullExpression,
+    /// This traces through `CallExpression`, `PropertyAccessExpression`,
+    /// `ElementAccessExpression`, `TaggedTemplateExpression`, `NonNullExpression`,
     /// and type assertions to find what will actually appear at the start of
     /// the emitted expression.
     pub(in crate::emitter) fn leftmost_expression_kind_after_erasure(
