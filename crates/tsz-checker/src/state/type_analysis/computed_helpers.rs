@@ -243,7 +243,7 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let class_name = self
-            .get_class_name_from_type(object_type)
+            .get_declaring_class_name_for_private_member(object_type, property_name)
             .unwrap_or_else(|| "the class".to_string());
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,

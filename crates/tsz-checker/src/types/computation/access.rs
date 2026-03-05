@@ -145,9 +145,9 @@ impl<'a> CheckerState<'a> {
             if symbols.is_empty() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-                // Try to get the class name from the type
+                // Find the class that declares this private member (walk up hierarchy)
                 let class_name = self
-                    .get_class_name_from_type(object_type)
+                    .get_declaring_class_name_for_private_member(object_type, prop_name)
                     .unwrap_or_else(|| "the class".to_string());
 
                 let message = format_message(
