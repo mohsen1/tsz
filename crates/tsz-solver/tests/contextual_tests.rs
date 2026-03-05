@@ -1699,3 +1699,153 @@ fn test_contextual_rest_param_from_mixed_params() {
     let rest_type_1 = ctx.get_rest_parameter_type(1).unwrap();
     assert_eq!(rest_type_1, number_array);
 }
+
+// =============================================================================
+// Rest Element Contextual Type Extraction (tuple rest → element type)
+// =============================================================================
+
+/// Tuple element contextual type for rest-at-end tuples:
+/// `[A, ...B[]]` — index 0 gets A, index 1+ gets B (not B[]).
+#[test]
+fn test_tuple_rest_element_extracts_array_element_type() {
+    let interner = TypeInterner::new();
+
+    // [(x: number) => number, ...((x: string) => number)[]]
+    let num_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let str_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let str_callback_array = interner.array(str_callback);
+
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: num_callback,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: str_callback_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, tuple_type);
+
+    // Index 0: should get (x: number) => number
+    let elem0 = ctx.get_tuple_element_type_with_count(0, 3);
+    assert_eq!(elem0, Some(num_callback));
+
+    // Index 1: should get (x: string) => number (the ELEMENT type, not the array)
+    let elem1 = ctx.get_tuple_element_type_with_count(1, 3);
+    assert_eq!(elem1, Some(str_callback));
+
+    // Index 2: should also get (x: string) => number (overflow into rest)
+    let elem2 = ctx.get_tuple_element_type_with_count(2, 3);
+    assert_eq!(elem2, Some(str_callback));
+}
+
+/// Rest parameter with tuple type extracts element types correctly:
+/// `f(...a: [A, ...B[]])` — arg 0 gets A, arg 1+ gets B.
+#[test]
+fn test_rest_param_tuple_extracts_element_type_for_call() {
+    let interner = TypeInterner::new();
+
+    let num_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let str_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let str_callback_array = interner.array(str_callback);
+
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: num_callback,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: str_callback_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    // f2(...a: [(x: number) => number, ...((x: string) => number)[]]): void
+    let f2 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("a")),
+            type_id: tuple_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, f2);
+
+    // Arg 0: should get (x: number) => number
+    assert_eq!(ctx.get_parameter_type_for_call(0, 3), Some(num_callback));
+
+    // Arg 1: should get (x: string) => number (element type, not array)
+    assert_eq!(ctx.get_parameter_type_for_call(1, 3), Some(str_callback));
+
+    // Arg 2: should also get (x: string) => number
+    assert_eq!(ctx.get_parameter_type_for_call(2, 3), Some(str_callback));
+}

@@ -31,6 +31,27 @@ pub(crate) fn collect_single_or_union(db: &dyn TypeDatabase, types: Vec<TypeId>)
     }
 }
 
+/// Extract the element type from a rest element's stored type for contextual typing.
+///
+/// Rest elements in tuples store the full array/tuple type (e.g., `string[]` for
+/// `...string[]`). When used as a contextual type for individual element positions,
+/// we need the element type (e.g., `string`), not the array type.
+fn rest_element_contextual_type(db: &dyn TypeDatabase, rest_type: TypeId) -> TypeId {
+    // Array type: extract element type
+    if let Some(TypeData::Array(elem)) = db.lookup(rest_type) {
+        return elem;
+    }
+    // Tuple type: use expand_tuple_rest to get the variadic element type
+    if let Some(TypeData::Tuple(_)) = db.lookup(rest_type) {
+        let expansion = crate::utils::expand_tuple_rest(db, rest_type);
+        if let Some(variadic) = expansion.variadic {
+            return variadic;
+        }
+    }
+    // Fallback: return the type as-is (e.g., type parameters)
+    rest_type
+}
+
 // =============================================================================
 // Visitor Pattern Implementations
 // =============================================================================
@@ -415,9 +436,20 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         }
 
         if self.index < elements.len() {
-            Some(elements[self.index].type_id)
+            let elem = &elements[self.index];
+            if elem.rest {
+                // Rest elements store the array/tuple type (e.g., `string[]`).
+                // Extract the element type for contextual typing of individual positions.
+                Some(rest_element_contextual_type(self.db, elem.type_id))
+            } else {
+                Some(elem.type_id)
+            }
         } else if let Some(last) = elements.last() {
-            last.rest.then_some(last.type_id)
+            if last.rest {
+                Some(rest_element_contextual_type(self.db, last.type_id))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -750,11 +782,16 @@ fn extract_param_type_at_inner(
 
             // Non-variadic tuple or no arg_count: direct indexing
             if rest_index < elements.len() {
-                return Some(elements[rest_index].type_id);
+                let elem = &elements[rest_index];
+                if elem.rest {
+                    // Rest elements store the array type; extract element type
+                    return Some(rest_element_contextual_type(db, elem.type_id));
+                }
+                return Some(elem.type_id);
             } else if let Some(last_elem) = elements.last()
                 && last_elem.rest
             {
-                return Some(last_elem.type_id);
+                return Some(rest_element_contextual_type(db, last_elem.type_id));
             }
             // If out of bounds of the tuple constraint without rest, return undefined/unknown?
             // Fall through
