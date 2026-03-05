@@ -307,31 +307,32 @@ impl<'a> CheckerState<'a> {
                     if let PropertyAccessResult::Success {
                         type_id: base_type, ..
                     } = base_prop_result
-                        && base_type != TypeId::ANY {
-                            let resolved_member_type = self.resolve_type_query_type(member_type);
-                            let resolved_base_type = self.resolve_type_query_type(base_type);
+                        && base_type != TypeId::ANY
+                    {
+                        let resolved_member_type = self.resolve_type_query_type(member_type);
+                        let resolved_base_type = self.resolve_type_query_type(base_type);
 
-                            let should_report = if info.is_method {
-                                should_report_member_type_mismatch_bivariant(
-                                    self,
-                                    resolved_member_type,
-                                    resolved_base_type,
-                                    info.name_idx,
-                                )
-                            } else {
-                                should_report_member_type_mismatch(
-                                    self,
-                                    resolved_member_type,
-                                    resolved_base_type,
-                                    info.name_idx,
-                                )
-                            };
+                        let should_report = if info.is_method {
+                            should_report_member_type_mismatch_bivariant(
+                                self,
+                                resolved_member_type,
+                                resolved_base_type,
+                                info.name_idx,
+                            )
+                        } else {
+                            should_report_member_type_mismatch(
+                                self,
+                                resolved_member_type,
+                                resolved_base_type,
+                                info.name_idx,
+                            )
+                        };
 
-                            if should_report {
-                                let member_type_str = self.format_type(member_type);
-                                let base_type_str = self.format_type(base_type);
+                        if should_report {
+                            let member_type_str = self.format_type(member_type);
+                            let base_type_str = self.format_type(base_type);
 
-                                self.error_at_node(
+                            self.error_at_node(
                                     info.name_idx,
                                     &format!(
                                         "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
@@ -339,14 +340,14 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
-                                self.report_type_not_assignable_detail(
+                            self.report_type_not_assignable_detail(
                                     info.name_idx,
                                     &member_type_str,
                                     &base_type_str,
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
-                            }
                         }
+                    }
                 }
             }
         }
