@@ -640,7 +640,10 @@ impl<'a> CheckerState<'a> {
         // Skip for "module" when there are parse errors — the parser likely failed to
         // parse a module declaration and recovered `module` as an identifier.
         if is_known_node_global(name) {
-            if name == "module" && self.has_parse_errors() {
+            if self.is_private_name_access_base(idx) {
+                // In private-name access contexts (`obj.#field`), emit TS2304
+                // instead of TS2591.
+            } else if name == "module" && self.has_parse_errors() {
                 // Fall through to TS2304 instead of TS2591 — the parser likely failed
                 // to parse a module declaration and recovered `module` as an identifier.
             } else {

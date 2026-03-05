@@ -14,6 +14,10 @@ pub(crate) fn callable_shape_for_type(
     tsz_solver::type_queries::get_callable_shape(db, type_id)
 }
 
+pub(crate) fn has_function_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::get_function_shape(db, type_id).is_some()
+}
+
 pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
     tsz_solver::type_queries::get_union_members(db, type_id)
 }
@@ -24,6 +28,10 @@ pub(crate) fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> 
 
 pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_keyof_type(db, type_id)
+}
+
+pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_index_access_type(db, type_id)
 }
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

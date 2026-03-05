@@ -3,10 +3,38 @@
 //! TS1361/TS2693 should be suppressed in type-only contexts (interface extends,
 //! declare class extends) but NOT in value contexts (non-ambient class extends).
 
+use crate::context::{CheckerOptions, LibContext};
 use crate::state::CheckerState;
-use tsz_binder::BinderState;
+use std::path::Path;
+use std::sync::Arc;
+use tsz_binder::{BinderState, lib_loader::LibFile, state::LibContext as BinderLibContext};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
+    ];
+
+    let mut lib_files = Vec::new();
+    for lib_path in &lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
+            let lib_file = LibFile::from_source(file_name, content);
+            lib_files.push(Arc::new(lib_file));
+        }
+    }
+    lib_files
+}
 
 /// Non-ambient class extending a type-only symbol (interface) should emit TS2689,
 /// NOT TS2693.  tsc uses the more specific TS2689 ("Cannot extend an interface")
@@ -352,6 +380,109 @@ declare class U extends Foo {}
             .diagnostics
             .iter()
             .filter(|d| d.code == 1361)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Generic constructor signatures behind a type alias should not trigger TS2315.
+#[test]
+fn call_expression_heritage_with_generic_constructor_signature_no_ts2315() {
+    let lib_files = load_lib_files_for_test();
+    let source = r"
+interface Base<T, U> {
+    x: T;
+    y: U;
+}
+
+interface BaseConstructor {
+    new (x: string, y: string): Base<string, string>;
+    new <T>(x: T): Base<T, T>;
+    new <T>(x: T, y: T): Base<T, T>;
+    new <T, U>(x: T, y: U): Base<T, U>;
+}
+
+declare function getBase(): BaseConstructor;
+
+class D2 extends getBase() <number> {}
+class D3 extends getBase() <string, number> {}
+class D4 extends getBase() <string, string, string> {}
+
+interface BadBaseConstructor {
+    new (x: string): Base<string, string>;
+    new (x: number): Base<number, number>;
+}
+
+declare function getBadBase(): BadBaseConstructor;
+
+    class D5 extends getBadBase() {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&lib_contexts);
+    }
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics;
+    let ts2315_count = diagnostics.iter().filter(|d| d.code == 2315).count();
+    assert_eq!(
+        ts2315_count,
+        0,
+        "Expected no TS2315 for generic base constructor signatures, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2315)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let ts2508_count = diagnostics.iter().filter(|d| d.code == 2508).count();
+    assert!(
+        ts2508_count >= 1,
+        "Expected TS2508 for D4 constructor argument count, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let ts2510_count = diagnostics.iter().filter(|d| d.code == 2510).count();
+    assert!(
+        ts2510_count >= 1,
+        "Expected TS2510 for D5 return type mismatch, got diagnostics: {:?}",
+        diagnostics
+            .iter()
             .map(|d| format!("TS{}: {}", d.code, d.message_text))
             .collect::<Vec<_>>()
     );
