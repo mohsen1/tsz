@@ -906,7 +906,13 @@ impl<'a> CheckerState<'a> {
             let should_narrow = self.should_apply_flow_narrowing_for_identifier(idx);
 
             if should_narrow {
-                // Apply flow narrowing to get the context-specific type
+                // Skip second flow narrowing if check_flow_usage already narrowed
+                // this node.  Double-narrowing corrupts `any` types: e.g.
+                // `any` → `string` (typeof), then re-narrowing `string` through
+                // an instanceof guard produces `string & Object`.
+                if self.ctx.flow_narrowed_nodes.contains(&idx.0) {
+                    return cached;
+                }
                 let narrowed = self.apply_flow_narrowing(idx, cached);
                 // FIX: If flow analysis returns a widened version of a literal cached type
                 // (e.g., cached="foo" but flow returns string), use the cached type.
@@ -979,6 +985,16 @@ impl<'a> CheckerState<'a> {
         let should_narrow_computed = self.should_apply_flow_narrowing_for_identifier(idx);
 
         if should_narrow_computed {
+            // Skip second flow narrowing if check_flow_usage already narrowed
+            // this node.  The compute result already has the correct narrowed type.
+            if self.ctx.flow_narrowed_nodes.contains(&idx.0) {
+                tracing::trace!(
+                    idx = idx.0,
+                    type_id = result.0,
+                    "get_type_of_node (already flow-narrowed)"
+                );
+                return result;
+            }
             let mut narrowed = self.apply_flow_narrowing(idx, result);
             // FIX: Flow narrowing may return the original fresh type from the initializer
             // expression, undoing the freshness stripping that get_type_of_identifier
