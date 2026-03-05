@@ -913,18 +913,25 @@ impl<'a> Printer<'a> {
         format!("{sanitized}_1")
     }
 
+    /// Extract `@jsxImportSource <package>` pragma from the file's leading comments.
+    /// Returns the package name (e.g. `"preact"`) or `None` if no pragma found.
+    pub(super) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
+        let text = self.source_text?;
+        extract_jsx_import_source(text)
+    }
+
     /// Check if the file needs JSX runtime auto-imports and return the import text.
     /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
     /// Only imports the functions that are actually used in the file.
     pub(super) fn jsx_auto_import_text(&self) -> Option<String> {
         let is_cjs = self.ctx.is_commonjs();
+        // Per-file @jsxImportSource pragma overrides the global option
+        let pragma_source = self.extract_jsx_import_source_pragma();
         match self.ctx.options.jsx {
             JsxEmit::ReactJsx => {
-                let source = self
-                    .ctx
-                    .options
-                    .jsx_import_source
+                let source = pragma_source
                     .as_deref()
+                    .or(self.ctx.options.jsx_import_source.as_deref())
                     .unwrap_or("react");
                 let usage = self.scan_jsx_usage();
                 if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
@@ -953,11 +960,9 @@ impl<'a> Printer<'a> {
                 }
             }
             JsxEmit::ReactJsxDev => {
-                let source = self
-                    .ctx
-                    .options
-                    .jsx_import_source
+                let source = pragma_source
                     .as_deref()
+                    .or(self.ctx.options.jsx_import_source.as_deref())
                     .unwrap_or("react");
                 let usage = self.scan_jsx_usage();
                 if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
@@ -1030,6 +1035,63 @@ impl<'a> Printer<'a> {
         }
         usage
     }
+}
+
+// =============================================================================
+// Pragma extraction
+// =============================================================================
+
+/// Extract `@jsxImportSource <package>` from leading block comments.
+/// Mirrors tsc behavior: only block comments before any code are scanned.
+fn extract_jsx_import_source(source: &str) -> Option<String> {
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+    let bytes = text.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                if let Some(idx) = comment_body.find("@jsxImportSource") {
+                    let after = &comment_body[idx + "@jsxImportSource".len()..];
+                    let pkg: String = after
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| {
+                            c.is_alphanumeric()
+                                || *c == '_'
+                                || *c == '-'
+                                || *c == '/'
+                                || *c == '@'
+                                || *c == '.'
+                        })
+                        .collect();
+                    if !pkg.is_empty() {
+                        return Some(pkg);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
 }
 
 // =============================================================================
