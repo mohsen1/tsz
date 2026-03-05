@@ -236,6 +236,19 @@ impl<'a> EnumES5Transformer<'a> {
         self.member_values.clear();
         self.current_enum_name = enum_name.to_string();
 
+        // Pre-populate member_names with ALL member names so that forward
+        // and self-references in initializers get qualified with the enum name.
+        // E.g., `enum E { A = A }` → `E[E["A"] = E.A] = "A"` (not `= A`).
+        for &member_idx in &members.nodes {
+            if let Some(member_node) = self.arena.get(member_idx)
+                && let Some(member_data) = self.arena.get_enum_member(member_node)
+            {
+                let name =
+                    crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
+                self.member_names.insert(name);
+            }
+        }
+
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -398,6 +411,15 @@ impl<'a> EnumES5Transformer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
+                    // tsc evaluates numeric literals and emits their JS representation.
+                    // E.g., 1e999 → Infinity (not the source text "1e999").
+                    if lit.text.parse::<i64>().is_err() {
+                        if let Ok(val) = lit.text.parse::<f64>() {
+                            if val.is_infinite() {
+                                return IRNode::NumericLiteral("Infinity".to_string());
+                            }
+                        }
+                    }
                     IRNode::NumericLiteral(lit.text.clone())
                 } else {
                     IRNode::NumericLiteral("0".to_string())

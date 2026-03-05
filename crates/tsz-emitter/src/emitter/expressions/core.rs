@@ -547,6 +547,69 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Walk the leftmost chain of an expression, unwrapping type assertions,
+    /// and return the kind of the deepest leftmost expression after erasure.
+    /// This traces through CallExpression, PropertyAccessExpression,
+    /// ElementAccessExpression, TaggedTemplateExpression, NonNullExpression,
+    /// and type assertions to find what will actually appear at the start of
+    /// the emitted expression.
+    pub(in crate::emitter) fn leftmost_expression_kind_after_erasure(
+        &self,
+        mut idx: NodeIndex,
+    ) -> Option<u16> {
+        loop {
+            let node = self.arena.get(idx)?;
+            match node.kind {
+                // Type assertions are erased — follow inner expression
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                // Call/New have a left-side "expression" field
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    if let Some(call) = self.arena.get_call_expr(node) {
+                        idx = call.expression;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                // Property/Element access have a left-side "expression" field
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    if let Some(acc) = self.arena.get_access_expr(node) {
+                        idx = acc.expression;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                // NonNull: expr!
+                k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    if let Some(expr) = self.arena.get_unary_expr_ex(node) {
+                        idx = expr.expression;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                    if let Some(tt) = self.arena.get_tagged_template(node) {
+                        idx = tt.tag;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
+                // Terminal — return this kind
+                _ => return Some(node.kind),
+            }
+        }
+    }
+
     pub(in crate::emitter) fn emit_type_assertion_expression(&mut self, node: &Node) {
         let Some(assertion) = self.arena.get_type_assertion(node) else {
             self.write("void 0");
