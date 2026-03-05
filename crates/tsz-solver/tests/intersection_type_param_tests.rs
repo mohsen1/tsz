@@ -192,3 +192,49 @@ fn test_intersection_member_check_does_not_allow_non_member() {
         "{{ name: string }} & {{ age: number }} should NOT be assignable to {{ name, age, active }}"
     );
 }
+
+#[test]
+fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
+    // T & U should be assignable to (A | B) & T & U when T extends A and U extends B
+    // This is the pattern: function f2<T extends A, U extends B>(ab: T & U): (A | B) & T & U { return ab; }
+    // where A = 1 | 2, B = 2 | 3
+    let interner = TypeInterner::new();
+
+    let lit_1 = interner.literal_number(1.0);
+    let lit_2 = interner.literal_number(2.0);
+    let lit_3 = interner.literal_number(3.0);
+
+    // A = 1 | 2, B = 2 | 3
+    let a_type = interner.union(vec![lit_1, lit_2]);
+    let b_type = interner.union(vec![lit_2, lit_3]);
+
+    // T extends A
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(a_type),
+        default: None,
+        is_const: false,
+    }));
+
+    // U extends B
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(b_type),
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: T & U
+    let t_and_u = interner.intersection(vec![t_param, u_param]);
+
+    // Target: (A | B) & T & U
+    let a_or_b = interner.union(vec![a_type, b_type]);
+    let target = interner.intersection(vec![a_or_b, t_param, u_param]);
+
+    // T & U <: (A | B) & T & U should be TRUE
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(t_and_u, target),
+        "T & U should be assignable to (A | B) & T & U when T extends A and U extends B"
+    );
+}
