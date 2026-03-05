@@ -246,7 +246,6 @@ FAIL TypeScript/tests/cases/compiler/destructuringAssignmentWithDefault.ts
 FAIL TypeScript/tests/cases/compiler/destructuringAssignmentWithDefault2.ts
 FAIL TypeScript/tests/cases/compiler/destructuringControlFlowNoCrash.ts
 FAIL TypeScript/tests/cases/compiler/destructuringTuple.ts
-FAIL TypeScript/tests/cases/compiler/destructuringTypeGuardFlow.ts
 FAIL TypeScript/tests/cases/compiler/destructuringUnspreadableIntoRest.ts
 FAIL TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts
 FAIL TypeScript/tests/cases/compiler/didYouMeanStringLiteral.ts
@@ -440,7 +439,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -4166,6 +4164,7 @@ PASS TypeScript/tests/cases/compiler/destructuringInVariableDeclarations7.ts
 PASS TypeScript/tests/cases/compiler/destructuringInVariableDeclarations8.ts
 PASS TypeScript/tests/cases/compiler/destructuringPropertyAssignmentNameIsNotAssignmentTarget.ts
 PASS TypeScript/tests/cases/compiler/destructuringTempOccursAfterPrologue.ts
+PASS TypeScript/tests/cases/compiler/destructuringTypeGuardFlow.ts
 PASS TypeScript/tests/cases/compiler/destructuringWithConstraint.ts
 PASS TypeScript/tests/cases/compiler/destructuringWithGenericParameter.ts
 PASS TypeScript/tests/cases/compiler/destructuringWithNewExpression.ts
@@ -4947,6 +4946,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
