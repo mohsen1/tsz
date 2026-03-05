@@ -2,7 +2,9 @@
 //! - Interface-extends-class accessibility checks
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-use crate::query_boundaries::class::should_report_member_type_mismatch;
+use crate::query_boundaries::class::{
+    should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -679,12 +681,19 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
 
-                                // Check type compatibility
+                                // Check type compatibility.
+                                // Methods use bivariant relation (covariant returns);
+                                // properties use regular assignability.
+                                let mismatch_fn = if prop.is_method {
+                                    should_report_member_type_mismatch_bivariant
+                                } else {
+                                    should_report_member_type_mismatch
+                                };
                                 if interface_member_type != tsz_solver::TypeId::ANY
                                     && class_member_type != tsz_solver::TypeId::ANY
                                     && interface_member_type != tsz_solver::TypeId::ERROR
                                     && class_member_type != tsz_solver::TypeId::ERROR
-                                    && should_report_member_type_mismatch(
+                                    && mismatch_fn(
                                         self,
                                         class_member_type,
                                         interface_member_type,
@@ -704,11 +713,16 @@ impl<'a> CheckerState<'a> {
                                 inherited_member_types.get(&member_name)
                             {
                                 // Member inherited from base class — check type compatibility
+                                let mismatch_fn = if prop.is_method {
+                                    should_report_member_type_mismatch_bivariant
+                                } else {
+                                    should_report_member_type_mismatch
+                                };
                                 if interface_member_type != tsz_solver::TypeId::ANY
                                     && inherited_type != tsz_solver::TypeId::ANY
                                     && interface_member_type != tsz_solver::TypeId::ERROR
                                     && inherited_type != tsz_solver::TypeId::ERROR
-                                    && should_report_member_type_mismatch(
+                                    && mismatch_fn(
                                         self,
                                         inherited_type,
                                         interface_member_type,
@@ -1580,12 +1594,18 @@ impl<'a> CheckerState<'a> {
 
                     // Check if class has this member
                     if let Some(&class_member_type) = class_member_type_map.get(&member_name) {
-                        // Check type compatibility
+                        // Check type compatibility.
+                        // Methods use bivariant relation; properties use regular assignability.
+                        let mismatch_fn = if prop.is_method {
+                            should_report_member_type_mismatch_bivariant
+                        } else {
+                            should_report_member_type_mismatch
+                        };
                         if interface_member_type != TypeId::ANY
                             && class_member_type != TypeId::ANY
                             && interface_member_type != TypeId::ERROR
                             && class_member_type != TypeId::ERROR
-                            && should_report_member_type_mismatch(
+                            && mismatch_fn(
                                 self,
                                 class_member_type,
                                 interface_member_type,
