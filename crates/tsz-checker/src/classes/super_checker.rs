@@ -809,7 +809,7 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|info| info.in_static_property_initializer);
 
-        if in_static_property_initializer {
+        if in_static_property_initializer && is_super_property_access {
             self.error_at_node(
                 idx,
                 diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
