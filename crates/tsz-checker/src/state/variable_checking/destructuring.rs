@@ -688,7 +688,21 @@ impl<'a> CheckerState<'a> {
                         NodeIndex::NONE
                     };
                     if element_data.initializer.is_none() && !defer_property_not_found {
-                        self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                        // In tsc, destructuring from `object` uses the apparent type `{}`
+                        // in error messages (getApparentType(object) = {}).
+                        if parent_type == TypeId::OBJECT {
+                            self.error_property_not_exist_with_apparent_type(
+                                prop_name_str,
+                                "{}",
+                                error_node,
+                            );
+                        } else {
+                            self.error_property_not_exist_at(
+                                prop_name_str,
+                                parent_type,
+                                error_node,
+                            );
+                        }
                     }
                     TypeId::ANY
                 }
