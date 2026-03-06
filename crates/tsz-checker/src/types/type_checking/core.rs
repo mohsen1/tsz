@@ -1822,14 +1822,14 @@ impl<'a> CheckerState<'a> {
                 object_type_for_check = expanded_object;
             }
         }
-        let keyof_object =
-            if let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, object_type_for_check)
-            {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                self.evaluate_mapped_constraint_with_resolution(mapped.constraint)
-            } else {
-                self.ctx.types.evaluate_keyof(object_type_for_check)
-            };
+        let keyof_object = if let Some(mapped_id) =
+            tsz_solver::mapped_type_id(self.ctx.types, object_type_for_check)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            self.evaluate_mapped_constraint_with_resolution(mapped.constraint)
+        } else {
+            self.ctx.types.evaluate_keyof(object_type_for_check)
+        };
         let is_self_derived_key_space = |candidate: TypeId| {
             tsz_solver::type_queries::get_index_access_types(self.ctx.types, candidate).is_some_and(
                 |(derived_object, derived_index)| {
