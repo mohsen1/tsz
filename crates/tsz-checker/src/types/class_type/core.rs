@@ -1106,6 +1106,16 @@ impl<'a> CheckerState<'a> {
             .class_instance_type_to_decl
             .insert(instance_type, class_idx);
 
+        // Register instance type → DefId in the definition store so the TypeFormatter
+        // can display the class name (e.g., "A") instead of expanding structurally
+        // (e.g., "{ a: string }"), even across file boundaries.
+        if let Some(sym_id) = current_sym {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(instance_type, def_id);
+        }
+
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type

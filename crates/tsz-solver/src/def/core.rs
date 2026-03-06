@@ -353,6 +353,13 @@ pub struct DefinitionStore {
 
     /// Next available `DefId`
     next_id: AtomicU32,
+
+    /// Reverse map: `TypeId` -> `DefId` for named types.
+    ///
+    /// When a class/interface instance type is computed, the checker registers it here
+    /// so the `TypeFormatter` can display the class/interface name instead of expanding
+    /// the structural form (e.g., show "A" instead of "{ a: string }").
+    type_to_def: DashMap<TypeId, DefId>,
 }
 
 impl Default for DefinitionStore {
@@ -370,6 +377,7 @@ impl DefinitionStore {
             instance_id,
             definitions: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
+            type_to_def: DashMap::new(),
         }
     }
 
@@ -467,7 +475,24 @@ impl DefinitionStore {
     /// Clear all definitions (for testing).
     pub fn clear(&self) {
         self.definitions.clear();
+        self.type_to_def.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
+    }
+
+    /// Register a mapping from a `TypeId` to its defining `DefId`.
+    ///
+    /// Called by the checker after computing class/interface instance types
+    /// so the `TypeFormatter` can display named types (e.g., "A" instead of
+    /// "{ a: string }") even across file boundaries.
+    pub fn register_type_to_def(&self, type_id: TypeId, def_id: DefId) {
+        self.type_to_def.insert(type_id, def_id);
+    }
+
+    /// Look up the `DefId` that produced the given `TypeId`.
+    ///
+    /// Returns `Some(def_id)` if a class/interface was registered for this type.
+    pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
+        self.type_to_def.get(&type_id).map(|r| *r)
     }
 
     /// Get exports for a namespace/module `DefId`.
