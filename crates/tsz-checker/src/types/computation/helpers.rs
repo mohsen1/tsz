@@ -99,7 +99,36 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
         let db = self.ctx.types;
         let mut evaluate_leaf = |leaf_type: TypeId| self.evaluate_type_with_resolution(leaf_type);
-        evaluate_contextual_structure_with(db, type_id, &mut evaluate_leaf)
+        let result = evaluate_contextual_structure_with(db, type_id, &mut evaluate_leaf);
+
+        // `evaluate_contextual_structure_with` does not walk into IndexAccess nodes.
+        // For patterns like `v[k]` where `v: T extends Record<K, number>`, the
+        // type is `IndexAccess(T, K)` which must be evaluated iteratively via the
+        // full TypeEnvironment resolver to eventually reach the concrete type `number`.
+        if matches!(
+            self.ctx.types.lookup(result),
+            Some(tsz_solver::TypeData::IndexAccess(_, _))
+        ) {
+            let mut current = result;
+            for _ in 0..3 {
+                let evaluated = self.evaluate_type_with_env(current);
+                if evaluated == current || evaluated == TypeId::UNKNOWN {
+                    break;
+                }
+                current = evaluated;
+                if !matches!(
+                    self.ctx.types.lookup(current),
+                    Some(tsz_solver::TypeData::IndexAccess(_, _))
+                ) {
+                    break;
+                }
+            }
+            if current != result && current != TypeId::UNKNOWN {
+                return current;
+            }
+        }
+
+        result
     }
 
     /// Evaluate a contextual type that may contain unevaluated mapped/conditional types.
