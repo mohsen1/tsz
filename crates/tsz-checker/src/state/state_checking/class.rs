@@ -283,6 +283,45 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+
+                // TS1267: Abstract property cannot have an initializer
+                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    && let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+                        if self.has_abstract_modifier(&prop.modifiers) && prop.initializer.is_some()
+                        {
+                            let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                            self.error_at_node_msg(
+                                prop.name,
+                                diagnostic_codes::PROPERTY_CANNOT_HAVE_AN_INITIALIZER_BECAUSE_IT_IS_MARKED_ABSTRACT,
+                                &[&name],
+                            );
+                        }
+
+                        let name = self.get_member_name_text(prop.name).unwrap_or_default();
+
+                        // TS18006: Classes may not have a field named 'constructor'
+                        if name == "constructor" {
+                            self.error_at_node(
+                                prop.name,
+                                crate::diagnostics::diagnostic_messages::CLASSES_MAY_NOT_HAVE_A_FIELD_NAMED_CONSTRUCTOR,
+                                diagnostic_codes::CLASSES_MAY_NOT_HAVE_A_FIELD_NAMED_CONSTRUCTOR,
+                            );
+                        }
+
+                        // TS2699: Static property 'prototype' conflicts with Function.prototype
+                        // Not reported in ambient contexts (declare class).
+                        if name == "prototype"
+                            && self.has_static_modifier(&prop.modifiers)
+                            && !is_declared
+                        {
+                            let class_name = self.get_class_name_from_decl(stmt_idx);
+                            self.error_at_node_msg(
+                                prop.name,
+                                diagnostic_codes::STATIC_PROPERTY_CONFLICTS_WITH_BUILT_IN_PROPERTY_FUNCTION_OF_CONSTRUCTOR_FUNCTIO,
+                                &["prototype", &class_name],
+                            );
+                        }
+                    }
             }
         }
 
@@ -1118,5 +1157,95 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn ts1267_abstract_property_with_initializer() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class C {
+    abstract x: number = 1;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 1267).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS1267, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        assert!(matching[0].message_text.contains("'x'"));
+    }
+
+    #[test]
+    fn ts1267_abstract_property_without_initializer_no_error() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class C {
+    abstract x: number;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 1267).collect();
+        assert_eq!(matching.len(), 0, "Expected no TS1267, got: {matching:?}");
+    }
+
+    #[test]
+    fn ts18006_field_named_constructor() {
+        let diags = check_source_diagnostics(
+            r#"
+class C {
+    "constructor" = 3;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 18006).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS18006, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2699_static_property_named_prototype() {
+        let diags = check_source_diagnostics(
+            r#"
+class C {
+    static prototype: number;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2699).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2699, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2699_non_static_prototype_no_error() {
+        let diags = check_source_diagnostics(
+            r#"
+class C {
+    prototype: number;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2699).collect();
+        assert_eq!(
+            matching.len(),
+            0,
+            "Expected no TS2699 for non-static prototype, got: {matching:?}"
+        );
     }
 }

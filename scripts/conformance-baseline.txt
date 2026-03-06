@@ -701,6 +701,7 @@ FAIL TypeScript/tests/cases/compiler/jsxChildrenGenericContextualTypes.tsx
 FAIL TypeScript/tests/cases/compiler/jsxClassAttributeResolution.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
+FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteralWithGeneric.tsx
 FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild2.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentAndFactoryUsedOnFragmentUse.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx
@@ -990,6 +991,7 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
+FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/primaryExpressionMods.ts
 FAIL TypeScript/tests/cases/compiler/primitiveConstraints2.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
@@ -1024,6 +1026,7 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksIgnored.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx
+FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
 FAIL TypeScript/tests/cases/compiler/reactReduxLikeDeferredInferenceAllowsAssignment.ts
 FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/readonlyFloat32ArrayAssignableWithFloat32Array.ts
@@ -1089,6 +1092,7 @@ FAIL TypeScript/tests/cases/compiler/restUnion.ts
 FAIL TypeScript/tests/cases/compiler/restUnion3.ts
 FAIL TypeScript/tests/cases/compiler/returnInConstructor1.ts
 FAIL TypeScript/tests/cases/compiler/returnTypeInferenceContextualTypeIgnoreAnyUnknown1.ts
+FAIL TypeScript/tests/cases/compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx
 FAIL TypeScript/tests/cases/compiler/returnTypeTypeArguments.ts
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedIntersectionInference2.ts
@@ -1441,7 +1445,6 @@ FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts
 FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts
-FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractPropertyInitializer.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideMethod.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty8.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor5.ts
@@ -1452,12 +1455,9 @@ FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/const
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/constructorParameterShadowsOuterScopes2.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/derivedUninitializedPropertyDeclaration.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/instanceMemberInitialization.ts
-FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyNamedConstructor.ts
-FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyNamedPrototype.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors5.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/strictPropertyInitialization.ts
 FAIL TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature2.ts
-FAIL TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature3.ts
 FAIL TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature4.ts
 FAIL TypeScript/tests/cases/conformance/constEnums/constEnum2.ts
 FAIL TypeScript/tests/cases/conformance/constEnums/constEnum3.ts
@@ -6469,7 +6469,6 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
-PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primitiveConstraints1.ts
@@ -6610,6 +6609,8 @@ PASS TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNextEsm.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceImportPresevation.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceJSXEmit.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceMissingDeclaration.tsx
+PASS TypeScript/tests/cases/compiler/reactSFCAndFunctionResolvable.tsx
+PASS TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM.tsx
 PASS TypeScript/tests/cases/compiler/readonlyAssignmentInSubclassOfClassExpression.ts
 PASS TypeScript/tests/cases/compiler/readonlyInDeclarationFile.ts
 PASS TypeScript/tests/cases/compiler/readonlyInNonPropertyParameters.ts
@@ -8130,6 +8131,7 @@ PASS TypeScript/tests/cases/conformance/classes/mixinClassesAnnotated.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinClassesAnonymous.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinClassesMembers.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractProperty.ts
+PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractPropertyInitializer.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessibilityModifiers.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty10.ts
@@ -8179,6 +8181,8 @@ PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/optio
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/overrideInterfaceProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyAndAccessorWithSameName.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyAndFunctionWithSameName.ts
+PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyNamedConstructor.ts
+PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyNamedPrototype.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors2.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors3.ts
@@ -8199,6 +8203,7 @@ PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/thisP
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/twoAccessorsWithSameName.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/twoAccessorsWithSameName2.ts
 PASS TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature1.ts
+PASS TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature3.ts
 PASS TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature5.ts
 PASS TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature6.ts
 PASS TypeScript/tests/cases/conformance/classes/staticIndexSignature/staticIndexSignature7.ts
