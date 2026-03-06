@@ -262,10 +262,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             TypeData::Intrinsic(crate::types::IntrinsicKind::String)
-            | TypeData::KeyOf(_)
             | TypeData::Conditional(_)
             | TypeData::Application(_)
             | TypeData::Infer(_) => true,
+
+            // Generic keyof that survived evaluation.  The solver's NoopResolver
+            // cannot resolve Lazy(DefId) constraints, so `keyof P` stays deferred
+            // even when P has a concrete constraint (e.g., P extends Props).
+            //
+            // Strategy: inspect the keyof *operand* to decide:
+            //  - Unconstrained type parameter → false (no property guaranteed;
+            //    tsc reports TS2339 for `Pick<T, K>.foo` with unconstrained T).
+            //  - Constrained type parameter / Lazy / other → true (conservative;
+            //    the constraint MIGHT include the property but we can't tell
+            //    without the checker's type environment).
+            TypeData::KeyOf(operand) => match self.interner().lookup(operand) {
+                Some(TypeData::TypeParameter(info)) => info.constraint.is_some(),
+                _ => true,
+            },
 
             // Type parameter constraints should be checked recursively. A mapped type
             // like `Pick<T, K>` must not treat all keys as valid when `K` is
