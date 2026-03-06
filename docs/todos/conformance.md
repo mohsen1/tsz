@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10,037 / 12,570 (79.8%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10,007 / 12,570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ---
 
@@ -20,6 +20,7 @@
 | Mar 5 18:00 | 10,050 (80.0%) | +1 | Fix TS17011 for super() in static property initializer |
 | Mar 6 09:00 | 10,039 (79.9%) | +3* | Fix TS2339 on mapped types with unconstrained keyof |
 | Mar 6 14:00 | 10,037 (79.8%) | +2 | Fix mapped type param name & modifiers in diagnostics |
+| Mar 6 19:00 | 10,007 (79.6%) | +2* | TS2639 JSX namespaced React components |
 
 **Velocity**: ~2.8 tests/hour over 37 hours. 74 fix commits, 100+ sessions, 3.0 tests/session average.
 
@@ -103,10 +104,58 @@ recovery would cascade-fix many TS1128 and TS1434 cases.
 | 68.2% | 20 | expressions/typeGuards |
 | 68.3% | 79 | jsdoc |
 | 68.4% | 18 | controlFlow |
-| 68.7% | 61 | jsx |
+| 69.5% | 58 | jsx |
 | 69.5% | 58 | salsa |
 | 69.9% | 22 | node |
 | 70.0% | 59 | classes/members |
+
+---
+
+## Session 2026-03-06c — JSX area deep dive: TS2639 + root cause analysis (+2 conf)
+
+### Fixed: TS2639 for JSX namespaced React component names
+
+**Area**: jsx (69.0% pass rate, 59 failing / 190 total → 62 failing / 211 total incl. inline)
+
+**Root cause**: When a JSX namespaced tag has an uppercase namespace (e.g., `<A:foo>`), tsc emits TS2639
+("React components cannot include JSX namespace names"). We were missing this check entirely.
+
+**Fix** (checker, jsx_checker.rs):
+In `get_type_of_jsx_opening_element()`, when processing `JSX_NAMESPACED_NAME` nodes, check if the
+namespace part starts with an uppercase letter. If so, and if the JSX mode is React/ReactJsx/ReactJsxDev,
+emit TS2639. Preserve mode correctly allows all namespaced names.
+
+**Tests fixed**: +2 (tsxNamespacedTagName2.tsx, snapshot refresh)
+
+### JSX Area Root Cause Analysis
+
+The remaining ~60 JSX failures fall into these categories:
+
+**Fingerprint-only failures (22 tests)** — error codes match but locations/messages differ:
+- **Children in props type**: We include `children?: ReactNode` in TS2741/TS2322 target types, tsc doesn't
+- **Literal vs widened types**: We say `Type 'true'`, tsc says `Type 'boolean'` in TS2322 messages
+- **Error location**: We point TS2769 at opening tag, tsc points at the problematic attribute
+- **IntrinsicAttributes wrapping**: Our target type differs from tsc's full intersection type
+
+**One-missing code failures (15 tests)**:
+- TS2322 (3): Complex JSX type checking, deep solver assignability gaps
+- TS2416 (2): Class property override for generic React.Component subclasses (solver issue)
+- TS18048 (2): Possibly-undefined in JSX expression context (narrowing gap)
+- TS2698 (2): Spread type validation for uninitialized variables (flow analysis gap)
+- TS2740/TS2769/TS2609/TS7017/TS7005/TS2532/TS1109 (1 each): Various specific checks
+
+**One-extra code failures (2 tests)**:
+- TS2353 false positive: Generic class component bailout causes cascade error
+- TS1382 false positive: Parser recovery in unclosed JSX (parser issue)
+
+**Higher diff failures (17+ tests)**: Multiple codes off, mix of above issues
+
+### Key Insights for Future Work
+
+1. **Generic JSX inference** is the biggest single gap: `get_class_component_props_type()` bails on generic components (line 867), causing cascading false positives and missed diagnostics
+2. **JSX error message formatting** differs systematically from tsc (children in types, literal widening, error locations) — fixing the display logic could flip 22 fingerprint-only tests
+3. **TS2322 ↔ TS2741 code swap** in JSX: We emit TS2741 (missing property) where tsc emits TS2322 (not assignable) for several tests
+4. **TS5107 false positive** affects 54 tests but only 2 are in JSX area; root cause is conformance wrapper's strict expansion for `@strict: false` tests
 
 ---
 
