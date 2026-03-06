@@ -827,10 +827,10 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
             if symbol.flags & symbol_flags::ALIAS != 0 {
                 let mut visited = Vec::new();
-                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
-                    if target_sym_id != sym_id {
-                        return self.symbol_is_namespace_only(target_sym_id);
-                    }
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                    && target_sym_id != sym_id
+                {
+                    return self.symbol_is_namespace_only(target_sym_id);
                 }
             }
 

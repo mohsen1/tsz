@@ -419,6 +419,13 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
                     .copied()
                     .unwrap_or(Variance::COVARIANT | Variance::CONTRAVARIANT);
 
+                // Propagate NEEDS_STRUCTURAL_FALLBACK from nested applications.
+                // If Required<T> needs structural fallback due to modifiers,
+                // then Foo<T> = { a: Required<T> } also needs it.
+                if base_param_variance.needs_structural_fallback() {
+                    self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                }
+
                 // Composition Rules:
                 // - Covariant base param: Argument inherits current polarity
                 if base_param_variance.contains(Variance::COVARIANT) {
@@ -430,8 +437,46 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
                 }
                 // Note: Invariant (both bits) visits both. Independent (no bits) visits neither.
             }
+        } else if let Some(def_id) = base_def_id {
+            // Variance not cached — try to compute on the fly for the base type
+            let params = self.db.get_lazy_type_params(def_id);
+            let body = self.db.resolve_lazy(def_id, self.db.as_type_database());
+            if let (Some(params), Some(body)) = (params, body) {
+                let params: Vec<TypeParamInfo> = params;
+                let mut computed_variances = Vec::with_capacity(params.len());
+                for param in params.iter() {
+                    let v = compute_variance(self.db, body, param.name);
+                    computed_variances.push(v);
+                }
+                for (i, &arg) in app.args.iter().enumerate() {
+                    let base_param_variance = computed_variances
+                        .get(i)
+                        .copied()
+                        .unwrap_or(Variance::COVARIANT | Variance::CONTRAVARIANT);
+
+                    if base_param_variance.needs_structural_fallback() {
+                        self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                    }
+                    if base_param_variance.contains(Variance::COVARIANT) {
+                        self.visit_with_polarity(arg, current_polarity);
+                    }
+                    if base_param_variance.contains(Variance::CONTRAVARIANT) {
+                        self.visit_with_polarity(arg, !current_polarity);
+                    }
+                }
+            } else {
+                // Can't compute — assume invariance + structural fallback.
+                // We have a DefId but can't resolve the body/params, so we
+                // can't verify whether the inner type has mapped type modifiers
+                // that would make the variance shortcut unsound.
+                self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                for &arg in &app.args {
+                    self.visit_with_polarity(arg, current_polarity);
+                    self.visit_with_polarity(arg, !current_polarity);
+                }
+            }
         } else {
-            // Fallback: Base variance unknown, assume invariance (safest choice)
+            // No DefId available — assume invariance (safest choice)
             for &arg in &app.args {
                 self.visit_with_polarity(arg, current_polarity);
                 self.visit_with_polarity(arg, !current_polarity);
@@ -459,6 +504,15 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     fn visit_mapped(&mut self, mapped_id: u32) {
         let mapped = self.db.mapped_type(MappedTypeId(mapped_id));
         let current_polarity = self.get_current_polarity();
+
+        // If the mapped type has modifiers that change optional/readonly status,
+        // the variance shortcut is unreliable because mutually-assignable type
+        // arguments can produce structurally incompatible results after modifier
+        // application (e.g., Required<{a?; x}> vs Required<{b?; x}> — the args
+        // are assignable but the results have different required properties).
+        if mapped.optional_modifier.is_some() || mapped.readonly_modifier.is_some() {
+            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+        }
 
         // Type parameter constraint: check if it's our target
         if mapped.type_param.name == self.target_param {

@@ -1382,13 +1382,18 @@ bitflags::bitflags! {
         const COVARIANT = 1 << 0;
         /// Contravariant position (e.g., function parameters)
         const CONTRAVARIANT = 1 << 1;
+        /// Variance may be unreliable due to mapped type modifiers (-?/+?/-readonly/+readonly).
+        /// When set, the variance shortcut must fall through to structural comparison
+        /// because modifiers can transform mutually-assignable type arguments into
+        /// structurally incompatible results (e.g., Required<{a?}> vs Required<{b?}>).
+        const NEEDS_STRUCTURAL_FALLBACK = 1 << 2;
     }
 }
 
 impl Variance {
     /// Check if this is an independent type parameter (not used in variance position).
     pub const fn is_independent(&self) -> bool {
-        self.is_empty()
+        !self.contains(Self::COVARIANT) && !self.contains(Self::CONTRAVARIANT)
     }
 
     /// Check if this is covariant only.
@@ -1404,6 +1409,11 @@ impl Variance {
     /// Check if this is invariant (both covariant and contravariant).
     pub fn is_invariant(&self) -> bool {
         self.contains(Self::COVARIANT | Self::CONTRAVARIANT)
+    }
+
+    /// Check if variance requires structural fallback (unreliable due to mapped type modifiers).
+    pub const fn needs_structural_fallback(&self) -> bool {
+        self.contains(Self::NEEDS_STRUCTURAL_FALLBACK)
     }
 
     /// Compose two variances (for nested generics).

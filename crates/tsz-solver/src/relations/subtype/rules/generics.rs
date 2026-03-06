@@ -270,7 +270,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
 
                         if all_ok {
-                            return SubtypeResult::True;
+                            // When any type parameter's variance is marked as needing
+                            // structural fallback (due to mapped type modifiers like -?/+?),
+                            // don't trust the variance shortcut — fall through to structural
+                            // comparison. This handles cases like Required<{a?}> vs Required<{b?}>
+                            // where the type args are mutually assignable but the mapped results
+                            // are structurally incompatible.
+                            if !variances.iter().any(|v| v.needs_structural_fallback()) {
+                                return SubtypeResult::True;
+                            }
                         }
 
                         let is_interface = self.resolver.get_def_kind(def_id);

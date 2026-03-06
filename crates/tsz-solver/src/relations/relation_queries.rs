@@ -391,6 +391,14 @@ pub fn check_application_variance<R: TypeResolver>(
     }
 
     if all_ok {
+        // When any type parameter's variance is marked as needing structural fallback
+        // (due to mapped type modifiers like -?/+?), don't trust the variance shortcut.
+        // Fall through to structural comparison. This handles cases like
+        // Required<{a?}> vs Required<{b?}> where args are mutually assignable
+        // but the mapped type results are structurally incompatible.
+        if variances.iter().any(|v| v.needs_structural_fallback()) {
+            return None;
+        }
         return Some(true);
     }
 
