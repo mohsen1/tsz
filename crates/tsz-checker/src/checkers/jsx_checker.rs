@@ -26,27 +26,47 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         };
         // Namespaced tags (e.g., `svg:path`) are always intrinsic.
-        let (tag_name, namespaced_tag_owned, is_intrinsic) =
-            if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                let name = self
-                    .ctx
-                    .arena
-                    .get_identifier(tag_name_node)
-                    .map(|id| id.escaped_text.as_str());
-                let intrinsic = name
-                    .as_ref()
-                    .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
-                (name, None::<String>, intrinsic)
-            } else if tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
-                // Namespaced tags like `svg:path` → always intrinsic.
-                // Build "namespace:name" string for IntrinsicElements lookup.
-                let ns_str = self
+        let (tag_name, namespaced_tag_owned, is_intrinsic) = if tag_name_node.kind
+            == tsz_scanner::SyntaxKind::Identifier as u16
+        {
+            let name = self
+                .ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .map(|id| id.escaped_text.as_str());
+            let intrinsic = name
+                .as_ref()
+                .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
+            (name, None::<String>, intrinsic)
+        } else if tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            // Namespaced tags like `svg:path` → always intrinsic.
+            // Build "namespace:name" string for IntrinsicElements lookup.
+            // If the namespace part starts with uppercase (e.g., `<A:foo>`),
+            // emit TS2639: React components cannot include JSX namespace names.
+            let ns_str = self
                     .ctx
                     .arena
                     .get_jsx_namespaced_name(tag_name_node)
                     .and_then(|ns| {
                         let ns_id = self.ctx.arena.get(ns.namespace)?;
                         let ns_text = self.ctx.arena.get_identifier(ns_id)?.escaped_text.as_str();
+                        // TS2639: React components (uppercase first char) cannot use
+                        // namespace names. Only in React-based JSX modes.
+                        if ns_text
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_uppercase())
+                        {
+                            use tsz_common::checker_options::JsxMode;
+                            let jsx_mode = self.ctx.compiler_options.jsx_mode;
+                            if matches!(jsx_mode, JsxMode::React | JsxMode::ReactJsx | JsxMode::ReactJsxDev) {
+                                self.error_at_node(
+                                    tag_name_idx,
+                                    crate::diagnostics::diagnostic_messages::REACT_COMPONENTS_CANNOT_INCLUDE_JSX_NAMESPACE_NAMES,
+                                    crate::diagnostics::diagnostic_codes::REACT_COMPONENTS_CANNOT_INCLUDE_JSX_NAMESPACE_NAMES,
+                                );
+                            }
+                        }
                         let name_id = self.ctx.arena.get(ns.name)?;
                         let name_text = self
                             .ctx
@@ -56,11 +76,11 @@ impl<'a> CheckerState<'a> {
                             .as_str();
                         Some(format!("{ns_text}:{name_text}"))
                     });
-                (None, ns_str, true)
-            } else {
-                // Property access expression (e.g., React.Component)
-                (None, None, false)
-            };
+            (None, ns_str, true)
+        } else {
+            // Property access expression (e.g., React.Component)
+            (None, None, false)
+        };
         // Unify: for namespaced tags, use the owned string; for simple tags, use the borrowed &str.
         let effective_tag: Option<&str> = tag_name.or(namespaced_tag_owned.as_deref());
 
