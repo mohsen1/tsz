@@ -1,17 +1,17 @@
 {
   "_comment": "Maps TypeScript submodule SHA to npm package version. Used by conformance testing to match TSC version to submodule commit.",
   "_usage": "When you update the TypeScript submodule, find the commit date and use the corresponding nightly: npm view typescript@6.0.0-dev.YYYYMMDD",
-  "current": "cdc205d5e6338d96b0fb54657af33d473d480a9c",
+  "current": "c9e7428bb76f0543a3555d0af87777e7db3a41e6",
   "mappings": {
-    "7f6a84673def7665a4c4bc2bdfaf7bcc8549b276": {
-      "npm": "6.0.0-dev.20260116",
-      "date": "2026-01-16",
-      "note": "Previous pinned TypeScript commit, retained for history."
-    },
     "cdc205d5e6338d96b0fb54657af33d473d480a9c": {
       "npm": "6.0.0-dev.20260224",
       "date": "2026-02-24",
-      "note": "Updated from 20260215 to 20260224 to pick up ignoreDeprecations 6.0 fixes"
+      "note": "Previous pinned TypeScript commit, retained for history."
+    },
+    "c9e7428bb76f0543a3555d0af87777e7db3a41e6": {
+      "npm": "6.0.0-dev.20260306",
+      "date": "2026-03-06",
+      "note": "Updated to latest TypeScript main (March 2026)"
     }
   },
   "default": {
