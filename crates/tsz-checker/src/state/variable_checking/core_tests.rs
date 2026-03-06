@@ -545,4 +545,31 @@ function test<T, K extends keyof T>(obj: Pick<T, K>) {
             "TS2339 message should reference foo: {ts2339:?}"
         );
     }
+
+    /// When a mapped type iterates over `keyof T` with T unconstrained, any
+    /// specific property access should report TS2339 because the key set is
+    /// not known.  This test uses an inline mapped type (no stdlib Pick needed).
+    #[test]
+    fn inline_mapped_type_unconstrained_keyof_reports_ts2339() {
+        // { [K in keyof T]: T[K] } is equivalent to identity-mapped T.
+        // With T unconstrained, accessing `.foo` should be an error.
+        let source = r#"
+function test<T>(obj: { [K in keyof T]: T[K] }) {
+    let value = obj.foo;
+}
+"#;
+        let ts2339 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2339)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2339.len(),
+            1,
+            "Expected TS2339 for .foo on mapped type with unconstrained keyof T: {ts2339:?}"
+        );
+        assert!(
+            ts2339[0].message_text.contains("foo"),
+            "TS2339 message should reference 'foo': {ts2339:?}"
+        );
+    }
 }
