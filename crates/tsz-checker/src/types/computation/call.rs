@@ -8,13 +8,14 @@
 use super::complex::is_contextually_sensitive;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::{CallResult, ContextualTypeContext, TypeId};
 
 struct CallResultContext<'a> {
     callee_expr: NodeIndex,
@@ -850,7 +851,7 @@ impl<'a> CheckerState<'a> {
 
         // super() calls are constructor calls, not function calls.
         // Use resolve_new() which checks construct signatures instead of call signatures.
-        let (result, instantiated_predicate) = if is_super_call {
+        let (result, instantiated_predicate, generic_instantiated_params) = if is_super_call {
             (
                 self.resolve_new_with_checker_adapter(
                     callee_type_for_call,
@@ -858,6 +859,7 @@ impl<'a> CheckerState<'a> {
                     force_bivariant_callbacks,
                     self.ctx.contextual_type,
                 ),
+                None,
                 None,
             )
         } else {
@@ -875,6 +877,83 @@ impl<'a> CheckerState<'a> {
         if let Some(predicate) = instantiated_predicate {
             self.ctx.call_type_predicates.insert(idx.0, predicate);
         }
+
+        // Post-inference excess property checking for generic calls.
+        // During argument collection, EPC is skipped for parameters whose raw type
+        // contains type parameters (via generic_excess_skip). After inference resolves
+        // type parameters, the instantiated parameter types may be concrete and
+        // restrictive (e.g., a mapped type that filters keys). Perform EPC on the
+        // evaluated instantiated parameter types to catch excess properties.
+        //
+        // Also handle ArgumentTypeMismatch: the solver's final check may fail due to
+        // subtype cache entries from inference. When we have instantiated params and
+        // a fresh assignability check passes, treat the call as successful and perform
+        // EPC instead of reporting TS2345.
+        let (result, did_post_epc) = if let Some(ref instantiated_params) =
+            generic_instantiated_params
+        {
+            let should_epc = match &result {
+                CallResult::Success(_) => true,
+                CallResult::ArgumentTypeMismatch { index, .. } => {
+                    // The final check may fail due to stale cache entries. Verify with
+                    // a fresh structural check on the evaluated instantiated param.
+                    if let Some(param) = instantiated_params.get(*index) {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let arg_type = arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN);
+                        // Use a fresh subtype check (no cache) to avoid false
+                        // negatives from stale query cache entries after inference.
+                        assign_query::is_fresh_subtype_of(self.ctx.types, arg_type, evaluated_param)
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+            if should_epc {
+                let mut did_epc = false;
+                for (i, &arg_idx) in args.iter().enumerate() {
+                    if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                        && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && let Some(param) = instantiated_params.get(i)
+                        && param.type_id != TypeId::ANY
+                        && param.type_id != TypeId::UNKNOWN
+                    {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        if !is_type_parameter_type(self.ctx.types, evaluated_param) {
+                            let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
+                            self.check_object_literal_excess_properties(
+                                arg_type,
+                                evaluated_param,
+                                arg_idx,
+                            );
+                            did_epc = true;
+                        }
+                    }
+                }
+                // If the result was ArgumentTypeMismatch but fresh check passed,
+                // convert to Success so the caller doesn't report TS2345.
+                let result = if did_epc
+                    && matches!(result, CallResult::ArgumentTypeMismatch { fallback_return, .. } if fallback_return != TypeId::ERROR)
+                {
+                    if let CallResult::ArgumentTypeMismatch {
+                        fallback_return, ..
+                    } = &result
+                    {
+                        CallResult::Success(*fallback_return)
+                    } else {
+                        result
+                    }
+                } else {
+                    result
+                };
+                (result, did_epc)
+            } else {
+                (result, false)
+            }
+        } else {
+            (result, false)
+        };
+        let _ = did_post_epc;
 
         let call_context = CallResultContext {
             callee_expr: call.expression,

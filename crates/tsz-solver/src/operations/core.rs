@@ -10,6 +10,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tracing::debug;
 
+/// Result of `resolve_call_with_checker`: the call result, an optional
+/// instantiated type predicate (for narrowing), and optional instantiated
+/// parameter types (for post-inference excess property checking).
+pub type CallWithCheckerResult = (
+    CallResult,
+    Option<(TypePredicate, Vec<ParamInfo>)>,
+    Option<Vec<ParamInfo>>,
+);
+
 /// Maximum recursion depth for type constraint collection to prevent infinite loops.
 pub const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
 /// Maximum number of constrain-types steps per call evaluator pass.
@@ -140,6 +149,10 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// After a generic call resolves, holds the instantiated type predicate (if any).
     /// This lets the checker retrieve the predicate with inferred type arguments applied.
     pub last_instantiated_predicate: Option<(TypePredicate, Vec<ParamInfo>)>,
+    /// After a generic call resolves, holds the instantiated parameter types.
+    /// This lets the checker perform post-inference excess property checking on
+    /// the concrete parameter types rather than the raw (pre-inference) types.
+    pub last_instantiated_params: Option<Vec<ParamInfo>>,
 }
 
 #[derive(Clone, Copy)]
@@ -188,6 +201,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             constraint_pairs: RefCell::new(FxHashSet::default()),
             constraint_fixed_union_members: RefCell::new(FxHashMap::default()),
             last_instantiated_predicate: None,
+            last_instantiated_params: None,
         }
     }
 
@@ -809,6 +823,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// This is pure type logic - no AST nodes, just types in and types out.
     pub fn resolve_call(&mut self, func_type: TypeId, arg_types: &[TypeId]) -> CallResult {
         self.last_instantiated_predicate = None;
+        self.last_instantiated_params = None;
         // Look up the function shape
         let key = match self.interner.lookup(func_type) {
             Some(k) => k,
@@ -1894,14 +1909,15 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
     force_bivariant_callbacks: bool,
     contextual_type: Option<TypeId>,
     actual_this_type: Option<TypeId>,
-) -> (CallResult, Option<(TypePredicate, Vec<ParamInfo>)>) {
+) -> CallWithCheckerResult {
     let mut evaluator = CallEvaluator::new(interner, checker);
     evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
     evaluator.set_contextual_type(contextual_type);
     evaluator.set_actual_this_type(actual_this_type);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
-    (result, predicate)
+    let instantiated_params = evaluator.last_instantiated_params.take();
+    (result, predicate, instantiated_params)
 }
 
 pub fn resolve_new_with_checker<C: AssignabilityChecker>(

@@ -38,6 +38,13 @@ pub(crate) fn classify_for_excess_properties(
     tsz_solver::type_queries::classify_for_excess_properties(db, type_id)
 }
 
+/// Perform a fresh subtype check that bypasses the `QueryDatabase` cache.
+/// This is needed after generic inference when the cache may contain stale
+/// entries from intermediate inference steps.
+pub(crate) fn is_fresh_subtype_of(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    tsz_solver::is_subtype_of(db, source, target)
+}
+
 pub(crate) fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_return_type(db, type_id)
 }

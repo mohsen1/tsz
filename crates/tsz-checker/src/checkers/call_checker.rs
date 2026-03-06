@@ -135,10 +135,7 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
-    ) -> (
-        CallResult,
-        Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>,
-    ) {
+    ) -> tsz_solver::operations::CallWithCheckerResult {
         self.ensure_relation_input_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
@@ -718,7 +715,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, _instantiated_predicate) = self.resolve_call_with_checker_adapter(
+            let (result, _instantiated_predicate, _) = self.resolve_call_with_checker_adapter(
                 resolved_func_type,
                 &arg_types,
                 force_bivariant_callbacks,
@@ -806,7 +803,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, _instantiated_predicate) = self.resolve_call_with_checker_adapter(
+            let (result, _instantiated_predicate, _) = self.resolve_call_with_checker_adapter(
                 resolved_func_type,
                 &sig_arg_types,
                 force_bivariant_callbacks,

@@ -74,10 +74,7 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     force_bivariant_callbacks: bool,
     contextual_type: Option<TypeId>,
     actual_this_type: Option<TypeId>,
-) -> (
-    CallResult,
-    Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>,
-) {
+) -> tsz_solver::operations::CallWithCheckerResult {
     tsz_solver::operations::resolve_call_with_checker(
         db,
         checker,

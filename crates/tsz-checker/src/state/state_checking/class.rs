@@ -1103,7 +1103,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let (result, _) = self.resolve_call_with_checker_adapter(
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[class_constructor_type],
             false,

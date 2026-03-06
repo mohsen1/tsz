@@ -5,8 +5,9 @@
 //! - Discriminated union excess property checking (narrowed member)
 //! - Type alias name display in error messages
 
-use crate::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -23,7 +24,7 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -176,6 +177,44 @@ let f: Foo = { a: 1, b: 2 }
 }
 
 // --- Intersection with index signatures ---
+
+// --- Post-inference EPC for generic calls with mapped type parameters ---
+
+#[test]
+fn generic_call_mapped_type_emits_epc_after_inference() {
+    // When a generic function's parameter is a mapped type like
+    // {[K in keyof T & keyof X]: T[K]}, and inference resolves T from
+    // the argument, post-inference EPC should catch excess properties
+    // that don't exist in the intersection of keyof T & keyof X.
+    //
+    // Before the fix, generic_excess_skip would suppress EPC entirely
+    // because the raw param type contained type parameters.
+    let source = r#"
+type XNumber = { x: number }
+declare function foo<T extends XNumber>(props: {[K in keyof T & keyof XNumber]: T[K]}): T;
+foo({x: 1, y: "foo"});
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2353),
+        "Expected TS2353 for excess property 'y' in generic call with mapped type, got: {diags:?}"
+    );
+}
+
+#[test]
+fn generic_call_mapped_type_no_excess_no_error() {
+    // When the object literal matches exactly, no EPC error should fire.
+    let source = r#"
+type XNumber = { x: number }
+declare function foo<T extends XNumber>(props: {[K in keyof T & keyof XNumber]: T[K]}): T;
+foo({x: 1});
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "No TS2353 expected when no excess properties, got: {diags:?}"
+    );
+}
 
 #[test]
 fn intersection_with_index_signatures_nested_excess_property() {
