@@ -1021,16 +1021,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
-        let symbol_meta = self
-            .get_cross_file_symbol(sym_id)
-            .map(|symbol| {
-                (
-                    symbol.escaped_name.clone(),
-                    symbol.flags,
-                    symbol.declarations.clone(),
-                    symbol.value_declaration,
-                )
-            });
+        let symbol_meta = self.get_cross_file_symbol(sym_id).map(|symbol| {
+            (
+                symbol.escaped_name.clone(),
+                symbol.flags,
+                symbol.declarations.clone(),
+                symbol.value_declaration,
+            )
+        });
 
         if let Some((name, flags, _, _)) = symbol_meta.as_ref() {
             tracing::debug!(
@@ -1086,9 +1084,8 @@ impl<'a> CheckerState<'a> {
                     // namespace type (from compute_type_of_symbol's namespace branch). We need
                     // the interface type for type-position usage, so compute it directly from
                     // the interface declarations.
-                    let is_merged_with_namespace = flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                        != 0;
+                    let is_merged_with_namespace =
+                        flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
 
                     let structural_type = if is_merged_with_namespace {
                         // Compute the interface type directly, bypassing get_type_of_symbol
