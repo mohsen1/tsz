@@ -1854,3 +1854,143 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
         }
     }
 }
+
+// =============================================================================
+// Tests for template_has_lazy_application_in_composite
+// =============================================================================
+
+#[test]
+fn test_template_lazy_application_in_union_detected() {
+    // Template: Func<T[P]> | Spec<T[P]>
+    // where Spec is Lazy(DefId(1)) — should be detected as needing deferral
+    let interner = TypeInterner::new();
+
+    let spec_def = DefId(1);
+    let lazy_spec = interner.intern(TypeData::Lazy(spec_def));
+    // Spec<T[P]> → Application(Lazy(Spec), [number])
+    let spec_app = interner.application(lazy_spec, vec![TypeId::NUMBER]);
+
+    let func_def = DefId(2);
+    let lazy_func = interner.intern(TypeData::Lazy(func_def));
+    // Func<T[P]> → Application(Lazy(Func), [number])
+    let func_app = interner.application(lazy_func, vec![TypeId::NUMBER]);
+
+    // Union: Func<T[P]> | Spec<T[P]>
+    let union_template = interner.union(vec![func_app, spec_app]);
+
+    assert!(
+        template_has_lazy_application_in_composite(&interner, union_template),
+        "Union containing Application with Lazy base should be detected"
+    );
+}
+
+#[test]
+fn test_template_single_lazy_application_not_detected() {
+    // Template: Selector<S, T[K]> (single Application, not in a union)
+    // Should NOT be detected — single applications pass through correctly
+    let interner = TypeInterner::new();
+
+    let selector_def = DefId(1);
+    let lazy_selector = interner.intern(TypeData::Lazy(selector_def));
+    let selector_app = interner.application(lazy_selector, vec![TypeId::STRING, TypeId::NUMBER]);
+
+    assert!(
+        !template_has_lazy_application_in_composite(&interner, selector_app),
+        "Single Application with Lazy base (not in union) should NOT be detected"
+    );
+}
+
+#[test]
+fn test_template_union_without_lazy_not_detected() {
+    // Template: string | number (no lazy applications)
+    let interner = TypeInterner::new();
+
+    let union_template = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    assert!(
+        !template_has_lazy_application_in_composite(&interner, union_template),
+        "Union without Application types should NOT be detected"
+    );
+}
+
+#[test]
+fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
+    // Regression test for isomorphicMappedTypeInference.ts
+    //
+    // type Spec<T> = { [P in keyof T]: Func<T[P]> | Spec<T[P]> }
+    //
+    // When instantiating with concrete T, the mapped type template contains
+    // Application(Lazy(Spec), ...) in a union. The instantiator must NOT
+    // eagerly evaluate this with NoopResolver, as it would drop the
+    // unresolvable union member.
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+    let keyof_source = interner.keyof(source);
+
+    let p_name = interner.intern_string("P");
+    let type_param_p = TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    // Create union template: number | Application(Lazy(DefId(1)), [string])
+    let spec_def = DefId(1);
+    let lazy_spec = interner.intern(TypeData::Lazy(spec_def));
+    let spec_app = interner.application(lazy_spec, vec![TypeId::STRING]);
+    let union_template = interner.union(vec![TypeId::NUMBER, spec_app]);
+
+    let mapped = MappedType {
+        type_param: type_param_p,
+        constraint: keyof_source,
+        name_type: None,
+        template: union_template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    // Create a substitution (even empty is fine, we test the deferral path)
+    let mapped_id = interner.mapped(mapped);
+
+    // The instantiator should defer evaluation (return MappedType, not Object)
+    // because the template is a union with a lazy application member.
+    let subst = TypeSubstitution::new();
+    let result = instantiate_type(&interner, mapped_id, &subst);
+
+    // The result should still be a Mapped type (deferred), not an Object
+    match interner.lookup(result) {
+        Some(TypeData::Mapped(_)) => {
+            // Good: evaluation was deferred as expected
+        }
+        other => {
+            // Also acceptable: if the mapped type was evaluated to an Object
+            // that preserves the union members, that's fine too.
+            // The key invariant is: no union members were dropped.
+            if let Some(TypeData::Object(shape_id)) = other {
+                let shape = interner.object_shape(shape_id);
+                // Each property should have a union type (not just number)
+                for prop in &shape.properties {
+                    match interner.lookup(prop.type_id) {
+                        Some(TypeData::Union(_)) => { /* Good: union preserved */ }
+                        Some(_) => {
+                            panic!(
+                                "Property {:?} should have union type to preserve Lazy application member",
+                                interner.resolve_atom_ref(prop.name)
+                            );
+                        }
+                        None => panic!("Property type not found"),
+                    }
+                }
+            } else {
+                panic!(
+                    "Expected Mapped or Object type (with preserved union), got {other:?}"
+                );
+            }
+        }
+    }
+}

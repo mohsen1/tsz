@@ -434,7 +434,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2268,7 +2267,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersectio
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -2288,7 +2286,6 @@ FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes5.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes7.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatterns.ts
-FAIL TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauses.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts
@@ -4901,6 +4898,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
@@ -11776,6 +11774,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
@@ -11819,6 +11818,7 @@ PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes5.ts
+PASS TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRecursiveNoCrash1.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRelationships.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints.ts

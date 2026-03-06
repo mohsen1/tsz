@@ -790,7 +790,15 @@ impl<'a> TypeInstantiator<'a> {
                 } else {
                     false
                 };
-                if has_lazy_extends {
+                // Also skip eager evaluation when the template contains Application
+                // types whose base is a Lazy(DefId) reference (e.g. recursive type
+                // aliases like `Spec<T[P]>`).  The instantiator's NoopResolver cannot
+                // resolve these references, so the evaluator would silently drop
+                // unresolvable union members.  Deferring lets the outer evaluator
+                // (which has a proper TypeResolver) handle the full expansion.
+                let has_lazy_application =
+                    template_has_lazy_application_in_composite(self.interner, new_template);
+                if has_lazy_extends || has_lazy_application {
                     mapped_type
                 } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
                     // Don't eagerly evaluate when the constraint still contains type
@@ -1022,6 +1030,50 @@ pub fn substitute_this_type(
         TypeId::ERROR
     } else {
         result
+    }
+}
+
+/// Check whether a mapped-type template is a **union or intersection** that
+/// contains an `Application` type whose base is a `Lazy(DefId)` reference.
+///
+/// This pattern occurs in recursive mapped types like:
+///   `Spec<T> = { [P in keyof T]: Func<T[P]> | Spec<T[P]> }`
+/// where the template union includes a self-referential type alias application.
+///
+/// The instantiator's eager `evaluate_type` uses `NoopResolver`, which cannot
+/// resolve `Lazy` references.  When a union member is an unresolvable
+/// application, the mapped type evaluator produces an incomplete object that
+/// silently drops that member.  Deferring lets the outer evaluator (which has
+/// a proper `TypeResolver`) handle the full expansion.
+///
+/// We intentionally do NOT match a top-level Application (e.g. `Selector<S, T[K]>`)
+/// because the evaluator correctly passes those through as-is.  Only unions/
+/// intersections are at risk of member loss.
+fn template_has_lazy_application_in_composite(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some(data) = interner.lookup(type_id) else {
+        return false;
+    };
+    match data {
+        TypeData::Union(members) | TypeData::Intersection(members) => {
+            let list = interner.type_list(members);
+            list.iter().any(|&m| {
+                if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
+                    let app = interner.type_application(app_id);
+                    matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+                } else {
+                    false
+                }
+            })
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = interner.conditional_type(cond_id);
+            template_has_lazy_application_in_composite(interner, cond.true_type)
+                || template_has_lazy_application_in_composite(interner, cond.false_type)
+        }
+        _ => false,
     }
 }
 
