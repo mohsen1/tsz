@@ -48,6 +48,8 @@ impl<'a> CheckerState<'a> {
 
         let mut base_class_idx: Option<NodeIndex> = None;
         let mut base_class_name = String::new();
+        let mut heritage_expr_idx: Option<NodeIndex> = None;
+        let mut heritage_type_idx: Option<NodeIndex> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -74,6 +76,9 @@ impl<'a> CheckerState<'a> {
                         type_idx
                     };
 
+                heritage_expr_idx = Some(expr_idx);
+                heritage_type_idx = Some(type_idx);
+
                 if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
                 {
@@ -93,7 +98,24 @@ impl<'a> CheckerState<'a> {
             break;
         }
 
+        // If the base class was resolved to a non-class declaration (e.g., a const variable
+        // holding a mixin result), clear it so we fall through to the type-level fallback.
+        if let Some(base_idx) = base_class_idx
+            && let Some(base_node) = self.ctx.arena.get(base_idx)
+            && self.ctx.arena.get_class(base_node).is_none()
+        {
+            base_class_idx = None;
+        }
+
         let Some(base_idx) = base_class_idx else {
+            // Type-level fallback: resolve via the solver for expression-based heritage
+            self.check_abstract_members_from_type(
+                class_idx,
+                class_data,
+                heritage_expr_idx,
+                heritage_type_idx,
+                &base_class_name,
+            );
             return;
         };
 
@@ -1732,4 +1754,8 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    // NOTE: check_abstract_members_from_type, find_abstract_members_in_type,
+    // collect_class_names_from_instance_type, and is_property_abstract_via_parent
+    // are in class_abstract_checker.rs
 }
