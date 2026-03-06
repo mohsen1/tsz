@@ -544,7 +544,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let a = a_norm;
         let b = b_norm;
 
-        // 5. Structural Identity
+        // 5a. DNF normalization for intersection-of-unions.
+        //
+        // TypeScript's `isTypeIdenticalTo` normalizes intersection types to their
+        // Disjunctive Normal Form (DNF) before comparison. This means that:
+        //   type X1 = (A | B) & (C | D)   -- all-union intersection
+        //   type X2 = A & C | A & D | B & C | B & D  -- DNF union
+        // are considered identical for TS2403 purposes, even though they have
+        // different TypeIds in our interner (we preserve the written form).
+        //
+        // To match tsc, we distribute any all-union intersection to its DNF form
+        // before the structural identity check. Non-all-union intersections
+        // (e.g., `A & (B | C)`) are already normalized during interning via
+        // `distribute_intersection_over_unions` with the `has_non_union` guard.
+        let a = self.normalize_all_union_intersection_to_dnf(a);
+        let b = self.normalize_all_union_intersection_to_dnf(b);
+
+        // 5b. Structural Identity
         // tsc uses isTypeIdenticalTo for redeclaration checking, which is stricter
         // than bidirectional subtyping. In particular, a non-union type is NEVER
         // identical to a union type, even if they are bidirectionally related.
@@ -590,6 +606,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             "are_types_identical_for_redeclaration: result"
         );
         fwd && bwd
+    }
+
+    /// Normalize an intersection-of-all-unions to its Disjunctive Normal Form (DNF).
+    ///
+    /// TypeScript's `isTypeIdenticalTo` normalizes `(A|B)&(C|D)` to
+    /// `(A&C)|(A&D)|(B&C)|(B&D)` before comparing types for TS2403 identity.
+    /// Our interner preserves the written form (all-union intersections are NOT
+    /// distributed during interning, to avoid changing diagnostic messages).
+    /// This function distributes on-demand for identity comparison only.
+    ///
+    /// Returns the original type unchanged if it is not an all-union intersection
+    /// or if distribution would produce too many combinations (>25).
+    fn normalize_all_union_intersection_to_dnf(&self, ty: TypeId) -> TypeId {
+        // Only applies to intersection types
+        let Some(TypeData::Intersection(members_id)) = self.interner.lookup(ty) else {
+            return ty;
+        };
+        let members = self.interner.type_list(members_id);
+        // Only applies when ALL members are union types (all-union intersection)
+        let all_are_unions = members
+            .iter()
+            .all(|&id| matches!(self.interner.lookup(id), Some(TypeData::Union(_))));
+        if !all_are_unions {
+            return ty;
+        }
+        // Use the existing distribution logic
+        let flat: smallvec::SmallVec<[TypeId; 8]> = members.iter().copied().collect();
+        self.interner
+            .distribute_intersection_over_unions(&flat)
+            .unwrap_or(ty)
     }
 
     /// Check if two types involving enums are compatible for redeclaration.

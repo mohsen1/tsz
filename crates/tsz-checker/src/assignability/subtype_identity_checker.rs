@@ -295,11 +295,21 @@ impl<'a> CheckerState<'a> {
         // Guard: when exactly one side is a union and the other is not, tsc's
         // isTypeIdenticalTo rejects them even if they're bidirectionally subtypes.
         // e.g., `C` vs `C | D` (where D extends C) fails identity in tsc.
+        //
+        // EXCEPTION: When one side is an intersection, the union/non-union check does
+        // not apply. An intersection of unions distributes to a union of intersections
+        // (e.g., `(A|B)&(C|D)` === `A&C | A&D | B&C | B&D`), and tsc considers these
+        // identical for TS2403 purposes. We allow the bidirectional subtype check to
+        // handle this case.
         {
             use tsz_solver::type_queries;
             let prev_is_union = type_queries::is_union_type(self.ctx.types, prev_type);
             let curr_is_union = type_queries::is_union_type(self.ctx.types, current_type);
-            if prev_is_union != curr_is_union {
+            let prev_is_intersection =
+                type_queries::is_intersection_type(self.ctx.types, prev_type);
+            let curr_is_intersection =
+                type_queries::is_intersection_type(self.ctx.types, current_type);
+            if prev_is_union != curr_is_union && !prev_is_intersection && !curr_is_intersection {
                 return false;
             }
         }
