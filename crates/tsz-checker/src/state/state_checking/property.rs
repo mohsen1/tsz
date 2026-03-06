@@ -1059,7 +1059,10 @@ impl<'a> CheckerState<'a> {
         ) && query::is_mapped_type(self.ctx.types, resolved_object_type)
         {
             let expanded = self.evaluate_mapped_type_with_resolution(resolved_object_type);
-            if expanded != resolved_object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
+            if expanded != resolved_object_type
+                && expanded != TypeId::ANY
+                && expanded != TypeId::ERROR
+            {
                 return self.ctx.types.resolve_property_access_with_options(
                     expanded,
                     prop_name,
