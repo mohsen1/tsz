@@ -9,8 +9,8 @@ use crate::diagnostics::{
 };
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue,
-    MappedType, ObjectShape, ParamInfo, PropertyInfo, StringIntrinsicKind, TemplateSpan,
-    TupleElement, TypeData, TypeId, TypeParamInfo,
+    MappedModifier, MappedType, ObjectShape, ParamInfo, PropertyInfo, StringIntrinsicKind,
+    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -851,8 +851,19 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_mapped(&mut self, mapped: &MappedType) -> String {
+        let param_name = self.atom(mapped.type_param.name);
+        let readonly_prefix = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => "readonly ",
+            Some(MappedModifier::Remove) => "-readonly ",
+            None => "",
+        };
+        let optional_suffix = match mapped.optional_modifier {
+            Some(MappedModifier::Add) => "?",
+            Some(MappedModifier::Remove) => "-?",
+            None => "",
+        };
         format!(
-            "{{ [K in {}]: {} }}",
+            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {} }}",
             self.format(mapped.constraint),
             self.format(mapped.template)
         )
@@ -1105,5 +1116,77 @@ mod tests {
         let mut fmt = TypeFormatter::new(&db);
         let result = fmt.format(obj);
         assert_eq!(result, "{ \"data-prop\": true; }");
+    }
+
+    #[test]
+    fn mapped_type_preserves_param_name() {
+        let db = TypeInterner::new();
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("P"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: db.keyof(TypeId::STRING),
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(mapped);
+        assert!(
+            result.contains("[P in "),
+            "Expected [P in ...], got: {result}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_shows_optional_modifier() {
+        let db = TypeInterner::new();
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("K"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: Some(MappedModifier::Add),
+        });
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(mapped);
+        assert!(
+            result.contains("]?:"),
+            "Expected ]?: in mapped type, got: {result}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_shows_readonly_modifier() {
+        let db = TypeInterner::new();
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("P"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: Some(MappedModifier::Add),
+            optional_modifier: None,
+        });
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(mapped);
+        assert!(
+            result.contains("readonly [P in"),
+            "Expected 'readonly [P in', got: {result}"
+        );
     }
 }
