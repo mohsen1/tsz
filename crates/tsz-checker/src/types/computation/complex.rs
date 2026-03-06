@@ -621,7 +621,30 @@ impl<'a> CheckerState<'a> {
                             is_method: shape.is_method,
                         }
                     };
-                    let substitution = {
+                    let mut substitution = {
+                        let round2_contextual_type = if let Some(contextual) =
+                            self.ctx.contextual_type
+                            && contextual != TypeId::ANY
+                            && contextual != TypeId::UNKNOWN
+                            && contextual != TypeId::NEVER
+                            && !self.type_contains_error(contextual)
+                            && self.is_promise_type(contextual)
+                        {
+                            if let Some(inner) = self.promise_like_return_type_argument(contextual)
+                            {
+                                let promise_like_t = self.get_promise_like_type(inner);
+                                let promise_t = self.get_promise_type(inner);
+                                let mut members = vec![inner, promise_like_t];
+                                if let Some(pt) = promise_t {
+                                    members.push(pt);
+                                }
+                                Some(self.ctx.types.factory().union(members))
+                            } else {
+                                self.ctx.contextual_type
+                            }
+                        } else {
+                            self.ctx.contextual_type
+                        };
                         let env = self.ctx.type_env.borrow();
                         call_checker::compute_contextual_types_with_context(
                             self.ctx.types,
@@ -629,10 +652,63 @@ impl<'a> CheckerState<'a> {
                             &env,
                             &evaluated_shape,
                             &round1_arg_types,
-                            self.ctx.contextual_type,
+                            round2_contextual_type,
                         )
                     };
+                    if let Some(contextual) = self.ctx.contextual_type {
+                        use tsz_binder::SymbolId;
 
+                        if let (
+                            Some(tsz_solver::TypeData::Application(src_app_id)),
+                            Some(tsz_solver::TypeData::Application(dst_app_id)),
+                        ) = (
+                            self.ctx.types.lookup(shape.return_type),
+                            self.ctx.types.lookup(contextual),
+                        ) {
+                            let src_app = self.ctx.types.type_application(src_app_id);
+                            let dst_app = self.ctx.types.type_application(dst_app_id);
+                            let base_name = |base: TypeId| -> Option<&str> {
+                                match self.ctx.types.lookup(base) {
+                                    Some(tsz_solver::TypeData::Lazy(def_id)) => self
+                                        .ctx
+                                        .def_to_symbol_id(def_id)
+                                        .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                        .map(|symbol| symbol.escaped_name.as_str()),
+                                    Some(tsz_solver::TypeData::TypeQuery(sym_ref)) => self
+                                        .ctx
+                                        .binder
+                                        .get_symbol(SymbolId(sym_ref.0))
+                                        .map(|symbol| symbol.escaped_name.as_str()),
+                                    _ => None,
+                                }
+                            };
+                            let same_base = src_app.base == dst_app.base
+                                || matches!(
+                                    (base_name(src_app.base), base_name(dst_app.base)),
+                                    (Some(left), Some(right)) if left == right
+                                );
+                            if same_base && src_app.args.len() == dst_app.args.len() {
+                                for (src_arg, dst_arg) in
+                                    src_app.args.iter().zip(dst_app.args.iter())
+                                {
+                                    if let Some(tsz_solver::TypeData::TypeParameter(info)) =
+                                        self.ctx.types.lookup(*src_arg)
+                                    {
+                                        let current = substitution.get(info.name);
+                                        let unresolved = current.is_none_or(|ty| {
+                                            matches!(
+                                                self.ctx.types.lookup(ty),
+                                                Some(tsz_solver::TypeData::TypeParameter(_))
+                                            )
+                                        });
+                                        if unresolved {
+                                            substitution.insert(info.name, *dst_arg);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Round 2: apply inferred types as contextual types for sensitive args
                     let arg_count = args.len();
                     let mut round2_contextual_types: Vec<Option<TypeId>> =
@@ -641,16 +717,93 @@ impl<'a> CheckerState<'a> {
                         let ctx_type = if let Some(param_type) =
                             ctx_helper.get_parameter_type_for_call(i, arg_count)
                         {
-                            let instantiated = tsz_solver::instantiate_type(
-                                self.ctx.types,
-                                param_type,
-                                &substitution,
-                            );
+                            let promise_executor_context = if i == 0 {
+                                if let Some(contextual) = self.ctx.contextual_type
+                                    && self.is_promise_type(contextual)
+                                    && let Some(inner) =
+                                        self.promise_like_return_type_argument(contextual)
+                                    && let Some(tsz_solver::TypeData::Function(exec_shape_id)) =
+                                        self.ctx.types.lookup(param_type)
+                                {
+                                    let mut exec_shape =
+                                        (*self.ctx.types.function_shape(exec_shape_id)).clone();
+                                    if let Some(first_param) = exec_shape.params.first_mut()
+                                        && let Some(tsz_solver::TypeData::Function(
+                                            resolve_shape_id,
+                                        )) = self.ctx.types.lookup(first_param.type_id)
+                                    {
+                                        let mut resolve_shape =
+                                            (*self.ctx.types.function_shape(resolve_shape_id))
+                                                .clone();
+                                        if let Some(resolve_first) =
+                                            resolve_shape.params.first_mut()
+                                        {
+                                            let promise_like_inner =
+                                                self.get_promise_like_type(inner);
+                                            resolve_first.type_id = self
+                                                .ctx
+                                                .types
+                                                .factory()
+                                                .union(vec![inner, promise_like_inner]);
+                                            first_param.type_id =
+                                                self.ctx.types.function(resolve_shape);
+                                            Some(self.ctx.types.function(exec_shape))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            let mut round2_substitution = substitution.clone();
+                            if let Some(contextual) = self.ctx.contextual_type
+                                && self.is_promise_type(contextual)
+                                && let Some(inner) =
+                                    self.promise_like_return_type_argument(contextual)
+                            {
+                                for ty in tsz_solver::visitor::collect_all_types(
+                                    self.ctx.types,
+                                    param_type,
+                                ) {
+                                    if let Some(tsz_solver::TypeData::TypeParameter(info)) =
+                                        self.ctx.types.lookup(ty)
+                                    {
+                                        let current = round2_substitution.get(info.name);
+                                        let unresolved = current.is_none_or(|mapped| {
+                                            matches!(
+                                                self.ctx.types.lookup(mapped),
+                                                Some(tsz_solver::TypeData::TypeParameter(_))
+                                            )
+                                        });
+                                        if unresolved {
+                                            round2_substitution.insert(info.name, inner);
+                                        }
+                                    }
+                                }
+                            }
+                            let instantiated = promise_executor_context.unwrap_or_else(|| {
+                                tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &round2_substitution,
+                                )
+                            });
                             Some(self.evaluate_type_with_env(instantiated))
                         } else {
                             None
                         };
                         round2_contextual_types.push(ctx_type);
+                    }
+
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if i < sensitive_args.len() && sensitive_args[i] {
+                            self.clear_type_cache_recursive(arg_idx);
+                        }
                     }
 
                     self.collect_call_argument_types_with_context(

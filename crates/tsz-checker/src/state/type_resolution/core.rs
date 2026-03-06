@@ -639,8 +639,36 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         if self.is_mapped_type_utility(name) {
             if let Some(args) = &type_ref.type_arguments {
-                for &arg_idx in &args.nodes {
-                    let _ = self.get_type_from_type_node(arg_idx);
+                let type_args: Vec<TypeId> = args
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                    .collect();
+
+                if name == "Pick" && type_args.len() == 2 {
+                    let factory = self.ctx.types.factory();
+                    let key_param = tsz_solver::TypeParamInfo {
+                        name: self.ctx.types.intern_string("__pick_key"),
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    };
+                    let key_type = self.ctx.types.type_param(key_param.clone());
+                    return factory.mapped(tsz_solver::MappedType {
+                        type_param: key_param,
+                        constraint: type_args[1],
+                        name_type: None,
+                        template: factory.index_access(type_args[0], key_type),
+                        readonly_modifier: None,
+                        optional_modifier: None,
+                    });
+                }
+
+                if self.ctx.has_lib_loaded() {
+                    let (base_type, _) = self.resolve_lib_type_with_params(name);
+                    if let Some(base_type) = base_type {
+                        return self.ctx.types.factory().application(base_type, type_args);
+                    }
                 }
             }
             return TypeId::ANY;

@@ -230,22 +230,6 @@ impl<'a> CheckerState<'a> {
                 .resolve_unqualified_name_in_enclosing_namespace(idx, ident.escaped_text.as_str())
             && ns_sym_id != found_sym_id
         {
-            if ident.escaped_text == "Component"
-                && self.ctx.file_name.contains("inst-create-element-shadow")
-            {
-                let found_meta = self.ctx.binder.get_symbol(found_sym_id);
-                let ns_meta = self.ctx.binder.get_symbol(ns_sym_id);
-                eprintln!(
-                    "DEBUG resolve_identifier_symbol_inner override Component idx={} file_local={} flags={:#x} parent={} namespace={} flags={:#x} parent={}",
-                    idx.0,
-                    found_sym_id.0,
-                    found_meta.map_or(0, |s| s.flags),
-                    found_meta.map_or(u32::MAX, |s| s.parent.0),
-                    ns_sym_id.0,
-                    ns_meta.map_or(0, |s| s.flags),
-                    ns_meta.map_or(u32::MAX, |s| s.parent.0),
-                );
-            }
             return Some(ns_sym_id);
         }
 
@@ -530,32 +514,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
                 && ns_sym_id != local_sym_id
             {
-                if name == "Component" && self.ctx.file_name.contains("inst-create-element-shadow")
-                {
-                    let local_meta = self.ctx.binder.get_symbol(local_sym_id);
-                    let ns_meta = self.ctx.binder.get_symbol(ns_sym_id);
-                    eprintln!(
-                        "DEBUG resolve_identifier_symbol_in_type_position override Component idx={} file_local={} flags={:#x} parent={} namespace={} flags={:#x} parent={}",
-                        idx.0,
-                        local_sym_id.0,
-                        local_meta.map_or(0, |s| s.flags),
-                        local_meta.map_or(u32::MAX, |s| s.parent.0),
-                        ns_sym_id.0,
-                        ns_meta.map_or(0, |s| s.flags),
-                        ns_meta.map_or(u32::MAX, |s| s.parent.0),
-                    );
-                }
                 return TypeSymbolResolution::Type(ns_sym_id);
-            }
-            if name == "Component" && self.ctx.file_name.contains("inst-create-element-shadow") {
-                let local_meta = self.ctx.binder.get_symbol(local_sym_id);
-                eprintln!(
-                    "DEBUG resolve_identifier_symbol_in_type_position Component idx={} resolved={} flags={:#x} parent={}",
-                    idx.0,
-                    local_sym_id.0,
-                    local_meta.map_or(0, |s| s.flags),
-                    local_meta.map_or(u32::MAX, |s| s.parent.0),
-                );
             }
             return TypeSymbolResolution::Type(local_sym_id);
         }
@@ -1628,16 +1587,15 @@ impl<'a> CheckerState<'a> {
             if is_compiler_managed_type(ident.escaped_text.as_str()) {
                 return None;
             }
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if let TypeSymbolResolution::Type(sym_id) =
+            if node.kind == SyntaxKind::Identifier as u16
+                && let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(idx)
+            {
+                let lib_binders = self.get_lib_binders();
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    && (symbol.flags & symbol_flags::TYPE) != 0
                 {
-                    let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && (symbol.flags & symbol_flags::TYPE) != 0
-                    {
-                        return Some(sym_id.0);
-                    }
+                    return Some(sym_id.0);
                 }
             }
         }

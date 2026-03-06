@@ -352,9 +352,16 @@ impl<'a> CheckerState<'a> {
         // lib_ctx.binder is a SEPARATE merged binder with DIFFERENT SymbolIds.
         // Using lib_ctx.binder's SymbolIds with self.ctx.get_or_create_def_id causes
         // SymbolId collisions and wrong type resolution.
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
+            self.ctx
+                .binder
+                .get_global_type_with_libs(name, &lib_binders)
+        });
+
+        if let Some(sym_id) = sym_id {
             // Get the symbol's declaration(s) from the main file's binder
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                 // Get the fallback arena from lib_contexts if available, otherwise use main arena
                 let fallback_arena: &NodeArena = self
                     .ctx

@@ -806,13 +806,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             s
         };
-        let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
-        let final_args: Vec<TypeId> = if placeholder_subst.is_empty() {
+        let mut final_arg_subst = infer_ctx.get_current_substitution();
+        for (name, ty) in placeholder_subst.map().iter() {
+            final_arg_subst.insert(*name, *ty);
+        }
+        let raw_return_type = instantiate_type(self.interner, func.return_type, &final_subst);
+        let return_type =
+            self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
+        let final_args: Vec<TypeId> = if final_arg_subst.is_empty() {
             arg_types.to_vec()
         } else {
             arg_types
                 .iter()
-                .map(|&arg| instantiate_type(self.interner, arg, &placeholder_subst))
+                .map(|&arg| self.normalize_inferred_placeholder_type(arg, &final_arg_subst))
                 .collect()
         };
         tracing::debug!(
@@ -949,16 +955,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         match self.interner.lookup(arg_type) {
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
-                if !crate::relations::freshness::is_fresh_object_type(self.interner, arg_type) {
-                    return false;
-                }
                 let shape = self.interner.object_shape(shape_id);
                 !shape
                     .properties
                     .iter()
                     .any(|prop| !self.is_contextually_sensitive(prop.type_id))
             }
-            Some(TypeData::Application(_)) => false,
             _ => true,
         }
     }
@@ -1050,8 +1052,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
-                | TypeData::Intrinsic(_)
-                | TypeData::Literal(_)
                 | TypeData::Function(_)
                 | TypeData::Callable(_),
             ) => true,
@@ -1102,11 +1102,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let arg_ty = arg_types[0];
-        let preserve_literal_arg = matches!(
-            self.interner.lookup(arg_ty),
-            Some(TypeData::Literal(_) | TypeData::TemplateLiteral(_) | TypeData::UniqueSymbol(_))
-        );
-        let inferred_ty = if tp.is_const || preserve_literal_arg {
+        let inferred_ty = if tp.is_const {
             arg_ty
         } else {
             let widened =
@@ -1170,6 +1166,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             }
             current = next;
+        }
+
+        let mut source_placeholder_subst = TypeSubstitution::new();
+        for ty in crate::visitor::collect_all_types(self.interner.as_type_database(), current) {
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
+                && self
+                    .interner
+                    .resolve_atom(info.name)
+                    .as_str()
+                    .starts_with("__infer_src_")
+            {
+                source_placeholder_subst.insert(info.name, TypeId::UNKNOWN);
+            }
+        }
+        if !source_placeholder_subst.is_empty() {
+            current = instantiate_type(self.interner, current, &source_placeholder_subst);
         }
 
         current
@@ -1283,9 +1295,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
 
             // Same-base Application pairwise extraction (see resolve_generic_call_inner).
+            let evaluated_return_type = self.interner.evaluate_type(return_type_with_placeholders);
+            let evaluated_ctx_type = self.interner.evaluate_type(ctx_type);
             if let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) = (
-                self.interner.lookup(return_type_with_placeholders),
-                self.interner.lookup(ctx_type),
+                self.interner.lookup(evaluated_return_type),
+                self.interner.lookup(evaluated_ctx_type),
             ) {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
@@ -1333,10 +1347,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 InferencePriority::NakedTypeVariable,
             );
 
-            // Same-base Application pairwise extraction for Round 1 arguments.
-            // Example: A<(value: number) => void> against A<__infer_0> should infer
-            // __infer_0 from the inner type argument, not rely only on structural
-            // assignability of the outer application wrapper.
             if let (
                 Some(TypeData::Application(arg_app_id)),
                 Some(TypeData::Application(target_app_id)),
@@ -1374,7 +1384,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // 4. Fix variables with enough information from Round 1
         let _ = infer_ctx.fix_current_variables();
-        let _ = infer_ctx.strengthen_constraints();
 
         // Restore state to prevent pollution if evaluator is reused
         self.defaulted_placeholders = previous_defaulted;
@@ -1492,19 +1501,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 result_subst.insert(tp.name, placeholder_id);
             }
         }
-
-        trace!(
-            contextual_result_subst = ?result_subst
-                .map()
-                .iter()
-                .map(|(name, ty)| (
-                    self.interner.resolve_atom(*name).to_string(),
-                    *ty,
-                    self.interner.lookup(*ty),
-                ))
-                .collect::<Vec<_>>(),
-            "compute_contextual_types: final substitution"
-        );
 
         result_subst
     }
