@@ -23,6 +23,20 @@ pub(crate) fn type_parameter_info(
     tsz_solver::type_queries::get_type_parameter_info(db, type_id)
 }
 
+pub(crate) fn get_application_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, Vec<TypeId>)> {
+    tsz_solver::type_queries::get_application_info(db, type_id)
+}
+
+pub(crate) fn get_function_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::FunctionShape>> {
+    tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
 pub(crate) fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassDeclTypeKind {
     tsz_solver::type_queries::classify_for_class_decl(db, type_id)
 }

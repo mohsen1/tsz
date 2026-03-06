@@ -105,10 +105,7 @@ impl<'a> CheckerState<'a> {
         // For patterns like `v[k]` where `v: T extends Record<K, number>`, the
         // type is `IndexAccess(T, K)` which must be evaluated iteratively via the
         // full TypeEnvironment resolver to eventually reach the concrete type `number`.
-        if matches!(
-            self.ctx.types.lookup(result),
-            Some(tsz_solver::TypeData::IndexAccess(_, _))
-        ) {
+        if tsz_solver::type_queries::get_index_access_types(self.ctx.types, result).is_some() {
             let mut current = result;
             for _ in 0..3 {
                 let evaluated = self.evaluate_type_with_env(current);
@@ -116,10 +113,9 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 current = evaluated;
-                if !matches!(
-                    self.ctx.types.lookup(current),
-                    Some(tsz_solver::TypeData::IndexAccess(_, _))
-                ) {
+                if tsz_solver::type_queries::get_index_access_types(self.ctx.types, current)
+                    .is_none()
+                {
                     break;
                 }
             }
@@ -130,8 +126,8 @@ impl<'a> CheckerState<'a> {
 
         // For TypeParameter types (e.g., T extends number), resolve through constraint
         // so arithmetic validity checks can see the constraint type.
-        if let Some(tsz_solver::TypeData::TypeParameter(param)) = self.ctx.types.lookup(result)
-            && let Some(constraint) = param.constraint
+        if let Some(constraint) =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, result)
             && constraint != TypeId::UNKNOWN
             && constraint != result
         {

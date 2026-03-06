@@ -16,6 +16,7 @@ pub(crate) mod binary;
 pub(crate) mod call;
 pub(crate) mod call_helpers;
 pub(crate) mod complex;
+pub(crate) mod complex_constructors;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod object_literal;
