@@ -205,23 +205,11 @@ impl<'a> CheckerState<'a> {
             let resolved = self.resolve_lazy_type(*member);
             // Get raw construct return type (without resolve_type_for_property_access)
             if let Some(return_type) = construct_return_type_for_display(self.ctx.types, resolved) {
-                // For Lazy return types (named interfaces/classes), format directly
-                // to preserve the name (e.g., "I1" instead of "{ m1: () => void }").
-                // For structural types (objects with unevaluated Application
-                // properties like InstanceType<T>), resolve nested types first.
-                let is_lazy = matches!(
-                    crate::query_boundaries::type_computation::complex::classify_for_lazy_resolution(
-                        self.ctx.types,
-                        return_type,
-                    ),
-                    tsz_solver::type_queries::LazyTypeKind::Lazy(_)
-                );
-                let display_type = if is_lazy {
-                    return_type
-                } else {
-                    self.resolve_type_for_property_access(return_type)
-                };
-                names.push(self.format_type(display_type));
+                // Collect display names from this constructor's return type.
+                // If the return type is an intersection (e.g., `AbstractBase & Mixin`),
+                // walk each member individually to preserve named type references.
+                // Otherwise, handle single types directly.
+                self.collect_display_names_from_return_type(return_type, &mut names);
             } else {
                 return None;
             }
@@ -235,6 +223,53 @@ impl<'a> CheckerState<'a> {
         names.sort();
 
         Some(names.join(" & "))
+    }
+
+    /// Collect display names from a constructor return type into `names`.
+    /// For intersection return types (e.g., `AbstractBase & Mixin`), walks each
+    /// member individually to preserve named type references. Deduplicates by name.
+    fn collect_display_names_from_return_type(
+        &mut self,
+        return_type: TypeId,
+        names: &mut Vec<String>,
+    ) {
+        // If the return type is an intersection, walk each member
+        if let Some(members_list) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, return_type)
+        {
+            for &member_id in members_list.iter() {
+                let name = self.format_single_display_type(member_id);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            return;
+        }
+
+        // Single type
+        let name = self.format_single_display_type(return_type);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    /// Format a single type for display name purposes.
+    /// Lazy (named) types are formatted directly to preserve names.
+    /// Structural types are resolved first.
+    fn format_single_display_type(&mut self, type_id: TypeId) -> String {
+        let is_lazy = matches!(
+            crate::query_boundaries::type_computation::complex::classify_for_lazy_resolution(
+                self.ctx.types,
+                type_id,
+            ),
+            tsz_solver::type_queries::LazyTypeKind::Lazy(_)
+        );
+        let display_type = if is_lazy {
+            type_id
+        } else {
+            self.resolve_type_for_property_access(type_id)
+        };
+        self.format_type(display_type)
     }
 
     pub(crate) fn instance_type_from_constructor_type(

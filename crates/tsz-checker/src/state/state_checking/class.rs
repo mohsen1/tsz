@@ -411,6 +411,12 @@ impl<'a> CheckerState<'a> {
         // Property type in derived class must be assignable to same property in base class
         self.check_property_inheritance_compatibility(stmt_idx, class);
 
+        // TS2797: A mixin class that extends from a type variable containing an
+        // abstract construct signature must also be declared 'abstract'.
+        if !is_abstract_class {
+            self.check_mixin_abstract_construct_constraint(stmt_idx, class);
+        }
+
         // Check that non-abstract class implements all abstract members from base class (error 2654)
         self.check_abstract_member_implementations(stmt_idx, class);
 
@@ -1158,6 +1164,149 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
+
+    /// TS2797: A mixin class that extends from a type variable containing an
+    /// abstract construct signature must also be declared 'abstract'.
+    ///
+    /// When a non-abstract class extends from a type variable (type parameter)
+    /// whose constraint includes `abstract new (...)`, the class must be abstract.
+    /// This is the mixin pattern: `class C extends baseClass` where `baseClass: T`
+    /// and `T extends abstract new (...args: any) => any`.
+    fn check_mixin_abstract_construct_constraint(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ref heritage_clauses) = class_data.heritage_clauses else {
+            return;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            // Get the extends expression
+            let Some(&type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+            let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                continue;
+            };
+
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+
+            // Try get_type_of_node first; if it returns a usable type, use it.
+            // Otherwise, fall back to resolving the parameter's declared type
+            // annotation directly (workaround for name-merging issues where
+            // get_type_of_node returns ANY).
+            let base_type = self.resolve_heritage_expr_declared_type(expr_idx);
+            if base_type == TypeId::ERROR {
+                return;
+            }
+
+            // Check if the base type is a type parameter with a constraint
+            let Some(constraint_type) =
+                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, base_type)
+            else {
+                return;
+            };
+
+            // Check if the constraint has abstract construct signatures
+            if self.constraint_has_abstract_construct(constraint_type) {
+                let error_node = if class_data.name.is_some() {
+                    class_data.name
+                } else {
+                    class_idx
+                };
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::A_MIXIN_CLASS_THAT_EXTENDS_FROM_A_TYPE_VARIABLE_CONTAINING_AN_ABSTRACT_CONSTRUCT,
+                    diagnostic_codes::A_MIXIN_CLASS_THAT_EXTENDS_FROM_A_TYPE_VARIABLE_CONTAINING_AN_ABSTRACT_CONSTRUCT,
+                );
+            }
+
+            return;
+        }
+    }
+
+    /// Resolve the declared type for a heritage expression identifier.
+    /// First tries `get_type_of_node`. If that returns ANY (which can happen
+    /// due to symbol name merging), falls back to resolving the identifier's
+    /// symbol, finding its parameter declaration, and evaluating the type
+    /// annotation directly.
+    fn resolve_heritage_expr_declared_type(&mut self, expr_idx: NodeIndex) -> TypeId {
+        let base_type = self.get_type_of_node(expr_idx);
+        if base_type != TypeId::ANY {
+            return base_type;
+        }
+
+        // Fallback: resolve via parameter declaration's type annotation
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return TypeId::ANY;
+        };
+        let Some(&decl_idx) = symbol.declarations.first() else {
+            return TypeId::ANY;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(param_data) = self.ctx.arena.get_parameter(decl_node) else {
+            return TypeId::ANY;
+        };
+        let type_ann = param_data.type_annotation;
+        if type_ann == NodeIndex::NONE {
+            return TypeId::ANY;
+        }
+        self.get_type_from_type_node(type_ann)
+    }
+
+    /// Check if a constraint type (or any member of an intersection constraint)
+    /// contains abstract construct signatures.
+    fn constraint_has_abstract_construct(&self, constraint_type: TypeId) -> bool {
+        // Direct callable check
+        if let Some(callable) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, constraint_type)
+            && callable.is_abstract
+            && !callable.construct_signatures.is_empty()
+        {
+            return true;
+        }
+
+        // Intersection: check each member
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, constraint_type)
+        {
+            for &member in members.iter() {
+                if let Some(callable) =
+                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, member)
+                    && callable.is_abstract
+                    && !callable.construct_signatures.is_empty()
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 #[cfg(test)]
@@ -1246,6 +1395,93 @@ class C {
             matching.len(),
             0,
             "Expected no TS2699 for non-static prototype, got: {matching:?}"
+        );
+    }
+
+    #[test]
+    fn ts2797_mixin_extending_abstract_type_variable() {
+        let diags = check_source_diagnostics(
+            r#"
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass) {
+    class MixinClass extends baseClass {
+    }
+    return MixinClass;
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2797).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2797 for mixin extending abstract type variable, got codes: {all_codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts2797_mixin_with_implements_clause() {
+        // TS2797 should still fire when the mixin class has an implements clause
+        // (previously broken due to name-merging between function Mixin and interface Mixin)
+        let diags = check_source_diagnostics(
+            r#"
+interface Mixin {
+    mixinMethod(): void;
+}
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => Mixin) {
+    class MixinClass extends baseClass implements Mixin {
+        mixinMethod() {}
+    }
+    return MixinClass;
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2797).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2797 for mixin with implements clause, got codes: {all_codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts2515_expression_based_heritage() {
+        // Non-abstract class extending expression-based heritage (mixin pattern)
+        // should report TS2515 for unimplemented abstract members
+        let diags = check_source_diagnostics(
+            r#"
+interface Mixin {
+    mixinMethod(): void;
+}
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => Mixin) {
+    class MixinClass extends baseClass implements Mixin {
+        mixinMethod() {}
+    }
+    return MixinClass;
+}
+
+abstract class AbstractBase {
+    abstract abstractBaseMethod(): void;
+}
+
+const MixedBase = Mixin(AbstractBase);
+
+class DerivedFromAbstract extends MixedBase {
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        let ts2515: Vec<_> = diags.iter().filter(|d| d.code == 2515).collect();
+        assert_eq!(
+            ts2515.len(),
+            1,
+            "Expected 1 TS2515 for missing abstract member, got codes: {all_codes:?}"
+        );
+        // Verify the message mentions the correct base class name
+        let msg = &ts2515[0].message_text;
+        assert!(
+            msg.contains("AbstractBase & Mixin"),
+            "TS2515 message should reference 'AbstractBase & Mixin', got: {msg}"
         );
     }
 }

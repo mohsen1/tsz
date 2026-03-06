@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-06T16:03:41Z",
-  "git_sha": "64aec91b36793e6f413f5646b61cddd69ffc6d06",
+  "timestamp": "2026-03-06T17:30:24Z",
+  "git_sha": "7d6cfe321cac697d1714c6ebf8e6a3a80b75cfa6",
   "summary": {
     "total_tests": 12570,
     "passed": 9998,
@@ -14,13 +14,6 @@
       "passed": 17,
       "failed": 9,
       "pass_rate": 65.38
-    },
-    {
-      "area": "classes",
-      "total": 16,
-      "passed": 11,
-      "failed": 5,
-      "pass_rate": 68.75
     },
     {
       "area": "types/nonPrimitive",
@@ -233,6 +226,13 @@
       "pass_rate": 75.0
     },
     {
+      "area": "classes",
+      "total": 16,
+      "passed": 12,
+      "failed": 4,
+      "pass_rate": 75.0
+    },
+    {
       "area": "expressions/typeSatisfaction",
       "total": 16,
       "passed": 12,
@@ -353,10 +353,10 @@
     },
     {
       "area": "compiler",
-      "total": 6479,
-      "passed": 5149,
-      "failed": 1330,
-      "pass_rate": 79.47
+      "total": 6477,
+      "passed": 5148,
+      "failed": 1329,
+      "pass_rate": 79.48
     },
     {
       "area": "es2021/logicalAssignment",
@@ -1168,11 +1168,11 @@
       "count": 3
     },
     {
-      "code": "TS2488",
+      "code": "TS2341",
       "count": 3
     },
     {
-      "code": "TS2341",
+      "code": "TS2488",
       "count": 3
     },
     {
@@ -1247,7 +1247,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 60
+      "count": 59
     },
     {
       "code": "TS2345",
@@ -1449,7 +1449,7 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 68
+      "count": 67
     },
     {
       "code": "TS2345",
@@ -1733,7 +1733,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 146
+      "count": 145
     },
     {
       "code": "TS2339",
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 262,
+    "false_positive": 261,
     "all_missing": 413,
-    "wrong_code": 1843,
-    "close_to_passing": 1562
+    "wrong_code": 1842,
+    "close_to_passing": 1561
   }
 }

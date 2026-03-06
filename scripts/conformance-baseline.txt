@@ -701,7 +701,7 @@ FAIL TypeScript/tests/cases/compiler/jsxChildrenGenericContextualTypes.tsx
 FAIL TypeScript/tests/cases/compiler/jsxClassAttributeResolution.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
-FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteralWithGeneric.tsx
+FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteral.tsx
 FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild2.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentAndFactoryUsedOnFragmentUse.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx
@@ -1025,8 +1025,8 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks3.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksIgnored.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts
+FAIL TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx
-FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
 FAIL TypeScript/tests/cases/compiler/reactReduxLikeDeferredInferenceAllowsAssignment.ts
 FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/readonlyFloat32ArrayAssignableWithFloat32Array.ts
@@ -1092,7 +1092,6 @@ FAIL TypeScript/tests/cases/compiler/restUnion.ts
 FAIL TypeScript/tests/cases/compiler/restUnion3.ts
 FAIL TypeScript/tests/cases/compiler/returnInConstructor1.ts
 FAIL TypeScript/tests/cases/compiler/returnTypeInferenceContextualTypeIgnoreAnyUnknown1.ts
-FAIL TypeScript/tests/cases/compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx
 FAIL TypeScript/tests/cases/compiler/returnTypeTypeArguments.ts
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedIntersectionInference2.ts
@@ -1440,7 +1439,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-3.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-4.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/typeFromPrivatePropertyAssignmentJs.ts
-FAIL TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts
@@ -6609,7 +6607,6 @@ PASS TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNextEsm.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceImportPresevation.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceJSXEmit.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceMissingDeclaration.tsx
-PASS TypeScript/tests/cases/compiler/reactSFCAndFunctionResolvable.tsx
 PASS TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM.tsx
 PASS TypeScript/tests/cases/compiler/readonlyAssignmentInSubclassOfClassExpression.ts
 PASS TypeScript/tests/cases/compiler/readonlyInDeclarationFile.ts
@@ -8121,6 +8118,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateStat
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateWriteOnlyAccessorRead.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/typeFromPrivatePropertyAssignment.ts
 PASS TypeScript/tests/cases/conformance/classes/methodDeclarations/optionalMethodDeclarations.ts
+PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClassesReturnTypeInference.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors1.ts
