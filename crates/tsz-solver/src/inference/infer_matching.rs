@@ -8,6 +8,7 @@
 //! containing type parameters, it walks both structures in parallel and records
 //! lower/upper bound candidates for each inference variable.
 
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallableShapeId, FunctionShapeId, InferencePriority, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId,
@@ -135,12 +136,12 @@ impl<'a> InferenceContext<'a> {
                 self.infer_intersections(source_members, target_members, priority)?;
             }
 
-            // Target is an intersection but source is not: decompose the intersection
+            // Target is a union/intersection but source is not: decompose the target
             // and infer against each member. This handles cases like:
             //   source: {store: string}  target: {dispatch: number} & OwnProps
             // We try each intersection member so that type parameters within the
-            // intersection (like OwnProps) can be inferred from the source.
-            (_, Some(TypeData::Intersection(target_members))) => {
+            // target (like OwnProps, or union branches) can be inferred from the source.
+            (_, Some(TypeData::Union(target_members) | TypeData::Intersection(target_members))) => {
                 let target_list: Vec<TypeId> = self.interner.type_list(target_members).to_vec();
                 for &target_member in &target_list {
                     let _ = self.infer_from_types(source, target_member, priority);
@@ -288,7 +289,11 @@ impl<'a> InferenceContext<'a> {
 
         // Infer the template type (T) from each source property value type
         for prop in &source.properties {
-            self.infer_from_types(prop.type_id, mapped.template, priority)?;
+            let key_literal = self.interner.literal_string_atom(prop.name);
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
+            self.infer_from_types(prop.type_id, instantiated_template, priority)?;
         }
 
         Ok(())

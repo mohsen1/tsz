@@ -579,3 +579,46 @@ const o2: { foo: any; bar: any } = getProps(myAny, ['foo', 'bar']);
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_promise_all_spread_any_does_not_produce_false_ts1360() {
+    let source = r#"
+declare function getT<T>(): T;
+
+Promise.all([getT<string>(), ...getT<any>()]).then((result) => {
+  const tail = result.slice(1);
+  tail satisfies string[];
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts1360_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1360)
+        .collect();
+    assert!(
+        ts1360_errors.is_empty(),
+        "Expected no TS1360 for Promise.all spread-any tail satisfies check, got: {:?}",
+        ts1360_errors
+            .iter()
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}

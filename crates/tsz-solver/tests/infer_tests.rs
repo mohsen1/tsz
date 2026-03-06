@@ -247,6 +247,22 @@ fn test_resolve_single_lower_bound() {
 }
 
 #[test]
+fn test_resolve_keeps_any_candidate_with_unknown_upper_bound() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let var = ctx.fresh_type_param(t_name, false);
+
+    // Simulates unconstrained generic params (`T extends unknown`) collecting `any`
+    // from argument inference (e.g. Promise.all with spread any[] inputs).
+    ctx.add_upper_bound(var, TypeId::UNKNOWN);
+    ctx.add_lower_bound(var, TypeId::ANY);
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(result, TypeId::ANY);
+}
+
+#[test]
 fn test_resolve_multiple_lower_bounds_union() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
@@ -12760,6 +12776,59 @@ fn test_mapped_type_key_inference() {
     let result = ctx.resolve_with_constraints(var_k).unwrap();
     // Multiple string literal keys widen to string
     assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_mapped_type_template_union_inference() {
+    use crate::types::{MappedType, TypeParamInfo};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let p_name = interner.intern_string("P");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    let _p_type = interner.type_param(TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let t_type = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("sum"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("nested"), TypeId::NUMBER),
+    ]);
+
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: p_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(t_type),
+        name_type: None,
+        template: interner.union(vec![t_type, TypeId::STRING]),
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+    let target = interner.mapped(mapped);
+
+    // Before this fix, `mapped_template` containing a union prevents
+    // the per-property values from inferring the outer generic `T`.
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]

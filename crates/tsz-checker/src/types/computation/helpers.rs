@@ -565,6 +565,7 @@ impl<'a> CheckerState<'a> {
         // Use contextual element type when available for better inference
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
+            && context_element_type != TypeId::UNKNOWN
         {
             // Check if all elements are structurally compatible with the contextual type.
             // IMPORTANT: Use is_subtype_of (structural check) instead of is_assignable_to

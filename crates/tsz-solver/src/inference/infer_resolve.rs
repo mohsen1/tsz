@@ -231,11 +231,16 @@ impl<'a> InferenceContext<'a> {
         }
 
         if !upper_bounds.is_empty() {
-            candidates.retain(|candidate| {
-                !matches!(
-                    candidate.type_id,
-                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                )
+            // Keep `any` candidates when bounds are only top types (unknown/any/error).
+            // Otherwise unconstrained generic parameters can collapse from `any` to `unknown`
+            // (e.g. Promise/iterable inference with implicit `extends unknown`).
+            let has_informative_upper_bound = upper_bounds
+                .iter()
+                .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+            candidates.retain(|candidate| match candidate.type_id {
+                TypeId::UNKNOWN | TypeId::ERROR => false,
+                TypeId::ANY => !has_informative_upper_bound,
+                _ => true,
             });
         }
 

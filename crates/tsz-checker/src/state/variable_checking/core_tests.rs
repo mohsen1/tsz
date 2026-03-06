@@ -497,3 +497,52 @@ for(let a: number;;) break;
         );
     }
 }
+
+#[cfg(test)]
+mod mapped_type_validation_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn mapped_template_invalid_key_index_reports_ts2536() {
+        let source = r#"
+type Foo2<T, F extends keyof T> = {
+    pf: { [P in F]?: T[P] },
+    pt: { [P in T]?: T[P] },
+};
+"#;
+
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2536.len(), 1, "Expected one TS2536 from pt: {ts2536:?}");
+        assert!(
+            ts2536[0]
+                .message_text
+                .contains("Type 'P' cannot be used to index type 'T'"),
+            "TS2536 message mismatch: {ts2536:?}"
+        );
+    }
+
+    #[test]
+    fn mapped_property_access_with_generic_key_reports_ts2339() {
+        let source = r#"
+function test<T, K extends keyof T>(obj: Pick<T, K>) {
+    let value = obj.foo;
+}
+"#;
+        let ts2339 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2339)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2339.len(),
+            1,
+            "Expected one TS2339 on Pick property access: {ts2339:?}"
+        );
+        assert!(
+            ts2339[0].message_text.contains("foo"),
+            "TS2339 message should reference foo: {ts2339:?}"
+        );
+    }
+}
