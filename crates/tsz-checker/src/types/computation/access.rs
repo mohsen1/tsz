@@ -683,6 +683,15 @@ impl<'a> CheckerState<'a> {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 
+        // MappedType[K] template substitution: when the solver produces deferred
+        // IndexAccess types for a MappedType indexed by a constrained TypeParameter K,
+        // substitute K into the template to produce the concrete result type.
+        result_type = self.try_mapped_type_template_substitution(
+            result_type,
+            pre_resolution_object_type,
+            index_type,
+        );
+
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
         {
@@ -853,6 +862,106 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    /// MappedType[K] template substitution for deferred IndexAccess results.
+    ///
+    /// When `object[index]` where `object` is a MappedType and `index` contains a
+    /// TypeParameter K whose constraint evaluates to the mapped type's constraint,
+    /// the solver produces deferred `IndexAccess` types. The correct result is
+    /// the template with K substituted for the mapped type parameter.
+    fn try_mapped_type_template_substitution(
+        &mut self,
+        result_type: TypeId,
+        pre_resolution_object_type: TypeId,
+        index_type: TypeId,
+    ) -> TypeId {
+        use tsz_solver::visitor;
+        let has_unresolved = visitor::is_index_access_type(self.ctx.types, result_type)
+            || tsz_solver::type_queries::data::get_union_members(self.ctx.types, result_type)
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .any(|&m| visitor::is_index_access_type(self.ctx.types, m));
+        if !has_unresolved || visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+        {
+            return result_type;
+        }
+        let lazy_body = self.resolve_lazy_type(pre_resolution_object_type);
+        let Some(mapped_id) = visitor::mapped_type_id(self.ctx.types, lazy_body) else {
+            return result_type;
+        };
+        let (mapped_constraint, mapped_param_name, mapped_template, mapped_optional) = {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            if mapped.name_type.is_some() {
+                return result_type;
+            }
+            (
+                mapped.constraint,
+                mapped.type_param.name,
+                mapped.template,
+                mapped.optional_modifier,
+            )
+        };
+        let Some(k_id) = self.extract_type_param_from_index(index_type) else {
+            return result_type;
+        };
+        let Some(k_info) = visitor::type_param_info(self.ctx.types, k_id) else {
+            return result_type;
+        };
+        let Some(k_constraint_raw) = k_info.constraint else {
+            return result_type;
+        };
+        let mapped_c = self.evaluate_type_with_env(mapped_constraint);
+        let k_c = self.evaluate_type_with_env(k_constraint_raw);
+        if mapped_c != k_c || matches!(mapped_c, TypeId::NEVER | TypeId::ERROR | TypeId::UNKNOWN) {
+            return result_type;
+        }
+        let mut subst = tsz_solver::TypeSubstitution::new();
+        subst.insert(mapped_param_name, k_id);
+        let instantiated = tsz_solver::instantiate_type(self.ctx.types, mapped_template, &subst);
+        let evaluated = self.evaluate_type_with_env(instantiated);
+        if evaluated == TypeId::ERROR
+            || evaluated == TypeId::NEVER
+            || visitor::is_index_access_type(self.ctx.types, evaluated)
+        {
+            return result_type;
+        }
+        if matches!(mapped_optional, Some(tsz_solver::MappedModifier::Add)) {
+            self.ctx
+                .types
+                .factory()
+                .union(vec![evaluated, TypeId::UNDEFINED])
+        } else {
+            evaluated
+        }
+    }
+
+    /// Extract a TypeParameter from a potentially compound index type.
+    fn extract_type_param_from_index(&self, index_type: TypeId) -> Option<TypeId> {
+        use tsz_solver::visitor;
+        if visitor::is_type_parameter(self.ctx.types, index_type) {
+            return Some(index_type);
+        }
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, index_type)
+        {
+            for &m in &members {
+                if visitor::is_type_parameter(self.ctx.types, m) {
+                    return Some(m);
+                }
+            }
+        }
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, index_type)
+        {
+            for &m in &members {
+                if let Some(tp) = self.extract_type_param_from_index(m) {
+                    return Some(tp);
+                }
+            }
+        }
+        None
     }
 
     /// Check if a type is a union of tuples where ALL members are out of bounds
