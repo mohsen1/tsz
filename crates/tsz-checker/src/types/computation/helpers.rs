@@ -128,6 +128,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For TypeParameter types (e.g., T extends number), resolve through constraint
+        // so arithmetic validity checks can see the constraint type.
+        if let Some(tsz_solver::TypeData::TypeParameter(param)) = self.ctx.types.lookup(result) {
+            if let Some(constraint) = param.constraint {
+                if constraint != TypeId::UNKNOWN && constraint != result {
+                    return constraint;
+                }
+            }
+        }
+
         result
     }
 
