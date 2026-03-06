@@ -418,6 +418,12 @@ impl<'a> CheckerState<'a> {
             if snc_off && left_is_nullish && right_is_nullish {
                 return;
             }
+            // If both evaluated operands are valid arithmetic types, suppress TS2365.
+            // The solver may return TypeError for generic T[K] or constrained type params
+            // that evaluate to number — these are valid at runtime.
+            if left_is_valid_arithmetic && right_is_valid_arithmetic {
+                return;
+            }
             if !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
                     "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
