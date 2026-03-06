@@ -1106,6 +1106,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When the base constructor type is an intersection (e.g., mixin patterns
+        // like `T & (new (...args) => Mixin)`), constructor signatures come from
+        // different intersection members and naturally have different return types.
+        // tsc doesn't compare return types across intersection members — the
+        // instance type is the intersection of all individual return types.
+        // Only check TS2510 for overloaded signatures on a single type.
+        if tsz_solver::is_intersection_type(self.ctx.types, base_constructor_type) {
+            return;
+        }
+
         let mut return_types = Vec::with_capacity(matching.len());
         for sig in matching {
             let mut args = provided_types.clone();
