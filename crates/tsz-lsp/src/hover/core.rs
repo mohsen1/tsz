@@ -149,13 +149,6 @@ impl<'a> HoverProvider<'a> {
             )
         };
 
-        let type_id = checker.get_type_of_symbol(symbol_id);
-        let type_string = checker.format_type(type_id);
-
-        // Extract and save the updated cache for future queries
-        *type_cache = Some(checker.extract_cache());
-
-        // 4. Get the declaration node for determining keyword and modifiers
         let decl_node_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first) = symbol.declarations.first() {
@@ -163,6 +156,34 @@ impl<'a> HoverProvider<'a> {
         } else {
             NodeIndex::NONE
         };
+
+        let type_id = if decl_node_idx.is_some()
+            && symbol.flags
+                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                != 0
+        {
+            checker.get_type_of_node(decl_node_idx)
+        } else {
+            checker.get_type_of_symbol(symbol_id)
+        };
+        let mut type_string = checker.format_type(type_id);
+        if symbol.flags
+            & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+            != 0
+        {
+            if let Some(annotation) = self.variable_declaration_annotation_text(decl_node_idx) {
+                type_string = annotation;
+            } else if let Some(initializer_type) =
+                self.variable_initializer_display_type(&mut checker, decl_node_idx)
+            {
+                type_string = initializer_type;
+            }
+        }
+
+        // Extract and save the updated cache for future queries
+        *type_cache = Some(checker.extract_cache());
 
         // 5. Determine the kind string (tsserver-compatible)
         let kind = self.get_tsserver_kind(symbol, decl_node_idx);
@@ -709,6 +730,85 @@ impl<'a> HoverProvider<'a> {
             self.function_signature_from_symbol(init_symbol)
                 .map(|sig| format::colon_to_arrow_signature(&sig))
         }
+    }
+
+    fn variable_declaration_annotation_text(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        if !var_decl.type_annotation.is_some() {
+            return None;
+        }
+        let type_node = self.arena.get(var_decl.type_annotation)?;
+        let start = type_node.pos as usize;
+        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        (start < end).then(|| {
+            self.source_text[start..end]
+                .trim_end()
+                .trim_end_matches([',', ';', '='])
+                .trim_end()
+                .to_string()
+        })
+    }
+
+    fn variable_initializer_display_type(
+        &self,
+        checker: &mut CheckerState,
+        decl_node_idx: NodeIndex,
+    ) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+        let init_node = self.arena.get(var_decl.initializer)?;
+        let init_type = checker.get_type_of_node(var_decl.initializer);
+        let mut init_type_text = checker.format_type(init_type);
+        if init_node.kind == tsz_parser::syntax_kind_ext::NEW_EXPRESSION
+            && !init_type_text.is_empty()
+            && init_type_text != "error"
+            && !init_type_text.contains('<')
+            && let Some(call) = self.arena.get_call_expr(init_node)
+            && let Some(type_args) = &call.type_arguments
+        {
+            let arg_texts: Vec<String> = type_args
+                .nodes
+                .iter()
+                .filter_map(|&arg_idx| {
+                    let arg = self.arena.get(arg_idx)?;
+                    let start = arg.pos as usize;
+                    let end = arg.end.min(self.source_text.len() as u32) as usize;
+                    (start < end).then(|| {
+                        let mut text = self.source_text[start..end].trim().to_string();
+                        while text.ends_with('>') {
+                            let opens = text.chars().filter(|&c| c == '<').count();
+                            let closes = text.chars().filter(|&c| c == '>').count();
+                            if closes > opens {
+                                text.pop();
+                                text = text.trim_end().to_string();
+                            } else {
+                                break;
+                            }
+                        }
+                        while text.ends_with(',') {
+                            text.pop();
+                            text = text.trim_end().to_string();
+                        }
+                        text
+                    })
+                })
+                .filter(|text| !text.is_empty())
+                .collect();
+            if !arg_texts.is_empty() {
+                init_type_text = format!("{init_type_text}<{}>", arg_texts.join(", "));
+            }
+        }
+        (!init_type_text.is_empty() && init_type_text != "error").then_some(init_type_text)
     }
 
     fn namespace_has_value_exports(&self, symbol: &tsz_binder::Symbol) -> bool {
