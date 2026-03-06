@@ -550,7 +550,6 @@ impl<'a> CheckerState<'a> {
                             7039,
                         );
                     }
-                    self.check_type_parameter_node_for_missing_names(mapped.type_parameter);
                     let mut param_binding: Option<(String, Option<TypeId>)> = None;
                     if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
                         && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
@@ -567,6 +566,28 @@ impl<'a> CheckerState<'a> {
                         });
                         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                         param_binding = Some((name, previous));
+                    }
+                    let is_direct_self_constraint = param_binding
+                        .as_ref()
+                        .and_then(|(name, _)| {
+                            let param_node = self.ctx.arena.get(mapped.type_parameter)?;
+                            let param = self.ctx.arena.get_type_parameter(param_node)?;
+                            let constraint = param.constraint;
+                            let constraint_text = self.node_text(constraint)?.trim().to_string();
+                            if constraint_text == name.as_str() {
+                                Some(())
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some();
+
+                    // TS2313: `P in P` and equivalent direct self-constraint cases are
+                    // reported in mapped-constraint checking, which runs during type-node
+                    // validation (`check_type_node`). Skip constraint-name missing-name checks
+                    // here to avoid surfacing a secondary TS2304.
+                    if !is_direct_self_constraint {
+                        self.check_type_parameter_node_for_missing_names(mapped.type_parameter);
                     }
                     if mapped.name_type.is_some() {
                         self.check_type_for_missing_names(mapped.name_type);

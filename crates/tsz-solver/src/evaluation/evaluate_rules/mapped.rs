@@ -5,7 +5,7 @@
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
-use crate::relations::subtype::TypeResolver;
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
 use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
@@ -799,6 +799,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Literal(LiteralValue::String(s)) => {
                 keys.string_literals.push(s);
                 Some(keys)
+            }
+            // `AB[K]` in mapped constraints: resolve to the union of property
+            // value types for index keys compatible with K, then recurse.
+            TypeData::IndexAccess(object_type, index_type) => {
+                // If index access can be simplified, recurse into the result.
+                let evaluated = self.evaluate(type_id);
+                if evaluated != type_id {
+                    return self.extract_mapped_keys(evaluated);
+                }
+
+                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+
+                match collect_properties(object_type, self.interner(), self.resolver()) {
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => {
+                        let mut members = Vec::new();
+
+                        // Match literal property keys against the index constraint.
+                        for prop in properties {
+                            let prop_key = self.interner().literal_string(
+                                self.interner().resolve_atom_ref(prop.name).as_ref(),
+                            );
+                            if checker.is_assignable_to(prop_key, index_type) {
+                                members.push(prop.type_id);
+                            }
+                        }
+
+                        // Index signatures are only used as a fallback if they are
+                        // directly addressed by the index constraint.
+                        if let Some(string_sig) = string_index
+                            && checker.is_assignable_to(string_sig.key_type, index_type)
+                        {
+                            members.push(string_sig.value_type);
+                        }
+                        if let Some(number_sig) = number_index
+                            && checker.is_assignable_to(number_sig.key_type, index_type)
+                        {
+                            members.push(number_sig.value_type);
+                        }
+
+                        if members.is_empty() {
+                            return None;
+                        }
+
+                        let value_union = if members.len() == 1 {
+                            members[0]
+                        } else {
+                            self.interner().union(members)
+                        };
+
+                        self.extract_mapped_keys(value_union)
+                    }
+                    PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => None,
+                }
             }
             TypeData::Union(members) => {
                 let members = self.interner().type_list(members);
