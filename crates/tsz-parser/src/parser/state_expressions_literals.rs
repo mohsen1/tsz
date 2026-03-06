@@ -8,7 +8,7 @@ use crate::parser::{
     NodeIndex, NodeList,
     node::{
         AccessExprData, CallExprData, IdentifierData, LiteralData, LiteralExprData,
-        ParenthesizedData, TemplateExprData, TemplateSpanData,
+        ParenthesizedData, TaggedTemplateData, TemplateExprData, TemplateSpanData,
     },
     syntax_kind_ext,
 };
@@ -2162,6 +2162,24 @@ impl ParserState {
                             expression: expr,
                             name_or_argument: argument,
                             question_dot_token: false,
+                        },
+                    );
+                }
+                // Tagged template literals: tag`template` — needed so that
+                // `new f\`abc\`.member(...)` parses the tagged template as
+                // part of the member expression, not as `(new f)\`abc\`...`.
+                SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead => {
+                    let template = self.parse_template_literal();
+                    let end_pos = self.token_end();
+
+                    expr = self.arena.add_tagged_template(
+                        syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                        start_pos,
+                        end_pos,
+                        TaggedTemplateData {
+                            tag: expr,
+                            type_arguments: None,
+                            template,
                         },
                     );
                 }

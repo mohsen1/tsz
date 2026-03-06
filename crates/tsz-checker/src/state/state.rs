@@ -1112,6 +1112,11 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(as_expr.expression);
                 }
             }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    self.clear_type_cache_recursive(unary.expression);
+                }
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {

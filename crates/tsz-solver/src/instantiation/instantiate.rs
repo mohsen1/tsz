@@ -629,6 +629,13 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     let resolved =
                         crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+
+                    // tsc: homomorphic mapped type over `any` evaluates to `any`
+                    if resolved == TypeId::ANY {
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return TypeId::ANY;
+                    }
+
                     // Check for Tuple first (tsc: instantiateMappedTupleType)
                     // Must also handle ReadonlyType wrapping Tuple
                     let tuple_source = match self.interner.lookup(resolved) {

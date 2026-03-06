@@ -501,7 +501,10 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types.factory().union(vec![type_id, pattern_type])
                         }
                     } else {
-                        pattern_type
+                        // When the initializer type is `any` or `unknown`, preserve it
+                        // rather than narrowing to the pattern type. A destructuring
+                        // param with default `{} as any` should keep `any`.
+                        type_id
                     }
                 } else {
                     type_id
