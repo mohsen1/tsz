@@ -286,42 +286,42 @@ impl<'a> CheckerState<'a> {
 
                 // TS1267: Abstract property cannot have an initializer
                 if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                    && let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
-                        if self.has_abstract_modifier(&prop.modifiers) && prop.initializer.is_some()
-                        {
-                            let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                            self.error_at_node_msg(
+                    && let Some(prop) = self.ctx.arena.get_property_decl(member_node)
+                {
+                    if self.has_abstract_modifier(&prop.modifiers) && prop.initializer.is_some() {
+                        let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                        self.error_at_node_msg(
                                 prop.name,
                                 diagnostic_codes::PROPERTY_CANNOT_HAVE_AN_INITIALIZER_BECAUSE_IT_IS_MARKED_ABSTRACT,
                                 &[&name],
                             );
-                        }
+                    }
 
-                        let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                    let name = self.get_member_name_text(prop.name).unwrap_or_default();
 
-                        // TS18006: Classes may not have a field named 'constructor'
-                        if name == "constructor" {
-                            self.error_at_node(
+                    // TS18006: Classes may not have a field named 'constructor'
+                    if name == "constructor" {
+                        self.error_at_node(
                                 prop.name,
                                 crate::diagnostics::diagnostic_messages::CLASSES_MAY_NOT_HAVE_A_FIELD_NAMED_CONSTRUCTOR,
                                 diagnostic_codes::CLASSES_MAY_NOT_HAVE_A_FIELD_NAMED_CONSTRUCTOR,
                             );
-                        }
+                    }
 
-                        // TS2699: Static property 'prototype' conflicts with Function.prototype
-                        // Not reported in ambient contexts (declare class).
-                        if name == "prototype"
-                            && self.has_static_modifier(&prop.modifiers)
-                            && !is_declared
-                        {
-                            let class_name = self.get_class_name_from_decl(stmt_idx);
-                            self.error_at_node_msg(
+                    // TS2699: Static property 'prototype' conflicts with Function.prototype
+                    // Not reported in ambient contexts (declare class).
+                    if name == "prototype"
+                        && self.has_static_modifier(&prop.modifiers)
+                        && !is_declared
+                    {
+                        let class_name = self.get_class_name_from_decl(stmt_idx);
+                        self.error_at_node_msg(
                                 prop.name,
                                 diagnostic_codes::STATIC_PROPERTY_CONFLICTS_WITH_BUILT_IN_PROPERTY_FUNCTION_OF_CONSTRUCTOR_FUNCTIO,
                                 &["prototype", &class_name],
                             );
-                        }
                     }
+                }
             }
         }
 
