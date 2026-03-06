@@ -66,14 +66,16 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
         // `handler(type, state => state)` to Round 2, so the outer call can first
         // infer type arguments from non-contextual inputs and then provide a concrete
         // contextual return type to the inner generic call.
-        k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
-            state
-                .ctx
-                .arena
-                .get_call_expr(node)
-                .and_then(|call| call.arguments.as_ref())
-                .is_some_and(|args| args.nodes.iter().any(|&arg| is_contextually_sensitive(state, arg)))
-        }
+        k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => state
+            .ctx
+            .arena
+            .get_call_expr(node)
+            .and_then(|call| call.arguments.as_ref())
+            .is_some_and(|args| {
+                args.nodes
+                    .iter()
+                    .any(|&arg| is_contextually_sensitive(state, arg))
+            }),
 
         // Object Literals: Sensitive if any property is sensitive
         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
