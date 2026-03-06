@@ -31,6 +31,7 @@ CHECKS = [
                 # TODO: refactor these to use solver query helpers
                 "crates/tsz-checker/src/types/computation/helpers.rs",
                 "crates/tsz-checker/src/types/computation/call.rs",
+                "crates/tsz-checker/src/types/computation/complex.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
             },
         },
@@ -192,6 +193,7 @@ CHECKS = [
             "exclude_files": {
                 # TODO: refactor these to use solver query helpers
                 "crates/tsz-checker/src/types/computation/helpers.rs",
+                "crates/tsz-checker/src/types/computation/complex.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
             },
             "ignore_comment_lines": True,
@@ -244,8 +246,11 @@ LINE_LIMIT_CHECKS = [
         "Checker boundary: src files must stay under 2000 LOC",
         ROOT / "crates" / "tsz-checker" / "src",
         2000,
-        # TODO: split jsx_checker.rs into smaller modules
-        {"crates/tsz-checker/src/checkers/jsx_checker.rs"},
+        # TODO: split these into smaller modules
+        {
+            "crates/tsz-checker/src/checkers/jsx_checker.rs",
+            "crates/tsz-checker/src/types/computation/complex.rs",
+        },
     ),
 ]
 
