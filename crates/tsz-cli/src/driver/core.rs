@@ -1139,12 +1139,23 @@ fn compile_inner(
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
 
-    // tsc suppresses TS2304 ("Cannot find name") when TS8xxx JS grammar errors exist
-    // anywhere in the project. TS8xxx errors indicate type annotations in JS files, which
-    // can cause cascading false TS2304 name-not-found errors.
-    let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
-    if has_js_grammar_errors {
-        diagnostics.retain(|d| d.code != 2304);
+    // TS2304 suppression near TS8xxx JS grammar errors.
+    // When TS8xxx errors exist in a project (type annotations in JS, JSDoc tag
+    // errors, etc.), our checker can emit cascading false TS2304 errors. Suppress
+    // TS2304 unless it co-occurs at the exact same file+position as a TS8xxx
+    // error — tsc emits both in cases like `@extends {Mismatch}` (TS2304 + TS8023).
+    {
+        let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
+        if has_js_grammar_errors {
+            let ts8xxx_positions: rustc_hash::FxHashSet<(String, u32)> = diagnostics
+                .iter()
+                .filter(|d| (8000..9000).contains(&d.code))
+                .map(|d| (d.file.clone(), d.start))
+                .collect();
+            diagnostics.retain(|d| {
+                d.code != 2304 || ts8xxx_positions.contains(&(d.file.clone(), d.start))
+            });
+        }
     }
 
     diagnostics.sort_by(|left, right| {

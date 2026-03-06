@@ -1448,6 +1448,103 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Eagerly validate base types of all `@typedef` declarations in the file.
+    /// Emits TS2304 "Cannot find name" for unresolvable simple-name base types.
+    pub(crate) fn check_jsdoc_typedef_base_types(&mut self) {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+
+        for comment in &comments {
+            if !is_jsdoc_comment(comment, &source_text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, &source_text);
+            for (_name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
+                if typedef_info.callback.is_some() {
+                    continue;
+                }
+                if let Some(ref base_type) = typedef_info.base_type {
+                    let expr = base_type.trim();
+                    if expr == "Object" || expr == "object" || expr.is_empty() {
+                        continue;
+                    }
+                    // Only validate simple identifier names — complex type expressions
+                    // like `function(string): boolean` or `{num: number}` will naturally
+                    // fail resolution and produce false TS2304 errors.
+                    if !Self::is_simple_type_name(expr) {
+                        continue;
+                    }
+                    if self.resolve_jsdoc_type_str(expr).is_none() {
+                        self.emit_jsdoc_cannot_find_name(
+                            expr,
+                            comment.pos,
+                            comment.end,
+                            &source_text,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emit TS2304 "Cannot find name 'X'" for an unresolvable JSDoc type reference.
+    /// Locates the name within the comment text range for precise error positioning.
+    fn emit_jsdoc_cannot_find_name(
+        &mut self,
+        name: &str,
+        comment_pos: u32,
+        comment_end: u32,
+        source_text: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let end = (comment_end as usize).min(source_text.len());
+        let comment_range = &source_text[comment_pos as usize..end];
+        let (start, length) = if let Some(offset) = comment_range.find(name) {
+            (comment_pos + offset as u32, name.len() as u32)
+        } else {
+            (comment_pos, 0)
+        };
+        let message = diagnostic_messages::CANNOT_FIND_NAME.replace("{0}", name);
+        self.ctx
+            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message,
+                diagnostic_codes::CANNOT_FIND_NAME,
+            ));
+    }
+
+    /// Check whether a JSDoc type expression is a simple identifier name
+    /// (possibly with dots and angle brackets for generics).
+    /// Returns false for complex expressions like function types, object literals, unions.
+    fn is_simple_type_name(expr: &str) -> bool {
+        if expr.is_empty() {
+            return false;
+        }
+        let first = expr.chars().next().unwrap();
+        if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+            return false;
+        }
+        let mut angle_depth = 0u32;
+        for ch in expr.chars() {
+            match ch {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$' | '.' => {}
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                ',' | ' ' if angle_depth > 0 => {}
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
