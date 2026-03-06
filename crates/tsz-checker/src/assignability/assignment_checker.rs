@@ -1043,7 +1043,12 @@ impl<'a> CheckerState<'a> {
             && right_type != TypeId::ERROR
         {
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-            let result = evaluator.evaluate(left_type, right_type, "+");
+            // Evaluate types to resolve IndexAccess/Application types before checking.
+            // e.g. `T[K]` where `T extends Record<K, number>` should resolve to `number`
+            // so the += operator is correctly accepted.
+            let eval_left = self.evaluate_type_for_binary_ops(left_type);
+            let eval_right = self.evaluate_type_for_binary_ops(right_type);
+            let result = evaluator.evaluate(eval_left, eval_right, "+");
             if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
                 // Use widened types for the diagnostic message: tsc widens enum
                 // member types (E.a) to the parent enum (E) in operator diagnostics.

@@ -407,8 +407,36 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             return None;
         }
 
+        // Same-name TypeParameter match: handle the case where the mapped constraint and
+        // the index type are both TypeParameters with the same name but different TypeIds.
+        //
+        // This occurs with `T extends Record<K, number>, K extends string` where
+        // `T[K]` should resolve to `number`. After Application expansion:
+        // - `Record<K, number>` → `{ [P in K_inner]: number }` where K_inner (TypeId A)
+        //   was created before K's `extends string` constraint was recorded.
+        // - The function's K has a different TypeId (TypeId B) with the constraint.
+        // - Both have the same Atom name (e.g., Atom("K")).
+        //
+        // By name-matching TypeParams we correctly identify that the index K is the
+        // same parameter as the mapped constraint K, enabling substitution.
+        let same_type_param_name = {
+            let interner = self.evaluator.interner();
+            match (
+                interner.lookup(mapped.constraint),
+                interner.lookup(self.index_type),
+            ) {
+                (
+                    Some(TypeData::TypeParameter(constraint_tp)),
+                    Some(TypeData::TypeParameter(index_tp)),
+                ) => constraint_tp.name == index_tp.name,
+                _ => false,
+            }
+        };
+
         // Direct match: index type exactly equals the constraint
         let can_substitute = mapped.constraint == self.index_type
+            // Same-named TypeParameters with different TypeIds (see above)
+            || same_type_param_name
             // Implicit index signature: when the constraint is `keyof T`,
             // string/number are valid key types because keyof T always
             // includes string | number | symbol for any T.

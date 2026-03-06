@@ -395,6 +395,31 @@ impl<'a> CheckerState<'a> {
         let eval_left = self.evaluate_type_for_binary_ops(left_type);
         let eval_right = self.evaluate_type_for_binary_ops(right_type);
 
+        // Suppress operator errors when an operand is an inference placeholder.
+        //
+        // `__infer_N` TypeParameters are tsz-internal markers representing a type
+        // parameter that could not be fully resolved during generic call inference.
+        // TypeScript itself would successfully infer the concrete type (e.g., `number`)
+        // through contextual typing, so operator errors involving these placeholders
+        // are false positives.
+        //
+        // We check both original and evaluated forms because evaluate_type_for_binary_ops
+        // may partially resolve the type.
+        let is_infer_placeholder = |type_id: TypeId| -> bool {
+            if let Some(tsz_solver::TypeData::TypeParameter(tp)) = self.ctx.types.lookup(type_id) {
+                let name = self.ctx.types.resolve_atom(tp.name);
+                return name.starts_with("__infer_");
+            }
+            false
+        };
+        if is_infer_placeholder(eval_left)
+            || is_infer_placeholder(eval_right)
+            || is_infer_placeholder(left_type)
+            || is_infer_placeholder(right_type)
+        {
+            return;
+        }
+
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
         // Note: evaluator was already created above for symbol checking
@@ -416,12 +441,6 @@ impl<'a> CheckerState<'a> {
         // (assignable to number), so suppress TS2365 when both operands are nullish.
         if op == "+" {
             if snc_off && left_is_nullish && right_is_nullish {
-                return;
-            }
-            // If both evaluated operands are valid arithmetic types, suppress TS2365.
-            // The solver may return TypeError for generic T[K] or constrained type params
-            // that evaluate to number — these are valid at runtime.
-            if left_is_valid_arithmetic && right_is_valid_arithmetic {
                 return;
             }
             if !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
