@@ -376,7 +376,13 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
-        if !self.ctx.options.remove_comments && is_function_body_block {
+        if !self.ctx.options.remove_comments
+            && is_function_body_block
+            && self
+                .all_comments
+                .get(self.comment_emit_idx)
+                .is_some_and(|c| c.end <= block_close_pos)
+        {
             self.write_line();
             self.emit_comments_before_pos(block_close_pos);
         }

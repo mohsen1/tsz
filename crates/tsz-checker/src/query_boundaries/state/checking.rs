@@ -13,6 +13,10 @@ pub(crate) fn extract_string_literal_keys(db: &dyn TypeDatabase, type_id: TypeId
     tsz_solver::type_queries::extract_string_literal_keys(db, type_id)
 }
 
+pub(crate) fn keyof_target(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_keyof_type(db, type_id)
+}
+
 pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
 }

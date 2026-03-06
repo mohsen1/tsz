@@ -168,6 +168,17 @@ function patchSessionClient(SessionClient, ts) {
         }
     };
 
+    const processOptionalResponse = (client, request) => {
+        try {
+            return client.processResponse(request);
+        } catch (err) {
+            if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
+                return { body: undefined };
+            }
+            throw err;
+        }
+    };
+
     // The constructor sets getCombinedCodeFix, applyCodeActionCommand, and mapCode
     // as instance properties (= notImplemented), which shadows prototype methods.
     // Wrap the constructor to delete those instance properties so our prototype
@@ -198,7 +209,7 @@ function patchSessionClient(SessionClient, ts) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("breakpointStatement", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        const response = processOptionalResponse(this, request);
         if (!response.body) return undefined;
         const { textSpan } = response.body;
         return textSpan ? {
@@ -216,7 +227,7 @@ function patchSessionClient(SessionClient, ts) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("jsxClosingTag", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        const response = processOptionalResponse(this, request);
         return response.body || undefined;
     };
 
@@ -353,7 +364,7 @@ function patchSessionClient(SessionClient, ts) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("definition", args);
-        const response = this.processResponse(request);
+        const response = processOptionalResponse(this, request);
         if (!response.body) return [];
         return response.body.map(entry => {
             const result = {
@@ -383,7 +394,7 @@ function patchSessionClient(SessionClient, ts) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("definitionAndBoundSpan", args);
-        const response = this.processResponse(request);
+        const response = processOptionalResponse(this, request);
         const body = response.body;
         if (!body) return undefined;
         const definitions = (body.definitions || []).map(entry => {
@@ -423,7 +434,7 @@ function patchSessionClient(SessionClient, ts) {
             openingBrace: String.fromCharCode(openingBrace),
         };
         const request = this.processRequest("braceCompletion", args);
-        const response = this.processResponse(request);
+        const response = processOptionalResponse(this, request);
         return response.body;
     };
 
@@ -441,7 +452,7 @@ function patchSessionClient(SessionClient, ts) {
             onlyMultiLine,
         };
         const request = this.processRequest("getSpanOfEnclosingComment", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        const response = this.processResponse(request);
         if (!response.body) return undefined;
         const { textSpan } = response.body;
         return textSpan ? {
@@ -616,7 +627,7 @@ function patchSessionClient(SessionClient, ts) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("linkedEditingRange", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        const response = processOptionalResponse(this, request);
         if (!response.body) return undefined;
         const { ranges, wordPattern } = response.body;
         if (!ranges || ranges.length === 0) return undefined;

@@ -4,9 +4,11 @@
 //! When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`)
 //! automatically syncs.
 
-use crate::utils::{find_node_at_offset, node_range};
+use crate::utils::{find_node_at_or_before_offset, node_range};
 use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, syntax_kind_ext};
+
+const JSX_TAG_WORD_PATTERN: &str = "[a-zA-Z0-9:\\-\\._$]*";
 
 /// Result of a linked editing request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -40,7 +42,7 @@ impl<'a> LinkedEditingProvider<'a> {
             .position_to_offset(position, self.source_text)?;
 
         // Find the node at the cursor
-        let node_idx = find_node_at_offset(self.arena, offset);
+        let node_idx = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
         // Check if we're on a JSX tag name (opening or closing)
         let (tag_name_idx, _is_opening) = self.find_jsx_tag_context(node_idx)?;
@@ -73,13 +75,41 @@ impl<'a> LinkedEditingProvider<'a> {
         // Extract the tag names from both elements
         let open_tag_name = self.arena.get_jsx_opening(opening_node)?.tag_name;
         let close_tag_name = self.arena.get_jsx_closing(closing_node)?.tag_name;
+        let open_tag = self.arena.get(open_tag_name)?;
+        let close_tag = self.arena.get(close_tag_name)?;
+
+        // Only return linked editing when the cursor is within one of the tag names.
+        let inside_open = open_tag.pos <= offset && offset <= open_tag.end;
+        let inside_close = close_tag.pos <= offset && offset <= close_tag.end;
+        if !inside_open && !inside_close {
+            return None;
+        }
+
+        // Do not link malformed tags with missing names or mismatched texts.
+        if open_tag.pos <= opening_node.pos
+            || close_tag.pos <= closing_node.pos
+            || open_tag.end >= opening_node.end
+            || close_tag.end >= closing_node.end
+        {
+            return None;
+        }
+
+        let open_text = self
+            .source_text
+            .get(open_tag.pos as usize..open_tag.end as usize)?;
+        let close_text = self
+            .source_text
+            .get(close_tag.pos as usize..close_tag.end as usize)?;
+        if open_text != close_text {
+            return None;
+        }
 
         Some(LinkedEditingRanges {
             ranges: vec![
                 node_range(self.arena, self.line_map, self.source_text, open_tag_name),
                 node_range(self.arena, self.line_map, self.source_text, close_tag_name),
             ],
-            word_pattern: None,
+            word_pattern: Some(JSX_TAG_WORD_PATTERN.to_string()),
         })
     }
 

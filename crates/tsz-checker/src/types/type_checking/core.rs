@@ -1468,7 +1468,34 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
-                // TODO: implement check_type_element for type literal members
+                if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                    for &member_idx in &type_lit.members.nodes {
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind == syntax_kind_ext::MAPPED_TYPE {
+                            self.check_type_node(member_idx);
+                            continue;
+                        }
+                        if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            if sig.type_annotation != NodeIndex::NONE {
+                                self.check_type_node(sig.type_annotation);
+                            }
+                            continue;
+                        }
+                        if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
+                            if index_sig.type_annotation != NodeIndex::NONE {
+                                self.check_type_node(index_sig.type_annotation);
+                            }
+                            continue;
+                        }
+                        if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                            && accessor.type_annotation != NodeIndex::NONE
+                        {
+                            self.check_type_node(accessor.type_annotation);
+                        }
+                    }
+                }
             }
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
                 // Recurse into conditional type branches to validate nested
@@ -1684,12 +1711,25 @@ impl<'a> CheckerState<'a> {
                 message,
                 2322,
             );
-            self.ctx.type_parameter_scope.remove(&name);
-            if let Some(prev_type) = previous {
-                self.ctx.type_parameter_scope.insert(name, prev_type);
-            }
-            return;
         }
+
+        let constrained_type_id = self
+            .ctx
+            .types
+            .factory()
+            .type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: Some(constraint_type),
+                default: None,
+                is_const: false,
+            });
+        self.ctx
+            .type_parameter_scope
+            .insert(name.clone(), constrained_type_id);
+        if data.type_node != ParserNodeIndex::NONE {
+            self.check_type_node(data.type_node);
+        }
+
         self.ctx.type_parameter_scope.remove(&name);
         if let Some(prev_type) = previous {
             self.ctx.type_parameter_scope.insert(name, prev_type);
@@ -1714,6 +1754,35 @@ impl<'a> CheckerState<'a> {
             || object_type == TypeId::ANY
             || index_type == TypeId::ANY
         {
+            return;
+        }
+
+        let index_constraint =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type);
+        let same_type_param_name = |left: TypeId, right: TypeId| {
+            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, left)
+                .zip(tsz_solver::type_queries::get_type_parameter_info(
+                    self.ctx.types,
+                    right,
+                ))
+                .is_some_and(|(l, r)| l.name == r.name)
+        };
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
+            && index_constraint.is_some_and(|constraint| {
+                constraint == object_type || same_type_param_name(constraint, object_type)
+            })
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                data.index_type,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
             return;
         }
 
@@ -1747,7 +1816,49 @@ impl<'a> CheckerState<'a> {
                 object_type_for_check = evaluated_constrained_access;
             }
         }
-        let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
+        if tsz_solver::is_generic_application(self.ctx.types, object_type_for_check) {
+            let expanded_object = self.evaluate_application_type(object_type_for_check);
+            if expanded_object != TypeId::ERROR && expanded_object != TypeId::ANY {
+                object_type_for_check = expanded_object;
+            }
+        }
+        let keyof_object =
+            if let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, object_type_for_check)
+            {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                self.evaluate_mapped_constraint_with_resolution(mapped.constraint)
+            } else {
+                self.ctx.types.evaluate_keyof(object_type_for_check)
+            };
+        let is_self_derived_key_space = |candidate: TypeId| {
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, candidate).is_some_and(
+                |(derived_object, derived_index)| {
+                    tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
+                        && !tsz_solver::type_queries::is_type_parameter_like(
+                            self.ctx.types,
+                            derived_object,
+                        )
+                        && (derived_index == index_type
+                            || same_type_param_name(derived_index, index_type))
+                },
+            )
+        };
+        if is_self_derived_key_space(keyof_object)
+            || is_self_derived_key_space(self.evaluate_type_with_env(keyof_object))
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                data.index_type,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
 
         let index_type_for_check = self.evaluate_type_with_env(index_type);
         // First check: raw index type against keyof.

@@ -54,6 +54,8 @@ const serverProcess = spawn(tszServerBinary, [], {
 
 // Collect stderr for debugging
 let stderrChunks = [];
+let exitInfo = null;
+let lastRequestSummary = null;
 serverProcess.stderr.on("data", (chunk) => {
     stderrChunks.push(chunk);
 });
@@ -63,12 +65,17 @@ serverProcess.on("error", (err) => {
 });
 
 serverProcess.on("exit", (code, signal) => {
+    exitInfo = {
+        code,
+        signal,
+        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+    };
     if (parentPort) {
         parentPort.postMessage({
             type: "exit",
-            code,
-            signal,
-            stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+            code: exitInfo.code,
+            signal: exitInfo.signal,
+            stderr: exitInfo.stderr,
         });
     }
 });
@@ -157,7 +164,21 @@ function readContentLengthMessage(stream) {
 
         function onClose() {
             cleanup();
-            reject(new Error("Stream closed before complete message was read"));
+            let message = "Stream closed before complete message was read";
+            const code = exitInfo ? exitInfo.code : serverProcess.exitCode;
+            const signal = exitInfo ? exitInfo.signal : serverProcess.signalCode;
+            const rawStderr = exitInfo ? exitInfo.stderr : Buffer.concat(stderrChunks).toString("utf-8");
+            const stderr = rawStderr && rawStderr.trim()
+                ? rawStderr.trim().replace(/\s+/g, " ").slice(0, 800)
+                : "";
+            if (code !== null || signal !== null || stderr) {
+                const stderrSuffix = stderr ? ` stderr=${stderr}` : "";
+                message += ` (server exit code=${code}, signal=${signal ?? "none"}${stderrSuffix})`;
+            }
+            if (lastRequestSummary) {
+                message += ` [last request: ${lastRequestSummary}]`;
+            }
+            reject(new Error(message));
         }
 
         function cleanup() {
@@ -176,6 +197,14 @@ function readContentLengthMessage(stream) {
  * Send a Content-Length framed message to tsz-server stdin.
  */
 function writeContentLengthMessage(requestBody) {
+    try {
+        const parsed = JSON.parse(requestBody);
+        lastRequestSummary = parsed && parsed.command
+            ? `${parsed.command}${parsed.arguments && parsed.arguments.file ? ` file=${parsed.arguments.file}` : ""}`
+            : requestBody.slice(0, 200);
+    } catch {
+        lastRequestSummary = requestBody.slice(0, 200);
+    }
     const bodyBytes = Buffer.byteLength(requestBody, "utf-8");
     const header = `Content-Length: ${bodyBytes}\r\n\r\n`;
     serverProcess.stdin.write(header + requestBody);

@@ -37,6 +37,9 @@ impl<'a> CodeActionProvider<'a> {
         if !self.is_extractable_expression(expr_node.kind) {
             return None;
         }
+        if self.is_assignment_expression(expr_node) || self.is_super_call_expression(expr_node) {
+            return None;
+        }
 
         // 4. Find the enclosing statement to determine where to insert the variable
         let stmt_idx = self.find_enclosing_statement(root, expr_idx)?;
@@ -766,6 +769,50 @@ impl<'a> CodeActionProvider<'a> {
             || kind == SyntaxKind::TrueKeyword as u16
             || kind == SyntaxKind::FalseKeyword as u16
             || kind == SyntaxKind::NullKeyword as u16)
+    }
+
+    fn is_assignment_expression(&self, expr_node: &Node) -> bool {
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+
+        matches!(
+            binary.operator_token,
+            k if k == SyntaxKind::EqualsToken as u16
+                || k == SyntaxKind::PlusEqualsToken as u16
+                || k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || k == SyntaxKind::BarBarEqualsToken as u16
+                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+        )
+    }
+
+    fn is_super_call_expression(&self, expr_node: &Node) -> bool {
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+
+        self.arena
+            .get(call.expression)
+            .is_some_and(|callee| callee.kind == SyntaxKind::SuperKeyword as u16)
     }
 
     /// Check if a syntax kind is a statement.
