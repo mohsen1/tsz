@@ -82,10 +82,31 @@ impl<'a> Printer<'a> {
                 } else {
                     self.map_opening_brace(node);
                     self.write_with_end_marker("{");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_comments_before_pos(closing_brace_pos);
-                    self.decrease_indent();
+                    // For control-flow blocks (if/for/while/try/catch), emit
+                    // trailing same-line comments on the `{` line before the
+                    // newline, matching tsc behavior:
+                    //   `if (cond) { // comment\n}`
+                    if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let start = node.pos as usize;
+                        let end = (node.end as usize).min(bytes.len());
+                        if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                            let brace_end = (start + offset + 1) as u32;
+                            self.emit_trailing_comments(brace_end);
+                        }
+                    }
+                    let has_remaining_comments = self
+                        .all_comments
+                        .get(self.comment_emit_idx)
+                        .is_some_and(|c| c.end <= closing_brace_pos);
+                    if has_remaining_comments {
+                        self.write_line();
+                        self.increase_indent();
+                        self.emit_comments_before_pos(closing_brace_pos);
+                        self.decrease_indent();
+                    } else {
+                        self.write_line();
+                    }
                     self.map_closing_brace(node);
                     self.write_with_end_marker("}");
                 }
@@ -111,9 +132,10 @@ impl<'a> Printer<'a> {
         // function/method/arrow body blocks.  Control-flow blocks (for, while,
         // if, do, try, etc.) are always expanded to multi-line, even when the
         // source was single-line.
+        // tsc preserves the single-line format for function body blocks regardless
+        // of statement count, as long as the source was single-line.
         // (Forced multi-line when we need to inject `var _this = this;`.)
-        let is_single_statement = block.statements.nodes.len() == 1;
-        let should_emit_single_line = is_single_statement
+        let should_emit_single_line = !block.statements.nodes.is_empty()
             && self.is_single_line(node)
             && !needs_this_capture
             && is_function_body_block
@@ -134,7 +156,12 @@ impl<'a> Printer<'a> {
             } else {
                 None
             };
-            self.emit(block.statements.nodes[0]);
+            for (si, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+                if si > 0 {
+                    self.write(" ");
+                }
+                self.emit(stmt_idx);
+            }
             // Inject hoisted temp vars inline for single-line function bodies.
             // Temps like `_a` are created during emit (e.g. optional chaining lowering),
             // so we insert `var _a; ` at the position right after `{ `.
@@ -367,25 +394,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // tsc places comments between the last function-body statement and `}`
-        // after the closing brace at the outer indentation level. Keep the old
-        // inside-the-block behavior for non-function blocks.
-        if !self.ctx.options.remove_comments && !is_function_body_block {
+        // Emit comments between the last statement and the closing `}`.
+        // tsc preserves these comments inside the block at the block's
+        // indentation level for both function bodies and control-flow blocks.
+        if !self.ctx.options.remove_comments {
             self.emit_comments_before_pos(block_close_pos);
         }
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
-        if !self.ctx.options.remove_comments
-            && is_function_body_block
-            && self
-                .all_comments
-                .get(self.comment_emit_idx)
-                .is_some_and(|c| c.end <= block_close_pos)
-        {
-            self.write_line();
-            self.emit_comments_before_pos(block_close_pos);
-        }
         self.ctx.block_scope_state.exit_scope();
         // Restore declared_namespace_names for non-function blocks to prevent
         // block-scoped let declarations from leaking to sibling blocks.

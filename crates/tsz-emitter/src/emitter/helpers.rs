@@ -39,6 +39,17 @@ impl<'a> Printer<'a> {
     /// Write a mapped token and also emit an end-of-token mapping.
     /// tsc emits these for single-character tokens like `;`, `{`, `}`.
     pub(super) fn write_with_end_marker(&mut self, text: &str) {
+        // Handle pending block comment space (e.g., `/*comment*/ ;`).
+        if self.pending_block_comment_space {
+            self.pending_block_comment_space = false;
+            if !text.is_empty()
+                && !text.starts_with(' ')
+                && !text.starts_with('\n')
+                && !text.starts_with('\r')
+            {
+                self.writer.write_space();
+            }
+        }
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_end(text, source_pos);
         } else {

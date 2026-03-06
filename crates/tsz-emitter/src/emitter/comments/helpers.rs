@@ -279,7 +279,13 @@ impl<'a> Printer<'a> {
 
         // Some transformed nodes report `end` before the terminating `;`.
         // Recover by scanning a short same-line suffix for `;` or `}`.
-        if token_end <= end {
+        // Only apply the suffix scan when we didn't find meaningful code
+        // content in the main scan (i.e., both token_end trackers are None).
+        // When `last_non_trivia_at_depth0` was found, the main scan already
+        // located the correct boundary and the suffix scan would overshoot
+        // into parent closing braces (e.g., `}` of an object literal after
+        // the last property).
+        if last_token_end.is_none() && last_non_trivia_at_depth0.is_none() && token_end <= end {
             let mut j = end_pos;
             while j < bytes.len() {
                 match bytes[j] {

@@ -66,6 +66,8 @@ pub struct IRPrinter<'a> {
     in_namespace_iife_body: bool,
     /// When true, the target is ES5 and `let`/`const` should not be emitted.
     target_es5: bool,
+    /// When true, comments like `/** @class */` are suppressed in output.
+    remove_comments: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -213,6 +215,7 @@ impl<'a> IRPrinter<'a> {
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
+            remove_comments: false,
         }
     }
 
@@ -230,6 +233,7 @@ impl<'a> IRPrinter<'a> {
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
+            remove_comments: false,
         }
     }
 
@@ -247,6 +251,7 @@ impl<'a> IRPrinter<'a> {
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
+            remove_comments: false,
         }
     }
 
@@ -268,6 +273,11 @@ impl<'a> IRPrinter<'a> {
     /// Mark this printer as targeting ES5 (disables `let`/`const` emission).
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
+    }
+
+    /// When true, suppress comment annotations like `/** @class */` in output.
+    pub const fn set_remove_comments(&mut self, remove: bool) {
+        self.remove_comments = remove;
     }
 
     /// Get the output
@@ -765,7 +775,9 @@ impl<'a> IRPrinter<'a> {
                 leading_comment,
             } => {
                 // Emit leading JSDoc/block comment if present (e.g., constructor comment)
-                if let Some(comment) = leading_comment {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
                     self.emit_multiline_comment(comment);
                     self.write_line();
                     self.write_indent();
@@ -783,7 +795,8 @@ impl<'a> IRPrinter<'a> {
                     *body_source_range,
                     force_multiline_empty,
                 );
-                if !self.suppress_function_trailing_extraction
+                if !self.remove_comments
+                    && !self.suppress_function_trailing_extraction
                     && let Some(comment) = self.extract_trailing_comment_from_function(node)
                 {
                     self.write(" ");
@@ -808,7 +821,9 @@ impl<'a> IRPrinter<'a> {
                     self.write(";");
                     self.write_line();
                 }
-                if let Some(comment) = leading_comment {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
                     self.write(comment);
                     self.write_line();
                 }
@@ -816,7 +831,11 @@ impl<'a> IRPrinter<'a> {
                 // var ClassName = /** @class */ (function (_super) { ... }(BaseClass));
                 self.write("var ");
                 self.write(name);
-                self.write(" = /** @class */ (function (");
+                if self.remove_comments {
+                    self.write(" = (function (");
+                } else {
+                    self.write(" = /** @class */ (function (");
+                }
                 if base_class.is_some() {
                     self.write("_super");
                 }
@@ -887,7 +906,9 @@ impl<'a> IRPrinter<'a> {
                 trailing_comment,
             } => {
                 // Emit leading JSDoc comment if present
-                if let Some(comment) = leading_comment {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
                     self.emit_multiline_comment(comment);
                     self.write_line();
                     self.write_indent();
@@ -898,9 +919,10 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = ");
                 self.emit_node(function);
                 self.write(";");
-                if let Some(comment) = trailing_comment
-                    .clone()
-                    .or_else(|| self.extract_trailing_comment_from_function(function))
+                if !self.remove_comments
+                    && let Some(comment) = trailing_comment
+                        .clone()
+                        .or_else(|| self.extract_trailing_comment_from_function(function))
                 {
                     self.write(" ");
                     self.write(&comment);
@@ -914,7 +936,9 @@ impl<'a> IRPrinter<'a> {
                 trailing_comment,
             } => {
                 // Emit leading JSDoc comment if present
-                if let Some(comment) = leading_comment {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
                     self.emit_multiline_comment(comment);
                     self.write_line();
                     self.write_indent();
@@ -924,9 +948,10 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = ");
                 self.emit_node(function);
                 self.write(";");
-                if let Some(comment) = trailing_comment
-                    .clone()
-                    .or_else(|| self.extract_trailing_comment_from_function(function))
+                if !self.remove_comments
+                    && let Some(comment) = trailing_comment
+                        .clone()
+                        .or_else(|| self.extract_trailing_comment_from_function(function))
                 {
                     self.write(" ");
                     self.write(&comment);
@@ -959,7 +984,9 @@ impl<'a> IRPrinter<'a> {
                 self.increase_indent();
 
                 // Emit leading comment inside the descriptor (before get/set)
-                if let Some(comment) = leading_comment {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
                     self.write_indent();
                     self.emit_multiline_comment(comment);
                     self.write_line();
@@ -969,10 +996,14 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("get: ");
                     self.emit_node(get);
-                    let trailing_comment = descriptor
-                        .trailing_comment
-                        .clone()
-                        .or_else(|| self.extract_trailing_comment_from_function(get));
+                    let trailing_comment = if self.remove_comments {
+                        None
+                    } else {
+                        descriptor
+                            .trailing_comment
+                            .clone()
+                            .or_else(|| self.extract_trailing_comment_from_function(get))
+                    };
                     if let Some(comment) = trailing_comment.as_deref() {
                         self.write(" ");
                         self.write(comment);
@@ -988,12 +1019,16 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("set: ");
                     self.emit_node(set);
-                    if let Some(comment) = self.extract_trailing_comment_from_function(set) {
-                        self.write(" ");
-                        self.write(&comment);
-                        self.write_line();
-                        self.write_indent();
-                        self.write(",");
+                    if !self.remove_comments {
+                        if let Some(comment) = self.extract_trailing_comment_from_function(set) {
+                            self.write(" ");
+                            self.write(&comment);
+                            self.write_line();
+                            self.write_indent();
+                            self.write(",");
+                        } else {
+                            self.write(",");
+                        }
                     } else {
                         self.write(",");
                     }

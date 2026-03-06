@@ -325,6 +325,7 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
+                ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -413,6 +414,7 @@ impl<'a> Printer<'a> {
                             }
                             ns_emitter.set_indent_level(self.writer.indent_level());
                             ns_emitter.set_target_es5(true);
+                            ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
                             }
@@ -778,6 +780,7 @@ impl<'a> Printer<'a> {
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_indent_level(self.writer.indent_level());
         es5_emitter.set_transforms(self.transforms.clone());
+        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -907,6 +910,7 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
+                ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1087,6 +1091,7 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 ns_emitter.set_target_es5(self.ctx.target_es5);
+                ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1152,6 +1157,7 @@ impl<'a> Printer<'a> {
                     }
                     ns_emitter.set_indent_level(self.writer.indent_level());
                     ns_emitter.set_target_es5(self.ctx.target_es5);
+                    ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
                     }
