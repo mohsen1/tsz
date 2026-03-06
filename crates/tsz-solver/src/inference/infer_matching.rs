@@ -8,7 +8,7 @@
 //! containing type parameters, it walks both structures in parallel and records
 //! lower/upper bound candidates for each inference variable.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, instantiate_type};
 use crate::types::{
     CallableShapeId, FunctionShapeId, InferencePriority, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId,
@@ -197,6 +197,16 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_mapped_type(source_shape, mapped_id, priority)?;
             }
 
+            // TypeApplication target: expand type alias and recurse.
+            // This handles cases like `Spec<T[P]>` where Spec is a mapped type alias.
+            // Without expansion, inference against recursive type alias applications
+            // silently fails (e.g., `{ [P in keyof T]: Func<T[P]> | Spec<T[P]> }`).
+            (_, Some(TypeData::Application(target_app_id))) => {
+                if let Some(expanded) = self.try_expand_application(target_app_id) {
+                    self.infer_from_types(source, expanded, priority)?;
+                }
+            }
+
             // If we can't match structurally, that's okay - it might mean the types are incompatible
             // The Checker will handle this with proper error reporting
             _ => {
@@ -297,6 +307,50 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Try to expand a `TypeApplication` target into its instantiated body.
+    ///
+    /// For type aliases like `type Spec<T> = { [P in keyof T]: ... }`, this expands
+    /// `Spec<SomeArg>` into the substituted mapped type body, enabling structural
+    /// inference to proceed. Without this, `(Object, Application)` falls through
+    /// the match and inference candidates are lost.
+    ///
+    /// Returns `None` if:
+    /// - No resolver is available
+    /// - The base isn't a resolvable DefId
+    /// - Type parameters or body can't be resolved
+    /// - Application expansion depth limit is exceeded (prevents infinite recursion
+    ///   for recursive type aliases)
+    fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
+        let resolver = self.resolver?;
+        let app = self.interner.type_application(app_id);
+
+        // Extract DefId from the base type (must be Lazy(DefId))
+        let def_id = match self.interner.lookup(app.base)? {
+            TypeData::Lazy(def_id) => def_id,
+            _ => return None,
+        };
+
+        // Depth guard: prevent infinite recursion for recursive type aliases
+        // (e.g., type Spec<T> = { [P in keyof T]: Spec<T[P]> })
+        let depth = self.app_expansion_depth;
+        if depth >= Self::MAX_APP_EXPANSION_DEPTH {
+            return None;
+        }
+        self.app_expansion_depth += 1;
+
+        // Resolve the type alias body and its type parameters
+        let type_params = resolver.get_lazy_type_params(def_id)?;
+        let body = resolver.resolve_lazy(def_id, self.interner)?;
+
+        // Instantiate the body with the application's type arguments
+        let instantiated = instantiate_generic(self.interner, body, &type_params, &app.args);
+
+        // Restore depth after expansion
+        self.app_expansion_depth = depth;
+
+        Some(instantiated)
     }
 
     /// Infer from function types, handling variance correctly
