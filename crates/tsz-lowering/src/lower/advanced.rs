@@ -614,9 +614,7 @@ impl<'a> TypeLowering<'a> {
                 let value_symbol = self.resolve_value_symbol(data.type_name);
                 let base_type =
                     if let (Some(type_symbol), Some(value_symbol)) = (type_symbol, value_symbol) {
-                        if type_symbol == value_symbol {
-                            self.interner.type_query(SymbolRef(value_symbol))
-                        } else if base_type == TypeId::ERROR {
+                        if type_symbol == value_symbol || base_type == TypeId::ERROR {
                             self.interner.type_query(SymbolRef(value_symbol))
                         } else {
                             base_type

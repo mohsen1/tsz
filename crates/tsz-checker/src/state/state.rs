@@ -1112,6 +1112,30 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(as_expr.expression);
                 }
             }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    for &param_idx in &func.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            if let Some(sym_id) = self
+                                .ctx
+                                .binder
+                                .get_node_symbol(param_idx)
+                                .or_else(|| self.ctx.binder.get_node_symbol(param.name))
+                            {
+                                self.ctx.symbol_types.remove(&sym_id);
+                            }
+                            if param.initializer.is_some() {
+                                self.clear_type_cache_recursive(param.initializer);
+                            }
+                        }
+                    }
+                    self.clear_type_cache_recursive(func.body);
+                }
+            }
             _ => {}
         }
     }

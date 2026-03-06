@@ -308,25 +308,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 )
                 && namespace_sym != found_sym
             {
-                if ident.escaped_text == "Component"
-                    && self.ctx.file_name.contains("inst-create-element-shadow")
-                {
-                    eprintln!(
-                        "DEBUG class_inheritance resolve_heritage_symbol_with Component idx={} file_local={} namespace={}",
-                        expr_idx.0, found_sym.0, namespace_sym.0
-                    );
-                }
                 return Some(namespace_sym);
-            }
-            if let Some(ident) = arena.get_identifier(node)
-                && ident.escaped_text == "Component"
-                && self.ctx.file_name.contains("inst-create-element-shadow")
-            {
-                eprintln!(
-                    "DEBUG class_inheritance resolve_heritage_symbol_with Component idx={} resolved={:?}",
-                    expr_idx.0,
-                    resolved.map(|sym| sym.0)
-                );
             }
             resolved
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {

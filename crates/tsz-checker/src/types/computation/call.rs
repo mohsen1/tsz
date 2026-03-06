@@ -645,7 +645,7 @@ impl<'a> CheckerState<'a> {
                         .filter_map(|tp| {
                             substitution
                                 .get(tp.name)
-                                .map(|ty| (self.ctx.types.resolve_atom(tp.name).to_string(), ty))
+                                .map(|ty| (self.ctx.types.resolve_atom(tp.name), ty))
                         })
                         .collect();
                     let mut round2_substitution = substitution.clone();
