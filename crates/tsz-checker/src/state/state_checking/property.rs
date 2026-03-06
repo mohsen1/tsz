@@ -1016,23 +1016,38 @@ impl<'a> CheckerState<'a> {
         result: tsz_solver::operations::property::PropertyAccessResult,
     ) -> tsz_solver::operations::property::PropertyAccessResult {
         let mut result = result;
+        let mut resolved_object_type = object_type;
+        let mut mapped_candidate_type = object_type;
 
-        // If property not found and the type is an Application (e.g. Promise<number>),
-        // the QueryCache's noop TypeResolver can't expand it. Evaluate the Application
-        // to its structural form and retry property access on the expanded type.
-        if matches!(
-            result,
-            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        ) && tsz_solver::is_generic_application(self.ctx.types, object_type)
-        {
+        // If the receiver is an Application (e.g. Promise<number> or Pick<T, K>),
+        // the QueryCache's noop TypeResolver can't expand it. Evaluate the
+        // Application to its structural form so mapped-type revalidation can use
+        // the real object shape. Only retry the initial lookup when it already
+        // failed; otherwise preserve the original first-pass result and use the
+        // expanded type only for mapped-property validation below.
+        if tsz_solver::is_generic_application(self.ctx.types, object_type) {
             let expanded = self.evaluate_application_type(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
-                result = self.ctx.types.resolve_property_access_with_options(
-                    expanded,
-                    prop_name,
-                    self.ctx.compiler_options.no_unchecked_indexed_access,
-                );
+                mapped_candidate_type = expanded;
+                if matches!(
+                    result,
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                ) {
+                    resolved_object_type = expanded;
+                    result = self.ctx.types.resolve_property_access_with_options(
+                        expanded,
+                        prop_name,
+                        self.ctx.compiler_options.no_unchecked_indexed_access,
+                    );
+                }
             }
+        }
+
+        if query::is_mapped_type(self.ctx.types, mapped_candidate_type)
+            && let Some(mapped_property) =
+                self.resolve_mapped_property_with_env(mapped_candidate_type, prop_name)
+        {
+            return mapped_property;
         }
 
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
@@ -1041,16 +1056,10 @@ impl<'a> CheckerState<'a> {
         if matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        ) && query::is_mapped_type(self.ctx.types, object_type)
+        ) && query::is_mapped_type(self.ctx.types, resolved_object_type)
         {
-            if let Some(mapped_property) =
-                self.resolve_mapped_property_with_env(object_type, prop_name)
-            {
-                return mapped_property;
-            }
-
-            let expanded = self.evaluate_mapped_type_with_resolution(object_type);
-            if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
+            let expanded = self.evaluate_mapped_type_with_resolution(resolved_object_type);
+            if expanded != resolved_object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 return self.ctx.types.resolve_property_access_with_options(
                     expanded,
                     prop_name,
@@ -1127,7 +1136,47 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if keys.is_empty() {
-                return None;
+                if let Some(keyof_target) = query::keyof_target(self.ctx.types, mapped.constraint)
+                    .or_else(|| query::keyof_target(self.ctx.types, constraint))
+                {
+                    if matches!(
+                        self.resolve_property_access_with_env(keyof_target, prop_name),
+                        tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                    ) {
+                        // `keyof T`-driven mapped types like Readonly<T> preserve
+                        // the property surface of T, even when the key set isn't
+                        // reducible to string literals. Keep going and instantiate
+                        // the template for the requested property.
+                    } else {
+                        if can_cache {
+                            self.ctx
+                                .narrowing_cache
+                                .property_cache
+                                .borrow_mut()
+                                .insert(cache_key, None);
+                        }
+                        return Some(
+                            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                                type_id: mapped_type,
+                                property_name: prop_atom,
+                            },
+                        );
+                    }
+                } else {
+                    if can_cache {
+                        self.ctx
+                            .narrowing_cache
+                            .property_cache
+                            .borrow_mut()
+                            .insert(cache_key, None);
+                    }
+                    return Some(
+                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                            type_id: mapped_type,
+                            property_name: prop_atom,
+                        },
+                    );
+                }
             }
         }
 

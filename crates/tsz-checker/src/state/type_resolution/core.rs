@@ -828,7 +828,9 @@ impl<'a> CheckerState<'a> {
             if symbol.flags & symbol_flags::ALIAS != 0 {
                 let mut visited = Vec::new();
                 if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
-                    return self.symbol_is_namespace_only(target_sym_id);
+                    if target_sym_id != sym_id {
+                        return self.symbol_is_namespace_only(target_sym_id);
+                    }
                 }
             }
 
@@ -1019,11 +1021,22 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+        let symbol_meta = self
+            .get_cross_file_symbol(sym_id)
+            .map(|symbol| {
+                (
+                    symbol.escaped_name.clone(),
+                    symbol.flags,
+                    symbol.declarations.clone(),
+                    symbol.value_declaration,
+                )
+            });
+
+        if let Some((name, flags, _, _)) = symbol_meta.as_ref() {
             tracing::debug!(
                 sym_id = sym_id.0,
-                name = %symbol.escaped_name,
-                flags = symbol.flags,
+                name = %name,
+                flags = *flags,
                 "type_reference_symbol_type: ENTRY"
             );
         }
@@ -1033,13 +1046,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+        if let Some((escaped_name, flags, declarations, value_declaration)) = symbol_meta {
             // For classes, return Lazy(DefId) to preserve class names in error messages
             // (e.g., "type MyClass" instead of expanded object shape)
             //
             // Special case: For merged class+namespace symbols, we still need the constructor type
             // to access namespace members via Foo.Bar. But we should still return Lazy for consistency.
-            if symbol.flags & symbol_flags::CLASS != 0 {
+            if flags & symbol_flags::CLASS != 0 {
                 // For classes in TYPE position, return the INSTANCE TYPE directly
                 // This is critical for nominal type checking to work correctly
                 let instance_type_opt = self.class_instance_type_from_symbol(sym_id);
@@ -1054,8 +1067,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.leave_recursion();
                 return lazy_type;
             }
-            if symbol.flags & symbol_flags::INTERFACE != 0 {
-                if !symbol.declarations.is_empty() {
+            if flags & symbol_flags::INTERFACE != 0 {
+                if !declarations.is_empty() {
                     // Return Lazy(DefId) for interface type references
                     // This preserves interface names in error messages (e.g., "type A" instead of "{ x: number }")
                     //
@@ -1073,7 +1086,7 @@ impl<'a> CheckerState<'a> {
                     // namespace type (from compute_type_of_symbol's namespace branch). We need
                     // the interface type for type-position usage, so compute it directly from
                     // the interface declarations.
-                    let is_merged_with_namespace = symbol.flags
+                    let is_merged_with_namespace = flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                         != 0;
 
@@ -1091,11 +1104,7 @@ impl<'a> CheckerState<'a> {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if self.ctx.get_def_type_params(def_id).is_none() {
                         // Extract type params from first declaration
-                        let first_decl = symbol
-                            .declarations
-                            .first()
-                            .copied()
-                            .unwrap_or(NodeIndex::NONE);
+                        let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
                         if first_decl.is_some()
                             && let Some(node) = self.ctx.arena.get(first_decl)
                             && let Some(iface) = self.ctx.arena.get_interface(node)
@@ -1129,20 +1138,20 @@ impl<'a> CheckerState<'a> {
                     self.ctx.leave_recursion();
                     return lazy_type;
                 }
-                if symbol.value_declaration.is_some() {
-                    let result = self.get_type_of_interface(symbol.value_declaration);
+                if value_declaration.is_some() {
+                    let result = self.get_type_of_interface(value_declaration);
                     self.ctx.leave_recursion();
                     return result;
                 }
             }
 
             // For type aliases, resolve the body type using the correct arena
-            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            if flags & symbol_flags::TYPE_ALIAS != 0 {
                 // When a type alias name collides with a global value declaration
                 // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
                 // the merged symbol's value_declaration may point to the var decl.
                 // Search declarations[] to find the actual type alias declaration first.
-                let has_type_alias_decl = symbol.declarations.iter().any(|&d| {
+                let has_type_alias_decl = declarations.iter().any(|&d| {
                     self.ctx
                         .arena
                         .get(d)
@@ -1151,14 +1160,14 @@ impl<'a> CheckerState<'a> {
                                 // Verify name matches to prevent NodeIndex collisions
                                 let type_alias = self.ctx.arena.get_type_alias(n)?;
                                 let name = self.ctx.arena.get_identifier_text(type_alias.name)?;
-                                Some(name == symbol.escaped_name.as_str())
+                                Some(name == escaped_name.as_str())
                             } else {
                                 Some(false)
                             }
                         })
                         .unwrap_or(false)
-                }) || symbol.value_declaration.is_some()
-                    || !symbol.declarations.is_empty();
+                }) || value_declaration.is_some()
+                    || !declarations.is_empty();
                 if has_type_alias_decl {
                     // Get the correct arena for the symbol (lib arena or current arena)
                     // Return structural type directly for type alias type references
