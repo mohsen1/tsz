@@ -209,9 +209,17 @@ impl<'a> CheckerState<'a> {
                     }
                     target_shapes.push(shape.clone());
                 } else {
+                    // `object` is structurally equivalent to `{}` — it has no named
+                    // properties or index signatures, but should NOT suppress excess
+                    // property checking on other intersection members.
+                    // In tsc, `object & { err: string }` still checks excess properties
+                    // against `{ err: string }`.
+                    if resolved_member == TypeId::OBJECT {
+                        continue;
+                    }
                     // If an intersection member has no object shape, it may accept
                     // arbitrary properties — skip excess checking.  This covers type
-                    // parameters, the `object` intrinsic, unresolved conditional types,
+                    // parameters, unresolved conditional types,
                     // and generic application types.
                     // Only skip for non-primitive types (primitives like `string` that
                     // don't have an object shape should not suppress the check).

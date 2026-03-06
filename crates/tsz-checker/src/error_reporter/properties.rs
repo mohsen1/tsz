@@ -174,6 +174,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2339 with an explicit type display string instead of formatting from TypeId.
+    /// Used when the apparent type should be displayed (e.g., `object` → `{}` in destructuring).
+    pub fn error_property_not_exist_with_apparent_type(
+        &mut self,
+        prop_name: &str,
+        type_display: &str,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message =
+                format!("Property '{prop_name}' does not exist on type '{type_display}'.");
+            self.ctx.push_diagnostic(Diagnostic::error(
+                &self.ctx.file_name,
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            ));
+        }
+    }
+
     /// Report TS18046: "'x' is of type 'unknown'."
     /// Emitted when an expression of type `unknown` is used in a position that requires
     /// a more specific type (property access, function call, arithmetic, etc.).

@@ -620,18 +620,25 @@ impl<'a> CheckerState<'a> {
                         ) {
                             // Elaboration emitted per-element TS2322 errors on the specific
                             // mismatching array/tuple elements. Skip the generic TS2322.
-                        } else if checker.check_assignable_or_report_at(
-                            init_type,
-                            declared_type,
-                            var_decl.initializer,
-                            decl_idx,
-                        ) {
-                            // assignable, keep going to excess-property checks
+                        } else {
+                            // Run excess property check first for object literal
+                            // initializers. In tsc, TS2353 (excess property) takes
+                            // priority over TS2741/TS2322 (missing property).
+                            let diags_before = checker.ctx.diagnostics.len();
                             checker.check_object_literal_excess_properties(
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
                             );
+                            if checker.ctx.diagnostics.len() == diags_before {
+                                // No excess errors — proceed with assignability
+                                let _ = checker.check_assignable_or_report_at(
+                                    init_type,
+                                    declared_type,
+                                    var_decl.initializer,
+                                    decl_idx,
+                                );
+                            }
                         }
                     }
 
