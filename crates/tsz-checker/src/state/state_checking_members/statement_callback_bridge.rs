@@ -176,6 +176,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
         if !is_closure {
+            // Pre-extract ordered @param names for positional matching with binding patterns
+            let jsdoc_param_names: Vec<String> = func_decl_jsdoc
+                .as_ref()
+                .map(|jsdoc| {
+                    Self::extract_jsdoc_param_names(jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect()
+                })
+                .unwrap_or_default();
             for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
                     continue;
@@ -188,7 +198,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // or if the function has a @type tag declaring its full type.
                 let has_jsdoc_param = if param.type_annotation.is_none() {
                     let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
-                        let pname = self.parameter_name_for_error(param.name);
+                        let pname =
+                            self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                         Self::jsdoc_has_param_type(jsdoc, &pname)
                             || Self::jsdoc_has_type_tag(jsdoc)
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
