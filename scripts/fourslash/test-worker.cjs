@@ -452,7 +452,7 @@ function patchSessionClient(SessionClient, ts) {
             onlyMultiLine,
         };
         const request = this.processRequest("getSpanOfEnclosingComment", args);
-        const response = this.processResponse(request);
+        const response = processOptionalResponse(this, request);
         if (!response.body) return undefined;
         const { textSpan } = response.body;
         return textSpan ? {
