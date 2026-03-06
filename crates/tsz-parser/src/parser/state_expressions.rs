@@ -244,12 +244,35 @@ impl ParserState {
         }
 
         // Skip to matching ) to check for =>
+        // Track whether we're at the start of a parameter slot (right after `(` or `,`
+        // at depth 1). If we see `(` at the start of a parameter slot, this cannot be
+        // a valid arrow function parameter list — e.g., `(a, (b, c)) =>` or `((a)) =>`.
+        // This matches tsc's behavior of rejecting nested-paren parameter patterns.
         let mut depth = 1;
+        let mut at_param_start = true; // true at the first position in a parameter slot
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             if self.is_token(SyntaxKind::OpenParenToken) {
+                // `(` at the start of a top-level parameter slot is not a valid
+                // parameter pattern. Reject early so the expression is NOT parsed
+                // as an arrow function (avoiding false TS1003 in parse_parameter).
+                if depth == 1 && at_param_start {
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    return false;
+                }
                 depth += 1;
+                at_param_start = false;
             } else if self.is_token(SyntaxKind::CloseParenToken) {
                 depth -= 1;
+                at_param_start = false;
+            } else if self.is_token(SyntaxKind::CommaToken) && depth == 1 {
+                // A comma at the top level separates parameters; the next token
+                // starts a new parameter slot.
+                at_param_start = true;
+            } else {
+                // Any other token (identifier, keyword, `[`, `{`, `...`, `=`, etc.)
+                // means we've moved past the start of this parameter slot.
+                at_param_start = false;
             }
             self.next_token();
         }
@@ -1447,6 +1470,13 @@ impl ParserState {
                                 },
                             );
                             continue;
+                        } else {
+                            // expr?.<T> not followed by `(` or a template literal.
+                            // tsc emits TS1005 ('(' expected) here. Do NOT fall
+                            // through to the property-access path, which would call
+                            // parse_identifier_name() and emit the spurious TS1003.
+                            self.parse_expected(SyntaxKind::OpenParenToken);
+                            break;
                         }
                     }
                     if self.is_token(SyntaxKind::OpenBracketToken) {

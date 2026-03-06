@@ -1171,6 +1171,14 @@ impl ParserState {
                     break;
                 }
 
+                // `=>` after a declaration is never a valid comma separator.
+                // Break silently so parse_semicolon() in the caller can emit
+                // "';' expected." at the `=` position, matching tsc's diagnostic.
+                // Example: `var tt = (a, (b, c)) => ...` — rejected arrow function.
+                if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    break;
+                }
+
                 // No ASI - emit ',' expected for the unexpected token
                 self.error_comma_expected();
                 break;
