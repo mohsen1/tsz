@@ -341,6 +341,9 @@ impl<'a> CheckerState<'a> {
                 // TS8033: Check for @typedef comments with multiple @type tags
                 self.check_typedef_duplicate_type_tags();
 
+                // TS2304: Check for @typedef base types that can't be resolved
+                self.check_jsdoc_typedef_base_types();
+
                 tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
 

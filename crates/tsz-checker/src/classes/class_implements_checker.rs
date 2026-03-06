@@ -1353,6 +1353,24 @@ impl<'a> CheckerState<'a> {
                     .find('<')
                     .map_or(jsdoc_type_name, |i| &jsdoc_type_name[..i]);
 
+                // Check if the JSDoc @extends type name actually exists. If not,
+                // emit TS2304 "Cannot find name" (tsc emits this alongside TS8023,
+                // not instead of it).
+                if !self.ctx.binder.file_locals.has(jsdoc_base_name) {
+                    let type_name_offset =
+                        type_name_in_rest.as_ptr() as usize - comment_text.as_ptr() as usize;
+                    let error_pos = comment.pos + type_name_offset as u32;
+                    let error_len = jsdoc_base_name.len() as u32;
+                    let message =
+                        format_message(diagnostic_messages::CANNOT_FIND_NAME, &[jsdoc_base_name]);
+                    self.ctx.error(
+                        error_pos,
+                        error_len,
+                        message,
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+
                 if jsdoc_base_name != actual_name {
                     let message = format_message(
                         diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,

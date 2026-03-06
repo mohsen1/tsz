@@ -10,20 +10,20 @@ use tsz_solver::{
 };
 
 #[derive(Clone)]
-struct JsdocTypedefInfo {
-    base_type: Option<String>,
-    properties: Vec<(String, String)>,
+pub(crate) struct JsdocTypedefInfo {
+    pub(crate) base_type: Option<String>,
+    pub(crate) properties: Vec<(String, String)>,
     /// If this is a `@callback` definition, holds the parsed parameter and return info.
-    callback: Option<JsdocCallbackInfo>,
+    pub(crate) callback: Option<JsdocCallbackInfo>,
 }
 
 /// Parsed `@callback` information: parameter names/types and return type/predicate.
 #[derive(Clone)]
-struct JsdocCallbackInfo {
-    params: Vec<(String, String)>, // (name, type_expr)
-    return_type: Option<String>,   // raw return type expression
+pub(crate) struct JsdocCallbackInfo {
+    pub(crate) params: Vec<(String, String)>, // (name, type_expr)
+    pub(crate) return_type: Option<String>,   // raw return type expression
     /// Parsed type predicate from `@return {x is Type}`.
-    predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
+    pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
 
 impl<'a> CheckerState<'a> {
@@ -1166,7 +1166,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
-        let mut best_def: Option<(u32, JsdocTypedefInfo)> = None;
+        let mut best_def: Option<JsdocTypedefInfo> = None;
 
         for comment in comments {
             if comment.end > anchor_pos {
@@ -1181,12 +1181,17 @@ impl<'a> CheckerState<'a> {
                 if name != type_expr {
                     continue;
                 }
-                best_def = Some((comment.pos, typedef_info));
+                best_def = Some(typedef_info);
             }
         }
 
-        let (_, typedef_info) = best_def?;
+        let typedef_info = best_def?;
+
+        // If the typedef's base type couldn't be resolved, return `any` as fallback.
+        // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
+        // post-checking phase, so we don't emit it here to avoid duplicates.
         self.type_from_jsdoc_typedef(typedef_info)
+            .or(Some(TypeId::ANY))
     }
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
@@ -1367,7 +1372,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
+    pub(crate) fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
         let mut typedefs = Vec::new();
         let mut current_name: Option<String> = None;
         let mut current_info = JsdocTypedefInfo {
