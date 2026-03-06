@@ -949,12 +949,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         match self.interner.lookup(arg_type) {
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                if !crate::relations::freshness::is_fresh_object_type(self.interner, arg_type) {
+                    return false;
+                }
                 let shape = self.interner.object_shape(shape_id);
                 !shape
                     .properties
                     .iter()
                     .any(|prop| !self.is_contextually_sensitive(prop.type_id))
             }
+            Some(TypeData::Application(_)) => false,
             _ => true,
         }
     }
@@ -1328,6 +1332,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 contextual_target_type,
                 InferencePriority::NakedTypeVariable,
             );
+
+            // Same-base Application pairwise extraction for Round 1 arguments.
+            // Example: A<(value: number) => void> against A<__infer_0> should infer
+            // __infer_0 from the inner type argument, not rely only on structural
+            // assignability of the outer application wrapper.
+            if let (
+                Some(TypeData::Application(arg_app_id)),
+                Some(TypeData::Application(target_app_id)),
+            ) = (
+                self.interner.lookup(contextual_arg_type),
+                self.interner.lookup(contextual_target_type),
+            ) {
+                let arg_app = self.interner.type_application(arg_app_id);
+                let target_app = self.interner.type_application(target_app_id);
+                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
+                    for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
+                    {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *arg_inner,
+                            *target_inner,
+                            InferencePriority::NakedTypeVariable,
+                        );
+                    }
+                }
+            }
         }
 
         // Process rest tuple in Round 1
@@ -1343,6 +1374,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // 4. Fix variables with enough information from Round 1
         let _ = infer_ctx.fix_current_variables();
+        let _ = infer_ctx.strengthen_constraints();
 
         // Restore state to prevent pollution if evaluator is reused
         self.defaulted_placeholders = previous_defaulted;
@@ -1361,12 +1393,46 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             placeholder_buf.clear();
             write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
-            if let Some(resolved) = infer_subst.get(placeholder_atom) {
+            let preferred_lower_bound = infer_ctx
+                .get_constraints(type_param_vars[i])
+                .and_then(|constraints| {
+                    let constraint_ty = tp.constraint?;
+                    let mut non_constraint_bounds = Vec::new();
+                    for bound in &constraints.lower_bounds {
+                        if *bound != constraint_ty && !non_constraint_bounds.contains(bound) {
+                            non_constraint_bounds.push(*bound);
+                        }
+                    }
+                    if non_constraint_bounds.is_empty() {
+                        return None;
+                    }
+                    let candidate = self.resolve_direct_parameter_inference_type(
+                        &non_constraint_bounds,
+                        infer_ctx.best_common_type(&non_constraint_bounds),
+                    );
+                    let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
+                        !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                            && infer_ctx.is_subtype(candidate, *upper)
+                            || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                    });
+                    upper_bounds_ok.then_some(candidate)
+                });
+            let resolved = preferred_lower_bound.or_else(|| {
+                match infer_ctx.resolve_with_constraints_by(type_param_vars[i], |source, target| {
+                    self.checker.is_assignable_to(source, target)
+                }) {
+                    Ok(resolved) => Some(resolved),
+                    Err(_) => infer_subst.get(placeholder_atom),
+                }
+            });
+            if let Some(resolved) = resolved {
                 if resolved != TypeId::UNKNOWN {
                     result_subst.insert(tp.name, resolved);
                 } else {
                     unresolved_indices.push(i);
                 }
+            } else {
+                unresolved_indices.push(i);
             }
         }
 
@@ -1425,6 +1491,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 result_subst.insert(tp.name, placeholder_id);
             }
         }
+
+        trace!(
+            contextual_result_subst = ?result_subst
+                .map()
+                .iter()
+                .map(|(name, ty)| (
+                    self.interner.resolve_atom(*name).to_string(),
+                    *ty,
+                    self.interner.lookup(*ty),
+                ))
+                .collect::<Vec<_>>(),
+            "compute_contextual_types: final substitution"
+        );
 
         result_subst
     }

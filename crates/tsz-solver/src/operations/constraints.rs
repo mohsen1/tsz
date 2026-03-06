@@ -541,7 +541,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // or array element type.
                             break;
                         }
-                        self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+                        self.constrain_parameter_types(
+                            ctx,
+                            var_map,
+                            s_p.type_id,
+                            t_p.type_id,
+                            priority,
+                        );
                     }
 
                     // Special case: If target has a rest parameter with a type parameter,
@@ -582,7 +588,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
 
                     if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
-                        self.constrain_types(ctx, var_map, t_this, s_this, priority);
+                        self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
                     }
                     // Covariant return: source_return <: target_return
                     debug!(
@@ -722,11 +728,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .iter()
                         .zip(target_params_unpacked.iter())
                     {
-                        self.constrain_types(
+                        self.constrain_parameter_types(
                             ctx,
                             &combined_var_map,
-                            t_p.type_id,
                             s_p.type_id,
+                            t_p.type_id,
                             priority,
                         );
                     }
@@ -767,7 +773,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
 
                     if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
-                        self.constrain_types(ctx, &combined_var_map, t_this, s_this, priority);
+                        self.constrain_parameter_types(
+                            ctx,
+                            &combined_var_map,
+                            s_this,
+                            t_this,
+                            priority,
+                        );
                     }
                     // Covariant return: instantiated_source_return <: target_return
                     self.constrain_types(
@@ -1097,6 +1109,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // generic types like Options<T, U>.
             (_, Some(TypeData::Application(_))) => {
                 let evaluated = self.checker.evaluate_type(target);
+                trace!(
+                    source = ?source,
+                    source_key = ?self.interner.lookup(source),
+                    target = ?target,
+                    target_key = ?self.interner.lookup(target),
+                    evaluated = ?evaluated,
+                    evaluated_key = ?self.interner.lookup(evaluated),
+                    "constrain_types: evaluated target application"
+                );
+                if let Some(TypeData::Callable(callable_id)) = self.interner.lookup(source) {
+                    let callable = self.interner.callable_shape(callable_id);
+                    trace!(
+                        source_construct_sigs = ?callable
+                            .construct_signatures
+                            .iter()
+                            .map(|sig| (
+                                sig.params
+                                    .iter()
+                                    .map(|p| (p.type_id, self.interner.lookup(p.type_id), p.rest))
+                                    .collect::<Vec<_>>(),
+                                sig.return_type,
+                                self.interner.lookup(sig.return_type),
+                            ))
+                            .collect::<Vec<_>>(),
+                        "constrain_types: source callable signatures"
+                    );
+                }
+                if let Some(TypeData::Callable(callable_id)) = self.interner.lookup(evaluated) {
+                    let callable = self.interner.callable_shape(callable_id);
+                    trace!(
+                        construct_sigs = ?callable
+                            .construct_signatures
+                            .iter()
+                            .map(|sig| (
+                                sig.params
+                                    .iter()
+                                    .map(|p| (p.type_id, self.interner.lookup(p.type_id), p.rest))
+                                    .collect::<Vec<_>>(),
+                                sig.return_type,
+                                self.interner.lookup(sig.return_type),
+                            ))
+                            .collect::<Vec<_>>(),
+                        "constrain_types: evaluated target callable signatures"
+                    );
+                }
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
@@ -1862,10 +1919,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this, priority);
+            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
         self.constrain_types(
             ctx,
@@ -1908,10 +1965,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this, priority);
+            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
         self.constrain_types(
             ctx,
@@ -1937,10 +1994,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this, priority);
+            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
         self.constrain_types(
             ctx,
@@ -2287,6 +2344,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
         crate::utils::optional_property_type(self.interner, prop)
+    }
+
+    fn constrain_parameter_types(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_param: TypeId,
+        target_param: TypeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        let mut placeholder_visited = FxHashSet::default();
+        if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
+            self.constrain_types(ctx, var_map, source_param, target_param, priority);
+        }
+        self.constrain_types(ctx, var_map, target_param, source_param, priority);
     }
 
     /// Constrain each element type against the string and number index signatures

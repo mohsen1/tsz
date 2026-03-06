@@ -431,9 +431,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let def_id = lazy_def_id(self.interner, app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let effective_body = if matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Class)
+        ) {
+            match self.interner.lookup(resolved_body) {
+                Some(TypeData::Callable(cs_id)) => {
+                    let shape = self.interner.callable_shape(cs_id);
+                    shape
+                        .construct_signatures
+                        .first()
+                        .map(|sig| sig.return_type)
+                        .unwrap_or(resolved_body)
+                }
+                _ => resolved_body,
+            }
+        } else {
+            resolved_body
+        };
 
         // Skip if self-referential
-        if let Some(resolved_app_id) = application_id(self.interner, resolved_body)
+        if let Some(resolved_app_id) = application_id(self.interner, effective_body)
             && resolved_app_id == app_id
         {
             return None;
@@ -442,7 +460,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         Some(instantiate_type(
             self.interner,
-            resolved_body,
+            effective_body,
             &substitution,
         ))
     }
@@ -906,10 +924,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let def_id = lazy_def_id(self.interner, app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let effective_body = if matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Class)
+        ) {
+            match self.interner.lookup(resolved_body) {
+                Some(TypeData::Callable(cs_id)) => {
+                    let shape = self.interner.callable_shape(cs_id);
+                    shape
+                        .construct_signatures
+                        .first()
+                        .map(|sig| sig.return_type)
+                        .unwrap_or(resolved_body)
+                }
+                _ => resolved_body,
+            }
+        } else {
+            resolved_body
+        };
 
         // Skip expansion if the resolved type is just this Application
         // (prevents infinite recursion on self-referential types)
-        if let Some(resolved_app_id) = application_id(self.interner, resolved_body)
+        if let Some(resolved_app_id) = application_id(self.interner, effective_body)
             && resolved_app_id == app_id
         {
             return None;
@@ -919,7 +955,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `{ [K in keyof T]: T[K] }` and the argument for T is a primitive/any type,
         // return the arg directly. This mirrors evaluate_application().
         // Only applies for identity templates (T[K]), not arbitrary ones like Data.
-        if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(resolved_body) {
+        if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body) {
             let mapped = self.interner.mapped_type(mapped_id);
             if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
                 && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
@@ -939,7 +975,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Create substitution and instantiate
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        let instantiated = instantiate_type(self.interner, resolved_body, &substitution);
+        let instantiated = instantiate_type(self.interner, effective_body, &substitution);
 
         // Return the instantiated type for recursive checking
         Some(instantiated)

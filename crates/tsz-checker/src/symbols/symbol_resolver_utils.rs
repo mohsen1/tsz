@@ -182,7 +182,21 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
 
         let resolved = if node.kind == SyntaxKind::Identifier as u16 {
-            self.resolve_identifier_symbol(idx)
+            let resolved = self.resolve_identifier_symbol(idx);
+            if self.ctx.file_name.contains("inst-create-element-shadow")
+                && let Some(ident) = self.ctx.arena.get_identifier(node)
+                && ident.escaped_text == "Component"
+            {
+                let meta = resolved.and_then(|sym_id| self.ctx.binder.get_symbol(sym_id));
+                eprintln!(
+                    "DEBUG resolve_heritage_symbol Component idx={} resolved={:?} flags={:#x} parent={}",
+                    idx.0,
+                    resolved.map(|sym_id| sym_id.0),
+                    meta.map_or(0, |s| s.flags),
+                    meta.map_or(u32::MAX, |s| s.parent.0),
+                );
+            }
+            resolved
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             self.resolve_qualified_symbol(idx)
         } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {

@@ -48,6 +48,7 @@ impl<'a> CheckerContext<'a> {
                 let def_name = self.types.resolve_atom_ref(info.name);
                 def_name.as_ref() == sym.escaped_name
                     && info.file_id.is_none_or(|fid| fid == sym.decl_file_idx)
+                    && info.symbol_id == Some(sym_id.0)
             } else {
                 false
             };
@@ -283,6 +284,13 @@ impl<'a> CheckerContext<'a> {
     /// ```
     pub fn resolve_type_to_symbol_id(&self, type_id: TypeId) -> Option<SymbolId> {
         use tsz_solver::type_queries;
+
+        // 0. Direct TypeQuery(typeof X) resolves to X's value symbol.
+        if let tsz_solver::type_queries::TypeQueryKind::TypeQuery(sym_ref) =
+            tsz_solver::type_queries::classify_type_query(self.types, type_id)
+        {
+            return Some(SymbolId(sym_ref.0));
+        }
 
         // 1. Try to get DefId from Lazy type - Phase 4.2+
         if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {

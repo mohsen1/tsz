@@ -65,6 +65,21 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             found.then_some(candidate)
         });
         if let Some(sym_id) = sym_id {
+            if self.file_name.contains("inst-create-element-shadow") && def_id.0 == 1 {
+                let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+                    self.lib_contexts
+                        .iter()
+                        .find_map(|lib| lib.binder.symbols.get(sym_id))
+                });
+                eprintln!(
+                    "DEBUG resolve_lazy def_id={} sym_id={} name={} flags={:#x} parent={}",
+                    def_id.0,
+                    sym_id.0,
+                    symbol.map_or("?", |s| s.escaped_name.as_str()),
+                    symbol.map_or(0, |s| s.flags),
+                    symbol.map_or(u32::MAX, |s| s.parent.0),
+                );
+            }
             // If this is a fallback from a raw SymbolId-based DefId, check if there's
             // a proper DefId registered for this symbol and redirect through it.
             if self.def_to_symbol.borrow().get(&def_id).is_none()

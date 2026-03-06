@@ -293,8 +293,42 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             // FIX: Use resolve_identifier instead of get_node_symbol
-            // get_node_symbol only works for declaration nodes, not references
-            binder.resolve_identifier(arena, expr_idx)
+            // get_node_symbol only works for declaration nodes, not references.
+            // Then prefer a namespace-local symbol when the raw binder lookup
+            // fell back to a same-name file-level global.
+            let resolved = binder.resolve_identifier(arena, expr_idx);
+            if let Some(ident) = arena.get_identifier(node)
+                && let Some(found_sym) = resolved
+                && binder.file_locals.get(ident.escaped_text.as_str()) == Some(found_sym)
+                && let Some(namespace_sym) = self.resolve_unqualified_name_in_enclosing_namespace(
+                    arena,
+                    binder,
+                    expr_idx,
+                    ident.escaped_text.as_str(),
+                )
+                && namespace_sym != found_sym
+            {
+                if ident.escaped_text == "Component"
+                    && self.ctx.file_name.contains("inst-create-element-shadow")
+                {
+                    eprintln!(
+                        "DEBUG class_inheritance resolve_heritage_symbol_with Component idx={} file_local={} namespace={}",
+                        expr_idx.0, found_sym.0, namespace_sym.0
+                    );
+                }
+                return Some(namespace_sym);
+            }
+            if let Some(ident) = arena.get_identifier(node)
+                && ident.escaped_text == "Component"
+                && self.ctx.file_name.contains("inst-create-element-shadow")
+            {
+                eprintln!(
+                    "DEBUG class_inheritance resolve_heritage_symbol_with Component idx={} resolved={:?}",
+                    expr_idx.0,
+                    resolved.map(|sym| sym.0)
+                );
+            }
+            resolved
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             self.resolve_qualified_symbol_with(arena, binder, expr_idx)
         } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -302,6 +336,64 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         } else {
             None
         }
+    }
+
+    fn resolve_unqualified_name_in_enclosing_namespace(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        binder: &tsz_binder::BinderState,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if binder.is_external_module() {
+            return None;
+        }
+
+        let mut current = node_idx;
+        for _ in 0..100 {
+            let ext = arena.get_extended(current)?;
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let parent_node = arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_data) = arena.get_module(parent_node)
+                && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
+            {
+                if module_data.body.is_some()
+                    && let Some(&scope_id) = binder.node_scope_ids.get(&module_data.body.0)
+                    && let Some(scope) = binder.scopes.get(scope_id.0 as usize)
+                    && let Some(member_id) = scope.table.get(name)
+                {
+                    let is_enum_member = binder
+                        .get_symbol(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member {
+                        return Some(member_id);
+                    }
+                }
+
+                let ns_name = ns_name_ident.escaped_text.as_str();
+                if let Some(ns_sym_id) = binder.file_locals.get(ns_name)
+                    && let Some(ns_sym) = binder.get_symbol(ns_sym_id)
+                    && let Some(exports) = ns_sym.exports.as_ref()
+                    && let Some(member_id) = exports.get(name)
+                {
+                    let is_enum_member = binder
+                        .get_symbol(member_id)
+                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                    if !is_enum_member {
+                        return Some(member_id);
+                    }
+                }
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     /// Resolve qualified name like 'Namespace.Class'
