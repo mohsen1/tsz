@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         members: &[NodeIndex],
         iface_type: TypeId,
-        _container_node: NodeIndex,
+        container_node: NodeIndex,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -328,19 +328,57 @@ impl<'a> CheckerState<'a> {
         // location.
         if let Some(number_idx) = &index_info.number_index
             && let Some(string_idx) = &index_info.string_index
-            && !number_index_nodes.is_empty()
         {
+            // Only emit when we have own number index nodes to anchor the error,
+            // OR when both signatures are inherited (anchor on container).
             let is_assignable = self.is_assignable_to(number_idx.value_type, string_idx.value_type);
             if !is_assignable {
                 let num_value_str = self.format_type(number_idx.value_type);
                 let str_value_str = self.format_type(string_idx.value_type);
 
-                for &node_idx in &number_index_nodes {
-                    self.error_at_node_msg(
+                if !number_index_nodes.is_empty() {
+                    for &node_idx in &number_index_nodes {
+                        self.error_at_node_msg(
                             node_idx,
-                            crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                             &["number", &num_value_str, "string", &str_value_str],
                         );
+                    }
+                } else if string_index_nodes.is_empty() {
+                    // Both signatures are truly inherited (not from a merged
+                    // body) — report on the declaration name.  When only
+                    // number_index_nodes is empty but string_index_nodes has
+                    // entries, we are in a merged interface body that doesn't
+                    // own the number index; the body that does will emit the
+                    // error, so we skip to avoid a duplicate at a wrong
+                    // location.
+                    let error_node = self
+                        .get_declaration_name_node(container_node)
+                        .unwrap_or(container_node);
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &["number", &num_value_str, "string", &str_value_str],
+                    );
+                }
+            }
+        }
+
+        // TS2413 for static index signatures: same rule applies to the static side.
+        if let (Some(static_num_type), Some(static_str_type)) =
+            (static_number_value_type, static_string_value_type)
+        {
+            let is_assignable = self.is_assignable_to(static_num_type, static_str_type);
+            if !is_assignable {
+                let num_value_str = self.format_type(static_num_type);
+                let str_value_str = self.format_type(static_str_type);
+
+                for &node_idx in &static_number_index_nodes {
+                    self.error_at_node_msg(
+                        node_idx,
+                        diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &["number", &num_value_str, "string", &str_value_str],
+                    );
                 }
             }
         }
@@ -632,5 +670,68 @@ impl<'a> CheckerState<'a> {
     fn is_symbol_or_unique_symbol(&self, type_id: TypeId) -> bool {
         use crate::query_boundaries::type_checking as query;
         query::is_symbol_or_unique_symbol(self.ctx.types, type_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn ts2413_static_index_signature_number_not_assignable_to_string() {
+        let diags = check_source_diagnostics(
+            r#"
+class B {
+    static readonly [s: string]: number;
+    static readonly [s: number]: boolean;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2413 for static index sig mismatch, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2413_static_index_signature_compatible_no_error() {
+        let diags = check_source_diagnostics(
+            r#"
+class C {
+    static readonly [s: string]: number;
+    static readonly [s: number]: 42 | 233;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
+        assert_eq!(
+            matching.len(),
+            0,
+            "Expected no TS2413 when number index is subtype of string index, got: {matching:?}"
+        );
+    }
+
+    #[test]
+    fn ts2413_inherited_index_signature_conflict() {
+        let diags = check_source_diagnostics(
+            r#"
+interface A {
+    [x: string]: string;
+}
+interface B {
+    [x: number]: number;
+}
+interface C extends A, B {}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
+        assert!(
+            !matching.is_empty(),
+            "Expected TS2413 for inherited index signature conflict, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
     }
 }
