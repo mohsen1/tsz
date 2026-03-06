@@ -643,17 +643,16 @@ impl<'a> CheckerState<'a> {
                         .type_params
                         .iter()
                         .filter_map(|tp| {
-                            substitution.get(tp.name).map(|ty| {
-                                (self.ctx.types.resolve_atom(tp.name).to_string(), ty)
-                            })
+                            substitution
+                                .get(tp.name)
+                                .map(|ty| (self.ctx.types.resolve_atom(tp.name).to_string(), ty))
                         })
                         .collect();
                     let mut round2_substitution = substitution.clone();
                     for param in &evaluated_shape.params {
-                        for referenced in tsz_solver::collect_referenced_types(
-                            self.ctx.types,
-                            param.type_id,
-                        ) {
+                        for referenced in
+                            tsz_solver::collect_referenced_types(self.ctx.types, param.type_id)
+                        {
                             if let Some(info) =
                                 tsz_solver::type_param_info(self.ctx.types, referenced)
                                 && round2_substitution.get(info.name).is_none()
@@ -749,13 +748,10 @@ impl<'a> CheckerState<'a> {
                         let round2_param = round1_instantiated_params
                             .as_ref()
                             .and_then(|params| {
-                                params
-                                    .get(i)
-                                    .map(|p| (p.type_id, p.rest))
-                                    .or_else(|| {
-                                        let last = params.last()?;
-                                        last.rest.then_some((last.type_id, true))
-                                    })
+                                params.get(i).map(|p| (p.type_id, p.rest)).or_else(|| {
+                                    let last = params.last()?;
+                                    last.rest.then_some((last.type_id, true))
+                                })
                             })
                             .or_else(|| {
                                 shape
@@ -767,16 +763,11 @@ impl<'a> CheckerState<'a> {
                                         last.rest.then_some((last.type_id, true))
                                     })
                             });
-                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param
-                        {
+                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
                             let instantiated = if round1_instantiated_params.is_some() {
                                 param_type
                             } else {
-                                instantiate_type(
-                                    self.ctx.types,
-                                    param_type,
-                                    &round2_substitution,
-                                )
+                                instantiate_type(self.ctx.types, param_type, &round2_substitution)
                             };
                             let evaluated = self.evaluate_type_with_env(instantiated);
                             trace!(
@@ -854,7 +845,8 @@ impl<'a> CheckerState<'a> {
                     let arena = self.ctx.arena;
                     let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                         .map(|i| {
-                            let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                            let param_type =
+                                ctx_helper.get_parameter_type_for_call(i, args.len())?;
                             let is_empty_array_literal = arena.get(args[i]).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                     && arena
