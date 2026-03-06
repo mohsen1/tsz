@@ -811,10 +811,8 @@ pub fn emit_exports_init(
         return Ok(());
     }
 
-    // tsc chunks exports into groups of 50 and reverses each chunk
-    // (reduceLeft builds the assignment chain right-to-left within each chunk).
     for chunk in exports.chunks(50) {
-        for (i, name) in chunk.iter().rev().enumerate() {
+        for (i, name) in chunk.iter().enumerate() {
             if i > 0 {
                 write!(writer, " = ")?;
             }

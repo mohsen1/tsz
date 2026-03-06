@@ -825,7 +825,11 @@ impl<'a> CheckerState<'a> {
     fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+            let is_namespace = (symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0;
             let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
             return is_namespace && !has_type;
         }
