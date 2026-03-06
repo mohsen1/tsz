@@ -1393,30 +1393,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             placeholder_buf.clear();
             write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
-            let preferred_lower_bound = infer_ctx
-                .get_constraints(type_param_vars[i])
-                .and_then(|constraints| {
-                    let constraint_ty = tp.constraint?;
-                    let mut non_constraint_bounds = Vec::new();
-                    for bound in &constraints.lower_bounds {
-                        if *bound != constraint_ty && !non_constraint_bounds.contains(bound) {
-                            non_constraint_bounds.push(*bound);
+            let preferred_lower_bound =
+                infer_ctx
+                    .get_constraints(type_param_vars[i])
+                    .and_then(|constraints| {
+                        let constraint_ty = tp.constraint?;
+                        let mut non_constraint_bounds = Vec::new();
+                        for bound in &constraints.lower_bounds {
+                            if *bound != constraint_ty && !non_constraint_bounds.contains(bound) {
+                                non_constraint_bounds.push(*bound);
+                            }
                         }
-                    }
-                    if non_constraint_bounds.is_empty() {
-                        return None;
-                    }
-                    let candidate = self.resolve_direct_parameter_inference_type(
-                        &non_constraint_bounds,
-                        infer_ctx.best_common_type(&non_constraint_bounds),
-                    );
-                    let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
-                        !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
-                            && infer_ctx.is_subtype(candidate, *upper)
-                            || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                        if non_constraint_bounds.is_empty() {
+                            return None;
+                        }
+                        let candidate = self.resolve_direct_parameter_inference_type(
+                            &non_constraint_bounds,
+                            infer_ctx.best_common_type(&non_constraint_bounds),
+                        );
+                        let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
+                            !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                                && infer_ctx.is_subtype(candidate, *upper)
+                                || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                        });
+                        upper_bounds_ok.then_some(candidate)
                     });
-                    upper_bounds_ok.then_some(candidate)
-                });
             let resolved = preferred_lower_bound.or_else(|| {
                 match infer_ctx.resolve_with_constraints_by(type_param_vars[i], |source, target| {
                     self.checker.is_assignable_to(source, target)

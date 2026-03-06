@@ -226,10 +226,8 @@ impl<'a> CheckerState<'a> {
         if let Some(ident) = self.ctx.arena.get_identifier_at(idx)
             && let Some(found_sym_id) = result
             && self.ctx.binder.file_locals.get(ident.escaped_text.as_str()) == Some(found_sym_id)
-            && let Some(ns_sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(
-                idx,
-                ident.escaped_text.as_str(),
-            )
+            && let Some(ns_sym_id) = self
+                .resolve_unqualified_name_in_enclosing_namespace(idx, ident.escaped_text.as_str())
             && ns_sym_id != found_sym_id
         {
             if ident.escaped_text == "Component"
@@ -1635,8 +1633,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(idx)
                 {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) =
-                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                         && (symbol.flags & symbol_flags::TYPE) != 0
                     {
                         return Some(sym_id.0);
