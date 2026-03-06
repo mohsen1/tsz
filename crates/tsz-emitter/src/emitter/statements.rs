@@ -747,14 +747,24 @@ impl<'a> Printer<'a> {
         let stmt_end = std::cmp::min(range_end as usize, bytes.len());
         let stmt_start = range_start as usize;
 
-        // Scan backwards to find the semicolon within this node's range
+        // Scan backwards to find the semicolon within this node's range.
+        // Track brace depth so we only match `;` at the outermost level.
+        // Without this, statements containing nested blocks (arrow functions,
+        // object literals, etc.) would match an inner `;` and duplicate its
+        // trailing comment on the outer statement line.
         let mut semi_pos = None;
+        let mut depth: i32 = 0;
         let mut i = stmt_end;
         while i > stmt_start {
             i -= 1;
-            if bytes[i] == b';' {
-                semi_pos = Some(i + 1);
-                break;
+            match bytes[i] {
+                b'}' => depth += 1,
+                b'{' => depth -= 1,
+                b';' if depth == 0 => {
+                    semi_pos = Some(i + 1);
+                    break;
+                }
+                _ => {}
             }
         }
 
