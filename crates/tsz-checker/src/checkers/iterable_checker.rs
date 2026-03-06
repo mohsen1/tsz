@@ -485,13 +485,12 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // For unions, check if each member is individually async- or sync-iterable
-            if let Some(members) = union_members_for_type(self.ctx.types, expr_type) {
-                if members
+            if let Some(members) = union_members_for_type(self.ctx.types, expr_type)
+                && members
                     .iter()
                     .all(|&m| self.is_async_iterable_type(m) || self.is_iterable_type(m))
-                {
-                    return true;
-                }
+            {
+                return true;
             }
             // Not async iterable - emit TS2504
             if let Some((start, end)) = self.get_node_span(expr_idx) {
