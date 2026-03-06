@@ -53,10 +53,14 @@ jobs:
               - 'src/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'scripts/**'
+              - '.github/workflows/**'
             any_rust:
               - '**/*.rs'
               - '**/Cargo.toml'
               - 'Cargo.lock'
+              - 'scripts/**'
+              - '.github/workflows/**'
 
   # ─── Lint (fast, always runs) ──────────────────────────────────────────────
   lint:
