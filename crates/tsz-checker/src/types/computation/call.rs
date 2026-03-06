@@ -474,6 +474,19 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.no_implicit_any,
         );
         let check_excess_properties = overload_signatures.is_none();
+        let normalize_contextual_param_type =
+            |this: &mut Self,
+             helper: &ContextualTypeContext,
+             param_type: TypeId,
+             index: usize,
+             arg_count: usize| {
+                let evaluated = this.evaluate_type_with_env(param_type);
+                if helper.is_rest_parameter_position(index, arg_count) {
+                    tsz_solver::rest_argument_element_type(this.ctx.types, evaluated)
+                } else {
+                    evaluated
+                }
+            };
         // Two-pass argument collection for generic calls is only needed when at least one
         // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).
         // Preserve literal types in array literals during generic call argument collection.
@@ -626,6 +639,36 @@ impl<'a> CheckerState<'a> {
                         "Round 1 inference: substitution computed"
                     );
 
+                    let inferred_type_params_by_name: Vec<_> = shape
+                        .type_params
+                        .iter()
+                        .filter_map(|tp| {
+                            substitution.get(tp.name).map(|ty| {
+                                (self.ctx.types.resolve_atom(tp.name).to_string(), ty)
+                            })
+                        })
+                        .collect();
+                    let mut round2_substitution = substitution.clone();
+                    for param in &evaluated_shape.params {
+                        for referenced in tsz_solver::collect_referenced_types(
+                            self.ctx.types,
+                            param.type_id,
+                        ) {
+                            if let Some(info) =
+                                tsz_solver::type_param_info(self.ctx.types, referenced)
+                                && round2_substitution.get(info.name).is_none()
+                            {
+                                let param_name = self.ctx.types.resolve_atom(info.name);
+                                if let Some((_, inferred)) = inferred_type_params_by_name
+                                    .iter()
+                                    .find(|(name, _)| name.as_str() == param_name.as_str())
+                                {
+                                    round2_substitution.insert(info.name, *inferred);
+                                }
+                            }
+                        }
+                    }
+
                     // === Pre-inference from annotated callback parameters ===
                     // When a callback is context-sensitive (has unannotated params) AND has
                     // some annotated params, use those annotations to enrich the substitution
@@ -682,6 +725,16 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    let round1_instantiated_params = self
+                        .resolve_call_with_checker_adapter(
+                            callee_type_for_context,
+                            &round1_arg_types,
+                            force_bivariant_callbacks,
+                            self.ctx.contextual_type,
+                            actual_this_type,
+                        )
+                        .2;
+
                     // === Pre-evaluate instantiated parameter types ===
                     // After instantiation with Round 1 substitution, parameter types may
                     // contain unevaluated IndexAccess/KeyOf over Lazy(DefId) references
@@ -693,19 +746,71 @@ impl<'a> CheckerState<'a> {
                     let mut round2_contextual_types: Vec<Option<TypeId>> =
                         Vec::with_capacity(arg_count);
                     for i in 0..arg_count {
-                        let ctx_type = if let Some(param_type) =
-                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        let round2_param = round1_instantiated_params
+                            .as_ref()
+                            .and_then(|params| {
+                                params
+                                    .get(i)
+                                    .map(|p| (p.type_id, p.rest))
+                                    .or_else(|| {
+                                        let last = params.last()?;
+                                        last.rest.then_some((last.type_id, true))
+                                    })
+                            })
+                            .or_else(|| {
+                                shape
+                                    .params
+                                    .get(i)
+                                    .map(|p| (p.type_id, p.rest))
+                                    .or_else(|| {
+                                        let last = shape.params.last()?;
+                                        last.rest.then_some((last.type_id, true))
+                                    })
+                            });
+                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param
                         {
-                            let instantiated =
-                                instantiate_type(self.ctx.types, param_type, &substitution);
+                            let instantiated = if round1_instantiated_params.is_some() {
+                                param_type
+                            } else {
+                                instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &round2_substitution,
+                                )
+                            };
                             let evaluated = self.evaluate_type_with_env(instantiated);
-                            Some(evaluated)
+                            trace!(
+                                arg_index = i,
+                                param_type_id = param_type.0,
+                                param_type_key = ?self.ctx.types.lookup(param_type),
+                                param_type_app_args = ?tsz_solver::type_queries::get_application_info(
+                                    self.ctx.types,
+                                    param_type,
+                                )
+                                .map(|(_, args)| args),
+                                instantiated_id = instantiated.0,
+                                instantiated_key = ?self.ctx.types.lookup(instantiated),
+                                instantiated_app_args = ?tsz_solver::type_queries::get_application_info(
+                                    self.ctx.types,
+                                    instantiated,
+                                )
+                                .map(|(_, args)| args),
+                                evaluated_id = evaluated.0,
+                                evaluated_key = ?self.ctx.types.lookup(evaluated),
+                                "Round 2: instantiated parameter type"
+                            );
+                            Some(if is_rest_param {
+                                tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                            } else {
+                                evaluated
+                            })
                         } else {
                             None
                         };
                         trace!(
                             arg_index = i,
                             ctx_type_id = ?ctx_type.map(|t| t.0),
+                            ctx_type_key = ?ctx_type.and_then(|t| self.ctx.types.lookup(t)),
                             "Round 2: contextual type for argument"
                         );
                         round2_contextual_types.push(ctx_type);
@@ -747,35 +852,37 @@ impl<'a> CheckerState<'a> {
                         sub
                     };
                     let arena = self.ctx.arena;
+                    let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                        .map(|i| {
+                            let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                            let is_empty_array_literal = arena.get(args[i]).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    && arena
+                                        .get_literal_expr(n)
+                                        .is_some_and(|lit| lit.elements.nodes.is_empty())
+                            });
+                            let param_type = if is_empty_array_literal {
+                                use tsz_solver::instantiate_type;
+                                instantiate_type(self.ctx.types, param_type, &type_param_eraser)
+                            } else {
+                                param_type
+                            };
+                            Some(normalize_contextual_param_type(
+                                self,
+                                &ctx_helper,
+                                param_type,
+                                i,
+                                args.len(),
+                            ))
+                        })
+                        .collect();
                     self.collect_call_argument_types_with_context(
                         args,
                         |i, arg_count| {
-                            let param_type =
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)?;
-                            // Only erase type params for EMPTY array literal args `[]`.
-                            // Empty arrays have no elements to provide type information, so
-                            // they inherit their type entirely from contextual typing. When
-                            // the contextual type contains callee type params (e.g., `T[]`),
-                            // the type param leaks into the arg type (`T[]` instead of
-                            // `unknown[]`), causing false TS2345 errors during inference.
-                            // Non-empty arrays like `[o]` or `[1,2,3]` get their element
-                            // types from their contents, so contextual typing is safe.
-                            let is_empty_array_literal = i < args.len()
-                                && arena.get(args[i]).is_some_and(|n| {
-                                    n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                        && arena
-                                            .get_literal_expr(n)
-                                            .is_some_and(|lit| lit.elements.nodes.is_empty())
-                                });
-                            if is_empty_array_literal {
-                                use tsz_solver::instantiate_type;
-                                Some(instantiate_type(
-                                    self.ctx.types,
-                                    param_type,
-                                    &type_param_eraser,
-                                ))
+                            if i < single_pass_contextual_types.len() {
+                                single_pass_contextual_types[i]
                             } else {
-                                Some(param_type)
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)
                             }
                         },
                         check_excess_properties,
@@ -784,9 +891,27 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 // Shouldn't happen for generic call detection, but keep single-pass fallback.
+                let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                    .map(|i| {
+                        let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                        Some(normalize_contextual_param_type(
+                            self,
+                            &ctx_helper,
+                            param_type,
+                            i,
+                            args.len(),
+                        ))
+                    })
+                    .collect();
                 self.collect_call_argument_types_with_context(
                     args,
-                    |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                    |i, arg_count| {
+                        if i < single_pass_contextual_types.len() {
+                            single_pass_contextual_types[i]
+                        } else {
+                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        }
+                    },
                     check_excess_properties,
                     None, // No skipping needed for single-pass
                 )
@@ -794,9 +919,27 @@ impl<'a> CheckerState<'a> {
         } else {
             // === Single-pass: Standard argument collection ===
             // Non-generic calls or calls with explicit type arguments use the standard flow.
+            let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                .map(|i| {
+                    let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                    Some(normalize_contextual_param_type(
+                        self,
+                        &ctx_helper,
+                        param_type,
+                        i,
+                        args.len(),
+                    ))
+                })
+                .collect();
             self.collect_call_argument_types_with_context(
                 args,
-                |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                |i, arg_count| {
+                    if i < single_pass_contextual_types.len() {
+                        single_pass_contextual_types[i]
+                    } else {
+                        ctx_helper.get_parameter_type_for_call(i, arg_count)
+                    }
+                },
                 check_excess_properties,
                 None, // No skipping needed for single-pass
             )

@@ -224,6 +224,34 @@ impl<'a> CheckerState<'a> {
         );
 
         if let Some(ident) = self.ctx.arena.get_identifier_at(idx)
+            && let Some(found_sym_id) = result
+            && self.ctx.binder.file_locals.get(ident.escaped_text.as_str()) == Some(found_sym_id)
+            && let Some(ns_sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(
+                idx,
+                ident.escaped_text.as_str(),
+            )
+            && ns_sym_id != found_sym_id
+        {
+            if ident.escaped_text == "Component"
+                && self.ctx.file_name.contains("inst-create-element-shadow")
+            {
+                let found_meta = self.ctx.binder.get_symbol(found_sym_id);
+                let ns_meta = self.ctx.binder.get_symbol(ns_sym_id);
+                eprintln!(
+                    "DEBUG resolve_identifier_symbol_inner override Component idx={} file_local={} flags={:#x} parent={} namespace={} flags={:#x} parent={}",
+                    idx.0,
+                    found_sym_id.0,
+                    found_meta.map_or(0, |s| s.flags),
+                    found_meta.map_or(u32::MAX, |s| s.parent.0),
+                    ns_sym_id.0,
+                    ns_meta.map_or(0, |s| s.flags),
+                    ns_meta.map_or(u32::MAX, |s| s.parent.0),
+                );
+            }
+            return Some(ns_sym_id);
+        }
+
+        if let Some(ident) = self.ctx.arena.get_identifier_at(idx)
             && result.is_none()
         {
             let name = ident.escaped_text.as_str();
@@ -499,7 +527,43 @@ impl<'a> CheckerState<'a> {
                     return resolved;
                 }
             }
+            if self.ctx.binder.file_locals.get(name) == Some(local_sym_id)
+                && let Some(ns_sym_id) =
+                    self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
+                && ns_sym_id != local_sym_id
+            {
+                if name == "Component" && self.ctx.file_name.contains("inst-create-element-shadow")
+                {
+                    let local_meta = self.ctx.binder.get_symbol(local_sym_id);
+                    let ns_meta = self.ctx.binder.get_symbol(ns_sym_id);
+                    eprintln!(
+                        "DEBUG resolve_identifier_symbol_in_type_position override Component idx={} file_local={} flags={:#x} parent={} namespace={} flags={:#x} parent={}",
+                        idx.0,
+                        local_sym_id.0,
+                        local_meta.map_or(0, |s| s.flags),
+                        local_meta.map_or(u32::MAX, |s| s.parent.0),
+                        ns_sym_id.0,
+                        ns_meta.map_or(0, |s| s.flags),
+                        ns_meta.map_or(u32::MAX, |s| s.parent.0),
+                    );
+                }
+                return TypeSymbolResolution::Type(ns_sym_id);
+            }
+            if name == "Component" && self.ctx.file_name.contains("inst-create-element-shadow") {
+                let local_meta = self.ctx.binder.get_symbol(local_sym_id);
+                eprintln!(
+                    "DEBUG resolve_identifier_symbol_in_type_position Component idx={} resolved={} flags={:#x} parent={}",
+                    idx.0,
+                    local_sym_id.0,
+                    local_meta.map_or(0, |s| s.flags),
+                    local_meta.map_or(u32::MAX, |s| s.parent.0),
+                );
+            }
             return TypeSymbolResolution::Type(local_sym_id);
+        }
+
+        if let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name) {
+            return TypeSymbolResolution::Type(sym_id);
         }
 
         let resolved = self.ctx.binder.resolve_identifier_with_filter(
@@ -540,13 +604,6 @@ impl<'a> CheckerState<'a> {
             if is_value_only {
                 return TypeSymbolResolution::ValueOnly(sym_id);
             }
-            return TypeSymbolResolution::Type(sym_id);
-        }
-
-        // Cross-file namespace body fallback for type position
-        if resolved.is_none()
-            && let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
-        {
             return TypeSymbolResolution::Type(sym_id);
         }
 
@@ -1009,6 +1066,25 @@ impl<'a> CheckerState<'a> {
                 if let Some(module_data) = arena.get_module(parent_node)
                     && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
                 {
+                    // Same-block namespace members are visible inside the block
+                    // even when they are not exported. Consult the namespace
+                    // body's persistent scope before falling back to exports.
+                    if module_data.body.is_some()
+                        && let Some(&scope_id) =
+                            self.ctx.binder.node_scope_ids.get(&module_data.body.0)
+                        && let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                        && let Some(member_id) = scope.table.get(name)
+                    {
+                        let is_enum_member = self
+                            .ctx
+                            .binder
+                            .get_symbol(member_id)
+                            .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        if !is_enum_member {
+                            return Some(member_id);
+                        }
+                    }
+
                     let ns_name = ns_name_ident.escaped_text.as_str();
                     // Look up the name in the merged namespace's exports
                     // First check the global symbol directly
@@ -1550,9 +1626,23 @@ impl<'a> CheckerState<'a> {
         // These types use built-in TypeData representations instead of Refs
         if let Some(node) = self.ctx.arena.get(idx)
             && let Some(ident) = self.ctx.arena.get_identifier(node)
-            && is_compiler_managed_type(ident.escaped_text.as_str())
         {
-            return None;
+            if is_compiler_managed_type(ident.escaped_text.as_str()) {
+                return None;
+            }
+            if node.kind == SyntaxKind::Identifier as u16 {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(idx)
+                {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) =
+                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        && (symbol.flags & symbol_flags::TYPE) != 0
+                    {
+                        return Some(sym_id.0);
+                    }
+                }
+            }
         }
 
         let sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {

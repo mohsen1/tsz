@@ -72,7 +72,7 @@ pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
 pub use classes::inheritance::*;
-pub use contextual::{ContextualTypeContext, apply_contextual_type};
+pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
 pub use def::*;
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{

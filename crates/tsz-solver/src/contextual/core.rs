@@ -22,6 +22,33 @@ pub struct ContextualTypeContext<'a> {
     no_implicit_any: bool,
 }
 
+/// Extract the per-argument contextual type from an already-evaluated rest parameter type.
+///
+/// For array rest params like `...args: Foo[]`, this returns `Foo`.
+/// For tuple rest params, this returns the trailing rest element type when present.
+/// Otherwise, it returns the original type unchanged.
+pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::Array(elem)) => elem,
+        Some(TypeData::Tuple(elements_id)) => {
+            let elements = db.tuple_list(elements_id);
+            if let Some(last) = elements.last() {
+                if last.rest {
+                    match db.lookup(last.type_id) {
+                        Some(TypeData::Array(elem)) => elem,
+                        _ => last.type_id,
+                    }
+                } else {
+                    last.type_id
+                }
+            } else {
+                type_id
+            }
+        }
+        _ => type_id,
+    }
+}
+
 impl<'a> ContextualTypeContext<'a> {
     /// Create a new contextual type context.
     /// Defaults to `no_implicit_any: false` for compatibility.
