@@ -454,6 +454,8 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
         Some(TypeData::Union(members_id)) => {
             LiteralKeyKind::Union(db.type_list(members_id).to_vec())
         }
+        // Enum members resolve to their underlying literal value
+        Some(TypeData::Enum(_, member_type)) => classify_literal_key(db, member_type),
         _ => LiteralKeyKind::Other,
     }
 }
