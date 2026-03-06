@@ -70,6 +70,8 @@ pub struct ClassES5Emitter<'a> {
     transforms: Option<TransformContext>,
     /// Leading comment text to place after `WeakMap` decls and before the class IIFE.
     leading_comment: Option<String>,
+    /// When true, suppress `/** @class */` annotation and leading comments.
+    remove_comments: bool,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -83,6 +85,7 @@ impl<'a> ClassES5Emitter<'a> {
             transformer: ES5ClassTransformer::new(arena),
             transforms: None,
             leading_comment: None,
+            remove_comments: false,
         }
     }
 
@@ -97,6 +100,11 @@ impl<'a> ClassES5Emitter<'a> {
     /// but before the class IIFE.
     pub fn set_leading_comment(&mut self, comment: String) {
         self.leading_comment = Some(comment);
+    }
+
+    /// When true, suppress `/** @class */` annotation in output.
+    pub const fn set_remove_comments(&mut self, remove: bool) {
+        self.remove_comments = remove;
     }
 
     /// Set the initial indentation level (to match the parent context)
@@ -170,6 +178,7 @@ impl<'a> ClassES5Emitter<'a> {
 
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);
+        printer.set_remove_comments(self.remove_comments);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
         }

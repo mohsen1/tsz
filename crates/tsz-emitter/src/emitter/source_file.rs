@@ -405,6 +405,41 @@ impl<'a> Printer<'a> {
             .first()
             .and_then(|&idx| self.arena.get(idx))
             .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
+
+        // When removeComments is true, tsc still emits "pinned" comments
+        // (/*! ... */) that are detached from the first statement (i.e.,
+        // separated by a blank line). These are typically copyright notices.
+        if self.ctx.options.remove_comments
+            && let Some(text) = self.source_text
+        {
+            let all_comments = tsz_common::comments::get_comment_ranges(text);
+            // Collect pinned comments before the first statement
+            let pinned: Vec<_> = all_comments
+                .iter()
+                .filter(|c| {
+                    let content = c.get_text(text);
+                    c.end <= first_stmt_pos && content.starts_with("/*!")
+                })
+                .collect();
+            // Only emit pinned comments that are "detached" — followed by a
+            // blank line before the next comment/statement.
+            for (pi, comment) in pinned.iter().enumerate() {
+                let next_start = pinned
+                    .get(pi + 1)
+                    .map_or(first_stmt_pos, |next_c| next_c.pos);
+                let between =
+                    crate::safe_slice::slice(text, comment.end as usize, next_start as usize);
+                let is_detached = between.contains("\n\n") || between.contains("\r\n\r\n");
+                if is_detached {
+                    let comment_text =
+                        crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+                    self.write_comment_with_reindent(comment_text, Some(comment.pos));
+                    if comment.has_trailing_new_line {
+                        self.write_line();
+                    }
+                }
+            }
+        }
         let first_stmt_is_auto_accessor_class = source
             .statements
             .nodes
@@ -572,6 +607,8 @@ impl<'a> Printer<'a> {
                         self.write_comment_with_reindent(comment_text, Some(c_pos));
                         if c_trailing {
                             self.write_line();
+                        } else if comment_text.starts_with("/*") {
+                            self.pending_block_comment_space = true;
                         }
                     }
                     self.comment_emit_idx += 1;
@@ -741,6 +778,8 @@ impl<'a> Printer<'a> {
                 self.write_comment(comment);
                 if *has_trailing_new_line {
                     self.write_line();
+                } else if comment.starts_with("/*") {
+                    self.pending_block_comment_space = true;
                 }
             }
         }

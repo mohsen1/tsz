@@ -56,6 +56,7 @@ pub struct NamespaceES5Emitter<'a> {
     indent_level: u32,
     should_declare_var: bool,
     target_es5: bool,
+    remove_comments: bool,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -67,6 +68,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             indent_level: 0,
             should_declare_var: true, // Default to true for backward compatibility
             target_es5: false,
+            remove_comments: false,
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -79,6 +81,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             indent_level: 0,
             should_declare_var: true, // Default to true for backward compatibility
             target_es5: false,
+            remove_comments: false,
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -98,6 +101,11 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// Mark this emitter as targeting ES5 (disables `let` in namespace IIFE bodies).
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
+    }
+
+    /// When true, suppress `/** @class */` annotation in output.
+    pub const fn set_remove_comments(&mut self, remove: bool) {
+        self.remove_comments = remove;
     }
 
     /// Set exported variable names from prior blocks of the same namespace.
@@ -130,6 +138,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         };
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
+        printer.set_remove_comments(self.remove_comments);
         printer.emit(&ir).to_string()
     }
 
@@ -148,6 +157,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         };
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
+        printer.set_remove_comments(self.remove_comments);
         printer.emit(&ir).to_string()
     }
 

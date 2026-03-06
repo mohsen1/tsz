@@ -93,6 +93,7 @@ impl<'a> Printer<'a> {
             }
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
+            es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
                 // Cross-block export sharing for ES5 path

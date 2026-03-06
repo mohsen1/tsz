@@ -140,3 +140,73 @@ fn comments_between_consecutive_erased_declarations_are_erased() {
         "Runtime statement should be preserved.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn block_comment_before_semicolon_preserves_space() {
+    // Source has a block comment followed by an empty statement (;)
+    let source = "/*existing trivia*/ ;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("/*existing trivia*/ ;"),
+        "Block comment before semicolon should have space between comment and semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn pinned_comments_preserved_when_remove_comments_true() {
+    // /*! ... */ comments should be preserved even with removeComments: true,
+    // but only when detached (separated by a blank line from the next content).
+    let source = "/*! Copyright 2024 */\n\nclass C {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let opts = PrintOptions {
+        remove_comments: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("/*! Copyright 2024 */"),
+        "Pinned /*! ... */ comments should be preserved even with removeComments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn attached_pinned_comments_stripped_when_remove_comments_true() {
+    // Attached /*! ... */ comments (no blank line before code) should be stripped
+    // when removeComments: true, matching tsc behavior.
+    let source = "/*! attached comment */\nclass C {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let opts = PrintOptions {
+        remove_comments: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("/*! attached comment */"),
+        "Attached pinned comments should be stripped with removeComments.\nOutput:\n{output}"
+    );
+}
