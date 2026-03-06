@@ -205,7 +205,7 @@ build_typescript_harness() {
         node -e "
             const fs = require('fs');
             const path = require('path');
-            const libs = JSON.parse(fs.readFileSync('src/lib/libs.json', 'utf-8'));
+            const libs = JSON.parse(fs.readFileSync('src/lib/libs.json', 'utf-8').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''));
             fs.mkdirSync('built/local', { recursive: true });
             const copyright = fs.readFileSync('scripts/CopyrightNotice.txt', 'utf-8');
             for (const lib of libs.libs) {
