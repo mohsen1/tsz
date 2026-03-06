@@ -968,14 +968,14 @@ impl<'a> Printer<'a> {
                 //   - Comments on subsequent lines → keep for the next statement
                 // Cap the scan end at the next statement's pos to avoid scanning
                 // into subsequent statements (same fix as initialization phase).
-                let scan_end = source
+                let next_stmt_node = source
                     .statements
                     .nodes
                     .get(stmt_i + 1)
-                    .and_then(|&next_idx| self.arena.get(next_idx))
-                    .map_or(stmt_node.end, |next_node| next_node.pos);
+                    .and_then(|&next_idx| self.arena.get(next_idx));
+                let scan_end = next_stmt_node.map_or(stmt_node.end, |n| n.pos);
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
-                let line_end = if let Some(text) = self.source_text {
+                let mut line_end = if let Some(text) = self.source_text {
                     let bytes = text.as_bytes();
                     let mut pos = stmt_token_end as usize;
                     while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
@@ -985,6 +985,18 @@ impl<'a> Printer<'a> {
                 } else {
                     stmt_token_end
                 };
+                // If the next sibling statement is on the same line and is NOT
+                // erased, cap the comment consumption at the next statement's start.
+                // Comments after a non-erased sibling (e.g., `interface Foo {}; // Error`)
+                // belong to that sibling, not the erased declaration.
+                if let Some(next_node) = next_stmt_node {
+                    let next_is_erased = self.is_erased_statement(next_node);
+                    if !next_is_erased && scan_end < line_end {
+                        // The next statement starts before the line ends — it's on
+                        // the same line. Cap to avoid consuming its trailing comments.
+                        line_end = scan_end;
+                    }
+                }
                 while self.comment_emit_idx < self.all_comments.len() {
                     let c_end = self.all_comments[self.comment_emit_idx].end;
                     if c_end <= line_end {
