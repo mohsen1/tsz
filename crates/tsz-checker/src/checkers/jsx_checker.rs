@@ -1938,11 +1938,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Determine the import source (default to "react" if not set)
-        let source = if self.ctx.compiler_options.jsx_import_source.is_empty() {
-            "react"
+        // Determine the import source (default to "react" if not set) — owned
+        // to avoid a conflicting borrow with later &self method calls.
+        let source: String = if self.ctx.compiler_options.jsx_import_source.is_empty() {
+            "react".to_string()
         } else {
-            &self.ctx.compiler_options.jsx_import_source
+            self.ctx.compiler_options.jsx_import_source.clone()
         };
 
         let runtime_path = format!("{source}/{runtime_suffix}");
@@ -1954,6 +1955,15 @@ impl<'a> CheckerState<'a> {
         if self.is_ambient_module_match(&runtime_path) {
             return;
         }
+        // Fallback: check if the JSX runtime .d.ts file exists on disk.
+        // The implicit JSX runtime (e.g. react/jsx-runtime) is never an
+        // explicit import, so it never appears in `resolved_module_paths`.
+        // TSC resolves this module implicitly during program creation; we
+        // approximate that by probing the file system from the current file's
+        // directory walking up to find node_modules.
+        if self.jsx_runtime_file_exists_on_disk(&source, runtime_suffix) {
+            return;
+        }
 
         // Emit TS2875 at the JSX opening element node
         use crate::diagnostics::diagnostic_codes;
@@ -1962,6 +1972,56 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
             &[&runtime_path],
         );
+    }
+
+    /// Check if the JSX runtime file exists on disk by walking up from the
+    /// current file's directory.
+    ///
+    /// Looks for:
+    ///   `node_modules/{source}/{suffix}.d.ts`
+    ///   `node_modules/@types/{source}/{suffix}.d.ts`
+    ///
+    /// This handles implicit JSX runtime modules (e.g. `react/jsx-runtime`)
+    /// which are never added to `resolved_module_paths` by the driver because
+    /// they are not explicit imports in source files.
+    fn jsx_runtime_file_exists_on_disk(&self, source: &str, suffix: &str) -> bool {
+        use std::path::Path;
+
+        let current_file = &self.ctx.file_name;
+        if current_file.is_empty() {
+            return false;
+        }
+
+        let mut dir = Path::new(current_file.as_str());
+        // Start from the containing directory
+        if let Some(parent) = dir.parent() {
+            dir = parent;
+        }
+
+        loop {
+            let node_modules = dir.join("node_modules");
+            if node_modules.is_dir() {
+                // Check node_modules/{source}/{suffix}.d.ts
+                let candidate1 = node_modules.join(source).join(format!("{suffix}.d.ts"));
+                if candidate1.is_file() {
+                    return true;
+                }
+                // Check node_modules/@types/{source}/{suffix}.d.ts
+                // (for scoped packages like @types/react)
+                let candidate2 = node_modules
+                    .join("@types")
+                    .join(source)
+                    .join(format!("{suffix}.d.ts"));
+                if candidate2.is_file() {
+                    return true;
+                }
+            }
+            match dir.parent() {
+                Some(parent) if parent != dir => dir = parent,
+                _ => break,
+            }
+        }
+        false
     }
 
     /// Check that JSX fragments have a valid fragment factory when jsxFactory is set (TS17016).
