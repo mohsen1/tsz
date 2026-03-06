@@ -1987,9 +1987,7 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
                     }
                 }
             } else {
-                panic!(
-                    "Expected Mapped or Object type (with preserved union), got {other:?}"
-                );
+                panic!("Expected Mapped or Object type (with preserved union), got {other:?}");
             }
         }
     }
