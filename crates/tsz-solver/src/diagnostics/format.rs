@@ -213,6 +213,17 @@ impl<'a> TypeFormatter<'a> {
             return self.format_def_name(&def);
         }
 
+        // For class/interface instance types, check the type-to-def reverse map.
+        // This handles cross-file scenarios where the ObjectShape's symbol belongs
+        // to a different file's SymbolArena and can't be resolved by format_symbol_name.
+        if matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            && let Some(def_store) = self.def_store
+                && let Some(def_id) = def_store.find_def_for_type(type_id)
+                && let Some(def) = def_store.get(def_id)
+            {
+                return self.format_def_name(&def);
+            }
+
         self.current_depth += 1;
         let result = self.format_key(&key);
         self.current_depth -= 1;

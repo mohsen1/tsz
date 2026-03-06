@@ -1084,6 +1084,15 @@ impl<'a> CheckerState<'a> {
                 let instance_type_opt = self.class_instance_type_from_symbol(sym_id);
 
                 if let Some(instance_type) = instance_type_opt {
+                    // Register instance type → DefId so the TypeFormatter can display
+                    // the class name (e.g., "A") even when the type was resolved via
+                    // cross-file delegation and produced a different TypeId than the
+                    // original get_class_instance_type_inner call.
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(instance_type, def_id);
+
                     self.ctx.leave_recursion();
                     return instance_type;
                 }
