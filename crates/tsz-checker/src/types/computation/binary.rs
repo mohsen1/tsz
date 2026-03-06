@@ -348,6 +348,19 @@ impl<'a> CheckerState<'a> {
                         is_valid_rhs = true;
                     }
 
+                    // TypeScript also allows types with [Symbol.hasInstance] as valid instanceof RHS.
+                    // This is checked even when the standard callable/Function checks fail.
+                    if !is_valid_rhs {
+                        use tsz_solver::operations::property::PropertyAccessResult;
+                        is_valid_rhs = matches!(
+                            self.resolve_property_access_with_env(
+                                eval_right,
+                                "[Symbol.hasInstance]"
+                            ),
+                            PropertyAccessResult::Success { .. }
+                        );
+                    }
+
                     if !is_valid_rhs && let Some(right_node) = self.ctx.arena.get(right_idx) {
                         let message = format_message(
                                 diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,

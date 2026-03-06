@@ -823,6 +823,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // 3. Target was resolved from a Lazy(DefId) whose DefId is a known Function DefId
         //    (handles the case where get_type_of_symbol and resolve_lib_type_by_name
         //    produce different TypeIds for the same Function interface)
+        let is_function_structural = self.is_function_interface_structural(target);
         let is_function_target = intrinsic_kind(self.interner, target)
             == Some(IntrinsicKind::Function)
             || self
@@ -836,21 +837,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.resolver
                     .is_boxed_def_id(def_id, IntrinsicKind::Function)
             })
-            || self.is_function_interface_structural(target);
+            || is_function_structural;
         if is_function_target {
             if self.is_callable_type(source) {
                 return SubtypeResult::True;
             }
-            // Trace: Source is not function-compatible
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
+            // For structural Function interface targets (object types with apply/call/bind),
+            // allow non-callable object types to fall through to structural checking.
+            // This handles class instances that extend Function (e.g., `class Foo extends Function {}`),
+            // where the instance type has apply/call/bind methods but no call signature.
+            // TypeScript allows such types as valid instanceof RHS because they're structurally
+            // assignable to the Function interface.
+            let source_is_object = object_shape_id(self.interner, source).is_some()
+                || object_with_index_shape_id(self.interner, source).is_some();
+            if is_function_structural && source_is_object {
+                // Fall through to structural object-to-object comparison below
+            } else {
+                // Trace: Source is not function-compatible
+                if let Some(tracer) = &mut self.tracer
+                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    })
+                {
+                    return SubtypeResult::False;
+                }
                 return SubtypeResult::False;
             }
-            return SubtypeResult::False;
         }
 
         // Check if target is the global `Object` interface from lib.d.ts.
