@@ -632,3 +632,160 @@ function g(x) {
         "JSDoc @return {{x is number}} should create type predicate, got: {relevant:?}"
     );
 }
+
+/// Control flow alias invalidation: when a type guard alias is created and
+/// the aliased reference is later reassigned, the alias narrowing must be
+/// invalidated (TS2322 should be emitted).
+#[test]
+fn test_alias_narrowing_invalidated_by_reassignment() {
+    let source = r#"
+function f(x: string | number) {
+    const isString = typeof x === "string";
+    x = 42;  // reassign the aliased reference
+    if (isString) {
+        // x was reassigned, alias should be invalidated
+        let s: string = x;  // should error: TS2322
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 when alias reference is reassigned, got: {diagnostics:?}"
+    );
+}
+
+/// Control flow alias narrowing should work when the reference is NOT reassigned.
+#[test]
+fn test_alias_narrowing_works_without_reassignment() {
+    let source = r#"
+function f(x: string | number) {
+    const isString = typeof x === "string";
+    if (isString) {
+        let s: string = x;  // should NOT error: alias is valid
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Unexpected TS2322 when alias reference is NOT reassigned: {diagnostics:?}"
+    );
+}
+
+/// Property access alias invalidation: when a typeof guard aliases a
+/// property access (e.g., `typeof obj.x`) and the base object's property
+/// is reassigned later, the alias must be invalidated.
+#[test]
+fn test_alias_narrowing_invalidated_by_property_reassignment() {
+    let source = r#"
+function f(obj: { x: string | number }) {
+    const isString = typeof obj.x === "string";
+    obj.x = 42;  // reassign the aliased property
+    if (isString) {
+        let s: string = obj.x;  // should error: TS2322
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 when aliased property is reassigned, got: {diagnostics:?}"
+    );
+}
