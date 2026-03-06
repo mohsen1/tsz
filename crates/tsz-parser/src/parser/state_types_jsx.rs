@@ -756,6 +756,7 @@ impl ParserState {
         while !self.is_token(SyntaxKind::GreaterThanToken)
             && !self.is_token(SyntaxKind::SlashToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
+            && !self.is_token(SyntaxKind::SemicolonToken)
         {
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 // Spread attribute: {...props}

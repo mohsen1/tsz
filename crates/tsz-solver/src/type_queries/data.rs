@@ -5,7 +5,7 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 use crate::TypeDatabase;
-use crate::types::{PropertyInfo, TypeData, TypeId};
+use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use tsz_common::Atom;
 
@@ -498,6 +498,65 @@ pub fn find_property_in_object_by_str(
         .iter()
         .find(|p| db.resolve_atom_ref(p.name).as_ref() == name)
         .cloned()
+}
+
+/// Check if a type that is a numeric literal (or union of numeric literals) is
+/// a valid index for `object_type` by matching numeric values against named
+/// properties.
+///
+/// TypeScript represents `keyof { 0: T; 1: U }` as `0 | 1` (numeric literal
+/// types). Our `evaluate_keyof` uses string-atom literals for property names,
+/// so `is_assignable_to(0 | 1, "0" | "1")` fails even when `0` and `1` are
+/// valid property names. This function bridges that gap by explicitly checking
+/// each numeric member of `index_type` against the object's named properties.
+///
+/// Returns `true` if and only if:
+/// 1. `index_type` is a numeric literal or union of numeric literals, AND
+/// 2. Every numeric value corresponds to a named property of `object_type`.
+///
+/// Returns `false` if `index_type` contains any non-numeric member, if the
+/// union is empty, or if any numeric value has no matching property.
+pub fn numeric_literal_index_valid_for_object(
+    db: &dyn TypeDatabase,
+    index_type: TypeId,
+    object_type: TypeId,
+) -> bool {
+    // Collect union members; treat a non-union as a single-element slice.
+    let members = match get_union_members(db, index_type) {
+        Some(ms) => ms,
+        None => vec![index_type],
+    };
+    if members.is_empty() {
+        return false;
+    }
+    for &member in &members {
+        // Each member must be a numeric literal.
+        let num_val = match db.lookup(member) {
+            Some(TypeData::Literal(LiteralValue::Number(n))) => n.0,
+            _ => return false,
+        };
+        // Convert the numeric value to its canonical JS property-name string.
+        // For non-negative integers this is simply the decimal representation.
+        let prop_name = numeric_value_to_property_name(num_val);
+        // Check if the object has a property with that name.
+        if find_property_in_object_by_str(db, object_type, &prop_name).is_none() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Convert an `f64` numeric literal value to its canonical JavaScript property
+/// name string (matching `Number.prototype.toString()` for the common cases).
+fn numeric_value_to_property_name(value: f64) -> String {
+    // For non-negative integers representable exactly as u64, use integer format.
+    // This covers 0, 1, 2, … which are the typical numeric property name cases.
+    if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < 1e15 {
+        return format!("{}", value as u64);
+    }
+    // Fall back to canonicalize_numeric_name for edge cases.
+    crate::utils::canonicalize_numeric_name(&format!("{value}"))
+        .unwrap_or_else(|| format!("{value}"))
 }
 
 /// Find a named property in any type shape (object or callable) by string name.
