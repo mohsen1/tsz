@@ -154,7 +154,6 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         &self,
         def_id: tsz_solver::DefId,
     ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
-        // Look up type parameters for type aliases
         self.get_def_type_params(def_id)
     }
 

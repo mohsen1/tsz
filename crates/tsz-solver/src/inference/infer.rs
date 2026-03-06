@@ -224,11 +224,18 @@ pub struct InferenceContext<'a> {
     /// Used to decide literal type preservation: `T extends string` preserves `"z"`,
     /// but contextual `Box<boolean>` should NOT preserve `false`.
     pub(crate) declared_constraints: FxHashMap<InferenceVar, TypeId>,
+    /// Depth counter for `TypeApplication` expansion during inference.
+    /// Prevents infinite recursion when inferring through recursive type aliases
+    /// like `type Spec<T> = { [P in keyof T]: Spec<T[P]> }`.
+    pub(crate) app_expansion_depth: u32,
 }
 
 impl<'a> InferenceContext<'a> {
     pub(crate) const UPPER_BOUND_INTERSECTION_FAST_PATH_LIMIT: usize = 8;
     pub(crate) const UPPER_BOUND_INTERSECTION_LARGE_SET_THRESHOLD: usize = 64;
+    /// Maximum depth for expanding `TypeApplication` targets during inference.
+    /// Prevents infinite recursion for recursive type aliases.
+    pub(crate) const MAX_APP_EXPANSION_DEPTH: u32 = 5;
 
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
@@ -238,6 +245,7 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            app_expansion_depth: 0,
         }
     }
 
@@ -252,6 +260,7 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            app_expansion_depth: 0,
         }
     }
 

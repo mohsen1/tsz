@@ -1341,7 +1341,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// TYPE, `REGULAR_ENUM`, or `CONST_ENUM` flags. Returns the raw symbol ID (u32).
     /// Skips compiler-managed types (Array, ReadonlyArray, etc.) that `TypeLowering`
     /// handles specially.
-    fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
+    pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
         use tsz_solver::is_compiler_managed_type;
 
@@ -1415,7 +1415,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ///
     /// Extended variant used by `compute_type` fallback and `mapped_type` resolvers
     /// that also checks `lib_contexts` and includes `REGULAR_ENUM/CONST_ENUM` flags.
-    fn resolve_value_symbol_with_libs(&self, node_idx: NodeIndex) -> Option<u32> {
+    pub(crate) fn resolve_value_symbol_with_libs(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
 
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
@@ -1453,117 +1453,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Resolve a DefId from a node index via the type resolver.
     fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<tsz_solver::def::DefId> {
-        let sym_id = self.resolve_type_symbol(node_idx)?;
-        Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
-    }
+        let sym_id_raw = self.resolve_type_symbol(node_idx)?;
+        let sym_id = tsz_binder::SymbolId(sym_id_raw);
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
 
-    /// Resolve a DefId with support for qualified names (e.g., `AnimalType.cat`).
-    ///
-    /// Used by the `compute_type` fallback path where template literal types may
-    /// reference enum members via qualified names inside `${...}`.
-    fn resolve_def_id_with_qualified_names(
-        &self,
-        node_idx: NodeIndex,
-    ) -> Option<tsz_solver::def::DefId> {
-        use tsz_parser::parser::syntax_kind_ext;
+        // Ensure type alias type params and body are registered for Application expansion.
+        // TypeLowering creates Application(Lazy(DefId)) without calling get_type_of_symbol,
+        // so type aliases referenced inside lowered types (mapped type templates, conditional
+        // types, etc.) may not have their params/body registered in the resolver.
+        self.ensure_type_alias_resolved(sym_id, def_id);
 
-        if let Some(sym_id) = self.resolve_type_symbol(node_idx) {
-            return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
-        }
-
-        let node = self.ctx.arena.get(node_idx)?;
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            // For the left part of a qualified name (e.g., `Lib` in `Lib.Base`),
-            // we need to also consider ALIAS symbols because import declarations
-            // like `import Lib = require('./helper')` create ALIAS-flagged symbols.
-            // resolve_type_symbol only checks TYPE | ENUM flags, so try it first,
-            // then fall back to resolve_type_or_alias_symbol for the namespace part.
-            let left_sym_raw = self
-                .resolve_type_symbol(qn.left)
-                .or_else(|| self.resolve_type_or_alias_symbol(qn.left))?;
-            let left_sym_id = tsz_binder::SymbolId(left_sym_raw);
-
-            // If the left symbol is an import alias (e.g., `import Lib = require('./helper')`),
-            // follow the import to the target module symbol which holds the actual exports.
-            let resolved_sym_id = self
-                .ctx
-                .binder
-                .resolve_import_symbol(left_sym_id)
-                .unwrap_or(left_sym_id);
-            let resolved_symbol = self.ctx.binder.get_symbol(resolved_sym_id)?;
-
-            let right_node = self.ctx.arena.get(qn.right)?;
-            let right_ident = self.ctx.arena.get_identifier(right_node)?;
-            let right_name = right_ident.escaped_text.as_str();
-
-            // Look up the member in the resolved symbol's exports
-            if let Some(member_sym_id) = resolved_symbol.exports.as_ref()?.get(right_name) {
-                return Some(self.ctx.get_or_create_def_id(member_sym_id));
-            }
-
-            // Also check lib contexts for the member (e.g., global namespace types)
-            for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(lib_resolved) = lib_ctx.binder.resolve_import_symbol(left_sym_id)
-                    && let Some(lib_symbol) = lib_ctx.binder.get_symbol(lib_resolved)
-                    && let Some(member_sym_id) = lib_symbol.exports.as_ref()?.get(right_name)
-                {
-                    return Some(self.ctx.get_or_create_def_id(member_sym_id));
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Resolve a type-or-alias-or-namespace symbol from a node index.
-    ///
-    /// Like `resolve_type_symbol` but also matches ALIAS and NAMESPACE-flagged
-    /// symbols, needed for:
-    /// - Import declarations used as namespace qualifiers
-    ///   (e.g., `import Lib = require('./helper')` then `Lib.Type`)
-    /// - Namespace declarations used as qualified name prefixes
-    ///   (e.g., `declare namespace NS { class C {} }` then `NS.C`)
-    fn resolve_type_or_alias_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
-        use tsz_binder::symbol_flags;
-
-        let ident = self.ctx.arena.get_identifier_at(node_idx)?;
-        let name = ident.escaped_text.as_str();
-
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if (symbol.flags
-                & (symbol_flags::TYPE
-                    | symbol_flags::ALIAS
-                    | symbol_flags::REGULAR_ENUM
-                    | symbol_flags::CONST_ENUM
-                    | symbol_flags::VALUE_MODULE
-                    | symbol_flags::NAMESPACE_MODULE))
-                != 0
-            {
-                return Some(sym_id.0);
-            }
-        }
-
-        for lib_ctx in &self.ctx.lib_contexts {
-            if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
-                if (symbol.flags
-                    & (symbol_flags::TYPE
-                        | symbol_flags::ALIAS
-                        | symbol_flags::REGULAR_ENUM
-                        | symbol_flags::CONST_ENUM
-                        | symbol_flags::VALUE_MODULE
-                        | symbol_flags::NAMESPACE_MODULE))
-                    != 0
-                {
-                    let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
-                    return Some(file_sym_id.0);
-                }
-            }
-        }
-
-        None
+        Some(def_id)
     }
 
     /// Collect type parameter bindings from the current scope.

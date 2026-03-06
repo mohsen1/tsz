@@ -332,15 +332,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // HOMOMORPHIC MAPPED TYPE TUPLE/ARRAY PRESERVATION
-        // When the body is a homomorphic mapped type (constraint = keyof T) and the
-        // type argument for T is a tuple or array, we must avoid the normal
-        // instantiate_type path because it eagerly evaluates the mapped type with
-        // NoopResolver, which can't resolve lib types like NonNullable. This causes
-        // the tuple preservation path in evaluate_mapped to miss.
+        // HOMOMORPHIC MAPPED TYPE RESOLUTION WITH FULL RESOLVER
+        // When the body is a homomorphic mapped type (constraint = keyof T), we must
+        // avoid the normal instantiate_type path because it eagerly evaluates the
+        // mapped type with NoopResolver. NoopResolver can't resolve Application types
+        // like `Func<T[K]>` (Lazy(DefId) references), causing property values to
+        // contain unresolved Application types. This affects both tuple/array
+        // preservation and recursive mapped types like `Spec<T>`.
         // Instead, we instantiate only the template and construct a new MappedType
         // with `keyof <resolved_arg>` as constraint, then let evaluate_type_with_env
-        // (which has the full resolver) evaluate it — correctly preserving tuple structure.
+        // (which has the full resolver) evaluate it — correctly resolving all types.
         if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type) {
             let mapped = self.ctx.types.mapped_type(mapped_id);
             if let Some(keyof_source) =
@@ -350,47 +351,43 @@ impl<'a> CheckerState<'a> {
                 && idx < args.len()
             {
                 let evaluated_arg = self.evaluate_type_with_env(args[idx]);
-                let is_tuple_or_array = tsz_solver::is_tuple_type(self.ctx.types, evaluated_arg)
-                    || tsz_solver::is_array_type(self.ctx.types, evaluated_arg);
-                if is_tuple_or_array {
-                    // Evaluate all args for substitution
-                    let evaluated_args: Vec<TypeId> = args
-                        .iter()
-                        .map(|&arg| self.evaluate_type_with_env(arg))
-                        .collect();
-                    // Substitute outer type params into mapped type parts,
-                    // keeping the iteration variable (K) intact.
-                    // CRITICAL: We must shadow K in the substitution to prevent
-                    // the instantiator from replacing K with its constraint.
-                    // When K has constraint `keyof T` and T is substituted with a
-                    // concrete type, the instantiator would replace K with `keyof <tuple>`
-                    // (via the TypeParameter constraint fallback), destroying the
-                    // iteration variable that evaluate_mapped_tuple needs.
-                    let mut subst =
-                        TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-                    // Create a constraint-free version of K to shadow the constrained one
-                    let k_unconstrained = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
-                        name: mapped.type_param.name,
-                        constraint: None,
-                        default: None,
-                        is_const: false,
-                    });
-                    subst.insert(mapped.type_param.name, k_unconstrained);
-                    let inst_template = instantiate_type(self.ctx.types, mapped.template, &subst);
-                    let inst_name_type = mapped
-                        .name_type
-                        .map(|nt| instantiate_type(self.ctx.types, nt, &subst));
-                    let inst_mapped = tsz_solver::MappedType {
-                        type_param: mapped.type_param.clone(),
-                        constraint: self.ctx.types.keyof(evaluated_arg),
-                        name_type: inst_name_type,
-                        template: inst_template,
-                        readonly_modifier: mapped.readonly_modifier,
-                        optional_modifier: mapped.optional_modifier,
-                    };
-                    let mapped_type_id = self.ctx.types.mapped(inst_mapped);
-                    return self.evaluate_type_with_env(mapped_type_id);
-                }
+                // Evaluate all args for substitution
+                let evaluated_args: Vec<TypeId> = args
+                    .iter()
+                    .map(|&arg| self.evaluate_type_with_env(arg))
+                    .collect();
+                // Substitute outer type params into mapped type parts,
+                // keeping the iteration variable (K) intact.
+                // CRITICAL: We must shadow K in the substitution to prevent
+                // the instantiator from replacing K with its constraint.
+                // When K has constraint `keyof T` and T is substituted with a
+                // concrete type, the instantiator would replace K with `keyof <tuple>`
+                // (via the TypeParameter constraint fallback), destroying the
+                // iteration variable that evaluate_mapped needs.
+                let mut subst =
+                    TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
+                // Create a constraint-free version of K to shadow the constrained one
+                let k_unconstrained = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+                    name: mapped.type_param.name,
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                });
+                subst.insert(mapped.type_param.name, k_unconstrained);
+                let inst_template = instantiate_type(self.ctx.types, mapped.template, &subst);
+                let inst_name_type = mapped
+                    .name_type
+                    .map(|nt| instantiate_type(self.ctx.types, nt, &subst));
+                let inst_mapped = tsz_solver::MappedType {
+                    type_param: mapped.type_param.clone(),
+                    constraint: self.ctx.types.keyof(evaluated_arg),
+                    name_type: inst_name_type,
+                    template: inst_template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+                let mapped_type_id = self.ctx.types.mapped(inst_mapped);
+                return self.evaluate_type_with_env(mapped_type_id);
             }
         }
 

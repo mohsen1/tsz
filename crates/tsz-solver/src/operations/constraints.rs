@@ -1630,6 +1630,80 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        // Case 6: template is a Mapped type (from recursive type alias expansion).
+        // When a recursive type alias like `Spec<T[K]>` evaluates to a mapped type
+        // `{ [P in keyof T[K]]: Func<T[K][P]> | Spec<T[K][P]> }`, and the source is
+        // an object, perform a nested reverse-mapped inference with T[K] as the new
+        // target placeholder. This reconstructs the inner type from source properties.
+        if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(template) {
+            let mapped = self.interner.mapped_type(mapped_id);
+            // Extract the new target placeholder from the constraint:
+            // keyof X → X becomes the new placeholder for recursive reversal
+            if let Some(TypeData::KeyOf(inner_placeholder)) =
+                self.interner.lookup(mapped.constraint)
+                && let Some(
+                    TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
+                ) = self.interner.lookup(source_value)
+            {
+                let source_obj = self.interner.object_shape(source_shape_id);
+                let source_props = source_obj.properties.clone();
+                let mut reverse_properties = Vec::new();
+                let mut any_reversed = false;
+
+                for prop in &source_props {
+                    // Instantiate the mapped template with the concrete key
+                    let key_literal = self.interner.literal_string_atom(prop.name);
+                    let mut subst = TypeSubstitution::new();
+                    subst.insert(mapped.type_param.name, key_literal);
+                    let instantiated_template =
+                        instantiate_type(self.interner, mapped.template, &subst);
+
+                    // Recursively reverse through the instantiated template,
+                    // using the inner placeholder (e.g., T["nested"]) instead of T
+                    let reversed_value = match self.reverse_infer_through_template(
+                        prop.type_id,
+                        instantiated_template,
+                        inner_placeholder,
+                    ) {
+                        Some(v) => {
+                            any_reversed = true;
+                            v
+                        }
+                        None => TypeId::UNKNOWN,
+                    };
+
+                    // Reverse modifiers (same logic as the outer level)
+                    let optional = match mapped.optional_modifier {
+                        Some(MappedModifier::Add) => false,
+                        Some(MappedModifier::Remove) => true,
+                        None => prop.optional,
+                    };
+                    let readonly = match mapped.readonly_modifier {
+                        Some(MappedModifier::Add) => false,
+                        Some(MappedModifier::Remove) => true,
+                        None => prop.readonly,
+                    };
+
+                    reverse_properties.push(PropertyInfo {
+                        name: prop.name,
+                        type_id: reversed_value,
+                        write_type: reversed_value,
+                        optional,
+                        readonly,
+                        is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                    });
+                }
+
+                if any_reversed {
+                    return Some(self.interner.object(reverse_properties));
+                }
+            }
+            return None;
+        }
+
         // For any other template shape (conditional types, etc.),
         // we can't safely reverse.
         None
