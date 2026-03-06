@@ -567,7 +567,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // E.g., `C` is NOT identical to `C | D` even when `D extends C`.
         let a_is_union = matches!(self.interner.lookup(a), Some(TypeData::Union(_)));
         let b_is_union = matches!(self.interner.lookup(b), Some(TypeData::Union(_)));
-        if a_is_union != b_is_union {
+        let a_is_intersection = matches!(self.interner.lookup(a), Some(TypeData::Intersection(_)));
+        let b_is_intersection = matches!(self.interner.lookup(b), Some(TypeData::Intersection(_)));
+        // When one side is an intersection, skip the union/non-union identity mismatch
+        // because intersections of unions can distribute to unions of intersections
+        // (e.g., `(A|B) & (C|D)` ≡ `A&C | A&D | B&C | B&D`)
+        if a_is_union != b_is_union && !a_is_intersection && !b_is_intersection {
             return false;
         }
 
@@ -631,11 +636,42 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if !all_are_unions {
             return ty;
         }
-        // Use the existing distribution logic
-        let flat: smallvec::SmallVec<[TypeId; 8]> = members.iter().copied().collect();
-        self.interner
-            .distribute_intersection_over_unions(&flat)
-            .unwrap_or(ty)
+        // Collect member TypeIds (each is a union type)
+        let union_types: Vec<TypeId> = members.iter().copied().collect();
+        // Guard: abort if total combinations would exceed 25
+        let mut total_combinations = 1usize;
+        for &ut in &union_types {
+            if let Some(TypeData::Union(ul)) = self.interner.lookup(ut) {
+                total_combinations =
+                    total_combinations.saturating_mul(self.interner.type_list(ul).len());
+                if total_combinations > 25 {
+                    return ty;
+                }
+            }
+        }
+        // Build combinations: cartesian product of all union members
+        let mut combinations: Vec<Vec<TypeId>> = vec![vec![]];
+        for &ut in &union_types {
+            let Some(TypeData::Union(ul)) = self.interner.lookup(ut) else {
+                return ty;
+            };
+            let union_members = self.interner.type_list(ul);
+            let mut new_combinations = Vec::new();
+            for combination in &combinations {
+                for &um in union_members.iter() {
+                    let mut new_combo = combination.clone();
+                    new_combo.push(um);
+                    new_combinations.push(new_combo);
+                }
+            }
+            combinations = new_combinations;
+        }
+        // Convert each combination to an intersection TypeId and union them (DNF)
+        let dnf_members: Vec<TypeId> = combinations
+            .into_iter()
+            .map(|combo| self.interner.intersection(combo))
+            .collect();
+        self.interner.union(dnf_members)
     }
 
     /// Check if two types involving enums are compatible for redeclaration.
