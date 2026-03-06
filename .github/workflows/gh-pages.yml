@@ -119,7 +119,7 @@ jobs:
           retention-days: 7
 
   build:
-    needs: [check, benchmark, wasm]
+    needs: [check, wasm]
     if: needs.check.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
