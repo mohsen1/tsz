@@ -825,6 +825,13 @@ impl<'a> CheckerState<'a> {
     fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            if symbol.flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
+                    return self.symbol_is_namespace_only(target_sym_id);
+                }
+            }
+
             let is_namespace = (symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::NAMESPACE_MODULE

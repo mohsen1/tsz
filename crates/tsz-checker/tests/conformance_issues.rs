@@ -355,6 +355,64 @@ type OldDiff<T extends keyof any, U extends keyof any> = (
 }
 
 #[test]
+fn test_mapped_type_direct_circular_constraint_reports_ts2313() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type T00 = { [P in P]: string };
+",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2313),
+        "Expected TS2313 for direct mapped type parameter self reference.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Should not emit TS2304 for self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_type_invalid_key_constraint_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Foo2<T, F extends keyof T> = {
+    pf: { [P in F]?: T[P] },
+    pt: { [P in T]?: T[P] },
+};
+
+type O = { x: number; y: boolean; };
+let o: O = { x: 5, y: false };
+    let f: Foo2<O, 'x'> = {
+        pf: { x: 7 },
+        pt: { x: 7, y: false },
+    };
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Expected TS2536 for `T[P]` when mapped key is constrained as `P in T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_type_key_index_access_constraint_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type AB = { a: 'a'; b: 'a' };
+type T1<K extends keyof AB> = { [key in AB[K]]: true };
+type T2<K extends 'a'|'b'> = T1<K>[K];
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Expected TS2536 for indexing mapped result with unconstrained key subset (`AB[K]` values).\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_element_access_mismatched_keyof_source_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
