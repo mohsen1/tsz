@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-06T11:57:51Z",
-  "git_sha": "4274269af7966945f180f5947374c5ecf5238d2e",
+  "timestamp": "2026-03-06T12:38:04Z",
+  "git_sha": "6b2c64a5b600bdcbb4b180a24dd0420bfd69f3f8",
   "summary": {
     "total_tests": 12570,
-    "passed": 10035,
-    "failed": 2535,
+    "passed": 10037,
+    "failed": 2533,
     "pass_rate": 79.8
   },
   "areas_by_pass_rate": [
@@ -233,13 +233,6 @@
       "pass_rate": 75.0
     },
     {
-      "area": "classes/members",
-      "total": 197,
-      "passed": 149,
-      "failed": 48,
-      "pass_rate": 75.63
-    },
-    {
       "area": "expressions/unaryOperators",
       "total": 58,
       "passed": 44,
@@ -280,6 +273,13 @@
       "passed": 26,
       "failed": 8,
       "pass_rate": 76.47
+    },
+    {
+      "area": "classes/members",
+      "total": 197,
+      "passed": 151,
+      "failed": 46,
+      "pass_rate": 76.65
     },
     {
       "area": "internalModules/DeclarationMerging",
@@ -1168,11 +1168,11 @@
       "count": 3
     },
     {
-      "code": "TS2488",
+      "code": "TS2341",
       "count": 3
     },
     {
-      "code": "TS2341",
+      "code": "TS2488",
       "count": 3
     },
     {
@@ -1402,11 +1402,11 @@
       "count": 1
     },
     {
-      "code": "TS2454",
+      "code": "TS2366",
       "count": 1
     },
     {
-      "code": "TS2366",
+      "code": "TS2454",
       "count": 1
     },
     {
@@ -1895,7 +1895,7 @@
   "categories": {
     "false_positive": 238,
     "all_missing": 421,
-    "wrong_code": 1816,
-    "close_to_passing": 1532
+    "wrong_code": 1814,
+    "close_to_passing": 1530
   }
 }
