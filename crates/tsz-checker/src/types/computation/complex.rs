@@ -658,48 +658,38 @@ impl<'a> CheckerState<'a> {
                     if let Some(contextual) = self.ctx.contextual_type {
                         use tsz_binder::SymbolId;
 
-                        if let (
-                            Some(tsz_solver::TypeData::Application(src_app_id)),
-                            Some(tsz_solver::TypeData::Application(dst_app_id)),
-                        ) = (
-                            self.ctx.types.lookup(shape.return_type),
-                            self.ctx.types.lookup(contextual),
+                        if let (Some((src_base, src_args)), Some((dst_base, dst_args))) = (
+                            query::get_application_info(self.ctx.types, shape.return_type),
+                            query::get_application_info(self.ctx.types, contextual),
                         ) {
-                            let src_app = self.ctx.types.type_application(src_app_id);
-                            let dst_app = self.ctx.types.type_application(dst_app_id);
                             let base_name = |base: TypeId| -> Option<&str> {
-                                match self.ctx.types.lookup(base) {
-                                    Some(tsz_solver::TypeData::Lazy(def_id)) => self
-                                        .ctx
-                                        .def_to_symbol_id(def_id)
-                                        .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                                        .map(|symbol| symbol.escaped_name.as_str()),
-                                    Some(tsz_solver::TypeData::TypeQuery(sym_ref)) => self
-                                        .ctx
-                                        .binder
-                                        .get_symbol(SymbolId(sym_ref.0))
-                                        .map(|symbol| symbol.escaped_name.as_str()),
-                                    _ => None,
-                                }
+                                query::lazy_def_id(self.ctx.types, base)
+                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                    .map(|symbol| symbol.escaped_name.as_str())
+                                    .or_else(|| {
+                                        tsz_solver::visitor::type_query_symbol(self.ctx.types, base)
+                                            .and_then(|sym_ref| {
+                                                self.ctx
+                                                    .binder
+                                                    .get_symbol(SymbolId(sym_ref.0))
+                                                    .map(|symbol| symbol.escaped_name.as_str())
+                                            })
+                                    })
                             };
-                            let same_base = src_app.base == dst_app.base
+                            let same_base = src_base == dst_base
                                 || matches!(
-                                    (base_name(src_app.base), base_name(dst_app.base)),
+                                    (base_name(src_base), base_name(dst_base)),
                                     (Some(left), Some(right)) if left == right
                                 );
-                            if same_base && src_app.args.len() == dst_app.args.len() {
-                                for (src_arg, dst_arg) in
-                                    src_app.args.iter().zip(dst_app.args.iter())
-                                {
-                                    if let Some(tsz_solver::TypeData::TypeParameter(info)) =
-                                        self.ctx.types.lookup(*src_arg)
+                            if same_base && src_args.len() == dst_args.len() {
+                                for (src_arg, dst_arg) in src_args.iter().zip(dst_args.iter()) {
+                                    if let Some(info) =
+                                        query::type_parameter_info(self.ctx.types, *src_arg)
                                     {
                                         let current = substitution.get(info.name);
                                         let unresolved = current.is_none_or(|ty| {
-                                            matches!(
-                                                self.ctx.types.lookup(ty),
-                                                Some(tsz_solver::TypeData::TypeParameter(_))
-                                            )
+                                            query::type_parameter_info(self.ctx.types, ty).is_some()
                                         });
                                         if unresolved {
                                             substitution.insert(info.name, *dst_arg);
@@ -722,19 +712,17 @@ impl<'a> CheckerState<'a> {
                                     && self.is_promise_type(contextual)
                                     && let Some(inner) =
                                         self.promise_like_return_type_argument(contextual)
-                                    && let Some(tsz_solver::TypeData::Function(exec_shape_id)) =
-                                        self.ctx.types.lookup(param_type)
+                                    && let Some(exec_shape) =
+                                        query::get_function_shape(self.ctx.types, param_type)
                                 {
-                                    let mut exec_shape =
-                                        (*self.ctx.types.function_shape(exec_shape_id)).clone();
+                                    let mut exec_shape = (*exec_shape).clone();
                                     if let Some(first_param) = exec_shape.params.first_mut()
-                                        && let Some(tsz_solver::TypeData::Function(
-                                            resolve_shape_id,
-                                        )) = self.ctx.types.lookup(first_param.type_id)
+                                        && let Some(resolve_shape) = query::get_function_shape(
+                                            self.ctx.types,
+                                            first_param.type_id,
+                                        )
                                     {
-                                        let mut resolve_shape =
-                                            (*self.ctx.types.function_shape(resolve_shape_id))
-                                                .clone();
+                                        let mut resolve_shape = (*resolve_shape).clone();
                                         if let Some(resolve_first) =
                                             resolve_shape.params.first_mut()
                                         {
@@ -770,15 +758,13 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     param_type,
                                 ) {
-                                    if let Some(tsz_solver::TypeData::TypeParameter(info)) =
-                                        self.ctx.types.lookup(ty)
+                                    if let Some(info) =
+                                        query::type_parameter_info(self.ctx.types, ty)
                                     {
                                         let current = round2_substitution.get(info.name);
                                         let unresolved = current.is_none_or(|mapped| {
-                                            matches!(
-                                                self.ctx.types.lookup(mapped),
-                                                Some(tsz_solver::TypeData::TypeParameter(_))
-                                            )
+                                            query::type_parameter_info(self.ctx.types, mapped)
+                                                .is_some()
                                         });
                                         if unresolved {
                                             round2_substitution.insert(info.name, inner);
@@ -1508,368 +1494,6 @@ impl<'a> CheckerState<'a> {
         };
 
         Some((prop_name, type_id))
-    }
-
-    /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
-    /// Returns two sets:
-    /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
-    /// - `this.prop` assignments from inside prototype method bodies (typed as T | undefined)
-    #[allow(clippy::type_complexity)]
-    fn collect_prototype_members_and_this_properties(
-        &mut self,
-        func_decl_idx: NodeIndex,
-        func_name: &str,
-        parent_sym: tsz_binder::SymbolId,
-    ) -> (
-        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
-        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
-    ) {
-        use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
-
-        let mut method_bindings = Vec::new();
-        let mut this_props = Vec::new();
-
-        // Find the parent block/source file containing the function declaration
-        let parent_idx = self
-            .ctx
-            .arena
-            .get_extended(func_decl_idx)
-            .map_or(NodeIndex::NONE, |e| e.parent);
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return (method_bindings, this_props);
-        };
-
-        // Get sibling statements from the parent block or source file
-        let siblings: Vec<NodeIndex> = if let Some(block) = self.ctx.arena.get_block(parent_node) {
-            block.statements.nodes.clone()
-        } else if let Some(source) = self.ctx.arena.get_source_file(parent_node) {
-            source.statements.nodes.clone()
-        } else {
-            return (method_bindings, this_props);
-        };
-
-        // Look for `FuncName.prototype.X = rhs` patterns
-        for &stmt_idx in &siblings {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
-                continue;
-            };
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-
-            // Check LHS: FuncName.prototype.methodName
-            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
-                continue;
-            };
-            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                continue;
-            }
-            let Some(lhs_access) = self.ctx.arena.get_access_expr(lhs_node) else {
-                continue;
-            };
-
-            // The object should be FuncName.prototype
-            let Some(proto_node) = self.ctx.arena.get(lhs_access.expression) else {
-                continue;
-            };
-            if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                continue;
-            }
-            let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node) else {
-                continue;
-            };
-
-            // Check: object is FuncName
-            let Some(base_node) = self.ctx.arena.get(proto_access.expression) else {
-                continue;
-            };
-            if base_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
-                continue;
-            };
-            if base_ident.escaped_text != func_name {
-                continue;
-            }
-
-            // Check: property is "prototype"
-            let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument) else {
-                continue;
-            };
-            let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node) else {
-                continue;
-            };
-            if proto_ident.escaped_text != "prototype" {
-                continue;
-            }
-
-            // Get the method name from the LHS
-            let Some(method_name_node) = self.ctx.arena.get(lhs_access.name_or_argument) else {
-                continue;
-            };
-            let Some(method_ident) = self.ctx.arena.get_identifier(method_name_node) else {
-                continue;
-            };
-            let method_name_str = method_ident.escaped_text.clone();
-            let method_name_atom = self.ctx.types.intern_string(&method_name_str);
-
-            // Add the prototype method itself as an instance property
-            let rhs_type = self.get_type_of_node(binary.right);
-            method_bindings.push((
-                method_name_atom,
-                tsz_solver::PropertyInfo {
-                    name: method_name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: Some(parent_sym),
-                    declaration_order: 0,
-                },
-            ));
-
-            // If RHS is a function, also collect this-property assignments from its body
-            let Some(rhs_node) = self.ctx.arena.get(binary.right) else {
-                continue;
-            };
-            if rhs_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
-                continue;
-            }
-            let Some(rhs_func) = self.ctx.arena.get_function(rhs_node) else {
-                continue;
-            };
-            let method_body = rhs_func.body;
-            if method_body.is_none() {
-                continue;
-            }
-
-            // Collect this-property assignments from the prototype method body
-            let mut method_this_props: rustc_hash::FxHashMap<
-                tsz_common::interner::Atom,
-                tsz_solver::PropertyInfo,
-            > = rustc_hash::FxHashMap::default();
-            self.collect_js_constructor_this_properties(
-                method_body,
-                &mut method_this_props,
-                Some(parent_sym),
-            );
-
-            for (name, prop) in method_this_props {
-                this_props.push((name, prop));
-            }
-        }
-
-        (method_bindings, this_props)
-    }
-
-    /// Resolve a self-referencing class constructor in a static initializer.
-    /// When `new C()` appears inside C's own static property initializer, the
-    /// constructor type is a Lazy placeholder. Returns the cached instance type
-    /// if the symbol is a class with a cached instance type.
-    fn resolve_self_referencing_constructor(
-        &self,
-        constructor_type: TypeId,
-        expr_idx: NodeIndex,
-    ) -> Option<TypeId> {
-        use tsz_binder::symbol_flags;
-
-        tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type)?;
-        let sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, expr_idx)
-            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
-            return None;
-        }
-        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
-            return Some(instance_type);
-        }
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
-        self.ctx.class_instance_type_cache.get(&decl_idx).copied()
-    }
-
-    /// Check if a type contains any abstract class constructors.
-    ///
-    /// This handles union types like `typeof AbstractA | typeof ConcreteB`.
-    /// Recursively checks union and intersection types for abstract class members.
-    pub(crate) fn type_contains_abstract_class(&self, type_id: TypeId) -> bool {
-        self.type_contains_abstract_class_inner(type_id, &mut rustc_hash::FxHashSet::default())
-    }
-
-    fn type_contains_abstract_class_inner(
-        &self,
-        type_id: TypeId,
-        visited: &mut rustc_hash::FxHashSet<TypeId>,
-    ) -> bool {
-        use tsz_binder::SymbolId;
-        use tsz_binder::symbol_flags;
-
-        // Prevent infinite loops in circular type references
-        if !visited.insert(type_id) {
-            return false;
-        }
-
-        // Special handling for Callable types - check if the symbol is abstract
-        // or if the callable shape itself is marked abstract (for anonymous
-        // construct signature types like `abstract new (a: string) => string`).
-        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
-            if callable_shape.is_abstract {
-                return true;
-            }
-            if let Some(sym_id) = callable_shape.symbol
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                return (symbol.flags & symbol_flags::ABSTRACT) != 0;
-            }
-        }
-        // If no symbol or not abstract, fall through to general classification
-
-        // Special handling for Lazy types - need to check via context
-        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
-            // Try to get the SymbolId for this DefId
-            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
-                if is_abstract {
-                    return true;
-                }
-                // If not abstract, check if it's a type alias and recurse into its body
-                if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-                    // Get the body from the definition_store and recurse
-                    // NOTE: We need to use resolve_lazy_type here to handle nested type aliases
-                    if let Some(def) = self.ctx.definition_store.get(def_id)
-                        && let Some(body_type) = def.body
-                    {
-                        // Recursively check the body (which may be a union, another lazy, etc.)
-                        return self.type_contains_abstract_class_inner(body_type, visited);
-                    }
-                }
-            }
-            // If we can't map to a symbol, fall through to general classification
-        }
-
-        match query::classify_for_abstract_check(self.ctx.types, type_id) {
-            // TypeQuery is `typeof ClassName` - check if the symbol is abstract
-            // Since get_type_from_type_query now uses real SymbolIds, we can directly look up
-            query::AbstractClassCheckKind::TypeQuery(sym_ref) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
-                {
-                    return true;
-                }
-                false
-            }
-            // Union type - check if ANY constituent is abstract
-            query::AbstractClassCheckKind::Union(members) => members
-                .iter()
-                .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
-            // Intersection type - check if ANY constituent is abstract
-            query::AbstractClassCheckKind::Intersection(members) => members
-                .iter()
-                .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
-            query::AbstractClassCheckKind::NotAbstract => false,
-        }
-    }
-
-    /// Get the construct type from a `TypeId`, used for new expressions.
-    ///
-    /// This is similar to `get_construct_signature_return_type` but returns
-    /// the full construct type (not just the return type) for new expressions.
-    ///
-    /// The `emit_error` parameter controls whether we emit TS2507 errors.
-    /// Resolve Ref types to their actual types.
-    ///
-    /// For symbol references (Ref), this resolves them to the symbol's declared type.
-    /// This is important for new expressions where we need the actual constructor type
-    /// with construct signatures, not just a symbolic reference.
-    pub(crate) fn resolve_ref_type(&mut self, type_id: TypeId) -> TypeId {
-        match query::classify_for_lazy_resolution(self.ctx.types, type_id) {
-            query::LazyTypeKind::Lazy(def_id) => {
-                if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let symbol_type = self.get_type_of_symbol(symbol_id);
-                    if symbol_type == type_id {
-                        // symbol_types cache contains the Lazy type itself (can happen
-                        // when check_variable_declaration overwrites the structural type
-                        // with the Lazy annotation type for `declare var X: X` patterns).
-                        // Fall back to the type environment which may still have the
-                        // structural type from initial symbol resolution.
-                        if let Ok(env) = self.ctx.type_env.try_borrow()
-                            && let Some(env_type) = env.get_def(def_id)
-                            && env_type != type_id
-                        {
-                            return env_type;
-                        }
-                        type_id
-                    } else {
-                        symbol_type
-                    }
-                } else {
-                    type_id
-                }
-            }
-            _ => type_id, // Handle all cases
-        }
-    }
-
-    /// Resolve type parameter constraints for construct expressions.
-    ///
-    /// When the constructor type is a `TypeParameter` (e.g., `T extends Constructable`),
-    /// the solver's `resolve_new` tries to look through the constraint. But if the
-    /// constraint is a Lazy type (interface), the solver can't resolve it because it
-    /// lacks the type environment. This method pre-resolves the constraint so the
-    /// solver can find construct signatures.
-    fn resolve_type_param_for_construct(&mut self, type_id: TypeId) -> TypeId {
-        let factory = self.ctx.types.factory();
-        let Some(info) = query::type_parameter_info(self.ctx.types, type_id) else {
-            return type_id;
-        };
-
-        let Some(constraint) = info.constraint else {
-            return type_id;
-        };
-
-        // Resolve the constraint if it's a Lazy type (interface/type alias)
-        let resolved_constraint = self.resolve_lazy_type(constraint);
-        if resolved_constraint == constraint {
-            return type_id;
-        }
-
-        // Create a new TypeParameter with the resolved constraint
-        let new_info = tsz_solver::TypeParamInfo {
-            constraint: Some(resolved_constraint),
-            ..info
-        };
-        factory.type_param(new_info)
     }
 
     /// Get type from a union type node (A | B).

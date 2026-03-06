@@ -406,11 +406,8 @@ impl<'a> CheckerState<'a> {
         // We check both original and evaluated forms because evaluate_type_for_binary_ops
         // may partially resolve the type.
         let is_infer_placeholder = |type_id: TypeId| -> bool {
-            if let Some(tsz_solver::TypeData::TypeParameter(tp)) = self.ctx.types.lookup(type_id) {
-                let name = self.ctx.types.resolve_atom(tp.name);
-                return name.starts_with("__infer_");
-            }
-            false
+            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id)
+                .is_some_and(|tp| self.ctx.types.resolve_atom(tp.name).starts_with("__infer_"))
         };
         if is_infer_placeholder(eval_left)
             || is_infer_placeholder(eval_right)

@@ -773,21 +773,18 @@ impl<'a> CheckerState<'a> {
                             trace!(
                                 arg_index = i,
                                 param_type_id = param_type.0,
-                                param_type_key = ?self.ctx.types.lookup(param_type),
                                 param_type_app_args = ?tsz_solver::type_queries::get_application_info(
                                     self.ctx.types,
                                     param_type,
                                 )
                                 .map(|(_, args)| args),
                                 instantiated_id = instantiated.0,
-                                instantiated_key = ?self.ctx.types.lookup(instantiated),
                                 instantiated_app_args = ?tsz_solver::type_queries::get_application_info(
                                     self.ctx.types,
                                     instantiated,
                                 )
                                 .map(|(_, args)| args),
                                 evaluated_id = evaluated.0,
-                                evaluated_key = ?self.ctx.types.lookup(evaluated),
                                 "Round 2: instantiated parameter type"
                             );
                             Some(if is_rest_param {
@@ -801,7 +798,6 @@ impl<'a> CheckerState<'a> {
                         trace!(
                             arg_index = i,
                             ctx_type_id = ?ctx_type.map(|t| t.0),
-                            ctx_type_key = ?ctx_type.and_then(|t| self.ctx.types.lookup(t)),
                             "Round 2: contextual type for argument"
                         );
                         round2_contextual_types.push(ctx_type);
