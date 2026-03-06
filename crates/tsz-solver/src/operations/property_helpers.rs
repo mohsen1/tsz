@@ -263,10 +263,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeData::Intrinsic(crate::types::IntrinsicKind::String)
             | TypeData::KeyOf(_)
-            | TypeData::TypeParameter(_)
             | TypeData::Conditional(_)
             | TypeData::Application(_)
             | TypeData::Infer(_) => true,
+
+            // Type parameter constraints should be checked recursively. A mapped type
+            // like `Pick<T, K>` must not treat all keys as valid when `K` is
+            // constrained to `keyof T`.
+            TypeData::TypeParameter(info) => info
+                .constraint
+                .is_some_and(|constraint| self.is_key_in_mapped_constraint(constraint, prop_name)),
 
             // Other types - be conservative and reject
             _ => false,

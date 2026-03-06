@@ -1528,8 +1528,9 @@ impl<'a> CheckerState<'a> {
     /// TS2322: Check that a mapped type's constraint is assignable to `string | number | symbol`.
     ///
     /// For `{ [P in X]: T }`, validates that X is a valid property key type.
-    /// Resolves just the constraint type node (not the whole mapped type) to avoid
-    /// side effects from full type resolution.
+    /// Resolves the constraint type node and validates the mapped template using
+    /// the local mapped key symbol so template-index errors (e.g. TS2536) are
+    /// surfaced.
     fn check_mapped_type_constraint(&mut self, mapped_node_idx: NodeIndex) {
         use tsz_parser::parser::NodeIndex as ParserNodeIndex;
 
@@ -1590,18 +1591,14 @@ impl<'a> CheckerState<'a> {
             .ctx
             .type_parameter_scope
             .insert(name.clone(), provisional_type_id);
-        let mapped_param_binding = Some((name.clone(), previous));
 
         // Resolve just the constraint type node (e.g., Date, T, keyof T)
         // rather than the whole mapped type, to avoid side effects.
         let constraint_type = self.get_type_from_type_node(tp_data.constraint);
         if constraint_type == TypeId::ERROR {
-            if let Some((name, previous)) = mapped_param_binding {
-                if let Some(prev_type) = previous {
-                    self.ctx.type_parameter_scope.insert(name, prev_type);
-                } else {
-                    self.ctx.type_parameter_scope.remove(&name);
-                }
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
             }
             return;
         }
@@ -1622,64 +1619,56 @@ impl<'a> CheckerState<'a> {
                 message,
                 2313,
             );
-            if let Some((name, previous)) = mapped_param_binding {
-                if let Some(prev_type) = previous {
-                    self.ctx.type_parameter_scope.insert(name, prev_type);
-                } else {
-                    self.ctx.type_parameter_scope.remove(&name);
-                }
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
             }
             return;
         }
-        let mapped_param_constraint = tsz_solver::type_queries::get_type_parameter_constraint(
-            self.ctx.types,
-            constraint_type,
-        )
-        .unwrap_or(constraint_type);
-        let type_id = self
-            .ctx
-            .types
-            .factory()
-            .type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: Some(mapped_param_constraint),
-                default: None,
-                is_const: false,
-            });
-        let _ = self.ctx.type_parameter_scope.insert(name, type_id);
 
         // Evaluate to resolve Lazy/Application types before checking validity.
         let evaluated = self.evaluate_type_with_env(constraint_type);
 
         // Use the solver's is_valid_mapped_type_key_type which handles type
-        // parameters (checks constraint), unions, keyof, literals, etc. and
-        // treats deferred types (Application, Lazy, Conditional, IndexAccess)
-        // as valid since they can't be fully resolved in generic context.
+        // parameters (checks constraint), unions, keyof, literals, etc.
+        // Index-access constraints like AB[K] are accepted when K is known to be
+        // constrained to the object's key space.
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
         let is_valid = evaluator.is_valid_mapped_type_key_type(evaluated);
-        if let Some((ref name, _)) = mapped_param_binding {
-            let param_atom = self.ctx.types.intern_string(name);
-            if tsz_solver::contains_type_parameter_named(
-                self.ctx.types,
-                constraint_type,
-                param_atom,
-            ) {
-                let message = format!("Type parameter '{name}' has a circular constraint.");
-                self.ctx.error(
-                    constraint_pos,
-                    constraint_end - constraint_pos,
-                    message,
-                    2313,
-                );
-                if let Some((name, previous)) = mapped_param_binding {
-                    if let Some(prev_type) = previous {
-                        self.ctx.type_parameter_scope.insert(name, prev_type);
-                    } else {
-                        self.ctx.type_parameter_scope.remove(&name);
-                    }
-                }
-                return;
+        let is_deferred_index_access =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, evaluated)
+                .is_some_and(|(object_type, index_type)| {
+                    tsz_solver::type_queries::get_type_parameter_constraint(
+                        self.ctx.types,
+                        index_type,
+                    )
+                    .is_none_or(|constraint| {
+                        self.is_assignable_to(
+                            constraint,
+                            self.ctx.types.evaluate_keyof(object_type),
+                        )
+                    })
+                });
+        if tsz_solver::contains_type_parameter_named(self.ctx.types, constraint_type, atom) {
+            let message = format!("Type parameter '{name}' has a circular constraint.");
+            self.ctx.error(
+                constraint_pos,
+                constraint_end - constraint_pos,
+                message,
+                2313,
+            );
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
             }
+            return;
+        }
+        if is_deferred_index_access {
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            }
+            return;
         }
         if !is_valid {
             let constraint_name = {
@@ -1695,27 +1684,16 @@ impl<'a> CheckerState<'a> {
                 message,
                 2322,
             );
-            if let Some((name, previous)) = mapped_param_binding {
-                if let Some(prev_type) = previous {
-                    self.ctx.type_parameter_scope.insert(name, prev_type);
-                } else {
-                    self.ctx.type_parameter_scope.remove(&name);
-                }
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
             }
             return;
         }
-
-        if let Some((name, previous)) = mapped_param_binding {
-            if let Some(prev_type) = previous {
-                self.ctx.type_parameter_scope.insert(name, prev_type);
-            } else {
-                self.ctx.type_parameter_scope.remove(&name);
-            }
+        self.ctx.type_parameter_scope.remove(&name);
+        if let Some(prev_type) = previous {
+            self.ctx.type_parameter_scope.insert(name, prev_type);
         }
-        // Note: We do NOT recurse into the mapped type's template (data.type_node)
-        // because the template references the mapped type variable (P) which is not
-        // in scope during the check_type_node validation walk. The template is validated
-        // when the full mapped type is resolved during type checking.
     }
 
     /// Check an indexed access type (T[K]).
