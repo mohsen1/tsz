@@ -98,5 +98,9 @@ path = "tests/ts1254_ambient_const_tests.rs"
 name = "conformance_issues"
 path = "tests/conformance_issues.rs"
 
+[[test]]
+name = "ts2353_tests"
+path = "tests/ts2353_tests.rs"
+
 [lints]
 workspace = true

@@ -827,6 +827,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             tracing::debug!("  Param {}: {:?}", i, self.interner.lookup(param.type_id));
             tracing::debug!("  Arg   {}: {:?}", i, self.interner.lookup(arg_type));
         }
+        // Store instantiated params for post-inference excess property checking.
+        // The checker needs these to perform EPC on the concrete (post-inference)
+        // parameter types rather than the raw types that still contain type parameters.
+        // Store BEFORE the final check so they're available even if the check fails
+        // (the checker uses these to perform EPC on ArgumentTypeMismatch too).
+        self.last_instantiated_params = Some(instantiated_params.clone());
+
         if let Some(result) =
             self.check_argument_types_with(&instantiated_params, &final_args, true, func.is_method)
         {
