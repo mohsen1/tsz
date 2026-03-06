@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10,050 / 12,570 (80.0%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **~10,039 / 12,570 (79.9%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ---
 
@@ -18,6 +18,7 @@
 | Mar 5 15:45 | 10,045 (79.9%) | +20 | TS18013 declaring class + TS2416 type args |
 | Mar 5 16:20 | 10,049 (79.9%) | +4 | Fix private name instance access (remove bad lazy-to-ctor) |
 | Mar 5 18:00 | 10,050 (80.0%) | +1 | Fix TS17011 for super() in static property initializer |
+| Mar 6 09:00 | 10,039 (79.9%) | +3* | Fix TS2339 on mapped types with unconstrained keyof |
 
 **Velocity**: ~2.8 tests/hour over 37 hours. 74 fix commits, 100+ sessions, 3.0 tests/session average.
 
@@ -105,6 +106,38 @@ recovery would cascade-fix many TS1128 and TS1434 cases.
 | 69.5% | 58 | salsa |
 | 69.9% | 22 | node |
 | 70.0% | 59 | classes/members |
+
+---
+
+## Session 2026-03-06a — fix TS2339 on mapped types with unconstrained keyof (+3 conf)
+
+### Fixed: Property access on generic mapped types with unconstrained keyof
+
+**Area**: types/mapped (65.4% pass rate, 9 failing / 26 total)
+
+**Root cause**: In `is_key_in_mapped_constraint()` (property_helpers.rs), the `KeyOf(_)` match arm returned `true` unconditionally. This meant any property name was considered valid when a mapped type's constraint was `keyof T` for a generic T, even when T was completely unconstrained.
+
+For `Pick<T, K>` where T is unconstrained, `K extends keyof T` — accessing `.foo` should report TS2339 because 'foo' is not guaranteed to be in K. But the solver's property resolution allowed it because `keyof T` matched `KeyOf(_)` → `true`.
+
+**Key insight**: The solver's `NoopResolver` can't resolve `Lazy(DefId)` references. So `keyof P` where P has a Lazy constraint (e.g., `P extends Props`) stays as `KeyOf(P)` even though Props has known properties. The fix must distinguish between:
+- **Unconstrained type parameters** (no constraint at all) → `false` (no property guaranteed)
+- **Constrained type parameters** (constraint exists but can't be resolved by solver) → `true` (conservative)
+
+**Fix** (solver only, property_helpers.rs):
+```rust
+TypeData::KeyOf(operand) => match self.interner().lookup(operand) {
+    Some(TypeData::TypeParameter(info)) => info.constraint.is_some(),
+    _ => true,
+}
+```
+
+**Tests fixed**: +3 conformance tests (privateNamesConstructorChain-1, privateNamesConstructorChain-2, intersectionTypeInference3)
+
+**Remaining types/mapped issues**:
+- TS2536: Missing "Type 'P' cannot be used to index type 'T'" in malformed mapped type bodies
+- TS2322: Missing mapped type constraint check in mappedTypeErrors2.ts
+- TS2353: Missing excess property checks on Partial/Readonly/Pick
+- recursiveMappedTypes.ts: Circular type detection (TS2313, TS2456, TS2502, TS2589, TS2615)
 
 ---
 
