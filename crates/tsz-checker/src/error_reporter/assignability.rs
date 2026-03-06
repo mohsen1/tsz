@@ -9,6 +9,32 @@ use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+/// Returns true if the formatted type name matches a built-in wrapper type
+/// (Boolean, Number, String, Object). These types inherit properties from Object
+/// and missing-property diagnostics should be suppressed in favor of TS2322.
+fn is_builtin_wrapper_name(name: &str) -> bool {
+    matches!(name, "Boolean" | "Number" | "String" | "Object")
+}
+
+/// Returns true if the property name is a standard Object.prototype method.
+/// These are implicitly available on all interfaces/objects through the Object
+/// prototype chain. When such a property appears as "missing" in a subtype check,
+/// it typically means the source type inherits it implicitly but its ObjectShape
+/// doesn't include it. In this case, the mismatch is a type compatibility issue
+/// (TS2322), not a missing property issue (TS2741).
+fn is_object_prototype_method(name: &str) -> bool {
+    matches!(
+        name,
+        "valueOf"
+            | "toString"
+            | "toLocaleString"
+            | "hasOwnProperty"
+            | "isPrototypeOf"
+            | "propertyIsEnumerable"
+            | "constructor"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Type Assignability Errors
@@ -302,16 +328,20 @@ impl<'a> CheckerState<'a> {
                 // explicitly list inherited properties, so TS2741 would be incorrect.
                 // Example: `b: Boolean = {}` → TS2322 "Type '{}' is not assignable to type 'Boolean'"
                 //          NOT TS2741 "Property 'valueOf' is missing in type '{}'..."
+                // Check both the solver's target_type (inner shape) and the original target
+                // (may be the named interface when solver resolves to anonymous shape).
                 let tgt_str = self.format_type(*target_type);
-                if tgt_str == "Boolean"
-                    || tgt_str == "Number"
-                    || tgt_str == "String"
-                    || tgt_str == "Object"
-                {
+                let original_tgt_str = self.format_type(target);
+                if is_builtin_wrapper_name(&tgt_str) || is_builtin_wrapper_name(&original_tgt_str) {
                     let src_str = self.format_type(*source_type);
+                    let display_tgt = if is_builtin_wrapper_name(&original_tgt_str) {
+                        &original_tgt_str
+                    } else {
+                        &tgt_str
+                    };
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
+                        &[&src_str, display_tgt],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -410,6 +440,27 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // When the missing property is an Object.prototype method (valueOf,
+                // toString, etc.), the source type likely has it through implicit
+                // Object inheritance — its ObjectShape just doesn't include it.
+                // The real failure is type incompatibility (different return types),
+                // not a missing property. Emit TS2322 instead of TS2741.
+                if is_object_prototype_method(&prop_name) {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 // In tsc, `object` type uses its apparent type `{}` in property-missing
                 // diagnostics (getApparentType(object) = {}).
@@ -461,16 +512,21 @@ impl<'a> CheckerState<'a> {
                 // instead of TS2739/TS2740.
                 // These built-in types inherit properties from Object, and object literals don't
                 // explicitly list inherited properties, so TS2739 would be incorrect.
+                // Check both the solver's target_type and the original target.
                 let tgt_str_check = self.format_type(*target_type);
-                if tgt_str_check == "Boolean"
-                    || tgt_str_check == "Number"
-                    || tgt_str_check == "String"
-                    || tgt_str_check == "Object"
+                let original_tgt_check = self.format_type(target);
+                if is_builtin_wrapper_name(&tgt_str_check)
+                    || is_builtin_wrapper_name(&original_tgt_check)
                 {
                     let src_str = self.format_type(*source_type);
+                    let display_tgt = if is_builtin_wrapper_name(&original_tgt_check) {
+                        &original_tgt_check
+                    } else {
+                        &tgt_str_check
+                    };
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str_check],
+                        &[&src_str, display_tgt],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -523,6 +579,28 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if all_numeric {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
+                // If all missing properties are Object.prototype methods, emit TS2322.
+                // Same reasoning as the single-property TS2741 guard above.
+                let all_object_proto = !filtered_names.is_empty()
+                    && filtered_names.iter().all(|name| {
+                        is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**name))
+                    });
+                if all_object_proto {
                     let src_str = self.format_type(*source_type);
                     let tgt_str = self.format_type(*target_type);
                     let message = format_message(
