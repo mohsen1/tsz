@@ -15,100 +15,100 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let union_member_property_type =
-            |this: &mut Self, union_type: TypeId, property_name: &str| -> Option<TypeId> {
-                let members = tsz_solver::type_queries::get_union_members(this.ctx.types, union_type)
-                    .or_else(|| match crate::query_boundaries::assignability::classify_for_excess_properties(
-                        this.ctx.types,
-                        union_type,
-                    ) {
-                        crate::query_boundaries::assignability::ExcessPropertiesKind::Union(
-                            members,
-                        ) => Some(members),
-                        _ => None,
-                    })?;
-                let mut property_types = Vec::new();
+        let union_member_property_type = |this: &mut Self,
+                                          union_type: TypeId,
+                                          property_name: &str|
+         -> Option<TypeId> {
+            let members = tsz_solver::type_queries::get_union_members(this.ctx.types, union_type)
+                .or_else(|| {
+                match crate::query_boundaries::assignability::classify_for_excess_properties(
+                    this.ctx.types,
+                    union_type,
+                ) {
+                    crate::query_boundaries::assignability::ExcessPropertiesKind::Union(
+                        members,
+                    ) => Some(members),
+                    _ => None,
+                }
+            })?;
+            let mut property_types = Vec::new();
 
-                for &member in &members {
-                    let resolved_member = this.resolve_type_for_property_access(member);
-                    let evaluated_member = this.evaluate_type_with_env(member);
-                    let evaluated_member_for_property_access =
-                        this.resolve_type_for_property_access(evaluated_member);
-                    let evaluated_member_for_property_access =
-                        this.resolve_lazy_type(evaluated_member_for_property_access);
-                    let evaluated_member_for_property_access =
-                        this.evaluate_application_type(evaluated_member_for_property_access);
-                    let mut property_type = this
+            for &member in &members {
+                let resolved_member = this.resolve_type_for_property_access(member);
+                let evaluated_member = this.evaluate_type_with_env(member);
+                let evaluated_member_for_property_access =
+                    this.resolve_type_for_property_access(evaluated_member);
+                let evaluated_member_for_property_access =
+                    this.resolve_lazy_type(evaluated_member_for_property_access);
+                let evaluated_member_for_property_access =
+                    this.evaluate_application_type(evaluated_member_for_property_access);
+                let mut property_type = this
+                    .ctx
+                    .types
+                    .contextual_property_type(member, property_name);
+
+                if property_type.is_none() {
+                    property_type = this
                         .ctx
                         .types
-                        .contextual_property_type(member, property_name);
-
-                    if property_type.is_none() {
-                        property_type = this
-                            .ctx
-                            .types
-                            .contextual_property_type(resolved_member, property_name);
-                    }
-
-                    if property_type.is_none() {
-                        property_type = this
-                            .ctx
-                            .types
-                            .contextual_property_type(
-                                evaluated_member_for_property_access,
-                                property_name,
-                            );
-                    }
-
-                    let mut alternate_member_for_property_access = None;
-                    if property_type.is_none() {
-                        use tsz_solver::TypeEvaluator;
-
-                        let mut evaluator = TypeEvaluator::with_resolver(this.ctx.types, &this.ctx);
-                        let alternate_member = evaluator.evaluate(member);
-                        let alternate_member =
-                            this.resolve_type_for_property_access(alternate_member);
-                        let alternate_member = this.resolve_lazy_type(alternate_member);
-                        let alternate_member = this.evaluate_application_type(alternate_member);
-                        alternate_member_for_property_access = Some(alternate_member);
-                        property_type = this
-                            .ctx
-                            .types
-                            .contextual_property_type(alternate_member, property_name);
-                    }
-
-                    let property_type = property_type;
-                    if property_type.is_none() {
-                        tracing::trace!(
-                            union_type = union_type.0,
-                            union_type_str = %this.format_type(union_type),
-                            property_name,
-                            member = member.0,
-                            member_str = %this.format_type(member),
-                            resolved_member = resolved_member.0,
-                            resolved_member_str = %this.format_type(resolved_member),
-                            evaluated_member = evaluated_member.0,
-                            evaluated_member_str = %this.format_type(evaluated_member),
-                            evaluated_member_for_property_access = evaluated_member_for_property_access.0,
-                            evaluated_member_for_property_access_str = %this.format_type(evaluated_member_for_property_access),
-                            alternate_member_for_property_access = alternate_member_for_property_access.map(|id| id.0),
-                            alternate_member_for_property_access_str = alternate_member_for_property_access
-                                .map(|id| this.format_type(id))
-                                .unwrap_or_default(),
-                            "contextual_object_literal_property_type: union-member miss"
-                        );
-                    }
-                    if let Some(property_type) = property_type {
-                        property_types.push(property_type);
-                    }
+                        .contextual_property_type(resolved_member, property_name);
                 }
 
-                if property_types.is_empty() {
-                    None
-                } else {
-                    Some(this.ctx.types.factory().union(property_types))
+                if property_type.is_none() {
+                    property_type = this.ctx.types.contextual_property_type(
+                        evaluated_member_for_property_access,
+                        property_name,
+                    );
                 }
-            };
+
+                let mut alternate_member_for_property_access = None;
+                if property_type.is_none() {
+                    use tsz_solver::TypeEvaluator;
+
+                    let mut evaluator = TypeEvaluator::with_resolver(this.ctx.types, &this.ctx);
+                    let alternate_member = evaluator.evaluate(member);
+                    let alternate_member = this.resolve_type_for_property_access(alternate_member);
+                    let alternate_member = this.resolve_lazy_type(alternate_member);
+                    let alternate_member = this.evaluate_application_type(alternate_member);
+                    alternate_member_for_property_access = Some(alternate_member);
+                    property_type = this
+                        .ctx
+                        .types
+                        .contextual_property_type(alternate_member, property_name);
+                }
+
+                let property_type = property_type;
+                if property_type.is_none() {
+                    tracing::trace!(
+                        union_type = union_type.0,
+                        union_type_str = %this.format_type(union_type),
+                        property_name,
+                        member = member.0,
+                        member_str = %this.format_type(member),
+                        resolved_member = resolved_member.0,
+                        resolved_member_str = %this.format_type(resolved_member),
+                        evaluated_member = evaluated_member.0,
+                        evaluated_member_str = %this.format_type(evaluated_member),
+                        evaluated_member_for_property_access = evaluated_member_for_property_access.0,
+                        evaluated_member_for_property_access_str = %this.format_type(evaluated_member_for_property_access),
+                        alternate_member_for_property_access = alternate_member_for_property_access.map(|id| id.0),
+                        alternate_member_for_property_access_str = alternate_member_for_property_access
+                            .map(|id| this.format_type(id))
+                            .unwrap_or_default(),
+                        "contextual_object_literal_property_type: union-member miss"
+                    );
+                }
+                if let Some(property_type) = property_type {
+                    property_types.push(property_type);
+                }
+            }
+
+            if property_types.is_empty() {
+                None
+            } else {
+                Some(this.ctx.types.factory().union(property_types))
+            }
+        };
         let original_contextual_type = contextual_type;
 
         if let Some(property_type) = self
@@ -156,11 +156,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if resolved_original_contextual_type != original_contextual_type
-            && let Some(property_type) = union_member_property_type(
-                self,
-                resolved_original_contextual_type,
-                property_name,
-            )
+            && let Some(property_type) =
+                union_member_property_type(self, resolved_original_contextual_type, property_name)
         {
             tracing::trace!(
                 original_contextual_type = original_contextual_type.0,
@@ -208,9 +205,11 @@ impl<'a> CheckerState<'a> {
             evaluator.evaluate(original_contextual_type)
         };
         if alternate_contextual_type != contextual_type {
-            let alternate_contextual_type = self.resolve_type_for_property_access(alternate_contextual_type);
+            let alternate_contextual_type =
+                self.resolve_type_for_property_access(alternate_contextual_type);
             let alternate_contextual_type = self.resolve_lazy_type(alternate_contextual_type);
-            let alternate_contextual_type = self.evaluate_application_type(alternate_contextual_type);
+            let alternate_contextual_type =
+                self.evaluate_application_type(alternate_contextual_type);
             if let Some(property_type) = self
                 .ctx
                 .types

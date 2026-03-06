@@ -642,8 +642,7 @@ impl<'a> CheckerState<'a> {
             let resolved_prop_name_type = self.resolve_lazy_type(resolved_for_property_access);
             let application_prop_name_type =
                 self.evaluate_application_type(resolved_prop_name_type);
-            let assignability_prop_name_type =
-                self.evaluate_type_for_assignability(prop_name_type);
+            let assignability_prop_name_type = self.evaluate_type_for_assignability(prop_name_type);
 
             for candidate in [
                 prop_name_type,
@@ -652,10 +651,12 @@ impl<'a> CheckerState<'a> {
                 application_prop_name_type,
                 assignability_prop_name_type,
             ] {
-                if let Some(atom) = crate::query_boundaries::type_computation::access::literal_property_name(
-                    self.ctx.types,
-                    candidate,
-                ) {
+                if let Some(atom) =
+                    crate::query_boundaries::type_computation::access::literal_property_name(
+                        self.ctx.types,
+                        candidate,
+                    )
+                {
                     tracing::trace!(
                         name_idx = name_idx.0,
                         expr_idx = computed.expression.0,
