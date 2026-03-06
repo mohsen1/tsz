@@ -367,15 +367,19 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // tsc keeps comments between the last statement and `}` INSIDE the
-        // block at body indentation for both function bodies and control-flow
-        // blocks. Emit them before decreasing indent so they stay inside.
-        if !self.ctx.options.remove_comments {
+        // tsc places comments between the last function-body statement and `}`
+        // after the closing brace at the outer indentation level. Keep the old
+        // inside-the-block behavior for non-function blocks.
+        if !self.ctx.options.remove_comments && !is_function_body_block {
             self.emit_comments_before_pos(block_close_pos);
         }
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
+        if !self.ctx.options.remove_comments && is_function_body_block {
+            self.write_line();
+            self.emit_comments_before_pos(block_close_pos);
+        }
         self.ctx.block_scope_state.exit_scope();
         // Restore declared_namespace_names for non-function blocks to prevent
         // block-scoped let declarations from leaking to sibling blocks.

@@ -446,6 +446,32 @@ impl<'a> CheckerState<'a> {
             true
         };
 
+        let resolve_alias_type_position_result = |sym_id: SymbolId| {
+            let mut visited_aliases = Vec::new();
+            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                .map(|target_sym_id| {
+                    let target_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .map_or(0, |s| s.flags);
+                    let target_is_namespace_module = (target_flags
+                        & (symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE))
+                        != 0;
+                    let target_is_value_only = (self
+                        .alias_resolves_to_value_only(target_sym_id, None)
+                        || self.symbol_is_value_only(target_sym_id, None))
+                        && !self.symbol_is_type_only(target_sym_id, None);
+                    if target_is_value_only && !target_is_namespace_module {
+                        TypeSymbolResolution::ValueOnly(target_sym_id)
+                    } else {
+                        TypeSymbolResolution::Type(target_sym_id)
+                    }
+                })
+        };
+
         if let Some(local_sym_id) =
             self.ctx
                 .binder
@@ -462,6 +488,17 @@ impl<'a> CheckerState<'a> {
                     accept_type_symbol(sym_id)
                 })
         {
+            if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
+                && symbol.flags & symbol_flags::ALIAS != 0
+            {
+                self.ctx
+                    .referenced_symbols
+                    .borrow_mut()
+                    .insert(local_sym_id);
+                if let Some(resolved) = resolve_alias_type_position_result(local_sym_id) {
+                    return resolved;
+                }
+            }
             return TypeSymbolResolution::Type(local_sym_id);
         }
 
@@ -531,25 +568,8 @@ impl<'a> CheckerState<'a> {
                 // and inserted into referenced_symbols by the caller. Without this,
                 // imports used only in type positions appear unused (false TS6133).
                 self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                let mut visited_aliases = Vec::new();
-                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                {
-                    let target_flags = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(target_sym_id, &lib_binders)
-                        .map_or(0, |s| s.flags);
-                    let target_is_namespace_module = (target_flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                        != 0;
-                    let target_is_value_only = (self
-                        .alias_resolves_to_value_only(target_sym_id, None)
-                        || self.symbol_is_value_only(target_sym_id, None))
-                        && !self.symbol_is_type_only(target_sym_id, None);
-                    if target_is_value_only && !target_is_namespace_module {
-                        return TypeSymbolResolution::ValueOnly(target_sym_id);
-                    }
-                    return TypeSymbolResolution::Type(target_sym_id);
+                if let Some(resolved) = resolve_alias_type_position_result(sym_id) {
+                    return resolved;
                 }
             }
             return TypeSymbolResolution::Type(sym_id);
