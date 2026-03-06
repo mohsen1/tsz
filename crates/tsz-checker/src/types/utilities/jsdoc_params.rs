@@ -14,6 +14,31 @@ impl<'a> CheckerState<'a> {
     // JSDoc Helpers for Implicit Any Suppression
     // =========================================================================
 
+    /// Get the effective JSDoc param name for a parameter, using positional
+    /// matching for destructured parameters (binding patterns).
+    ///
+    /// For named parameters, returns the identifier text. For binding patterns
+    /// like `{a, b}`, looks up the @param name at `pos` from the pre-extracted
+    /// `jsdoc_names` list, falling back to `parameter_name_for_error`.
+    pub(crate) fn effective_jsdoc_param_name(
+        &self,
+        param_name: tsz_parser::parser::NodeIndex,
+        jsdoc_names: &[String],
+        pos: usize,
+    ) -> String {
+        if self.ctx.arena.get(param_name).is_some_and(|n| {
+            n.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || n.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
+        }) {
+            jsdoc_names
+                .get(pos)
+                .cloned()
+                .unwrap_or_else(|| self.parameter_name_for_error(param_name))
+        } else {
+            self.parameter_name_for_error(param_name)
+        }
+    }
+
     /// TS8024: Check that JSDoc `@param` tag names match actual function parameters.
     ///
     /// For each `@param` tag, verifies that a parameter with that name exists.
@@ -1560,5 +1585,107 @@ function f(p) {}
         assert!(!CheckerState::is_plain_jsdoc_type_name("foo.bar"));
         assert!(!CheckerState::is_plain_jsdoc_type_name("Promise<T>"));
         assert!(!CheckerState::is_plain_jsdoc_type_name("C<T>[]"));
+    }
+
+    #[test]
+    fn extract_param_names_basic() {
+        let jsdoc = r#"
+ * @param {string} name
+ * @param {number} age
+        "#;
+        let names = CheckerState::extract_jsdoc_param_names(jsdoc);
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].0, "name");
+        assert_eq!(names[1].0, "age");
+    }
+
+    #[test]
+    fn extract_param_names_with_dotted_nested() {
+        // Dotted names (nested params) should be filtered out — only top-level names
+        let jsdoc = r#"
+ * @param {Object} error
+ * @param {string} error.reason
+ * @param {string} error.code
+        "#;
+        let names = CheckerState::extract_jsdoc_param_names(jsdoc);
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0].0, "error");
+    }
+
+    #[test]
+    fn extract_param_names_multiple_with_nested() {
+        // Multiple top-level params where one has nested properties
+        let jsdoc = r#"
+ * @param {Object} opts
+ * @param {string} opts.name
+ * @param {number} count
+        "#;
+        let names = CheckerState::extract_jsdoc_param_names(jsdoc);
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].0, "opts");
+        assert_eq!(names[1].0, "count");
+    }
+
+    #[test]
+    fn extract_param_names_rest_param() {
+        let jsdoc = r#"
+ * @param {...string} args
+        "#;
+        let names = CheckerState::extract_jsdoc_param_names(jsdoc);
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0].0, "args");
+    }
+
+    #[test]
+    fn extract_param_names_optional_bracket() {
+        let jsdoc = r#"
+ * @param {string} [name]
+ * @param {number} [age=25]
+        "#;
+        let names = CheckerState::extract_jsdoc_param_names(jsdoc);
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].0, "name");
+        assert_eq!(names[1].0, "age");
+    }
+
+    /// Test that positional matching works for destructured params in class methods.
+    /// The `@param {Object} error` at index 0 should match a destructured `{reason, code}`
+    /// at parameter position 0.
+    #[test]
+    fn jsdoc_positional_matching_class_method_no_ts7031() {
+        let diags = crate::test_utils::check_js_source_diagnostics(
+            r#"class X {
+    /**
+     * @param {Object} error
+     * @param {string} error.reason
+     * @param {string} error.code
+     */
+    cancel({reason, code}) {}
+}
+"#,
+        );
+        let ts7031_diags: Vec<_> = diags.iter().filter(|d| d.code == 7031).collect();
+        assert!(
+            ts7031_diags.is_empty(),
+            "Expected no TS7031 for destructured param with JSDoc @param, got: {ts7031_diags:?}"
+        );
+    }
+
+    /// Test that positional matching works for standalone function declarations.
+    #[test]
+    fn jsdoc_positional_matching_function_decl_no_ts7031() {
+        let diags = crate::test_utils::check_js_source_diagnostics(
+            r#"/**
+ * @param {Object} opts
+ * @param {string} opts.name
+ */
+function f({name}) {}
+"#,
+        );
+        let ts7031_diags: Vec<_> = diags.iter().filter(|d| d.code == 7031).collect();
+        assert!(
+            ts7031_diags.is_empty(),
+            "Expected no TS7031 for destructured param with JSDoc @param, got: {ts7031_diags:?}"
+        );
     }
 }

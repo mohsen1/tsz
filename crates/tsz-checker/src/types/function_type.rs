@@ -342,6 +342,17 @@ impl<'a> CheckerState<'a> {
             found
         };
 
+        // Pre-extract ordered @param names for positional matching with binding patterns.
+        let jsdoc_param_names: Vec<String> = func_jsdoc
+            .as_ref()
+            .map(|jsdoc| {
+                Self::extract_jsdoc_param_names(jsdoc)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -415,7 +426,12 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_param_type = if is_js_file {
                         if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(idx) {
                             if let Some(ref jsdoc) = func_jsdoc {
-                                let pname = self.parameter_name_for_error(param.name);
+                                // Use positional matching for binding patterns
+                                let pname = self.effective_jsdoc_param_name(
+                                    param.name,
+                                    &jsdoc_param_names,
+                                    contextual_index,
+                                );
                                 self.resolve_jsdoc_param_type_with_pos(
                                     jsdoc,
                                     &pname,
@@ -499,20 +515,15 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Check all function parameters for implicit any (TS7006)
-                // This includes function declarations, expressions, arrow functions, and methods
-                //
-                // For closures (function expressions and arrow functions), skip TS7006 during
-                // the build_type_environment phase. During that phase, contextual types are not
-                // yet available (they're set during check_variable_declaration). The closure
-                // will be re-evaluated with contextual types during the checking phase.
-                //
-                // JSDoc @param {type} annotations also suppress TS7006 in JS files.
-                // Also check for inline /** @type {T} */ annotations on the parameter itself.
-                // A @type {function-type} on the function also suppresses TS7006 for all params.
+                // TS7006: Check for implicit any. Skip closures during build_type_environment
+                // (no contextual type yet). JSDoc @param/@type annotations suppress TS7006.
                 let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
                     let from_func_jsdoc = if let Some(ref jsdoc) = func_jsdoc {
-                        let pname = self.parameter_name_for_error(param.name);
+                        let pname = self.effective_jsdoc_param_name(
+                            param.name,
+                            &jsdoc_param_names,
+                            contextual_index,
+                        );
                         Self::jsdoc_has_param_type(jsdoc, &pname)
                             || Self::jsdoc_has_type_tag(jsdoc)
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
@@ -526,14 +537,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                // Skip TS7006 for:
-                // 1. Closures during build_type_environment (no contextual type yet)
-                // 2. SET_ACCESSOR nodes — their TS7006 is handled by the caller
-                //    (type_computation.rs for object literals, ambient_signature_checks.rs
-                //    for class members) with proper paired-getter detection.
-                // 3. Closures inside decorator expressions — tsc provides contextual
-                //    types for decorator parameters (which we don't implement yet),
-                //    so we must suppress TS7006 to avoid false positives.
+                // Skip TS7006 for setters (handled by caller), closures during
+                // build_type_environment (no contextual type), and decorator closures.
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
                 let skip_implicit_any = is_setter
                     || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
@@ -546,13 +551,8 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // Check if optional or has initializer
-                // In JS files, parameters without type annotations are implicitly optional,
-                // UNLESS the function has a JSDoc @param tag for this parameter. The
-                // existence of @param (even without a type) makes the param required in tsc.
-                // Note: We use find_jsdoc_for_function (bypasses check_js guard) rather
-                // than func_jsdoc because allowJs without checkJs still respects @param
-                // tags for parameter optionality in cross-file contexts.
+                // In JS files, params without type annotations are implicitly optional
+                // unless a JSDoc @param tag exists (making the param required).
                 let js_implicit_optional = self.is_js_file()
                     && param.type_annotation.is_none()
                     && !{
@@ -561,7 +561,11 @@ impl<'a> CheckerState<'a> {
                             .cloned()
                             .or_else(|| self.find_jsdoc_for_function(idx));
                         jsdoc_for_opt.is_some_and(|jsdoc| {
-                            let pname = self.parameter_name_for_error(param.name);
+                            let pname = self.effective_jsdoc_param_name(
+                                param.name,
+                                &jsdoc_param_names,
+                                contextual_index,
+                            );
                             Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
                         })
                     };

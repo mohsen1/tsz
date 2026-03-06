@@ -528,6 +528,16 @@ impl<'a> CheckerState<'a> {
             && self.has_private_modifier(&method.modifiers);
         // Get method-level JSDoc for @param type checking
         let method_jsdoc = self.get_jsdoc_for_function(member_idx);
+        // Pre-extract ordered @param names for positional matching with binding patterns
+        let jsdoc_param_names: Vec<String> = method_jsdoc
+            .as_ref()
+            .map(|jsdoc| {
+                Self::extract_jsdoc_param_names(jsdoc)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect()
+            })
+            .unwrap_or_default();
         for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -538,7 +548,8 @@ impl<'a> CheckerState<'a> {
                 if !skip_implicit_any {
                     let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx)
                         || if let Some(ref jsdoc) = method_jsdoc {
-                            let pname = self.parameter_name_for_error(param.name);
+                            let pname =
+                                self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                             Self::jsdoc_has_param_type(jsdoc, &pname)
                         } else {
                             false
