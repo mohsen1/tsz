@@ -477,10 +477,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For async for-of, first check async iterable, then fall back to sync iterable
+        // For async for-of, first check async iterable, then fall back to sync iterable.
+        // For union types like `Iterable<T> | AsyncIterable<T>`, tsc checks each member
+        // individually — each member must be EITHER async iterable OR sync iterable.
         if is_async {
             if self.is_async_iterable_type(expr_type) || self.is_iterable_type(expr_type) {
                 return true;
+            }
+            // For unions, check if each member is individually async- or sync-iterable
+            if let Some(members) = union_members_for_type(self.ctx.types, expr_type) {
+                if members
+                    .iter()
+                    .all(|&m| self.is_async_iterable_type(m) || self.is_iterable_type(m))
+                {
+                    return true;
+                }
             }
             // Not async iterable - emit TS2504
             if let Some((start, end)) = self.get_node_span(expr_idx) {
