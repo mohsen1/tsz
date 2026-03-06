@@ -595,6 +595,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle unique symbol index access on concrete (non-type-parameter) objects.
+        // Unique symbols resolve to internal property names like "__unique_N" and need
+        // write_type propagation for getter/setter divergence (e.g., `foo[k] = value`
+        // where `k` is a unique symbol with a setter type different from the getter).
+        if result_type.is_none()
+            && let Some(sym_ref) =
+                tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type)
+            && !tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+        {
+            let property_name = format!("__unique_{}", sym_ref.0);
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                let effective = if self.ctx.skip_flow_narrowing {
+                    write_type.unwrap_or(type_id)
+                } else {
+                    type_id
+                };
+                result_type = Some(effective);
+            }
+        }
+
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 && self.is_generic_index_type(index_type)

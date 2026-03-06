@@ -162,6 +162,18 @@ impl<'a> CheckerState<'a> {
                 return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
 
+            // Handle TypeQuery(SymbolRef) base — the return type annotation stores
+            // Promise<T> as Application(TypeQuery(Promise_SymbolRef), [T]) when the
+            // base reference is a `typeof` value symbol rather than a Lazy(DefId).
+            if let Some(tsz_solver::TypeData::TypeQuery(sym_ref)) = self.ctx.types.lookup(base) {
+                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                {
+                    return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
+                }
+            }
+
             // Try to get the type argument from the base symbol
             if let Some(result) =
                 self.promise_like_type_argument_from_base(base, &args, &mut Vec::new())
