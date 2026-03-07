@@ -11,6 +11,52 @@ use tsz_solver::{NarrowingContext, TypeId};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn typeof_switch_operand(&self, switch_expr: NodeIndex) -> Option<NodeIndex> {
+        let switch_expr = self.ctx.arena.skip_parenthesized(switch_expr);
+        let node = self.ctx.arena.get(switch_expr)?;
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let unary = self.ctx.arena.get_unary_expr(node)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+        Some(self.ctx.arena.skip_parenthesized(unary.operand))
+    }
+
+    fn typeof_switch_domain_from_operand_type(&self, operand_type: TypeId) -> Option<TypeId> {
+        if operand_type == TypeId::ERROR {
+            return None;
+        }
+
+        const TYPEOF_RESULTS: [&str; 8] = [
+            "string",
+            "number",
+            "bigint",
+            "boolean",
+            "symbol",
+            "undefined",
+            "object",
+            "function",
+        ];
+
+        let env = self.ctx.type_environment.borrow();
+        let narrowing = NarrowingContext::new(self.ctx.types).with_resolver(&*env);
+
+        let mut possible = Vec::with_capacity(TYPEOF_RESULTS.len());
+        for typeof_result in TYPEOF_RESULTS {
+            if narrowing.narrow_by_typeof(operand_type, typeof_result) != TypeId::NEVER {
+                possible.push(self.ctx.types.literal_string(typeof_result));
+            }
+        }
+
+        match possible.len() {
+            0 => None,
+            1 => possible.first().copied(),
+            _ => Some(self.ctx.types.union(possible)),
+        }
+    }
+
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
         if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
             || case_types.is_empty()
@@ -34,10 +80,19 @@ impl<'a> CheckerState<'a> {
         &self,
         switch_data: &tsz_parser::parser::node::SwitchData,
     ) -> bool {
-        let switch_type = self
-            .literal_type_from_initializer(switch_data.expression)
-            .or_else(|| self.ctx.node_types.get(&switch_data.expression.0).copied())
-            .unwrap_or(TypeId::ERROR);
+        let switch_type =
+            if let Some(typeof_operand) = self.typeof_switch_operand(switch_data.expression) {
+                let operand_type = self
+                    .literal_type_from_initializer(typeof_operand)
+                    .or_else(|| self.ctx.node_types.get(&typeof_operand.0).copied())
+                    .unwrap_or(TypeId::ERROR);
+                self.typeof_switch_domain_from_operand_type(operand_type)
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                self.literal_type_from_initializer(switch_data.expression)
+                    .or_else(|| self.ctx.node_types.get(&switch_data.expression.0).copied())
+                    .unwrap_or(TypeId::ERROR)
+            };
 
         let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
             return false;
@@ -75,9 +130,17 @@ impl<'a> CheckerState<'a> {
         &mut self,
         switch_data: &tsz_parser::parser::node::SwitchData,
     ) -> bool {
-        let switch_type = self
-            .literal_type_from_initializer(switch_data.expression)
-            .unwrap_or_else(|| self.get_type_of_node(switch_data.expression));
+        let switch_type =
+            if let Some(typeof_operand) = self.typeof_switch_operand(switch_data.expression) {
+                let operand_type = self
+                    .literal_type_from_initializer(typeof_operand)
+                    .unwrap_or_else(|| self.get_type_of_node(typeof_operand));
+                self.typeof_switch_domain_from_operand_type(operand_type)
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                self.literal_type_from_initializer(switch_data.expression)
+                    .unwrap_or_else(|| self.get_type_of_node(switch_data.expression))
+            };
 
         let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
             return false;
