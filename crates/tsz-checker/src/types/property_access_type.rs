@@ -1565,6 +1565,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a property access reads an expando property assigned via `X.prop = value`.
+    ///
+    /// Checks the current file's binder first, then all other binders in multi-file
+    /// mode (for global-scope cross-file expando access). Also handles import chains
+    /// like `a.C1.staticProp` by resolving the object expression to its source symbol
+    /// and checking the source file's binder.
     fn is_expando_property_read(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {
         fn property_access_chain(
             arena: &tsz_parser::parser::node::NodeArena,
@@ -1587,11 +1592,50 @@ impl<'a> CheckerState<'a> {
         let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
             return false;
         };
-        self.ctx
+
+        // 1. Check current file's binder
+        if self
+            .ctx
             .binder
             .expando_properties
             .get(&obj_key)
             .is_some_and(|props| props.contains(property_name))
+        {
+            return true;
+        }
+
+        // 2. Check all other binders (cross-file global scope access)
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder
+                    .expando_properties
+                    .get(&obj_key)
+                    .is_some_and(|props| props.contains(property_name))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 3. For qualified access chains like `a.C1` where `a` is an import namespace,
+        //    the source file's binder stores the expando under just "C1" (the original
+        //    symbol name), not "a.C1". Extract the last segment and check all binders.
+        if let Some(last_dot) = obj_key.rfind('.') {
+            let last_segment = &obj_key[last_dot + 1..];
+            if let Some(all_binders) = &self.ctx.all_binders {
+                for binder in all_binders.iter() {
+                    if binder
+                        .expando_properties
+                        .get(last_segment)
+                        .is_some_and(|props| props.contains(property_name))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn union_has_explicit_property_member(&mut self, object_type: TypeId, prop_name: &str) -> bool {

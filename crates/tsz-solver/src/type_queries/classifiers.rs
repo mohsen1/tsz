@@ -133,6 +133,17 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
+/// Get the `SymbolRef` from a `TypeQuery` type (`typeof X`).
+pub fn get_type_query_symbol_ref(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::SymbolRef> {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeQuery(sym_ref)) => Some(sym_ref),
+        _ => None,
+    }
+}
+
 /// Get the mapped type ID if the type is a Mapped type.
 pub fn get_mapped_type_id(
     db: &dyn TypeDatabase,
