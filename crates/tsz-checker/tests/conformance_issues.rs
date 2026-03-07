@@ -289,7 +289,7 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 
 #[test]
 fn test_indexed_access_unconstrained_type_param_emits_ts2536() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_lib(
         r"
 type BadPropertyType<T extends object, K> = T[K];
         ",
@@ -321,7 +321,7 @@ type ChildrenOf<T extends Node> = T['children'][number];
 
 #[test]
 fn test_indexed_access_scalar_property_then_number_index_emits_ts2536() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_lib(
         r"
 type Boxed = { value: number };
 type Bad<T extends Boxed> = T['value'][number];

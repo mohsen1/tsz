@@ -12,7 +12,7 @@ engine on top to match TypeScript behavior while preserving correctness where po
 > This project is not ready for general use yet.
 
 <!-- TS_VERSION_START -->
-Currently targeting `TypeScript`@`6.0.0-dev.20260224`
+Currently targeting `TypeScript`@`6.0.0-dev.20260306`
 <!-- TS_VERSION_END -->
 
 ### Type Checker
@@ -23,7 +23,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████░░░░] 79.4% (9,983/12,570 tests)
+Progress: [████████████████░░░░] 79.5% (10,002/12,581 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -37,8 +37,8 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [████████████████░░░░] 80.4% (10,867 / 13,524 tests)
-Declaration: [████████████░░░░░░░░] 59.5% (880 / 1,478 tests)
+JavaScript:  [████████████████░░░░] 80.8% (10,924 / 13,526 tests)
+Declaration: [████████████░░░░░░░░] 58.9% (871 / 1,480 tests)
 ```
 <!-- EMIT_END -->
 
@@ -49,7 +49,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████████████] 99.8% (2,535 / 2,540 tests)
+Progress: [████████████████████] 99.1% (2,517 / 2,540 tests)
 ```
 <!-- FOURSLASH_END -->
 

@@ -464,7 +464,7 @@ impl<'a> CheckerState<'a> {
     /// with `TypeQuery(SymbolRef)`, which correctly resolves to the constructor
     /// type in both relation checks and property access resolution.
     ///
-    /// IMPORTANT: Only converts to TypeQuery when the class symbol is currently
+    /// IMPORTANT: Only converts to `TypeQuery` when the class symbol is currently
     /// being resolved (i.e., in `class_instance_resolution_set` or
     /// `class_constructor_resolution_set`). If the class is NOT being resolved,
     /// the `Lazy(DefId)` came from contextual parameter/return typing (e.g., a
