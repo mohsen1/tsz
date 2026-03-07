@@ -222,7 +222,15 @@ impl<'a> CheckerState<'a> {
 
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
-                && self.check_assignable_or_report(init_type, declared_type, prop.initializer)
+                // Use prop.initializer as source_idx for excess-property resolution,
+                // and prop.name as diag_idx for TS2322 diagnostic anchoring (tsc
+                // points at the property name, not the initializer value).
+                && self.check_assignable_or_report_at(
+                    init_type,
+                    declared_type,
+                    prop.initializer,
+                    prop.name,
+                )
             {
                 self.check_object_literal_excess_properties(
                     init_type,

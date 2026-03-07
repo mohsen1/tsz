@@ -377,8 +377,10 @@ impl<'a> Printer<'a> {
                 {
                     self.comment_emit_idx += 1;
                 }
-                // Emit trailing comment on the enum closing `}` line (e.g., `} // comment`)
-                self.emit_trailing_comments(enum_close_pos);
+                // Don't emit trailing comments here — the source_file statement
+                // loop handles them with proper next-sibling bounds, preventing
+                // us from stealing comments that belong to subsequent statements
+                // (e.g., `enum E { One }; // error` where `// error` belongs to `;`).
 
                 // Track enum name for subsequent namespace/enum merges.
                 if !enum_name.is_empty() {
