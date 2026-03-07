@@ -49,6 +49,12 @@ pub struct EmitFlags {
     /// ternary in parentheses. Set in the same contexts as `optional_chain_needs_parens`.
     /// e.g., `a ?? b || c` → `(a !== null && a !== void 0 ? a : b) || c`
     pub nullish_coalescing_needs_parens: bool,
+
+    /// Whether the leftmost function/object expression should self-parenthesize.
+    /// Set by `emit_expression_statement` when the statement is a call expression
+    /// whose direct callee is a function/object expression. This produces TSC-style
+    /// `(function(){})()` instead of `(function(){}())`.
+    pub paren_leftmost_function_or_object: bool,
 }
 
 /// State for arrow function ES5 transformation

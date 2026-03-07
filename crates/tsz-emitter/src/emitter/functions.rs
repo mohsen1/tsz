@@ -433,6 +433,15 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Consume the paren flag: when set, this function expression is the direct
+        // callee of an expression-statement call and should self-parenthesize to
+        // produce TSC-style `(function(){})()` instead of `(function(){}())`.
+        let self_paren = self.ctx.flags.paren_leftmost_function_or_object;
+        if self_paren {
+            self.ctx.flags.paren_leftmost_function_or_object = false;
+            self.write("(");
+        }
+
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
@@ -440,6 +449,9 @@ impl<'a> Printer<'a> {
                 String::new()
             };
             self.emit_async_function_es5(func, &func_name, "this");
+            if self_paren {
+                self.write(")");
+            }
             return;
         }
 
@@ -519,6 +531,9 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.exit_scope();
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
+        if self_paren {
+            self.write(")");
+        }
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).
