@@ -4,6 +4,7 @@
 //! Including property access, array indexing, and tuple indexing.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId,
@@ -295,7 +296,48 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersection types, evaluate all members and combine successful lookups.
+        // When the index is generic (type parameter, keyof, etc.), distributing the
+        // index access over intersection members creates incorrect deferred types.
+        // For example: ({ a: string } & { b: string })[K] where K extends "a" | "b"
+        // would become Union(IndexAccess({a:string}, K), IndexAccess({b:string}, K)),
+        // causing false TS2322 because {a:string}["b"] doesn't exist.
+        // Fix: merge the intersection into a single object first, then index into it.
+        if self.is_generic_index() {
+            let intersection_type = self.object_type;
+            match collect_properties(
+                intersection_type,
+                self.evaluator.interner(),
+                self.evaluator.resolver(),
+            ) {
+                PropertyCollectionResult::Properties {
+                    properties,
+                    string_index,
+                    number_index,
+                } => {
+                    let merged = if string_index.is_some() || number_index.is_some() {
+                        let shape = ObjectShape {
+                            flags: crate::types::ObjectFlags::empty(),
+                            properties,
+                            string_index,
+                            number_index,
+                            symbol: None,
+                        };
+                        self.evaluator.interner().object_with_index(shape)
+                    } else {
+                        self.evaluator.interner().object(properties)
+                    };
+                    // Index access on merged object will defer (generic index),
+                    // but the merged object has all properties accessible.
+                    return Some(self.evaluator.recurse_index_access(merged, self.index_type));
+                }
+                PropertyCollectionResult::Any => return Some(TypeId::ANY),
+                PropertyCollectionResult::NonObject => {
+                    // Fall through to existing distribution logic
+                }
+            }
+        }
+
+        // For concrete indexes, distribute over intersection members and combine results.
         // Returning the first non-undefined result can incorrectly lock onto `never`
         // for mapped/index-signature helper intersections.
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
