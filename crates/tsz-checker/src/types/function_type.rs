@@ -1486,30 +1486,25 @@ impl<'a> CheckerState<'a> {
         tsz_solver::type_queries::extract_contextual_type_params(self.ctx.types, expected)
     }
 
-    /// Check if a contextual type is a union of callable types with incompatible
-    /// call signatures (per TS spec §3.4).
-    ///
-    /// Only checks union members that are Lazy types (interface/type alias
-    /// references). Direct Function/Callable union members (from overload
-    /// resolution) are skipped since they provide valid contextual types.
+    /// Per TS spec §3.4: returns true when a union's callable members have
+    /// incompatible call signatures (different param counts or types).
     fn union_has_incompatible_call_signatures(&self, ctx_type: TypeId) -> bool {
-        use tsz_solver::type_queries::{get_call_signatures, get_lazy_def_id, get_union_members};
-
+        use tsz_solver::type_queries::{
+            get_call_signatures, get_lazy_def_id, get_union_members, is_callable_type,
+        };
         let Some(members) = get_union_members(self.ctx.types, ctx_type) else {
             return false;
         };
-
-        // Collect call signature param types from Lazy (interface) union members.
         let mut callable_member_sigs: Vec<Vec<Vec<TypeId>>> = Vec::new();
-
         for m in &members {
-            // Only check Lazy types (interfaces/type aliases with call sigs).
-            if get_lazy_def_id(self.ctx.types, *m).is_none() {
+            let resolved = if get_lazy_def_id(self.ctx.types, *m).is_some() {
+                self.judge_evaluate(*m)
+            } else {
+                *m
+            };
+            if !is_callable_type(self.ctx.types, resolved) {
                 continue;
             }
-
-            // Evaluate the Lazy type via checker's judge_evaluate (resolves DefIds)
-            let resolved = self.judge_evaluate(*m);
             if let Some(call_sigs) = get_call_signatures(self.ctx.types, resolved)
                 && !call_sigs.is_empty()
             {
@@ -1521,13 +1516,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Need at least 2 callable interface members to check compatibility
         if callable_member_sigs.len() < 2 {
             return false;
         }
-
-        // Check if all callable members have identical sets of call signatures
-        // (ignoring return types, per TS spec §3.4).
         let first = &callable_member_sigs[0];
         for other in &callable_member_sigs[1..] {
             if other.len() != first.len() {

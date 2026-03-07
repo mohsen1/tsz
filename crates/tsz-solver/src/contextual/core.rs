@@ -159,10 +159,15 @@ impl<'a> ContextualTypeContext<'a> {
             if !has_callable_member || param_types.is_empty() {
                 return None;
             }
-            // If all callable members that contribute agree on the same type, use it.
-            // If they disagree, return a union of the parameter types (tsc behavior:
-            // contextual type is the union of parameter types across union members).
-            return collect_single_or_union(self.interner, param_types);
+            // Per TS spec §3.4: union call signatures must be identical (ignoring
+            // return types) for contextual parameter typing to apply. When callable
+            // members disagree on a parameter type at the same index, no contextual
+            // type is provided — this triggers TS7006 under noImplicitAny.
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                return Some(first);
+            }
+            return None;
         }
 
         // Handle Application explicitly.
