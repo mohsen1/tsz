@@ -520,8 +520,18 @@ impl<'a> Printer<'a> {
                     self.write(",");
                 }
 
+                // Emit trailing same-line comments before the closing brace,
+                // e.g. `[this.bar()]() { } // needs capture`
+                let token_end = self.find_token_end_before_trivia(prop_node.pos, prop_node.end);
+                // Bound to node.end to avoid consuming comments outside the
+                // object literal (e.g. `{ foo() { } }); // comment`).
+                self.emit_trailing_comments_before(token_end, node.end);
+
                 if newline_before_prop || newline_before_close {
-                    self.write_line();
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, node.end);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
                     self.decrease_indent();
                     self.write("}");
                 } else {
