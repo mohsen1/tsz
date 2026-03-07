@@ -253,6 +253,88 @@ fn test_ts2454_not_emitted_when_initialized() {
     );
 }
 
+#[test]
+fn test_ts2454_not_emitted_for_exhaustive_switch_implicit_default_path() {
+    let source = r"
+        function functionB(key: string): string {
+            return key;
+        }
+
+        function functionC(): void {
+            let unionVal: 'A' | 'B' = 'A';
+            while (true) {
+                let key: string;
+                switch (unionVal) {
+                    case 'A': {
+                        key = 'AA';
+                        break;
+                    }
+                    case 'B': {
+                        key = 'BB';
+                        break;
+                    }
+                }
+                functionB(key);
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Expected no TS2454 for exhaustive switch assignment, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_not_emitted_when_switch_discriminant_is_flow_literal() {
+    let source = r"
+        declare function functionB(key: string): string;
+
+        function functionC(): void {
+            let unionVal: 'A' | 'B' = 'A';
+            while (true) {
+                let key: string;
+                switch (unionVal) {
+                    case 'A': {
+                        key = 'AA';
+                        break;
+                    }
+                }
+                functionB(key);
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Expected no TS2454 when flow narrows switch discriminant to a covered literal, got: {diags:?}"
+    );
+}
+
 /// TS2454 should not fire when the type includes `undefined` (assignment is not required).
 #[test]
 fn test_ts2454_skipped_for_undefined_type() {
