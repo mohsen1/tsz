@@ -234,6 +234,7 @@ fn test_grammar_error_classification() {
     assert!(is_grammar_error_for_deprecation_priority(8024));
     // 1xxx parser errors in whitelist
     assert!(is_grammar_error_for_deprecation_priority(1003));
+    assert!(is_grammar_error_for_deprecation_priority(1005));
     assert!(is_grammar_error_for_deprecation_priority(1125));
     assert!(is_grammar_error_for_deprecation_priority(1128));
     assert!(is_grammar_error_for_deprecation_priority(1436));
