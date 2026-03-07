@@ -628,22 +628,22 @@ impl<'a> CheckerState<'a> {
                 let key_is_number = key_type == TypeId::NUMBER;
 
                 // TS2538: Type cannot be used as an index type.
-                // Delegate to the solver's validity check: `any`, `string`, `number`,
-                // `symbol`, `unique symbol`, `never`, `unknown`, and their literals
-                // are all valid index types. Only structurally invalid types (void,
-                // null, boolean, bigint, object, function, array, tuple) are rejected.
+                // Use the strict validity check matching tsc's `isValidIndexType`:
+                // only `string`, `number`, `bigint`, and their literal subtypes plus
+                // template literals / string mappings are valid. `any`, `symbol`,
+                // `unique symbol`, `unknown`, and structural types are rejected.
+                // Note: ERROR types from failed expressions are treated as `any`
+                // for this check — tsc cascades TS2538 after prior expression errors.
                 if !key_is_string && !key_is_number && key_type != TypeId::NEVER {
-                    let resolved_key = self.resolve_lazy_type(key_type);
-                    let has_structural_invalid =
-                        query::invalid_index_type_member(self.ctx.types, resolved_key);
-                    let should_report = has_structural_invalid.is_some();
-                    if should_report {
-                        let display_type = if let Some(invalid) = has_structural_invalid {
-                            invalid
-                        } else {
-                            resolved_key
-                        };
-                        let key_type_str = self.format_type(display_type);
+                    let check_key = if key_type == TypeId::ERROR {
+                        TypeId::ANY
+                    } else {
+                        self.resolve_lazy_type(key_type)
+                    };
+                    if let Some(invalid_member) =
+                        query::invalid_index_type_member_strict(self.ctx.types, check_key)
+                    {
+                        let key_type_str = self.format_type(invalid_member);
                         let message = crate::diagnostics::format_message(
                             crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[&key_type_str],
