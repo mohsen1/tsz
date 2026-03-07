@@ -239,6 +239,36 @@ those facts through one AST-agnostic guard API. Every correct CFG edge fixes man
   - `controlFlowOptionalChain2.ts` and `controlFlowOptionalChain3.tsx` remain passing.
   - `narrowingWithNonNullExpression.ts` remains failing (separate non-null assertion transport path).
 
+**Session notes (2026-03-07 late evening — narrowing-flow deep dive, no landing fix):**
+- Representative basket used in targeted runs:
+  - `TypeScript/tests/cases/compiler/narrowingWithNonNullExpression.ts`
+  - `TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts`
+  - `TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChainInference.ts`
+- Shared invariant investigated: optional-chain/non-nullish facts must transport through wrapper
+  expressions and optional-call receiver typing before relation/inference.
+- What tsc does differently (confirmed via cache/targeted runs):
+  - `callChainInference.ts`: accepts both `value?.foo("a")` calls (no TS2345), while tsz reports
+    `"a" not assignable to never` at both call sites.
+  - `controlFlowOptionalChain.ts`: code-level parity but still large TS18048 fingerprint drift
+    (missing + extra locations).
+  - `narrowingWithNonNullExpression.ts`: tsc expects no diagnostics; tsz still reports TS18047 at
+    line 3 (`m! && m[0]`) in conformance mode.
+- Exact owning paths that need real fix:
+  1. `crates/tsz-checker/src/types/computation/call.rs`
+     - optional-call receiver handling in `get_type_of_call_expression_inner`
+     - `actual_this_type` / signature instantiation path should use non-nullish receiver for
+       optional calls (`obj?.method(...)` and `obj.method?.(...)`).
+  2. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+     - wrapper-expression transport for conditions is still inconsistent with conformance behavior
+       under harness options.
+  3. `crates/tsz-checker/src/types/property_access_type.rs` and
+     `crates/tsz-checker/src/types/computation/access.rs`
+     - optional-chain detection still has representation mismatch risk (`question_dot_token` vs
+       `OPTIONAL_CHAIN` flag) across call/property/element paths.
+- Estimated scope for a real fix: ~120-220 LOC across the three files above, plus 2-4 focused
+  checker tests for optional-call receiver inference and optional-chain/nonnull condition transport.
+- Status: no conformance-affecting patch landed from this session; reverted experimental code.
+
 ### Known Architecture Drift
 
 These are specific findings that should be addressed as part of campaign work:
@@ -7150,3 +7180,153 @@ BLAST RADIUS: assertion optional-chain CFA cases where false `TS2339`/`TS2345`/`
   - `./scripts/conformance.sh snapshot`
 - Result: **10,126 / 12,581 (80.5%)**
 - Net from this lane: +1 passing test with no targeted regressions observed.
+
+## Session 2026-03-07aa — narrowing-flow optional-call `this` inference probe (reverted, no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `callChainInference.ts`
+- `narrowingWithNonNullExpression.ts`
+- `contextuallyTypedOptionalProperty.ts`
+
+SHARED INVARIANT: Optional-call receiver narrowing must propagate into generic `this`-parameter inference so `keyof T` argument checks do not collapse to `never` on optional chains.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+- `value?.foo("a")` still emits false `TS2345` (`"a"` not assignable to `never`) in
+  `TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChainInference.ts`.
+- Candidate gap: generic-call inference did not consume optional-call receiver facts through the same
+  shared inference/constraint pipeline as ordinary arguments.
+
+### Attempted fix (reverted)
+
+1. Checker path (`crates/tsz-checker/src/types/computation/call.rs`):
+   - Stripped nullish from `actual_this_type` for optional property/element calls.
+2. Solver path (`crates/tsz-solver/src/operations/generic_call.rs`):
+   - Seeded generic inference constraints from `actual_this_type` to instantiated generic `this` type.
+3. Added focused checker regression (`crates/tsz-checker/tests/conformance_issues.rs`) for:
+   - `interface Y { foo<T>(this: T, arg: keyof T): void; ... }`
+   - `value?.foo("a")` should not emit `TS2345`.
+
+### Validation
+
+- Unit check passed for the focused regression after the solver seed change.
+- Targeted conformance remained unchanged:
+  - `./.target/dist-fast/tsz-conformance --filter callChainInference --verbose --print-fingerprints`
+  - still `extra TS2345`.
+- Direct CLI repro remained unchanged:
+  - `tsz --strict --target es2015 ... callChainInference.ts`
+  - still emits `"a"` not assignable to `never` at both call sites.
+
+### Conclusion / why reverted
+
+- The attempted shared inference seed is not the owning conformance bottleneck for this basket.
+- There is still a divergence between unit-path behavior and conformance/CLI behavior in optional-call
+  generic-`this` handling.
+- Because targeted conformance did not move, all experimental code/tests were reverted.
+
+### Exact owning boundary to change next
+
+- `crates/tsz-checker/src/types/computation/call.rs`
+  - how optional-call receiver facts are transported into the exact call-resolution path used by conformance.
+- `crates/tsz-solver/src/operations/core.rs` + `operations/generic_call.rs`
+  - ensure the same `this` inference/checking path is used for generic method calls in optional-chain contexts
+    (including conformance call-shape path).
+
+### Estimated scope / expected flips
+
+- Scope: ~120-220 LOC across checker call boundary + solver generic-call/this pipeline.
+- Expected flips if fixed correctly:
+  - `callChainInference.ts` (remove extra `TS2345`)
+  - nearby optional-call/assertion CFA call sites currently showing `never`-based argument mismatches.
+
+## Session 2026-03-07ab — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow lane above remained blocked (no targeted basket movement), so follow-on campaign claimed: **big3**.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+  - `python3 scripts/query-conformance.py --campaign big3`
+  - `python3 scripts/query-conformance.py --extra-code TS2345`
+
+### Representative basket sampled
+- `arrayToLocaleStringES2015.ts`
+- `arrayToLocaleStringES2020.ts`
+- `coAndContraVariantInferences6.ts`
+
+### Shared invariant candidate
+Top-level `TS2345` extras in call paths are still being preferred where tsc accepts call-site compatibility (or emits nested/member-level diagnostics), indicating mismatch in post-inference call compatibility routing.
+
+### What was checked
+- Targeted conformance with verbose/fingerprints for `arrayToLocaleStringES2015` and `arrayToLocaleStringES2020` still reports `extra TS2345`.
+- Direct CLI repro confirms at least one concrete extra in ES2020 lane:
+  - `arrayToLocaleStringES2020.ts(52,42): TS2345` (`{ style: string; currency: string; }` not assignable to `Int16Array`).
+
+### Why no patch landed
+- No safe single shared boundary fix was identified in this slice without risking broader call-resolution regressions.
+- Kept workspace code clean (no non-conformance-affecting code changes committed).
+
+## Session 2026-03-07ac — narrowing-flow optional-call generic `this` transport (+1 conf)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `callChainInference.ts`
+- `narrowingWithNonNullExpression.ts`
+- `contextuallyTypedOptionalProperty.ts`
+
+SHARED INVARIANT: Optional-chain/non-nullish guard transport must feed both flow narrowing and generic call `this` inference from executed receiver types.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP:
+- Solver generic-call path did not infer/check generic `this` parameters (`func.this_type`) against `actual_this_type`.
+- Checker optional-call path passed nullable receiver types into solver (`Y | undefined`), collapsing `keyof T` to `never` in `value?.foo("a")`.
+- Optional-chain truthiness checks in condition narrowing were keyed to `question_dot_token` only; some forms are represented via `OPTIONAL_CHAIN` flags.
+
+FIX BELONGS IN:
+- `crates/tsz-solver/src/operations/generic_call.rs`
+- `crates/tsz-checker/src/types/computation/call.rs`
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+
+### What changed
+- `crates/tsz-solver/src/operations/generic_call.rs`
+  - Seeded inference constraints from `actual_this_type` to instantiated generic `this` type.
+  - Added final instantiated `this` assignability check returning `ThisTypeMismatch` when needed.
+- `crates/tsz-checker/src/types/computation/call.rs`
+  - For optional calls, passed non-nullish receiver type as `actual_this_type` into solver call resolution.
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+  - Unified optional-chain detection for access expressions via `question_dot_token || OPTIONAL_CHAIN flag`.
+
+### Focused tests added
+- `crates/tsz-solver/tests/operations_tests.rs`
+  - `test_generic_call_infers_type_param_from_this_parameter`
+- `crates/tsz-checker/tests/conformance_issues.rs`
+  - `test_optional_call_generic_this_inference_uses_receiver_type`
+  - `test_non_null_assertion_on_optional_chain_condition_narrows_underlying_reference`
+
+### Validation
+- `cargo nextest run -p tsz-solver test_generic_call_infers_type_param_from_this_parameter` ✅
+- `cargo nextest run -p tsz-checker test_optional_call_generic_this_inference_uses_receiver_type test_non_null_assertion_on_optional_chain_condition_narrows_underlying_reference` ✅
+- Targeted conformance:
+  - `./.target/dist-fast/tsz-conformance --filter callChainInference --verbose --print-fingerprints` → PASS
+  - `./.target/dist-fast/tsz-conformance --filter narrowingWithNonNullExpression --verbose --print-fingerprints` → still extra `TS18047`
+  - `./.target/dist-fast/tsz-conformance --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints` → still missing `TS18048`
+
+### Snapshot
+- Ran: `./scripts/conformance.sh snapshot`
+- Result: **10,118 / 12,581 (80.4%)**
+- Representative movement: `callChainInference.ts` now PASS; adjacent TS18047/TS18048 optional-chain/nullish lanes remain open.

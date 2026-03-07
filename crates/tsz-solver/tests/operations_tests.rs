@@ -10065,6 +10065,45 @@ fn test_generic_call_evaluates_conditional_constraint_to_never() {
     }
 }
 
+#[test]
+fn test_generic_call_infers_type_param_from_this_parameter() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        is_const: false,
+        name: t_name,
+        constraint: None,
+        default: None,
+    };
+    let t_type = interner.type_param(t_info.clone());
+
+    let arg_type = interner.keyof(t_type);
+    let foo = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(arg_type)],
+        this_type: Some(t_type),
+        return_type: TypeId::VOID,
+        type_params: vec![t_info],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let receiver = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+    ]);
+    evaluator.set_actual_this_type(Some(receiver));
+
+    let result = evaluator.resolve_call(foo, &[interner.literal_string("a")]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected generic `this` to infer T from receiver, got {result:?}"
+    );
+}
+
 /// When a conditional constraint evaluates to a concrete type (not never),
 /// inference should succeed normally.
 ///

@@ -133,6 +133,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Seed inference from generic `this` parameter when present.
+        // For calls like `obj.method<T>(...)`, `this: T` must constrain `T` from
+        // the calling receiver so parameter types like `keyof T` don't collapse.
+        if let Some(expected_this) = func.this_type {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            let expected_this_inst = instantiate_type(self.interner, expected_this, &substitution);
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                actual_this,
+                expected_this_inst,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
+        }
+
         // 1.5. Pre-compute which placeholders should have their argument's object
         // properties widened. In tsc, object literal property widening happens at the
         // expression level (checkObjectLiteral) based on contextual type. When the
@@ -791,6 +806,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
+
+        // Validate `this` after final substitution so generic `this` params are fully
+        // instantiated (e.g. `this: T` -> `this: Y`).
+        if let Some(expected_this) = func.this_type {
+            let expected_this = instantiate_type(self.interner, expected_this, &final_subst);
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, expected_this) {
+                return CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this,
+                };
+            }
+        }
+
         // Final check: verify arguments against instantiated parameters.
         // When callbacks are contextually typed with the callee's inference placeholders
         // (__infer_0, etc.), those placeholders leak into the arg types. Replace them

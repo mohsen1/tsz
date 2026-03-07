@@ -538,7 +538,7 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                         if let Some(callee_node) = self.arena.get(call.expression)
                             && let Some(access) = self.arena.get_access_expr(callee_node)
-                            && access.question_dot_token
+                            && self.access_expr_is_optional_chain(callee_node, access)
                             && self.is_matching_reference(access.expression, target)
                         {
                             let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
@@ -570,7 +570,7 @@ impl<'a> FlowAnalyzer<'a> {
             {
                 if let Some(access) = self.arena.get_access_expr(cond_node) {
                     // Handle optional chaining: y?.a
-                    if access.question_dot_token
+                    if self.access_expr_is_optional_chain(cond_node, access)
                         && is_true_branch
                         && self.is_matching_reference(access.expression, target)
                     {
@@ -750,12 +750,20 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
             && let Some(access) = self.arena.get_access_expr(node)
         {
-            if access.question_dot_token {
+            if self.access_expr_is_optional_chain(node, access) {
                 return true;
             }
             return self.contains_optional_chain(access.expression);
         }
         false
+    }
+
+    const fn access_expr_is_optional_chain(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        access: &tsz_parser::parser::node::AccessExprData,
+    ) -> bool {
+        access.question_dot_token || (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
     }
 
     /// Check if `expr` is an optional chain (or typeof of one) that contains `target`

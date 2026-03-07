@@ -1513,6 +1513,64 @@ m! && m[0];
     );
 }
 
+#[test]
+fn test_non_null_assertion_on_optional_chain_condition_narrows_underlying_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const m = ''.match('');
+m?.[0]! && m[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for m?.[0]! && m[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_call_generic_this_inference_uses_receiver_type() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Y {
+    foo<T>(this: T, arg: keyof T): void;
+    a: number;
+    b: string;
+}
+declare const value: Y | undefined;
+if (value) {
+    value?.foo("a");
+}
+value?.foo("a");
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2345),
+        "Expected no TS2345 for optional-call generic this inference. Actual: {semantic_errors:#?}"
+    );
+}
+
 /// Assignment-based narrowing should use declared annotation types, not initializer flow types.
 ///
 /// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`
