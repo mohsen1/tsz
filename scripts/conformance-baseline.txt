@@ -71,7 +71,6 @@ FAIL TypeScript/tests/cases/compiler/circularReferenceInReturnType.ts
 FAIL TypeScript/tests/cases/compiler/circularReferenceInReturnType2.ts
 FAIL TypeScript/tests/cases/compiler/circularTypeArgumentsLocalAndOuterNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/ClassDeclaration26.ts
-FAIL TypeScript/tests/cases/compiler/classDeclarationShouldBeOutOfScopeInComputedNames.ts
 FAIL TypeScript/tests/cases/compiler/classExpressionAssignment.ts
 FAIL TypeScript/tests/cases/compiler/classExpressionWithResolutionOfNamespaceOfSameName01.ts
 FAIL TypeScript/tests/cases/compiler/classExtendsClauseClassMergedWithModuleNotReferingConstructor.ts
@@ -128,8 +127,6 @@ FAIL TypeScript/tests/cases/compiler/constructorParametersThatShadowExternalName
 FAIL TypeScript/tests/cases/compiler/constructorReturningAPrimitive.ts
 FAIL TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 FAIL TypeScript/tests/cases/compiler/contextualComputedNonBindablePropertyType.ts
-FAIL TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren.tsx
-FAIL TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedOptionalProperty.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersOptionalInJSDoc.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersWithQuestionToken.ts
@@ -1890,7 +1887,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/jsxParsingError1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxParsingErrorImmediateSpreadInAttributeValue.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxReactTestSuite.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxUnclosedParserRecovery.ts
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeInvalidNames.tsx
@@ -3025,6 +3021,7 @@ PASS TypeScript/tests/cases/compiler/classDeclarationBlockScoping2.ts
 PASS TypeScript/tests/cases/compiler/classDeclarationCheckUsedBeforeDefinitionInFunctionDeclaration.ts
 PASS TypeScript/tests/cases/compiler/classDeclarationCheckUsedBeforeDefinitionInItself.ts
 PASS TypeScript/tests/cases/compiler/classDeclarationMergedInModuleWithContinuation.ts
+PASS TypeScript/tests/cases/compiler/classDeclarationShouldBeOutOfScopeInComputedNames.ts
 PASS TypeScript/tests/cases/compiler/ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts
 PASS TypeScript/tests/cases/compiler/ClassDeclarationWithInvalidConstOnPropertyDeclaration2.ts
 PASS TypeScript/tests/cases/compiler/classDeclaredBeforeClassFactory.ts
@@ -3461,7 +3458,6 @@ PASS TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion2.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedGenericAssignment.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute.ts
-PASS TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers1.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers2.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers3.ts
@@ -10292,7 +10288,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
