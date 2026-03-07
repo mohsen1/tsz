@@ -604,6 +604,44 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     );
                 }
             }
+
+            // String literal with numeric text: `"3" = 3`
+            // Use is_finite() to exclude "-Infinity", "Infinity", "NaN" which Rust
+            // f64::parse accepts but tsc does not consider numeric names.
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                if let Some(lit) = self.ctx.arena.get_literal(name_node)
+                    && lit.text.parse::<f64>().is_ok_and(|v| v.is_finite())
+                {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "An enum member cannot have a numeric name.".to_string(),
+                        diagnostic_codes::AN_ENUM_MEMBER_CANNOT_HAVE_A_NUMERIC_NAME,
+                    );
+                }
+                continue;
+            }
+
+            // Computed property name wrapping a literal: `[2]`, `["4"]`
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(cp) = self.ctx.arena.get_computed_property(name_node)
+                && let Some(expr) = self.ctx.arena.get(cp.expression)
+            {
+                let is_numeric = expr.kind == SyntaxKind::NumericLiteral as u16
+                    || expr.kind == SyntaxKind::BigIntLiteral as u16
+                    || (expr.kind == SyntaxKind::StringLiteral as u16
+                        && self.ctx.arena.get_literal(expr).is_some_and(|lit| {
+                            lit.text.parse::<f64>().is_ok_and(|v| v.is_finite())
+                        }));
+                if is_numeric {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "An enum member cannot have a numeric name.".to_string(),
+                        diagnostic_codes::AN_ENUM_MEMBER_CANNOT_HAVE_A_NUMERIC_NAME,
+                    );
+                }
+            }
         }
 
         // TS1066: In ambient enum declarations, member initializer must be constant expression
