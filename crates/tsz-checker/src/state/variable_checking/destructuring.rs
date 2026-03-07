@@ -1023,52 +1023,57 @@ impl<'a> CheckerState<'a> {
     /// positional tuple types (a=number, b=string) instead of a widened union.
     ///
     /// - Array binding patterns → tuple types with `any` elements
-    /// - Object binding patterns → object types with `any` properties
+    /// - Object binding patterns → object types with properties typed from defaults
     /// - Nested patterns → recursively structured contextual types
+    ///
+    /// When a binding element has a default initializer (e.g., `{ f = (x: string) => x.length }`),
+    /// the default's type is used instead of `any`. This enables contextual typing to flow
+    /// from binding pattern defaults into generic function return type seeding.
     pub(crate) fn build_contextual_type_from_pattern(
-        &self,
+        &mut self,
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
         let pattern_data = self.ctx.arena.get_binding_pattern(pattern_node)?;
+        let elem_indices: Vec<NodeIndex> = pattern_data.elements.nodes.clone();
+        let pattern_kind = pattern_node.kind;
         let factory = self.ctx.types.factory();
 
-        if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            let tuple_elements: Vec<tsz_solver::TupleElement> = pattern_data
-                .elements
-                .nodes
-                .iter()
-                .map(|&elem_idx| {
-                    // For nested binding patterns, recursively build the contextual type.
-                    let elem_type = self
-                        .ctx
-                        .arena
-                        .get(elem_idx)
-                        .and_then(|elem_node| self.ctx.arena.get_binding_element(elem_node))
-                        .and_then(|elem_data| {
-                            let name_node = self.ctx.arena.get(elem_data.name)?;
-                            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            {
-                                self.build_contextual_type_from_pattern(elem_data.name)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(TypeId::ANY);
-
-                    tsz_solver::TupleElement {
-                        type_id: elem_type,
-                        optional: false,
-                        rest: false,
-                        name: None,
-                    }
-                })
-                .collect();
+        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let mut tuple_elements = Vec::new();
+            for &elem_idx in &elem_indices {
+                let elem_type = self
+                    .ctx
+                    .arena
+                    .get(elem_idx)
+                    .and_then(|elem_node| self.ctx.arena.get_binding_element(elem_node))
+                    .and_then(|elem_data| {
+                        let name_node = self.ctx.arena.get(elem_data.name)?;
+                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        {
+                            Some(elem_data.name)
+                        } else {
+                            None
+                        }
+                    });
+                let elem_type = if let Some(pattern_name) = elem_type {
+                    self.build_contextual_type_from_pattern(pattern_name)
+                        .unwrap_or(TypeId::ANY)
+                } else {
+                    TypeId::ANY
+                };
+                tuple_elements.push(tsz_solver::TupleElement {
+                    type_id: elem_type,
+                    optional: false,
+                    rest: false,
+                    name: None,
+                });
+            }
             Some(factory.tuple(tuple_elements))
-        } else if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+        } else if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let mut properties = Vec::new();
-            for &elem_idx in &pattern_data.elements.nodes {
+            for &elem_idx in &elem_indices {
                 let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                     continue;
                 };
@@ -1100,21 +1105,36 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // For nested patterns, recursively build contextual type
-                let prop_type = self
-                    .ctx
-                    .arena
-                    .get(elem_data.name)
-                    .and_then(|name_node| {
-                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        {
-                            self.build_contextual_type_from_pattern(elem_data.name)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(TypeId::ANY);
+                let initializer = elem_data.initializer;
+                let name_idx = elem_data.name;
+
+                // For nested patterns, recursively build contextual type.
+                // For elements with default initializers, use the default's type
+                // instead of `any` so the contextual type carries useful info
+                // (e.g., `{ f = (x: string) => x.length }` → f: (x: string) => number).
+                let name_kind = self.ctx.arena.get(name_idx).map(|n| n.kind);
+                let prop_type = if matches!(
+                    name_kind,
+                    Some(
+                        k
+                    ) if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                ) {
+                    self.build_contextual_type_from_pattern(name_idx)
+                        .unwrap_or(TypeId::ANY)
+                } else if initializer.is_some() {
+                    let init_type = self.get_type_of_node(initializer);
+                    if init_type != TypeId::ANY
+                        && init_type != TypeId::UNKNOWN
+                        && init_type != TypeId::ERROR
+                    {
+                        init_type
+                    } else {
+                        TypeId::ANY
+                    }
+                } else {
+                    TypeId::ANY
+                };
 
                 let atom = self.ctx.types.intern_string(&name_str);
                 properties.push(tsz_solver::PropertyInfo::new(atom, prop_type));

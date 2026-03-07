@@ -991,6 +991,19 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
+
+        // tsc's getIntersectedSignatures returns undefined when multiple
+        // signatures are present and ANY is generic. A single generic signature
+        // still provides contextual types (type params act as contextual types).
+        if shape.call_signatures.len() > 1
+            && shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty())
+        {
+            return None;
+        }
+
         // Collect parameter types from all signatures at the given index
         let param_types: Vec<TypeId> = shape
             .call_signatures
@@ -1031,8 +1044,11 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
                 if non_any.iter().all(|&t| t == first_non_any) {
                     Some(first_non_any)
                 } else {
-                    // Genuinely different non-any types: no contextual type (TS7006).
-                    None
+                    // Genuinely different non-any types: union them.
+                    // tsc creates intersected parameter types across overloaded
+                    // signatures; we union them which also suppresses false TS7006
+                    // (e.g., Callback with (null, T) | (Error, null) overloads).
+                    collect_single_or_union(self.db, non_any)
                 }
             }
         }
