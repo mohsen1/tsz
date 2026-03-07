@@ -360,6 +360,42 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Handle JSDoc nullable prefix: "?Type" → Type | null
+        if let Some(inner) = type_expr.strip_prefix('?') {
+            let inner = inner.trim();
+            if !inner.is_empty()
+                && let Some(inner_type) = self.resolve_jsdoc_type_str(inner)
+            {
+                let factory = self.ctx.types.factory();
+                return Some(factory.union(vec![inner_type, TypeId::NULL]));
+            }
+        }
+
+        // Handle JSDoc non-nullable prefix: "!Type" → Type (strip the prefix)
+        if let Some(inner) = type_expr.strip_prefix('!') {
+            let inner = inner.trim();
+            if !inner.is_empty() {
+                return self.resolve_jsdoc_type_str(inner);
+            }
+        }
+
+        // Handle array suffix: "T[]" → Array<T>, "T[][]" → Array<Array<T>>
+        // Must come after union/intersection split so "string | number[]" parses
+        // as "string | (number[])" not "(string | number)[]".
+        // Must not match tuple types like "[string, number]".
+        if type_expr.ends_with("[]") && !type_expr.starts_with('[') {
+            let inner = &type_expr[..type_expr.len() - 2];
+            // Handle parenthesized inner: "(string | number)[]"
+            let inner = if inner.starts_with('(') && inner.ends_with(')') && inner.len() >= 2 {
+                &inner[1..inner.len() - 1]
+            } else {
+                inner
+            };
+            let element_type = self.resolve_jsdoc_type_str(inner)?;
+            let factory = self.ctx.types.factory();
+            return Some(factory.array(element_type));
+        }
+
         // Handle string literal types: "foo" or 'bar'
         if ((type_expr.starts_with('"') && type_expr.ends_with('"'))
             || (type_expr.starts_with('\'') && type_expr.ends_with('\'')))
