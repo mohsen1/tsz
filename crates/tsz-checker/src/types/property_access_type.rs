@@ -10,14 +10,18 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     /// Get type of property access expression.
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
-        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+        if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
             *self.ctx.depth_exceeded.borrow_mut() = true;
             return TypeId::ERROR; // Max instantiation depth exceeded - propagate error
         }
 
-        *self.ctx.instantiation_depth.borrow_mut() += 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() + 1);
         let result = self.get_type_of_property_access_inner(idx);
-        *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() - 1);
         result
     }
 
@@ -100,7 +104,10 @@ impl<'a> CheckerState<'a> {
                 .get(access.expression)
                 .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16);
             if is_identifier_base
-                && let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(base_sym_id) = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, access.expression)
                 && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
                 && base_symbol.flags & symbol_flags::ENUM != 0
                 && let Some(exports) = base_symbol.exports.as_ref()

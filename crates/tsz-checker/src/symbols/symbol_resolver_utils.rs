@@ -897,7 +897,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(expr_idx)
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
-            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+            && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.flags & symbol_flags::CLASS != 0
             && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
