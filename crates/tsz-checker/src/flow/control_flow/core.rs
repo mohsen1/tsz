@@ -1397,14 +1397,14 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         } else if self.is_switch_true(switch_data.expression) {
-            // For switch(true), each case expression is an independent condition.
-            // Treat `case expr:` as `if (expr)` rather than `if (true === expr)`.
-            self.narrow_type_by_condition(
+            // For switch(true), dispatch to a case requires prior cases to be false
+            // and the current case condition to be true.
+            self.narrow_by_switch_true_case_clause(
                 pre_switch_type,
+                switch_data.case_block,
+                clause_idx,
                 clause.expression,
                 reference,
-                true,
-                FlowNodeId::NONE,
             )
         } else {
             self.narrow_by_switch_clause(

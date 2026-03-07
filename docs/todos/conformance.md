@@ -6973,6 +6973,82 @@ Narrowing facts established by predicate/equality guards must remain available t
 
 ## Session 2026-03-07w — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
 
+## Session 2026-03-07y — narrowing-flow switch exhaustiveness enum-domain probe (no commit)
+
+- **CAMPAIGN**: Narrowing / control-flow parity
+- **REPRESENTATIVE TEST BASKET**:
+  - `exhaustiveSwitchStatements1.ts`
+  - `narrowingByTypeofInSwitch.ts`
+  - `narrowByClauseExpressionInSwitchTrue3.ts`
+- **SHARED INVARIANT**:
+  - Switch exhaustiveness/fallthrough checks must operate on the same finite discriminant domain as CFA narrowing; otherwise implicit-default edges remain reachable and downstream diagnostics drift (`TS2366`/`TS2454`/`TS2367` clusters).
+
+### Root Cause Layer
+- [ ] Parser — AST / recovery / driver/config parity
+- [x] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+### Specific Gap
+- Reachability/definite-assignment exhaustiveness checks still diverge from conformance behavior for enum and enum-adjacent switch domains in `exhaustiveSwitchStatements1.ts`.
+- Targeted probe to normalize enum wrappers to structural member unions in checker exhaustiveness probes passed unit tests but did **not** change conformance deltas in the basket.
+
+### Fix Belongs In
+- `crates/tsz-checker/src/flow/reachability_checker.rs`
+- `crates/tsz-checker/src/flow/control_flow/var_utils.rs`
+- Potentially shared domain acquisition boundary used by both reachability and definite-assignment paths.
+
+### What tsc Does Differently (Observed)
+- `tsc` treats selected no-`default` switches in the basket as exhaustive and suppresses fallthrough/definite-assignment fallout where tsz still emits:
+  - extra `TS2366` at `f/g/good2/expression` in `exhaustiveSwitchStatements1.ts`
+  - extra `TS2454` on variables assigned in exhaustive enum switches
+- tsz still misses `TS2367` in the same file (`k === 'c'` after switch rewrite), indicating discriminant transport remains incomplete even when basic exhaustiveness is considered.
+
+### Estimated Scope
+- ~120-240 LOC across shared switch-domain acquisition and consumers (`switch_has_exhaustive_coverage*`, implicit-default pruning for DAA/reachability).
+
+### Blast Radius
+- Expected flips if fixed:
+  - `exhaustiveSwitchStatements1.ts` (`TS2366`/`TS2454` extras and related reachability side-effects)
+  - nearby switch/discriminant CFA cases (`narrowingByTypeofInSwitch.ts`, switch-true clause narrowing baskets)
+  - other no-default switch false positives in control-flow family.
+
+### Verification Run (targeted)
+- `cargo nextest run -p tsz-checker test_ts2366_not_emitted_for_exhaustive_switch_without_default test_ts2454_not_emitted_for_exhaustive_switch_implicit_default_path` (pass)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints` (unchanged)
+
+## Session 2026-03-07z — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow remains blocked on shared switch-domain acquisition; claimed follow-on campaign `big3` per queue order.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+  - `python3 scripts/query-conformance.py --campaign big3`
+
+### Campaign Classification (pre-code)
+
+CAMPAIGN: Big 3 assignability/property/call compatibility  
+REPRESENTATIVE TEST BASKET:
+- `arrayConcatMap.ts`
+- `inferFromGenericFunctionReturnTypes1.ts`
+- `builtinIterator.ts`
+- `genericContextualTypes1.ts`
+
+SHARED INVARIANT: Two-pass generic call contextual typing must avoid round-1 placeholder contamination in round-2 parameter contextual types, while still preserving fallback behavior when round-2 substitutions are incomplete.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP: Round-2 contextual parameter derivation in generic calls can reuse round-1 instantiated parameter shapes contaminated by sensitive placeholders, causing mixed `TS2322`/`TS2345`/`TS7006` drift across big3 baskets.  
+FIX BELONGS IN: `crates/tsz-checker/src/types/computation/call.rs` round-2 contextual parameter source selection (with a solver-backed coverage probe for substitution completeness).  
+ESTIMATED SCOPE: ~120-220 LOC plus focused checker tests around round-2 contextual inference paths.  
+BLAST RADIUS: generic call/contextual typing families in big3 and contextual-typing campaigns (`TS2322`/`TS2345`/`TS7006` clusters).
 Narrowing-flow remained blocked in this run, so follow-on campaign claimed per queue: **big3**.
 
 ### Follow-on triage status
