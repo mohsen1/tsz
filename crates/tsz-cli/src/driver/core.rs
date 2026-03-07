@@ -679,23 +679,38 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
     // (verified against tsc: these are never false positives in our parser
     // for tests where tsc expects TS5107)
     || matches!(code,
-        1003  // Identifier expected
+        1002  // Unterminated string literal
+        | 1003  // Identifier expected
         | 1005  // 'X' expected (colon, comma, semicolon, etc.)
         | 1011  // '(' or '<' expected
+        | 1034  // 'super' must be followed by argument list or member access
         | 1109 // Expression expected
+        | 1110 // Type expected
         | 1121 // Octal literals are not allowed in strict mode
         | 1124 // Digit expected
         | 1125 // Hexadecimal digit expected
+        | 1126 // Unexpected end of text
         | 1128 // Declaration or statement expected
+        | 1131 // Property or signature expected
         | 1134 // Variable declaration expected
         | 1137 // Expression or comma expected
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
+        | 1198 // An extended Unicode escape value must be between 0x0 and 0x10FFFF
         | 1199 // Value of type '{0}' is not callable
+        // NOTE: 1359 ('await' is a reserved word) is NOT included — our parser
+        // false-positives on TS1359 in async tests where tsc expects TS5107 only.
+        | 1433 // Neither decorators nor modifiers may be applied to 'this' parameters
         | 1434 // Top-level 'await' expressions are only allowed...
         | 1436 // Decorators are not valid here
         | 1440 // Variable declaration not allowed at this location
         | 1489 // Decimals with leading zeros are not allowed
+    )
+    // Specific 2xxx codes that tsc treats as syntactic/preprocessing errors
+    // (emitted during early phases, before semantic analysis)
+    || matches!(code,
+        2458 // An AMD module cannot have multiple name assignments
+        | 2754 // 'super' may not use type arguments
     )
 }
 
