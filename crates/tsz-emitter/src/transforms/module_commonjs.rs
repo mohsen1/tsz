@@ -709,8 +709,8 @@ pub fn collect_export_names_categorized(
                 let Some(node) = arena.get(stmt_idx) else {
                     return false;
                 };
-                // Check direct VARIABLE_STATEMENT with export modifier
-                let check_var = |n: &Node| -> bool {
+                // Check if a VARIABLE_STATEMENT contains the target name
+                let var_has_name = |n: &Node| -> bool {
                     if n.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(var_stmt) = arena.get_variable(n)
                         && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
@@ -724,15 +724,24 @@ pub fn collect_export_names_categorized(
                     false
                 };
                 match node.kind {
-                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => check_var(node),
-                    // Also handle EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT
+                    // Direct VARIABLE_STATEMENT must be exported to count
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = arena.get_variable(node)
+                            && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                        {
+                            var_has_name(node)
+                        } else {
+                            false
+                        }
+                    }
+                    // EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT is already exported
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                         if let Some(export_decl) = arena.get_export_decl(node)
                             && !export_decl.is_type_only
                             && export_decl.module_specifier.is_none()
                             && let Some(clause_node) = arena.get(export_decl.export_clause)
                         {
-                            check_var(clause_node)
+                            var_has_name(clause_node)
                         } else {
                             false
                         }
