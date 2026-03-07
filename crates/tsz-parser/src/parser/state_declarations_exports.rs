@@ -573,8 +573,16 @@ impl ParserState {
             self.next_token();
             let diag_len = self.parse_diagnostics.len();
             let parsed_type = self.parse_type();
+            // Keep TS1110 "Type expected" (emitted by parse_type for missing type
+            // after `=`), but suppress other cascade diagnostics.
             if self.parse_diagnostics.len() > diag_len {
+                let kept: Vec<_> = self.parse_diagnostics[diag_len..]
+                    .iter()
+                    .filter(|d| d.code == diagnostic_codes::TYPE_EXPECTED)
+                    .cloned()
+                    .collect();
                 self.parse_diagnostics.truncate(diag_len);
+                self.parse_diagnostics.extend(kept);
             }
             parsed_type
         } else {
@@ -584,6 +592,15 @@ impl ParserState {
             if self.can_token_start_type() {
                 self.parse_type()
             } else {
+                // Emit TS1110 at the name's end position (tsc emits "Type expected"
+                // here; use a position distinct from TS1005 to avoid dedup).
+                let name_end = self.arena.get(name).map_or(self.token_pos(), |n| n.end);
+                self.parse_error_at(
+                    name_end,
+                    0,
+                    "Type expected.",
+                    diagnostic_codes::TYPE_EXPECTED,
+                );
                 NodeIndex::NONE
             }
         };
