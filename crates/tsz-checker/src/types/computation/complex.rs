@@ -779,6 +779,34 @@ impl<'a> CheckerState<'a> {
                                     &round2_substitution,
                                 )
                             });
+                            // Resolve type parameter constraints for contextual typing.
+                            // When a param is a TypeParameter with a constraint (e.g.,
+                            // TCallback extends Callback<TFoo, TBar>), use the
+                            // instantiated constraint as contextual type. Only if the
+                            // result is fully resolved (no outer-scope type params).
+                            // (See matching logic in call.rs Round 2.)
+                            let instantiated = if let Some(tp_info) =
+                                tsz_solver::type_param_info(self.ctx.types, instantiated)
+                                && let Some(constraint) = tp_info.constraint
+                            {
+                                let instantiated_constraint = tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    constraint,
+                                    &round2_substitution,
+                                );
+                                let evaluated =
+                                    self.evaluate_type_with_env(instantiated_constraint);
+                                if !tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    evaluated,
+                                ) {
+                                    evaluated
+                                } else {
+                                    instantiated
+                                }
+                            } else {
+                                instantiated
+                            };
                             Some(self.evaluate_type_with_env(instantiated))
                         } else {
                             None

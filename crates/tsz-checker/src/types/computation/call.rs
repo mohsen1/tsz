@@ -782,9 +782,74 @@ impl<'a> CheckerState<'a> {
                             });
                         let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
                             let instantiated = if round1_instantiated_params.is_some() {
-                                param_type
+                                // Round 1 already instantiated the params, but for
+                                // constrained type parameters whose constraint only
+                                // references type params from the SAME call signature
+                                // (e.g., TCallback extends Callback<TFoo, TBar>), the
+                                // solver resolved them to degraded constraint types with
+                                // `any` params. Check the ORIGINAL shape param — if it's a
+                                // TypeParameter with a constraint that becomes fully
+                                // resolved after instantiation, use that instead.
+                                let original_param = shape.params.get(i).map(|p| p.type_id);
+                                if let Some(orig) = original_param
+                                    && let Some(tp_info) =
+                                        tsz_solver::type_param_info(self.ctx.types, orig)
+                                    && let Some(constraint) = tp_info.constraint
+                                {
+                                    let instantiated_constraint = instantiate_type(
+                                        self.ctx.types,
+                                        constraint,
+                                        &round2_substitution,
+                                    );
+                                    let evaluated =
+                                        self.evaluate_type_with_env(instantiated_constraint);
+                                    // Only use the constraint if it's fully resolved (no
+                                    // remaining type parameters from outer scopes). If it
+                                    // still has unresolved params, fall back to Round 1.
+                                    if !tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        evaluated,
+                                    ) {
+                                        evaluated
+                                    } else {
+                                        param_type
+                                    }
+                                } else {
+                                    param_type
+                                }
                             } else {
-                                instantiate_type(self.ctx.types, param_type, &round2_substitution)
+                                let inst = instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &round2_substitution,
+                                );
+                                // When the instantiated type is still a bare TypeParameter
+                                // (not in the substitution), resolve to its CONSTRAINT for
+                                // contextual typing. This matches tsc where
+                                // `TCallback extends Callback<TFoo, TBar>` uses
+                                // `Callback<TFoo, TBar>` as contextual type.
+                                if let Some(tp_info) =
+                                    tsz_solver::type_param_info(self.ctx.types, inst)
+                                    && let Some(constraint) = tp_info.constraint
+                                {
+                                    let instantiated_constraint = instantiate_type(
+                                        self.ctx.types,
+                                        constraint,
+                                        &round2_substitution,
+                                    );
+                                    let evaluated =
+                                        self.evaluate_type_with_env(instantiated_constraint);
+                                    if !tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        evaluated,
+                                    ) {
+                                        evaluated
+                                    } else {
+                                        inst
+                                    }
+                                } else {
+                                    inst
+                                }
                             };
                             let evaluated = self.evaluate_type_with_env(instantiated);
                             trace!(
