@@ -1091,6 +1091,7 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
     fn get_enclosing_namespace(&self, decl_idx: NodeIndex) -> NodeIndex {
         use tsz_parser::parser::syntax_kind_ext;
         let mut current = decl_idx;

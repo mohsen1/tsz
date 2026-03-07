@@ -309,6 +309,9 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
+            // Check for constructor parameter property vs explicit property conflicts (2300/2687)
+            self.check_constructor_parameter_property_conflicts();
+
             // Check for built-in global identifier conflicts (2397)
             self.check_built_in_global_identifier_conflicts();
 

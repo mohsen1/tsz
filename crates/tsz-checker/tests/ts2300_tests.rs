@@ -540,3 +540,99 @@ fn namespace_exported_and_non_exported_class_no_ts2300() {
         "Exported + non-exported class in merging namespaces should NOT produce TS2300"
     );
 }
+
+/// Test that constructor parameter properties conflict with explicit class properties.
+/// When a constructor parameter has a visibility modifier (public/private/protected)
+/// and a class also has an explicit property with the same name, tsc reports TS2300
+/// on the parameter.
+#[test]
+fn constructor_param_property_duplicate_ts2300() {
+    let diagnostics = verify_errors(
+        "class D { y: number; constructor(public y: number) { } }",
+        &[(1, 42, "Duplicate identifier 'y'")],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert!(
+        ts2300 >= 1,
+        "Expected TS2300 for parameter property conflicting with explicit property"
+    );
+}
+
+/// Test that TS2687 is reported when parameter property modifier differs from
+/// the explicit property's modifier.
+#[test]
+fn constructor_param_property_modifier_mismatch_ts2687() {
+    let diagnostics = verify_errors(
+        "class E { y: number; constructor(private y: number) { } }",
+        &[(1, 43, "Duplicate identifier 'y'")],
+    );
+    let ts2687 = diagnostics.iter().filter(|d| d.code == 2687).count();
+    assert!(
+        ts2687 >= 2,
+        "Expected TS2687 on both property and parameter when modifiers differ, got {ts2687}"
+    );
+}
+
+/// Test that no TS2300 is emitted for regular constructor parameters (without
+/// visibility modifiers) that share a name with a class property.
+#[test]
+fn constructor_param_no_modifier_no_ts2300() {
+    let diagnostics = verify_errors(
+        "class C { y: number; constructor(y: number) { } }",
+        &[], // No TS2300 expected — parameter without modifier is fine
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "Regular constructor parameter (no modifier) should NOT produce TS2300"
+    );
+}
+
+/// Test that protected parameter property conflicting with explicit property
+/// reports both TS2300 and TS2687.
+#[test]
+fn constructor_protected_param_property_duplicate() {
+    let diagnostics = verify_errors(
+        "class F { y: number; constructor(protected y: number) { } }",
+        &[(1, 45, "Duplicate identifier 'y'")],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    let ts2687 = diagnostics.iter().filter(|d| d.code == 2687).count();
+    assert!(
+        ts2300 >= 1,
+        "Expected TS2300 for protected parameter property conflicting with explicit property"
+    );
+    assert!(
+        ts2687 >= 2,
+        "Expected TS2687 on both declarations when modifiers differ (protected vs none), got {ts2687}"
+    );
+}
+
+/// Test that TS2687 is NOT reported when the explicit property has no modifier
+/// (default = public) and the parameter property is explicitly `public` — they match.
+#[test]
+fn constructor_public_param_property_no_ts2687() {
+    let diagnostics = verify_errors(
+        "class D { y: number; constructor(public y: number) { } }",
+        &[(1, 42, "Duplicate identifier 'y'")],
+    );
+    let ts2687 = diagnostics.iter().filter(|d| d.code == 2687).count();
+    assert_eq!(
+        ts2687, 0,
+        "No TS2687 expected when both are public (explicit public matches default public)"
+    );
+}
+
+/// Test that static properties do NOT conflict with parameter properties.
+#[test]
+fn constructor_param_property_no_conflict_with_static() {
+    let diagnostics = verify_errors(
+        "class G { static y: number; constructor(public y: number) { } }",
+        &[], // No TS2300 — static and instance properties don't conflict
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "Static property should NOT conflict with instance parameter property"
+    );
+}
