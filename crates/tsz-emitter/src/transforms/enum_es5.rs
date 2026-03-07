@@ -427,8 +427,16 @@ impl<'a> EnumES5Transformer<'a> {
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             } else {
                 // Auto-increment: E[E["A"] = 0] = "A";
-                let next_val = self.last_value.map_or(0, |v| v + 1);
-                self.last_value = Some(next_val);
+                // When last_value is None, auto-increment was broken by a computed
+                // initializer (e.g. `X = "".length`), so emit `void 0` like tsc.
+                let value_node = if let Some(v) = self.last_value {
+                    let next_val = v + 1;
+                    self.last_value = Some(next_val);
+                    IRNode::NumericLiteral(next_val.to_string())
+                } else {
+                    // Can't auto-increment: emit void 0
+                    IRNode::Undefined
+                };
 
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
@@ -436,7 +444,7 @@ impl<'a> EnumES5Transformer<'a> {
                         index: Box::new(IRNode::StringLiteral(member_name.clone())),
                     }),
                     operator: "=".to_string(),
-                    right: Box::new(IRNode::NumericLiteral(next_val.to_string())),
+                    right: Box::new(value_node),
                 };
                 let outer_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
