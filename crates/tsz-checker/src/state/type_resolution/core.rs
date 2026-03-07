@@ -1443,6 +1443,11 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .map(|arc| (decl_idx, arc.as_ref()))
                                 .collect::<Vec<_>>()
+                        } else if has_declaration_arenas {
+                            // This symbol has lib declarations (with declaration_arenas
+                            // entries) but THIS declaration has no entry — it was added
+                            // during user-file binding and lives in the user arena.
+                            vec![(decl_idx, self.ctx.arena)]
                         } else {
                             vec![(decl_idx, fallback_arena)]
                         }
