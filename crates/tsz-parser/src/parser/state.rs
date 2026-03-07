@@ -253,6 +253,19 @@ impl ParserState {
             })
     }
 
+    /// Check if we're in a JavaScript file (not TypeScript).
+    pub(crate) fn is_js_file(&self) -> bool {
+        std::path::Path::new(&self.file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("js")
+                    || ext.eq_ignore_ascii_case("cjs")
+                    || ext.eq_ignore_ascii_case("mjs")
+                    || ext.eq_ignore_ascii_case("jsx")
+            })
+    }
+
     /// Get current token
     #[inline]
     pub(crate) const fn token(&self) -> SyntaxKind {

@@ -1045,6 +1045,25 @@ impl ParserState {
             }
         }
 
+        // Recovery: Handle 'try' keyword misplaced in class body.
+        // `try { ... }` is not a valid class member. When followed by `{` on the same line,
+        // emit TS1068 to match tsc's behavior.
+        if modifiers.is_none() && self.is_token(SyntaxKind::TryKeyword) {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let next_is_open_brace = self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.scanner.has_preceding_line_break();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            if next_is_open_brace {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+            }
+        }
+
         // Recovery: Handle 'class'/'enum' keywords that are misplaced declarations in class body.
         // `class D { }` or `enum E { }` inside a class body are invalid — classes and enums
         // can't be nested as class members. But `class;` or `class(){}` are valid property names.
@@ -1378,6 +1397,19 @@ impl ParserState {
             };
 
             self.context_flags = init_saved_flags;
+
+            // Match tsc's parseSemicolonAfterPropertyName: when a property has
+            // no type annotation and no initializer and no semicolon follows,
+            // use keyword-aware semicolon error (TS1434/TS1435) instead of
+            // the generic "';' expected". This produces "Unexpected keyword or
+            // identifier" for bare identifiers like `NoMove` in class bodies.
+            if type_annotation == NodeIndex::NONE
+                && initializer == NodeIndex::NONE
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.can_parse_semicolon()
+            {
+                self.parse_error_for_missing_semicolon_after(name);
+            }
 
             let end_pos = self.token_end();
             self.arena.add_property_decl(

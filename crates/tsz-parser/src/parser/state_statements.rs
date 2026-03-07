@@ -983,6 +983,14 @@ impl ParserState {
 
     /// Parse entity name: A or A.B.C or this or this.x
     pub(crate) fn parse_entity_name(&mut self) -> NodeIndex {
+        self.parse_entity_name_inner(false)
+    }
+
+    pub(crate) fn parse_entity_name_allow_reserved(&mut self) -> NodeIndex {
+        self.parse_entity_name_inner(true)
+    }
+
+    fn parse_entity_name_inner(&mut self, allow_reserved_words: bool) -> NodeIndex {
         // Handle 'this' keyword as a valid start for typeof expressions
         let mut left = if self.is_token(SyntaxKind::ThisKeyword) {
             let start_pos = self.token_pos();
@@ -990,6 +998,8 @@ impl ParserState {
             self.next_token();
             self.arena
                 .add_token(SyntaxKind::ThisKeyword as u16, start_pos, end_pos)
+        } else if allow_reserved_words {
+            self.parse_identifier_name()
         } else {
             self.parse_identifier()
         };
