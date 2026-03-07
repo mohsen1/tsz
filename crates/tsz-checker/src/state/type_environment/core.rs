@@ -253,7 +253,7 @@ impl<'a> CheckerState<'a> {
         // so thread-local counters provide global bounds that survive delegation.
         let global_depth = GLOBAL_INSTANTIATION_DEPTH.get();
         let global_fuel = GLOBAL_INSTANTIATION_FUEL.get();
-        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH
+        if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH
             || global_depth >= MAX_GLOBAL_INSTANTIATION_DEPTH
             || global_fuel >= MAX_GLOBAL_INSTANTIATION_FUEL
         {
@@ -261,13 +261,17 @@ impl<'a> CheckerState<'a> {
             self.ctx.application_eval_set.remove(&type_id);
             return type_id;
         }
-        *self.ctx.instantiation_depth.borrow_mut() += 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() + 1);
         GLOBAL_INSTANTIATION_DEPTH.set(global_depth + 1);
         GLOBAL_INSTANTIATION_FUEL.set(global_fuel + 1);
 
         let result = self.evaluate_application_type_inner(type_id);
 
-        *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() - 1);
         GLOBAL_INSTANTIATION_DEPTH.set(GLOBAL_INSTANTIATION_DEPTH.get().saturating_sub(1));
         self.ctx.application_eval_set.remove(&type_id);
         if can_cache {
@@ -462,16 +466,20 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+        if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
             *self.ctx.depth_exceeded.borrow_mut() = true;
             self.ctx.mapped_eval_set.remove(&type_id);
             return type_id;
         }
-        *self.ctx.instantiation_depth.borrow_mut() += 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() + 1);
 
         let result = self.evaluate_mapped_type_with_resolution_inner(type_id, mapped_id);
 
-        *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        self.ctx
+            .instantiation_depth
+            .set(self.ctx.instantiation_depth.get() - 1);
         self.ctx.mapped_eval_set.remove(&type_id);
         if can_cache {
             self.ctx
