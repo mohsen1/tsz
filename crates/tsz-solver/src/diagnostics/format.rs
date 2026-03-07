@@ -314,6 +314,16 @@ impl<'a> TypeFormatter<'a> {
                         "Application base resolved from DefId"
                     );
                     name
+                } else if let Some(TypeData::TypeQuery(sym)) = base_key {
+                    // For Application(TypeQuery(sym), args) — class instantiation
+                    // like D<string>. Display as "D<string>" not "typeof D<string>",
+                    // since typeof X<T> is not valid TS syntax and this represents
+                    // the instantiated class type.
+                    if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                        name
+                    } else {
+                        format!("Ref({})", sym.0)
+                    }
                 } else {
                     let formatted = self.format(app.base);
                     trace!(
