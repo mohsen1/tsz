@@ -1096,8 +1096,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // 5. Check if usage is inside a computed property name
-        if self.find_enclosing_computed_property(usage_idx).is_some() {
+        // 5. Check if usage is inside a computed property name.
+        // Skip TDZ in ambient/type-only contexts (interfaces, type aliases,
+        // declare class, .d.ts files) — these don't have runtime TDZ semantics.
+        if self.find_enclosing_computed_property(usage_idx).is_some()
+            && !self.ctx.arena.is_in_ambient_context(usage_idx)
+        {
             return true;
         }
 
@@ -1440,7 +1444,10 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::TEMPLATE_LITERAL_TYPE
                 | syntax_kind_ext::IMPORT_TYPE
                 | syntax_kind_ext::HERITAGE_CLAUSE
-                | syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => return true,
+                | syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                // Declaration containers that are purely type-level
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION => return true,
 
                 // Stop at boundaries that separate type from value context
                 syntax_kind_ext::TYPE_OF_EXPRESSION // typeof x in value position

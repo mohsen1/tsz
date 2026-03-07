@@ -123,22 +123,10 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // TS2538: When a variable is used before declaration in a computed property,
-            // it has implicit type 'any', which cannot be used as an index type.
-            // Emit this additional error for computed property contexts.
-            let is_in_computed_property =
-                self.is_variable_used_before_declaration_in_computed_property(sym_id, idx);
-            if is_in_computed_property {
-                let message = format_message(
-                    diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                    &["any"],
-                );
-                self.error_at_node(
-                    idx,
-                    &message,
-                    diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                );
-            }
+            // Note: tsc does NOT emit TS2538 for TDZ variables in computed properties.
+            // `any` is a valid index type (assignable to string | number | symbol),
+            // so the TDZ error (TS2448/TS2449) is sufficient. The solver's
+            // `get_invalid_index_type_member` correctly returns None for `any`.
         }
         is_tdz
     }
