@@ -12,6 +12,9 @@ use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
+pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
+
 // =============================================================================
 // Emitter Options
 // =============================================================================
@@ -282,8 +285,9 @@ pub struct Printer<'a> {
     /// Pending class field initializers to inject into constructor body.
     /// Each entry is (`field_name`, `initializer_node_index`, `init_end`, `trailing_comments`).
     /// `init_end` is used for trailing comment emission in synthesized constructors.
+    /// `leading_comments` are pre-collected for comments before the property declaration.
     /// `trailing_comments` are pre-collected during class body iteration for existing constructors.
-    pub(crate) pending_class_field_inits: Vec<(String, NodeIndex, u32, Vec<String>)>,
+    pub(crate) pending_class_field_inits: Vec<FieldInit>,
 
     /// Pending auto-accessor field initializers to emit in constructor body.
     /// Each tuple is (`weakmap_storage_name`, `initializer_expression`).

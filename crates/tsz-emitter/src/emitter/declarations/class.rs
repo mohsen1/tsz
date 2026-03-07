@@ -792,10 +792,10 @@ impl<'a> Printer<'a> {
         let mut computed_property_side_effects: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering
-        // (name, initializer_idx, init_end, trailing_comments)
-        // Trailing comments are collected eagerly here so they're available even
+        // (name, initializer_idx, init_end, leading_comments, trailing_comments)
+        // Comments are collected eagerly here so they're available even
         // when the constructor appears before the property in source order.
-        let mut field_inits: Vec<(String, NodeIndex, u32, Vec<String>)> = Vec::new();
+        let mut field_inits: Vec<crate::emitter::core::FieldInit> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
         if needs_class_field_lowering {
             let members = &class.members.nodes;
@@ -821,6 +821,26 @@ impl<'a> Printer<'a> {
                     if name.is_empty() {
                         continue;
                     }
+
+                    // Pre-collect leading comments for this property declaration.
+                    // Use the actual token end of the previous member (not its
+                    // `end` field which can overshoot into the next member's trivia)
+                    // so the range doesn't invert.
+                    let leading_comments = if !self.ctx.options.remove_comments {
+                        let prev_end = if member_i > 0 {
+                            members
+                                .get(member_i - 1)
+                                .and_then(|&prev_idx| self.arena.get(prev_idx))
+                                .map_or(member_node.pos, |prev| {
+                                    self.find_token_end_before_trivia(prev.pos, prev.end)
+                                })
+                        } else {
+                            member_node.pos.saturating_sub(64)
+                        };
+                        self.collect_leading_comments_in_range(prev_end, member_node.pos)
+                    } else {
+                        Vec::new()
+                    };
 
                     // Pre-collect trailing comments for this property declaration.
                     let trailing_comments = if !self.ctx.options.remove_comments {
@@ -851,7 +871,13 @@ impl<'a> Printer<'a> {
                             .arena
                             .get(prop.initializer)
                             .map_or(member_node.end, |n| n.end);
-                        field_inits.push((name, prop.initializer, init_end, trailing_comments));
+                        field_inits.push((
+                            name,
+                            prop.initializer,
+                            init_end,
+                            leading_comments,
+                            trailing_comments,
+                        ));
                     }
                 }
             }
@@ -930,7 +956,12 @@ impl<'a> Printer<'a> {
                 }
             }
             // Non-private field inits after WeakMap.set calls
-            for (name, init_idx, init_end, trailing) in &field_inits {
+            for (name, init_idx, init_end, leading, trailing) in &field_inits {
+                // Emit leading comments from the original property declaration
+                for comment in leading {
+                    self.write_comment(comment);
+                    self.write_line();
+                }
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
                     self.emit_string_literal_text(name);
@@ -1134,7 +1165,7 @@ impl<'a> Printer<'a> {
                             }
                         } else if !trailing.is_empty() {
                             if let Some(entry) = field_inits.get_mut(field_init_comment_idx) {
-                                entry.3 = trailing.clone();
+                                entry.4 = trailing.clone();
                             }
                             // Also update pending_class_field_inits so existing constructors
                             // that read from it during the member loop get the comments
@@ -1142,7 +1173,7 @@ impl<'a> Printer<'a> {
                                 .pending_class_field_inits
                                 .get_mut(field_init_comment_idx)
                             {
-                                entry.3 = trailing;
+                                entry.4 = trailing;
                             }
                         }
                     }
