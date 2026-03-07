@@ -442,11 +442,13 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // TS2576 parity for element access on instance/super with a static member name.
+                    // Use .is_some() — TS2576 fires for any static member (property or method).
                     if self.is_super_expression(access.expression)
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-                        && self.is_method_member_in_class_hierarchy(base_idx, &property_name, true)
-                            == Some(true)
+                        && self
+                            .is_method_member_in_class_hierarchy(base_idx, &property_name, true)
+                            .is_some()
                     {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -466,25 +468,13 @@ impl<'a> CheckerState<'a> {
                         );
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
-                    } else if self.is_super_expression(access.expression)
-                        && let Some(ref class_info) = self.ctx.enclosing_class
-                        && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-                        && self.is_method_member_in_class_hierarchy(base_idx, &property_name, true)
-                            == Some(false)
-                    {
-                        self.error_property_not_exist_at(
-                            &property_name,
-                            object_type_for_access,
-                            access.name_or_argument,
-                        );
-                        use_index_signature_check = false;
-                        Some(TypeId::ERROR)
                     } else if !self.is_super_expression(access.expression)
                         && let Some((class_idx, is_static_access)) =
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && !is_static_access
-                        && self.is_method_member_in_class_hierarchy(class_idx, &property_name, true)
-                            == Some(true)
+                        && self
+                            .is_method_member_in_class_hierarchy(class_idx, &property_name, true)
+                            .is_some()
                     {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -501,20 +491,6 @@ impl<'a> CheckerState<'a> {
                             access.name_or_argument,
                             &message,
                             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
-                        );
-                        use_index_signature_check = false;
-                        Some(TypeId::ERROR)
-                    } else if !self.is_super_expression(access.expression)
-                        && let Some((class_idx, is_static_access)) =
-                            self.resolve_class_for_access(access.expression, object_type_for_access)
-                        && !is_static_access
-                        && self.is_method_member_in_class_hierarchy(class_idx, &property_name, true)
-                            == Some(false)
-                    {
-                        self.error_property_not_exist_at(
-                            &property_name,
-                            object_type_for_access,
-                            access.name_or_argument,
                         );
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
