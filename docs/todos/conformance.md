@@ -6985,3 +6985,54 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
   - `genericContextualTypes1.ts`
   - `arrayToLocaleStringES2015.ts`
 - No safe conformance-affecting patch landed in this slice.
+
+## Session 2026-03-07x — narrowing-flow assertion optional-chain discriminant transport (+1 conf)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `assertionFunctionsCanNarrowByDiscriminant.ts`
+- `controlFlowOptionalChain.ts`
+- `controlFlowOptionalChain2.ts`
+- `controlFlowOptionalChain3.tsx`
+
+SHARED INVARIANT: Assertion-call CFA transport must compose optional-chain non-nullish transport with downstream discriminant/condition narrowing instead of short-circuiting early.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP: `handle_call_iterative` returned immediately after optional-chain prefix transport for assertion calls, so later discriminant narrowing (`assertEqual(x?.kind, "a")`) and condition-based assertion narrowing were skipped.  
+FIX BELONGS IN: `crates/tsz-checker/src/flow/control_flow/core.rs::handle_call_iterative`  
+ESTIMATED SCOPE: ~35-60 LOC + one focused checker regression test  
+BLAST RADIUS: assertion optional-chain CFA cases where false `TS2339`/`TS2345`/`TS2322` are caused by losing post-assert discriminant/condition narrowing.
+
+### What changed
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+  - Reworked optional-chain assertion transport to **compose** with subsequent narrowing steps:
+    - keep nullish-stripped `narrowed_pre_type`,
+    - continue into discriminant narrowing and condition-based assertion narrowing paths,
+    - fall back to transported type only when no richer narrowing applies.
+- `crates/tsz-checker/tests/conformance_issues.rs`
+  - Added `test_assert_optional_chain_discriminant_narrows_base_union_member` covering:
+    - `assertEqual(animalOrUndef?.type, 'cat' as const);`
+    - subsequent access `animalOrUndef.canMeow` should not emit `TS2339`/`TS18048`.
+
+### Validation
+- Targeted checker tests:
+  - `cargo nextest run -p tsz-checker test_assert_optional_chain_discriminant_narrows_base_union_member test_assert_nonnull_optional_chain_narrows_base_reference test_assert_optional_chain_then_assert_nonnull_keeps_base_narrowed`
+- Targeted conformance:
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter assertionFunctionsCanNarrowByDiscriminant --verbose --print-fingerprints` → PASS (was extra `TS2339`)
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain2 --verbose --print-fingerprints` → PASS
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain3 --verbose --print-fingerprints` → PASS
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints` → still failing (large TS18048/TS18047 fingerprint lane; separate root cause)
+
+### Snapshot
+- Ran full snapshot after fix:
+  - `./scripts/conformance.sh snapshot`
+- Result: **10,126 / 12,581 (80.5%)**
+- Net from this lane: +1 passing test with no targeted regressions observed.

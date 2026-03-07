@@ -1492,12 +1492,18 @@ impl<'a> FlowAnalyzer<'a> {
         // `assertNonNull(o?.foo)` and similar predicates prove that the chain
         // reached its tail value, so prefix references (`o`, `o.foo` intermediates)
         // must be non-nullish after the assertion.
+        //
+        // IMPORTANT: do not return early here. We still need to run discriminant
+        // and condition-based assertion narrowing on top of this transport.
+        let mut narrowed_pre_type = pre_type;
+        let mut applied_optional_chain_transport = false;
         if self.contains_optional_chain(predicate_target)
             && self.is_optional_chain_prefix(predicate_target, reference)
         {
             let narrowing = NarrowingContext::new(self.interner);
             let narrowed = narrowing.narrow_excluding_type(pre_type, TypeId::NULL);
-            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            narrowed_pre_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            applied_optional_chain_transport = true;
         }
 
         // Discriminant narrowing: if the predicate target is a property access on the
@@ -1520,7 +1526,11 @@ impl<'a> FlowAnalyzer<'a> {
                 env_borrow = env.borrow();
                 narrowing = narrowing.with_resolver(&*env_borrow);
             }
-            return narrowing.narrow_by_discriminant(pre_type, &property_path, predicate_type);
+            return narrowing.narrow_by_discriminant(
+                narrowed_pre_type,
+                &property_path,
+                predicate_type,
+            );
         }
 
         // Condition-based assertion narrowing: for `assert(condition)` where the predicate
@@ -1531,7 +1541,7 @@ impl<'a> FlowAnalyzer<'a> {
         if resolved_predicate.type_id.is_none() {
             let antecedent_id = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
             return self.narrow_type_by_condition(
-                pre_type,
+                narrowed_pre_type,
                 predicate_target,
                 reference,
                 true,
@@ -1539,6 +1549,10 @@ impl<'a> FlowAnalyzer<'a> {
             );
         }
 
-        pre_type
+        if applied_optional_chain_transport {
+            narrowed_pre_type
+        } else {
+            pre_type
+        }
     }
 }
