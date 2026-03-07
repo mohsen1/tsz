@@ -288,6 +288,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         readonly: any_readonly,
                         visibility: prop.visibility,
                         is_method: prop.is_method,
+                        is_class_prototype: prop.is_class_prototype,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
                     });

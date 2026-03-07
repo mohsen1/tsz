@@ -799,6 +799,7 @@ impl<'a> CheckerState<'a> {
                     optional: is_optional,
                     readonly: false,
                     is_method: false,
+                    is_class_prototype: false,
                     visibility: tsz_solver::Visibility::Public,
                     parent_id: None,
                     declaration_order: properties.len() as u32,

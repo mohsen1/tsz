@@ -106,6 +106,7 @@ impl<'a> NarrowingContext<'a> {
                 optional: false, // Property becomes required after `in` check
                 readonly: false,
                 is_method: false,
+                is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,
@@ -216,6 +217,7 @@ impl<'a> NarrowingContext<'a> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: 0,

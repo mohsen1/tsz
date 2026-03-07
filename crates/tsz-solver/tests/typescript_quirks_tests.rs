@@ -73,6 +73,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         optional: false,
         readonly: false,
         is_method: true, // This is a method
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -89,6 +90,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         optional: false,
         readonly: false,
         is_method: false, // Not a method, just a function property
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -105,6 +107,7 @@ fn animal_type(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -123,6 +126,7 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             optional: false,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,

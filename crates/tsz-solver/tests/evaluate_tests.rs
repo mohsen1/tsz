@@ -11447,6 +11447,7 @@ fn test_keyof_readonly_and_optional_properties() {
             optional: false,
             readonly: true, // readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -11458,6 +11459,7 @@ fn test_keyof_readonly_and_optional_properties() {
             optional: true, // optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12488,6 +12490,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -12569,6 +12572,7 @@ fn test_mapped_type_remove_readonly_modifier() {
             optional: false,
             readonly: false, // readonly removed
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12618,6 +12622,7 @@ fn test_mapped_type_remove_optional_modifier() {
             optional: false, // optional removed
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12667,6 +12672,7 @@ fn test_mapped_type_add_readonly_modifier() {
             optional: false,
             readonly: true, // readonly added
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12716,6 +12722,7 @@ fn test_mapped_type_add_optional_modifier() {
             optional: true, // optional added
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12761,6 +12768,7 @@ fn test_mapped_type_both_modifiers() {
         optional: true,
         readonly: true,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -12804,6 +12812,7 @@ fn test_mapped_type_both_remove_modifiers() {
         optional: false, // optional removed
         readonly: false, // readonly removed
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -12847,6 +12856,7 @@ fn test_mapped_type_add_readonly_remove_optional() {
         optional: false, // optional removed
         readonly: true,  // readonly added
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -12890,6 +12900,7 @@ fn test_mapped_type_remove_readonly_add_optional() {
         optional: true,  // optional added
         readonly: false, // readonly removed
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -12940,6 +12951,7 @@ fn test_mapped_type_minus_readonly_on_readonly_source() {
             optional: false,
             readonly: false, // removed
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -12988,6 +13000,7 @@ fn test_mapped_type_plus_optional_on_required_source() {
             optional: true, // added
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -13152,6 +13165,7 @@ fn test_mapped_type_add_both_modifiers_on_source() {
         optional: true,
         readonly: true,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -15252,6 +15266,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         optional: false,
         readonly: true, // readonly modifier
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -15309,6 +15324,7 @@ fn test_application_ref_expansion_with_optional_property() {
         optional: true, // optional modifier
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -16142,6 +16158,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             optional: false,
             readonly: true, // readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -16153,6 +16170,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             optional: true, // optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -18120,6 +18138,7 @@ fn test_indexed_access_optional_property() {
         optional: true, // optional property
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -18148,6 +18167,7 @@ fn test_indexed_access_mixed_optional_required() {
             optional: false, // required
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -18159,6 +18179,7 @@ fn test_indexed_access_mixed_optional_required() {
             optional: true, // optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -18292,6 +18313,7 @@ fn test_indexed_access_readonly_property() {
         optional: false,
         readonly: true, // readonly
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -18456,6 +18478,7 @@ fn test_generator_function_async_return() {
         optional: false,
         readonly: true,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -18480,6 +18503,7 @@ fn test_generator_function_async_return() {
         optional: false,
         readonly: true,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -18828,6 +18852,7 @@ fn test_module_augmentation_class_extension() {
         optional: false,
         readonly: true,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -22168,6 +22193,7 @@ fn test_iterable_with_symbol_iterator() {
         optional: false,
         readonly: true,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -22951,6 +22977,7 @@ fn test_noinfer_with_object_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23430,6 +23457,7 @@ fn test_partial_simple_object() {
             optional: true, // Made optional by Partial
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23441,6 +23469,7 @@ fn test_partial_simple_object() {
             optional: true, // Made optional by Partial
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23473,6 +23502,7 @@ fn test_partial_nested_object() {
         optional: false, // Inner property stays required
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23485,6 +23515,7 @@ fn test_partial_nested_object() {
         optional: true, // Outer property made optional
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23526,6 +23557,7 @@ fn test_partial_deep_nesting() {
             optional: true, // Deep optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23537,6 +23569,7 @@ fn test_partial_deep_nesting() {
             optional: true, // Deep optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23581,6 +23614,7 @@ fn test_required_simple_object() {
             optional: false, // Made required
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23592,6 +23626,7 @@ fn test_required_simple_object() {
             optional: false, // Made required
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23624,6 +23659,7 @@ fn test_required_nested_optionals() {
         optional: true, // Stays optional (Required is shallow)
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23636,6 +23672,7 @@ fn test_required_nested_optionals() {
         optional: false, // Made required at top level
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23707,6 +23744,7 @@ fn test_readonly_simple_object() {
             optional: false,
             readonly: true, // Made readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23718,6 +23756,7 @@ fn test_readonly_simple_object() {
             optional: false,
             readonly: true, // Made readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -23800,6 +23839,7 @@ fn test_readonly_nested() {
         optional: false,
         readonly: true, // Property is readonly
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23908,6 +23948,7 @@ fn test_partial_with_methods() {
         optional: true, // Method made optional
         readonly: false,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23968,6 +24009,7 @@ fn test_partial_required_inverse() {
         optional: false, // Required restores it
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -23997,6 +24039,7 @@ fn test_readonly_with_optional() {
         optional: true,
         readonly: true, // Both optional and readonly
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -26754,6 +26797,7 @@ fn test_recursive_conditional_type_unwrap_promise() {
         optional: false,
         readonly: false,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -29332,6 +29376,7 @@ fn test_satisfies_optional_property_satisfied() {
             optional: true, // optional property
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -30438,6 +30483,7 @@ fn test_const_object_literal_readonly_properties() {
             optional: false,
             readonly: true, // as const makes properties readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -31071,6 +31117,7 @@ fn test_pick_preserves_optional() {
             optional: true, // optional
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -31580,6 +31627,7 @@ fn test_omit_preserves_readonly() {
             optional: false,
             readonly: true, // readonly
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -31649,6 +31697,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             optional: true,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -31660,6 +31709,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             optional: false,
             readonly: true,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -37587,6 +37637,7 @@ fn test_infer_ignores_readonly() {
         optional: false,
         readonly: true, // readonly
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -39424,6 +39475,7 @@ fn test_infer_return_promise_like() {
         optional: false,
         readonly: false,
         is_method: true,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,
@@ -41684,6 +41736,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             optional: true,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -41695,6 +41748,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             optional: true,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -41752,6 +41806,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             optional: true,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -41763,6 +41818,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             optional: true,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,
@@ -41816,6 +41872,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         optional: false,
         readonly: true,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,

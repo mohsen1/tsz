@@ -209,6 +209,7 @@ impl<'a> TypeInstantiator<'a> {
                 optional: p.optional,
                 readonly: p.readonly,
                 is_method: p.is_method,
+                is_class_prototype: p.is_class_prototype,
                 visibility: p.visibility,
                 parent_id: p.parent_id,
                 declaration_order: 0,
