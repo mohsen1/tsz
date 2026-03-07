@@ -814,7 +814,7 @@ impl<'a> FlowAnalyzer<'a> {
         // `typeof a.error === 'undefined'` narrows `a` by filtering union members
         // where the `error` property is (or isn't) undefined.
         if is_strict
-            && let Some((property_path, typeof_literal)) =
+            && let Some((property_path, is_optional, typeof_literal)) =
                 self.typeof_discriminant_path(bin.left, bin.right, target)
         {
             let discriminant_type = match typeof_literal {
@@ -826,6 +826,13 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             };
             if discriminant_type != TypeId::NEVER {
+                // Optional-chain discriminants compared to `undefined` are special:
+                // `obj?.prop` can be `undefined` due to nullish short-circuit on the base.
+                // On truthy `===/!== undefined` paths, preserve the incoming type.
+                // Applying discriminant narrowing here can incorrectly collapse to `never`.
+                if is_optional && discriminant_type == TypeId::UNDEFINED && effective_truth {
+                    return type_id;
+                }
                 return narrowing.narrow_by_discriminant_for_type(
                     type_id,
                     &property_path,
@@ -877,16 +884,22 @@ impl<'a> FlowAnalyzer<'a> {
                 // Direct discriminant (is_aliased_discriminant = false) always applies.
                 if !(is_aliased_discriminant && (is_property_access || is_mutable)) {
                     let mut base_type = type_id;
-                    if is_optional && effective_truth {
+                    let optional_undefined_truthy =
+                        is_optional && literal_type == TypeId::UNDEFINED && effective_truth;
+                    if is_optional && effective_truth && !optional_undefined_truthy {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
                         base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                     }
-                    return narrowing.narrow_by_discriminant_for_type(
+                    let narrowed = narrowing.narrow_by_discriminant_for_type(
                         base_type,
                         &property_path,
                         literal_type,
                         effective_truth,
                     );
+                    if optional_undefined_truthy {
+                        return type_id;
+                    }
+                    return narrowed;
                 }
                 // Skipped: indirect property access or aliased let-bound variable.
                 // The type will be computed from the already-narrowed base or via literal comparison.
