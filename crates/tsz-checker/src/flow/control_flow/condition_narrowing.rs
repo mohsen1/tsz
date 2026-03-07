@@ -4,7 +4,7 @@
 //! typeof/instanceof/in guards, and boolean comparison narrowing.
 
 use super::FlowAnalyzer;
-use crate::query_boundaries::flow_analysis::is_unit_type;
+use crate::query_boundaries::{common::union_members, flow_analysis::is_unit_type};
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -604,7 +604,8 @@ impl<'a> FlowAnalyzer<'a> {
                 }
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
-                if self.is_matching_reference(condition_idx, target) {
+                let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
+                if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
                         // Remove null/undefined (truthy narrowing)
                         let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
@@ -619,7 +620,8 @@ impl<'a> FlowAnalyzer<'a> {
             // Truthiness check: if (x)
             // Use Solver-First architecture: delegate to TypeGuard::Truthy
             _ => {
-                if self.is_matching_reference(condition_idx, target) {
+                let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
+                if self.is_matching_reference(condition_ref, target) {
                     return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
                 }
             }
@@ -736,6 +738,14 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+        {
+            if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                return true;
+            }
+            return self.contains_optional_chain(call.expression);
+        }
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
             && let Some(access) = self.arena.get_access_expr(node)
@@ -766,7 +776,98 @@ impl<'a> FlowAnalyzer<'a> {
             }
             return false;
         }
-        self.contains_optional_chain(expr) && self.is_optional_chain_prefix(expr, target)
+        if !self.contains_optional_chain(expr) {
+            return false;
+        }
+        if self.is_optional_chain_prefix(expr, target) {
+            return true;
+        }
+
+        // Fallback for cases like `o?.["foo"]` where structural prefix matching can miss
+        // the target due access-form differences; walk chain bases directly.
+        let mut cur = expr;
+        for _ in 0..64 {
+            if self.is_matching_reference(cur, target) {
+                return true;
+            }
+            let Some(cur_node) = self.arena.get(cur) else {
+                return false;
+            };
+            if cur_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(cur_node)
+            {
+                cur = self
+                    .arena
+                    .skip_parenthesized_and_assertions(call.expression);
+                continue;
+            }
+            if (cur_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || cur_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.arena.get_access_expr(cur_node)
+            {
+                cur = self
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression);
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
+    fn optional_chain_comparison_proves_non_nullish(
+        &self,
+        bin: &BinaryExprData,
+        target: NodeIndex,
+        is_strict: bool,
+        effective_truth: bool,
+    ) -> bool {
+        if !effective_truth {
+            return false;
+        }
+        let Some(node_types) = self.node_types else {
+            return false;
+        };
+
+        for (chain_side, other_side) in [(bin.left, bin.right), (bin.right, bin.left)] {
+            if !self.is_optional_chain_containing_target(chain_side, target) {
+                continue;
+            }
+            let Some(&other_type) = node_types.get(&other_side.0) else {
+                continue;
+            };
+            if !self.comparison_allows_optional_chain_short_circuit(other_type, is_strict) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn comparison_allows_optional_chain_short_circuit(
+        &self,
+        compared_type: TypeId,
+        is_strict: bool,
+    ) -> bool {
+        if compared_type.is_any_or_unknown() || compared_type == TypeId::ERROR {
+            return true;
+        }
+
+        self.type_contains(compared_type, TypeId::UNDEFINED)
+            || (!is_strict && self.type_contains(compared_type, TypeId::NULL))
+    }
+
+    fn type_contains(&self, type_id: TypeId, needle: TypeId) -> bool {
+        if type_id == needle {
+            return true;
+        }
+        union_members(self.interner, type_id)
+            .map(|members| {
+                members
+                    .into_iter()
+                    .any(|member| self.type_contains(member, needle))
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn const_condition_initializer(
@@ -870,6 +971,20 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             !is_true_branch
         };
+        let mut type_id = type_id;
+
+        // Optional-chain equality transport:
+        // when an optional-chain comparison is known-equal to a value that cannot
+        // come from short-circuiting, the chain base/prefix is non-nullish.
+        if self.optional_chain_comparison_proves_non_nullish(
+            bin,
+            target,
+            is_strict,
+            effective_truth,
+        ) {
+            type_id = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+            type_id = narrowing.narrow_excluding_type(type_id, TypeId::UNDEFINED);
+        }
 
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
             // Use unified narrow_type API with TypeGuard::Typeof for both branches

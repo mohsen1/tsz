@@ -1446,6 +1446,73 @@ function f(o: Thing | undefined) {
     );
 }
 
+#[test]
+fn test_optional_chain_strict_equality_transports_non_nullish_to_base() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: number, bar(): number };
+function f(o: Thing | null, value: number) {
+    if (o?.foo === value) {
+        o.foo;
+    }
+    if (o?.["foo"] === value) {
+        o["foo"];
+    }
+    if (o?.bar() === value) {
+        o.bar;
+    }
+    if (o?.bar() == value) {
+        o.bar;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 after o?.foo === value. Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after o?.foo === value. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_non_null_assertion_condition_narrows_underlying_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const m = ''.match('');
+m! && m[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for m! && m[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
 /// Assignment-based narrowing should use declared annotation types, not initializer flow types.
 ///
 /// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`
