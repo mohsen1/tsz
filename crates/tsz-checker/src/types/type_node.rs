@@ -858,14 +858,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        // Now emit all the TS2304 errors
-        for (error_idx, name) in undefined_types {
-            if renamed_binding_aliases.contains(&name) {
-                continue;
-            }
-            if let Some(node) = self.ctx.arena.get(error_idx) {
-                let message = format!("Cannot find name '{name}'.");
-                self.ctx.error(node.pos, node.end - node.pos, message, 2304);
+        // Now emit all the TS2304 errors.
+        // In JS files, suppress TS2304 for names inside syntactic type annotations.
+        // tsc emits TS8010 for these but does NOT attempt name resolution.
+        let suppress_for_js = self.ctx.is_js_file();
+        if !suppress_for_js {
+            for (error_idx, name) in undefined_types {
+                if renamed_binding_aliases.contains(&name) {
+                    continue;
+                }
+                if let Some(node) = self.ctx.arena.get(error_idx) {
+                    let message = format!("Cannot find name '{name}'.");
+                    self.ctx.error(node.pos, node.end - node.pos, message, 2304);
+                }
             }
         }
 

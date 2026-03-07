@@ -578,6 +578,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // In JavaScript files, suppress TS2304 for names inside syntactic type
+        // annotations (return types, parameter types, etc.). tsc emits TS8010
+        // ("Type annotations can only be used in TypeScript files") for these but
+        // does NOT attempt name resolution within them.
+        // JSDoc type annotations are NOT syntactic type nodes, so they are unaffected.
+        if self.is_js_file() && self.is_in_syntactic_type_node(idx) {
+            return;
+        }
+
         // In files with real syntax errors, unresolved names inside `typeof` type queries
         // are often cascades from malformed declaration syntax; TypeScript commonly keeps
         // the primary parse diagnostic only for these.
@@ -952,6 +961,50 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
             ));
         }
+    }
+
+    /// Check whether `idx` is inside a syntactic type node (`TYPE_REFERENCE`,
+    /// `UNION_TYPE`, etc. — kinds 183..=206). This covers inline type annotations
+    /// in the AST but NOT JSDoc type annotations, which are separate nodes.
+    fn is_in_syntactic_type_node(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        let mut guard = 0;
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                let k = node.kind;
+                // Syntactic type node range: TYPE_PREDICATE (183) .. IMPORT_TYPE (206)
+                if (syntax_kind_ext::TYPE_PREDICATE..=syntax_kind_ext::IMPORT_TYPE).contains(&k) {
+                    return true;
+                }
+                // Also check TYPE_ASSERTION (217) — `<Foo>expr` in .js
+                if k == syntax_kind_ext::TYPE_ASSERTION {
+                    return true;
+                }
+                // Stop at statement/declaration boundaries
+                if k == syntax_kind_ext::SOURCE_FILE
+                    || k == syntax_kind_ext::BLOCK
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                {
+                    return false;
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
     }
 }
 
