@@ -4,12 +4,108 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::{NarrowingContext, TypeId};
 
 // =============================================================================
 // Reachability Checking Methods
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
+        if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+            || case_types.is_empty()
+        {
+            return false;
+        }
+        if case_types
+            .iter()
+            .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
+        {
+            return false;
+        }
+
+        let env = self.ctx.type_environment.borrow();
+        let narrowing = NarrowingContext::new(self.ctx.types).with_resolver(&*env);
+        narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+    }
+
+    /// Cache-backed exhaustiveness probe used from immutable analysis paths.
+    pub(crate) fn switch_has_exhaustive_coverage_cached(
+        &self,
+        switch_data: &tsz_parser::parser::node::SwitchData,
+    ) -> bool {
+        let switch_type = self
+            .literal_type_from_initializer(switch_data.expression)
+            .or_else(|| self.ctx.node_types.get(&switch_data.expression.0).copied())
+            .unwrap_or(TypeId::ERROR);
+
+        let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
+            return false;
+        };
+        let Some(case_block) = self.ctx.arena.get_block(case_block_node) else {
+            return false;
+        };
+
+        let mut case_types = Vec::new();
+        for &clause_idx in &case_block.statements.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_case_clause(clause_node) else {
+                continue;
+            };
+            if clause.expression.is_none() {
+                continue;
+            }
+            let case_type = self
+                .literal_type_from_initializer(clause.expression)
+                .or_else(|| self.ctx.node_types.get(&clause.expression.0).copied())
+                .unwrap_or(TypeId::ERROR);
+            case_types.push(case_type);
+        }
+
+        self.switch_exhaustive_with_types(switch_type, &case_types)
+    }
+
+    /// Check if a switch statement without a default clause is still exhaustive.
+    ///
+    /// This is true when excluding all case expression types from the switch
+    /// discriminant leaves `never`.
+    pub(crate) fn switch_has_exhaustive_coverage(
+        &mut self,
+        switch_data: &tsz_parser::parser::node::SwitchData,
+    ) -> bool {
+        let switch_type = self
+            .literal_type_from_initializer(switch_data.expression)
+            .unwrap_or_else(|| self.get_type_of_node(switch_data.expression));
+
+        let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
+            return false;
+        };
+        let Some(case_block) = self.ctx.arena.get_block(case_block_node) else {
+            return false;
+        };
+
+        let mut case_types = Vec::new();
+        for &clause_idx in &case_block.statements.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_case_clause(clause_node) else {
+                continue;
+            };
+            if clause.expression.is_none() {
+                continue;
+            }
+            let case_type = self
+                .literal_type_from_initializer(clause.expression)
+                .unwrap_or_else(|| self.get_type_of_node(clause.expression));
+            case_types.push(case_type);
+        }
+
+        self.switch_exhaustive_with_types(switch_type, &case_types)
+    }
+
     // =========================================================================
     // Block Analysis
     // =========================================================================
@@ -156,9 +252,9 @@ impl<'a> CheckerState<'a> {
             clause_indices.push(clause_idx);
         }
 
-        // Without a default clause, unmatched discriminants skip the switch body,
-        // so execution can always continue after the switch.
-        if !has_default {
+        // Without a default clause, unmatched discriminants can skip the switch
+        // body unless case coverage is exhaustive.
+        if !has_default && !self.switch_has_exhaustive_coverage(switch_data) {
             return true;
         }
 

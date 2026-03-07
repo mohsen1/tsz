@@ -2695,6 +2695,47 @@ function test() {
     );
 }
 
+/// Exhaustive switch without default should satisfy return-path checking.
+#[test]
+fn test_ts2366_not_emitted_for_exhaustive_switch_without_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+function f(v: 0 | 1): number {
+    switch (v) {
+        case 0:
+            return 1;
+        case 1:
+            return 2;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    assert!(
+        !has_ts2366,
+        "Exhaustive switch should not fall through; got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 /// Test that && creates intermediate flow condition nodes for the right operand.
 ///
 /// For `typeof x === 'object' && x`, the `x` on the right side of `&&` should
