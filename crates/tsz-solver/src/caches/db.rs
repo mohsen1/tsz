@@ -899,6 +899,37 @@ impl QueryDatabase for TypeInterner {
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        let mut evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(TypeInterner::no_unchecked_indexed_access(self));
+        evaluator.resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        match self.resolve_element_access(object_type, index_type, literal_index) {
+            ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        }
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        TypeInterner::no_unchecked_indexed_access(self)
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        TypeInterner::set_no_unchecked_indexed_access(self, enabled);
+    }
+
     fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {
         // TypeInterner doesn't have access to type parameter information.
         // The Checker will override this to provide the actual implementation.

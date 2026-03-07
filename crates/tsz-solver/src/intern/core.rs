@@ -20,7 +20,7 @@ use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock, RwLock,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
@@ -287,6 +287,8 @@ pub struct TypeInterner {
     /// Maps TypeId -> allocation order for types that need ordering.
     /// Only populated for non-intrinsic types. Used by `compare_union_members`.
     alloc_order: DashMap<TypeId, u32, FxBuildHasher>,
+    /// Effective value for `noUncheckedIndexedAccess` used by query-boundary helpers.
+    no_unchecked_indexed_access: AtomicBool,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -326,7 +328,19 @@ impl TypeInterner {
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
             alloc_counter: AtomicU32::new(0),
             alloc_order: DashMap::with_hasher(FxBuildHasher),
+            no_unchecked_indexed_access: AtomicBool::new(false),
         }
+    }
+
+    #[inline]
+    pub fn no_unchecked_indexed_access(&self) -> bool {
+        self.no_unchecked_indexed_access.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        self.no_unchecked_indexed_access
+            .store(enabled, Ordering::Relaxed);
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).

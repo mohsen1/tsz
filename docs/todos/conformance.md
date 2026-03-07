@@ -7722,3 +7722,130 @@ Big3 call-family drift is still centered on top-level call-site compatibility (`
 ### Why no patch landed
 - No safe single boundary adjustment was identified in this slice without broad call-resolution risk.
 - Workspace kept clean except conformance session notes.
+
+## Session 2026-03-07am — narrowing-flow optional-chain RHS assignment + optional-comparison branch transport probe (investigation, reverted; no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `controlFlowOptionalChain.ts`
+- `controlFlowGenericTypes.ts`
+- `exhaustiveSwitchStatements1.ts`
+- `narrowingByTypeofInSwitch.ts`
+
+SHARED INVARIANT: Optional-chain control-flow must preserve short-circuit branches through one shared flow path so assignment/possibly-undefined diagnostics (`TS2454`/`TS18048`) are emitted on the correct branch only.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [x] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAPS INVESTIGATED:
+1. Missing `TS2454` in `controlFlowOptionalChain.ts` at `test.ts:15` (`o?.x[b = 1]; b.toString();`) suggested optional short-circuit RHS assignment transport mismatch.
+2. Mixed missing/extra `TS18048` lines in the same file suggested optional-comparison branch transport divergence in checker condition narrowing.
+
+ATTEMPTED FIXES (all reverted due no basket movement):
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+  - tried exclusive TRUE/FALSE condition-bit interpretation for condition flow nodes.
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+  - tried disabling direct optional discriminant guard return path so optional comparisons always route through shared `narrow_by_binary_expr` path.
+- `crates/tsz-binder/src/binding/declaration.rs`
+  - tried recursive optional-chain detection for element-access RHS gating (`o?.x[b = 1]`) using `question_dot_token` + flags, not flags only.
+- Temporary focused tests added in:
+  - `crates/tsz-checker/tests/conformance_issues.rs`
+  - `crates/tsz-checker/tests/definite_assignment_tests.rs`
+  - removed after validation showed no representative conformance movement.
+
+VALIDATION RUNS:
+- `cargo nextest run -p tsz-checker test_optional_chain_not_undefined_narrows_to_object test_optional_chain_truthiness_does_not_over_narrow_false_branch`
+- `cargo nextest run -p tsz-checker test_ts2454_optional_chain_rhs_assignment_not_definite`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowGenericTypes.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints --max 20`
+
+RESULT:
+- Representative basket unchanged.
+- `controlFlowOptionalChain.ts` remained with the same missing `TS2454` at `test.ts:15:1` and same `TS18048` missing/extra fingerprint set.
+- `exhaustiveSwitchStatements1.ts` and `narrowingByTypeofInSwitch.ts` remained unchanged.
+
+WHY BLOCKED:
+- The observed `TS2454` miss appears to be a deeper path-specific mismatch than local optional-chain detection in binder element-access binding.
+- Optional-comparison drift depends on broader flow context in the conformance file; isolated unit-level probes were insufficient to move harness-level outcomes.
+
+EXACT OWNING BOUNDARY FOR NEXT REAL FIX:
+1. `crates/tsz-checker/src/flow/control_flow/var_utils.rs`
+   - inspect CONDITION/BRANCH definite-assignment traversal for optional-chain RHS assignment paths and verify branch-sense selection against binder flow flags.
+2. `crates/tsz-binder/src/binding/declaration.rs` + `crates/tsz-binder/src/nodes/binding.rs`
+   - verify CFG shape for nested optional-chain element access (`o?.x[b = 1]`) including which condition node controls RHS execution.
+3. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+   - keep optional-comparison transport unified (no early path bypass) but validate against full conformance contexts before landing.
+
+ESTIMATED REAL-FIX SCOPE: ~120-220 LOC across binder CFG edge shaping + checker definite-assignment/condition transport, plus 2-4 targeted checker tests keyed to the exact conformance snippets.
+
+STATUS: no conformance-affecting code change committed in this session.
+
+## Session 2026-03-07an — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed per queue: **big3**.
+
+### Campaign queries run
+- `./scripts/conformance.sh analyze --campaign big3`
+- `python3 scripts/query-conformance.py --campaign big3`
+- `python3 scripts/query-conformance.py --extra-code TS2345`
+
+### Quick triage result
+- Big3 still dominated by missing-code families (`TS2322`/`TS2339`/`TS2345`) in snapshot campaign output.
+- Current snapshot query reported `0` tests with extra `TS2345` in `--extra-code TS2345` view for this dataset slice.
+- No safe single-boundary Big3 patch selected in this follow-on slice; workspace kept clean except notes.
+
+## Session 2026-03-07ao — narrowing-flow noUnchecked object-rest index-signature transport (+partial basket movement)
+
+CAMPAIGN: Narrowing / control-flow parity
+
+REPRESENTATIVE TEST BASKET:
+- `noUncheckedIndexedAccessDestructuring.ts`
+- `destructureTupleWithVariableElement.ts`
+- `noUncheckedIndexedAccessCompoundAssignments.ts`
+
+SHARED INVARIANT:
+Object-rest reconstruction under `noUncheckedIndexedAccess` must preserve index signatures so `q[k]`/`q.z` reads keep `| undefined` and flow emits nullish diagnostics instead of false missing-property diagnostics.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — query-boundary option transport
+- [x] Checker — object-rest boundary routing
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP:
+- Checker-side object-rest type reconstruction in `destructuring.rs::omit_properties_from_type` rebuilt object types with properties only, dropping string/number index signatures (and flags/symbol).
+- This produced false TS2339 on `q.z` and suppressed expected `TS18048` nullish diagnostics in noUnchecked destructuring scenarios.
+
+FIX LANDED:
+- `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+  - Preserve index signatures when building rest-object types via `object_with_index`.
+  - Preserve object flags/symbol for non-index-signature shapes via `object_with_flags_and_symbol`.
+- `crates/tsz-checker/tests/conformance_issues.rs`
+  - Added `test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access`.
+- `crates/tsz-solver/src/intern/core.rs` + `crates/tsz-solver/src/caches/db.rs`
+  - Added persistent `noUncheckedIndexedAccess` state on `TypeInterner` `QueryDatabase` path.
+- `crates/tsz-solver/tests/db_tests.rs`
+  - Added focused regression tests for option storage and element-access behavior.
+
+VALIDATION:
+- `cargo nextest run -p tsz-solver type_interner_query_db_tracks_no_unchecked_indexed_access type_interner_element_access_respects_no_unchecked_indexed_access` ✅
+- `cargo nextest run -p tsz-checker test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access` ✅
+- Targeted conformance:
+  - `./.target/dist-fast/tsz-conformance --filter noUncheckedIndexedAccessDestructuring.ts --verbose --print-fingerprints`
+    - Improved: removed extra `TS2339` and removed missing `TS18048` fingerprints for `q.z`.
+    - Remaining drift: `TS2322` fingerprint mismatches on assignment sites.
+  - `destructureTupleWithVariableElement.ts`: unchanged (still missing `TS18048`).
+  - `noUncheckedIndexedAccessCompoundAssignments.ts`: unchanged (still missing `TS2532`/`TS18048` with extra arithmetic-family diagnostics).
+
+STATUS:
+- Narrowing-flow campaign advanced on one representative basket test (`noUncheckedIndexedAccessDestructuring.ts`) with shared-boundary fix.
+- Remaining noUnchecked tuple/compound-assignment lane appears to need separate index-access transport work (likely tuple variable-element and compound assignment flow interplay).

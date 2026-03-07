@@ -934,7 +934,20 @@ impl<'a> CheckerState<'a> {
             .cloned()
             .collect();
 
-        self.ctx.types.factory().object(remaining_props)
+        // Preserve index signatures/flags/symbol for object-rest types.
+        // Dropping them causes false TS2339 on reads like `q.z` and suppresses
+        // downstream nullish diagnostics under noUncheckedIndexedAccess.
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            let mut rest_shape = shape.as_ref().clone();
+            rest_shape.properties = remaining_props;
+            self.ctx.types.factory().object_with_index(rest_shape)
+        } else {
+            self.ctx.types.factory().object_with_flags_and_symbol(
+                remaining_props,
+                shape.flags,
+                shape.symbol,
+            )
+        }
     }
 
     /// Rest bindings from tuple members should produce an array type.

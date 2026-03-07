@@ -265,6 +265,38 @@ s2.toUpperCase();
 }
 
 #[test]
+fn test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access() {
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const numMapPoint: { x: number, y: number} & { [s: string]: number };
+const { x, ...q } = numMapPoint;
+x.toFixed();
+q.y.toFixed();
+q.z.toFixed();
+"#,
+        options,
+    );
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&non_lib, 2339),
+        "Expected no TS2339 for q.z when index signature is preserved; got: {non_lib:?}"
+    );
+    assert!(
+        has_error(&non_lib, 18048),
+        "Expected TS18048 for q.z possibly undefined under noUncheckedIndexedAccess; got: {non_lib:?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
