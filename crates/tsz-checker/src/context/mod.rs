@@ -502,7 +502,7 @@ pub struct CheckerContext<'a> {
     pub skip_flow_narrowing: bool,
 
     /// Current depth of recursive type instantiation.
-    pub instantiation_depth: RefCell<u32>,
+    pub instantiation_depth: Cell<u32>,
 
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: RefCell<bool>,

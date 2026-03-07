@@ -54,8 +54,8 @@ impl<'a> CheckerState<'a> {
             && let Some(node) = self.ctx.arena.get(decl_idx)
             && let Some(class) = self.ctx.arena.get_class(node)
         {
-            // Compute both constructor and instance types
             let ctor_type = self.get_class_constructor_type(decl_idx, class);
+            self.ctx.symbol_types.insert(sym_id, ctor_type);
             let instance_type = self.get_class_instance_type(decl_idx, class);
 
             // Cache instance type for TYPE position resolution
@@ -650,6 +650,22 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             });
+            // Detect cross-file declarations sharing the same NodeIndex as
+            // a local declaration. The binder merge skips duplicate NodeIndex
+            // values, so `declarations` has only one entry but
+            // `declaration_arenas` stores multiple arenas for it.
+            let has_cross_file_same_index = declarations.iter().any(|&decl_idx| {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arenas| {
+                        arenas.len() > 1
+                            && arenas
+                                .iter()
+                                .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
+                    })
+            });
             // Only use the is_lib_symbol fallback when the per-declaration check
             // couldn't determine the arena origin (i.e. no declaration_arenas entry
             // AND the declaration exists in the current arena). The is_lib_symbol
@@ -689,16 +705,29 @@ impl<'a> CheckerState<'a> {
             }
 
             if !declarations.is_empty() {
-                // Get type parameters from the first interface declaration
+                // Get type parameters from the first interface declaration.
+                // When cross-file declarations exist, the first declaration may be
+                // from another arena. Try all local declarations to find type params.
                 let mut params = Vec::new();
                 let mut updates = Vec::new();
 
-                // Try to get type parameters from the interface declaration
-                let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                if let Some(node) = self.ctx.arena.get(first_decl)
-                    && let Some(interface) = self.ctx.arena.get_interface(node)
-                {
-                    (params, updates) = self.push_type_parameters(&interface.type_parameters);
+                if has_out_of_arena_decl {
+                    for &decl_idx in declarations.iter() {
+                        if let Some(node) = self.ctx.arena.get(decl_idx)
+                            && let Some(interface) = self.ctx.arena.get_interface(node)
+                        {
+                            (params, updates) =
+                                self.push_type_parameters(&interface.type_parameters);
+                            break;
+                        }
+                    }
+                } else {
+                    let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
+                    if let Some(node) = self.ctx.arena.get(first_decl)
+                        && let Some(interface) = self.ctx.arena.get_interface(node)
+                    {
+                        (params, updates) = self.push_type_parameters(&interface.type_parameters);
+                    }
                 }
 
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
@@ -732,10 +761,53 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver);
-                let interface_type =
+                let mut interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
-                let interface_type =
+
+                // Cross-file interface declaration merging: when declarations from
+                // other arenas exist, lower each with a TypeLowering bound to its
+                // source arena and merge the members structurally.
+                // Handles both cases:
+                //  - Different NodeIndex (has_out_of_arena_decl): decl not in local arena
+                //  - Same NodeIndex collision (has_cross_file_same_index): decl IS in
+                //    local arena, but declaration_arenas has additional non-local arenas
+                if has_out_of_arena_decl || has_cross_file_same_index {
+                    for &decl_idx in declarations.iter() {
+                        let Some(arenas) =
+                            self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                        else {
+                            continue;
+                        };
+                        for arena in arenas.iter() {
+                            // Skip the local arena — already lowered above
+                            if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                                continue;
+                            }
+                            if let Some(node) = arena.get(decl_idx)
+                                && arena.get_interface(node).is_some()
+                            {
+                                let cross_type =
+                                    self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
+                                if cross_type != TypeId::ERROR {
+                                    interface_type =
+                                        self.merge_interface_types(interface_type, cross_type);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut interface_type =
                     self.merge_interface_heritage_types(&declarations, interface_type);
+
+                // Merge heritage types from cross-file declarations that
+                // merge_interface_heritage_types couldn't process (it uses
+                // self.ctx.arena which doesn't contain cross-file nodes).
+                if has_out_of_arena_decl || has_cross_file_same_index {
+                    interface_type =
+                        self.merge_cross_file_heritage(&declarations, sym_id, interface_type);
+                }
+
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
                 {
                     self.ctx

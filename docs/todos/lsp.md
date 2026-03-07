@@ -238,6 +238,14 @@ Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list parity.
   Reason: likely tied to the same completion-list shaping/parity layer around exact globals-plus matching in fourslash, beyond the resolver/ordering fixes in this pass.
 
+## 2026-02-23 (arbitrary module namespace identifiers references-full follow-up)
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`: still creates a local baseline in `verify.baselineFindAllReferences`.
+  Reason: `references-full` quoted-alias grouping still mixes module-specifier and local declaration symbols in definition metadata/display parts (needs deeper project-wide symbol-to-definition canonicalization than a small handler-level patch).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still creates a local baseline in `verify.baselineFindAllReferences`.
+  Reason: same remaining `references-full` grouping/display parity gap for quoted import/export alias chains (`alias`/module display text and group shaping differ from tsserver).
+
 ## 2026-02-22 (autoImportTypeOnlyPreferred1 completion follow-up)
 
 Completed in this pass:

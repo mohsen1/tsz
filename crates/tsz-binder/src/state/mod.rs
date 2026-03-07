@@ -23,6 +23,12 @@ use tsz_parser::parser::node::NodeArena;
 /// for the common single-arena case.
 pub type DeclarationArenaMap = FxHashMap<(SymbolId, NodeIndex), SmallVec<[Arc<NodeArena>; 1]>>;
 
+/// Map from arena pointer (as `usize`) to that arena's `node_symbols` mapping.
+/// Enables cross-file declaration resolution: when a symbol has declarations in
+/// multiple arenas, the checker can look up the correct `node_symbols` for each
+/// arena to resolve type references within cross-file interface declarations.
+pub type CrossFileNodeSymbols = FxHashMap<usize, Arc<FxHashMap<u32, SymbolId>>>;
+
 pub(crate) const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 
 type ReexportTarget = (String, Option<String>);
@@ -220,6 +226,9 @@ pub struct BinderState {
     /// Uses `SmallVec` to handle cross-arena `NodeIndex` collisions: when two lib files have
     /// their interface declaration at the same `NodeIndex`, both arenas are stored.
     pub declaration_arenas: DeclarationArenaMap,
+    /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
+    /// Enables resolving type references in cross-file interface declarations.
+    pub cross_file_node_symbols: CrossFileNodeSymbols,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     /// Used by the checker for control flow analysis (type narrowing)
     pub node_flow: FxHashMap<u32, FlowNodeId>,
@@ -376,6 +385,7 @@ pub struct BinderStateScopeInputs {
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: DeclarationArenaMap,
+    pub cross_file_node_symbols: CrossFileNodeSymbols,
     pub shorthand_ambient_modules: FxHashSet<String>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: FlowNodeArena,

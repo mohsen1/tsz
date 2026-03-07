@@ -277,21 +277,27 @@ impl<'a> Printer<'a> {
             if i < max_end && text.as_bytes()[i] == b'/' {
                 let regex_start = i;
                 i += 1; // Skip opening /
-                // Find closing / by scanning for it (handling escapes)
-                let mut escaped = false;
+                // Find closing / by scanning for it (handling escapes and character classes)
+                let mut in_escape = false;
+                let mut in_character_class = false;
                 while i < max_end {
-                    match text.as_bytes()[i] {
-                        b'\\' if !escaped => escaped = true,
-                        b'/' if !escaped => {
-                            i += 1; // Include closing /
-                            // Include any flags (g, i, m, etc.)
-                            while i < max_end && text.as_bytes()[i].is_ascii_alphabetic() {
-                                i += 1;
-                            }
-                            self.write(&text[regex_start..i]);
-                            return;
+                    let ch = text.as_bytes()[i];
+                    if in_escape {
+                        in_escape = false;
+                    } else if ch == b'\\' {
+                        in_escape = true;
+                    } else if ch == b'/' && !in_character_class {
+                        i += 1; // Include closing /
+                        // Include any flags (g, i, m, etc.)
+                        while i < max_end && text.as_bytes()[i].is_ascii_alphabetic() {
+                            i += 1;
                         }
-                        _ => escaped = false,
+                        self.write(&text[regex_start..i]);
+                        return;
+                    } else if ch == b'[' {
+                        in_character_class = true;
+                    } else if ch == b']' {
+                        in_character_class = false;
                     }
                     i += 1;
                 }

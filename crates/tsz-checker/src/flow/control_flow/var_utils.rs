@@ -11,11 +11,115 @@ use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{NarrowingContext, TypeId};
 
 use super::FlowAnalyzer;
 
 impl<'a> FlowAnalyzer<'a> {
+    fn switch_type_for_exhaustiveness(
+        &self,
+        switch_expr: NodeIndex,
+        pre_switch_flow: FlowNodeId,
+    ) -> Option<TypeId> {
+        let initial = if let Some(literal) = self.literal_type_from_node(switch_expr) {
+            literal
+        } else {
+            self.node_types
+                .and_then(|types| types.get(&switch_expr.0).copied())?
+        };
+
+        if pre_switch_flow.is_none() {
+            return Some(initial);
+        }
+
+        let narrowed = self.get_flow_type(switch_expr, initial, pre_switch_flow);
+        if narrowed == TypeId::ERROR {
+            Some(initial)
+        } else {
+            Some(narrowed)
+        }
+    }
+
+    fn case_types_for_exhaustiveness(&self, case_block: NodeIndex) -> Vec<TypeId> {
+        let Some(case_block_node) = self.arena.get(case_block) else {
+            return Vec::new();
+        };
+        let Some(block) = self.arena.get_block(case_block_node) else {
+            return Vec::new();
+        };
+
+        block
+            .statements
+            .nodes
+            .iter()
+            .filter_map(|&clause_idx| {
+                let clause_node = self.arena.get(clause_idx)?;
+                let clause = self.arena.get_case_clause(clause_node)?;
+                if clause.expression.is_none() {
+                    return None;
+                }
+                self.literal_type_from_node(clause.expression).or_else(|| {
+                    self.node_types
+                        .and_then(|types| types.get(&clause.expression.0).copied())
+                })
+            })
+            .collect()
+    }
+
+    fn is_implicit_default_of_exhaustive_switch(&self, flow_id: FlowNodeId) -> bool {
+        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+            return false;
+        };
+        if !flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+            return false;
+        }
+        let Some(node) = self.arena.get(flow.node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CASE_BLOCK {
+            return false;
+        }
+
+        let Some(switch_idx) = self
+            .arena
+            .get_extended(flow.node)
+            .and_then(|ext| (ext.parent.is_some()).then_some(ext.parent))
+        else {
+            return false;
+        };
+        let Some(switch_node) = self.arena.get(switch_idx) else {
+            return false;
+        };
+        let Some(switch_data) = self.arena.get_switch(switch_node) else {
+            return false;
+        };
+
+        let pre_switch_flow = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
+        let Some(switch_type) =
+            self.switch_type_for_exhaustiveness(switch_data.expression, pre_switch_flow)
+        else {
+            return false;
+        };
+        let case_types = self.case_types_for_exhaustiveness(switch_data.case_block);
+        if case_types.is_empty()
+            || matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+            || case_types
+                .iter()
+                .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
+        {
+            return false;
+        }
+
+        let env_borrow;
+        let mut narrowing = NarrowingContext::new(self.interner);
+        if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            narrowing = narrowing.with_resolver(&*env_borrow);
+        }
+
+        narrowing.narrow_excluding_types(switch_type, &case_types) == TypeId::NEVER
+    }
+
     /// Iterative flow graph traversal for definite assignment checks.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
@@ -113,6 +217,13 @@ impl<'a> FlowAnalyzer<'a> {
                             && ant_node.has_any_flags(flow_flags::UNREACHABLE)
                         {
                             // Unreachable branches satisfy the condition vacuously
+                            results.push(true);
+                            continue;
+                        }
+                        if self.is_implicit_default_of_exhaustive_switch(ant) {
+                            // Binder always materializes an implicit default edge for switches
+                            // without `default`. For exhaustive switches this edge is impossible
+                            // and should not force TS2454.
                             results.push(true);
                             continue;
                         }

@@ -241,7 +241,7 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         let func_name = if is_jsxs { "jsxs" } else { "jsx" };
 
         if is_cjs {
@@ -307,7 +307,7 @@ impl<'a> Printer<'a> {
             .collect();
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         let func_name = if is_jsxs { "jsxs" } else { "jsx" };
 
         if is_cjs {
@@ -466,13 +466,46 @@ impl<'a> Printer<'a> {
                 && let Some(spread) = self.arena.get_jsx_spread_attribute(prop_node)
             {
                 result.has_spread = true;
-                result.attrs.push(JsxAttrInfo::Spread {
-                    expr: spread.expression,
-                });
+                // Flatten spread of object literal with only spread properties:
+                // {...{...a, ...b}} → ...a, ...b
+                if let Some(inner_spreads) = self.get_spread_only_object_literal(spread.expression)
+                {
+                    for inner_expr in inner_spreads {
+                        result.attrs.push(JsxAttrInfo::Spread { expr: inner_expr });
+                    }
+                } else {
+                    result.attrs.push(JsxAttrInfo::Spread {
+                        expr: spread.expression,
+                    });
+                }
             }
         }
 
         result
+    }
+
+    /// Check if a node is an `ObjectLiteralExpression` with only `SpreadAssignment`
+    /// properties. If so, return the expression of each spread. This enables
+    /// JSX spread flattening: `{...{...a, ...b}}` → `...a, ...b`.
+    fn get_spread_only_object_literal(&self, expr: NodeIndex) -> Option<Vec<NodeIndex>> {
+        let node = self.arena.get(expr)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let lit = self.arena.get_literal_expr(node)?;
+        if lit.elements.nodes.is_empty() {
+            return None;
+        }
+        let mut result = Vec::new();
+        for &prop in &lit.elements.nodes {
+            let prop_node = self.arena.get(prop)?;
+            if prop_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let spread = self.arena.get_spread(prop_node)?;
+            result.push(spread.expression);
+        }
+        Some(result)
     }
 
     /// Get the name of a JSX attribute (identifier or namespaced).
@@ -665,11 +698,9 @@ impl<'a> Printer<'a> {
     /// Uses `Object.assign` when there are spreads mixed with named props.
     fn emit_jsx_spread_attrs_classic(&mut self, attrs: &[JsxAttrInfo]) {
         // Group consecutive named attrs and emit them as object literals,
-        // interleaved with spread expressions via Object.assign.
-        // e.g. <div a="1" {...x} b="2" /> → Object.assign({a: "1"}, x, {b: "2"})
-        // If only spreads: just the spread expression(s)
-        // If single spread with no named: spread expr
-        // Multiple: Object.assign(...)
+        // interleaved with spread expressions.
+        // ES2018+: { a: "1", ...x, b: "2" } (inline spread)
+        // ES2015-ES2017: Object.assign({a: "1"}, x, {b: "2"})
         let groups = group_jsx_attrs(attrs);
 
         if groups.len() == 1 {
@@ -677,7 +708,38 @@ impl<'a> Printer<'a> {
                 AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
                 AttrGroup::Spread(expr) => self.emit(*expr),
             }
+        } else if !self.ctx.needs_es2018_lowering {
+            // ES2018+: inline spread syntax
+            self.write("{ ");
+            let mut first = true;
+            for group in &groups {
+                match group {
+                    AttrGroup::Named(named) => {
+                        for attr in named {
+                            if let JsxAttrInfo::Named { name, value } = attr {
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.emit_jsx_prop_name(name);
+                                self.write(": ");
+                                self.emit_jsx_attr_value(value);
+                            }
+                        }
+                    }
+                    AttrGroup::Spread(expr) => {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write("...");
+                        self.emit(*expr);
+                    }
+                }
+            }
+            self.write(" }");
         } else {
+            // ES2015-ES2017: Object.assign
             self.write("Object.assign(");
             for (i, group) in groups.iter().enumerate() {
                 if i > 0 {
@@ -700,6 +762,11 @@ impl<'a> Printer<'a> {
         children: &[NodeIndex],
         is_jsxs: bool,
     ) {
+        if self.ctx.needs_es2018_lowering {
+            self.emit_jsx_spread_attrs_object_assign(attrs, children, is_jsxs);
+            return;
+        }
+
         self.write("{ ");
         let mut first = true;
 
@@ -746,6 +813,103 @@ impl<'a> Printer<'a> {
         }
 
         self.write(" }");
+    }
+
+    /// Emit JSX spread props using `Object.assign` for targets below ES2018.
+    ///
+    /// Groups consecutive named props into object literals, spreads become
+    /// separate arguments, and children is always a final `{ children: ... }`.
+    /// E.g., `<div className="T1" {...a}>T1</div>` becomes:
+    ///   `Object.assign({ className: "T1" }, a, { children: "T1" })`
+    fn emit_jsx_spread_attrs_object_assign(
+        &mut self,
+        attrs: &[JsxAttrInfo],
+        children: &[NodeIndex],
+        is_jsxs: bool,
+    ) {
+        // Segment attrs into groups of consecutive Named and individual Spreads
+        enum Segment {
+            Named(usize, usize), // start..end indices into attrs
+            Spread(usize),       // index into attrs
+        }
+
+        let mut segments: Vec<Segment> = Vec::new();
+        for (i, attr) in attrs.iter().enumerate() {
+            match attr {
+                JsxAttrInfo::Named { .. } => {
+                    if let Some(Segment::Named(_, end)) = segments.last_mut() {
+                        *end = i + 1;
+                    } else {
+                        segments.push(Segment::Named(i, i + 1));
+                    }
+                }
+                JsxAttrInfo::Spread { .. } => {
+                    segments.push(Segment::Spread(i));
+                }
+            }
+        }
+
+        self.write("Object.assign(");
+
+        // If first segment is a Spread (or no segments), start with empty object
+        let starts_with_spread = matches!(segments.first(), Some(Segment::Spread(_)));
+        if starts_with_spread {
+            self.write("{}, ");
+        }
+
+        let mut first_seg = true;
+        for seg in &segments {
+            if !first_seg {
+                self.write(", ");
+            }
+            first_seg = false;
+            match seg {
+                Segment::Named(start, end) => {
+                    self.write("{ ");
+                    let mut first_prop = true;
+                    for attr in &attrs[*start..*end] {
+                        if let JsxAttrInfo::Named { name, value } = attr {
+                            if !first_prop {
+                                self.write(", ");
+                            }
+                            first_prop = false;
+                            self.emit_jsx_prop_name(name);
+                            self.write(": ");
+                            self.emit_jsx_attr_value(value);
+                        }
+                    }
+                    self.write(" }");
+                }
+                Segment::Spread(idx) => {
+                    if let JsxAttrInfo::Spread { expr } = &attrs[*idx] {
+                        self.emit(*expr);
+                    }
+                }
+            }
+        }
+
+        // Children as a final separate argument
+        if !children.is_empty() {
+            if !first_seg || starts_with_spread {
+                self.write(", ");
+            }
+            self.write("{ children: ");
+            if is_jsxs {
+                self.write("[");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.emit_jsx_child_as_expression(*child);
+                }
+                self.write("]");
+            } else {
+                self.emit_jsx_child_as_expression(children[0]);
+            }
+            self.write(" }");
+        }
+
+        self.write(")");
     }
 
     // =========================================================================
@@ -924,7 +1088,7 @@ impl<'a> Printer<'a> {
     /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
     /// Only imports the functions that are actually used in the file.
     pub(super) fn jsx_auto_import_text(&self) -> Option<String> {
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         // Per-file @jsxImportSource pragma overrides the global option
         let pragma_source = self.extract_jsx_import_source_pragma();
         match self.ctx.options.jsx {

@@ -171,6 +171,77 @@ fn is_invalid_index_type_inner(
     if is_invalid { Some(type_id) } else { None }
 }
 
+/// Strict version of `get_invalid_index_type_member` matching tsc's `isValidIndexType`.
+///
+/// Used for computed property names in destructuring patterns where tsc applies
+/// stricter rules than for element access expressions. Unlike the permissive check,
+/// this rejects `any`, `symbol`, and `unique symbol` types which are not valid
+/// index types for computed property key expressions.
+///
+/// Valid types: `string`, `number`, string/number literals, template literals,
+/// string mappings, enum literals, and intersections of valid types.
+/// Invalid: everything else including `any`, `unknown`, `never`, `symbol`, `unique symbol`.
+pub fn get_invalid_index_type_member_strict(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let mut visited = FxHashSet::default();
+    is_invalid_index_type_strict_inner(db, type_id, &mut visited)
+}
+
+fn is_invalid_index_type_strict_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<TypeId> {
+    if !visited.insert(type_id) {
+        return None;
+    }
+
+    // Error types should not cascade further diagnostics
+    if type_id == TypeId::ERROR {
+        return None;
+    }
+
+    // In tsc's isValidIndexType, only these are valid:
+    // string, number, bigint, enum, string literal, number literal,
+    // template literal, string mapping, pattern literal, or intersections thereof.
+    // Everything else (any, unknown, never, symbol, void, null, etc.) is invalid.
+    let is_valid = match type_id {
+        TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT => true,
+        TypeId::ANY | TypeId::UNKNOWN | TypeId::NEVER | TypeId::SYMBOL => false,
+        _ => match db.lookup(type_id) {
+            Some(TypeData::Literal(value)) => matches!(
+                value,
+                crate::LiteralValue::String(_)
+                    | crate::LiteralValue::Number(_)
+                    | crate::LiteralValue::BigInt(_)
+            ),
+            Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
+            Some(TypeData::Intersection(list_id)) => {
+                // An intersection is valid only if ALL members are valid
+                for &member in db.type_list(list_id).iter() {
+                    if is_invalid_index_type_strict_inner(db, member, visited).is_some() {
+                        return Some(member);
+                    }
+                }
+                true
+            }
+            Some(TypeData::TypeParameter(info)) => {
+                // Valid if the constraint is a valid index type
+                if let Some(constraint) = info.constraint {
+                    is_invalid_index_type_strict_inner(db, constraint, visited).is_none()
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        },
+    };
+
+    if is_valid { None } else { Some(type_id) }
+}
+
 // =============================================================================
 // Promise Type Classification
 // =============================================================================

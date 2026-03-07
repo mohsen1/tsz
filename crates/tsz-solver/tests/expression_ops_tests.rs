@@ -142,6 +142,38 @@ fn test_conditional_falsy_condition() {
     assert_ne!(result, TypeId::NUMBER);
 }
 
+#[test]
+fn test_conditional_fresh_object_literals_get_complementary_optional_properties() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    let left = interner.object_with_flags(
+        vec![PropertyInfo::new(a, TypeId::NUMBER)],
+        ObjectFlags::FRESH_LITERAL,
+    );
+    let right = interner.object_with_flags(
+        vec![PropertyInfo::new(b, TypeId::NUMBER)],
+        ObjectFlags::FRESH_LITERAL,
+    );
+
+    let result = compute_conditional_expression_type(&interner, TypeId::BOOLEAN, left, right);
+    let members = crate::type_queries::get_union_members(&interner, result).unwrap();
+    assert_eq!(members.len(), 2);
+
+    for member in members.iter().copied() {
+        let shape = match interner.lookup(member) {
+            Some(TypeData::Object(id)) | Some(TypeData::ObjectWithIndex(id)) => {
+                interner.object_shape(id)
+            }
+            other => panic!("expected object member, got {other:?}"),
+        };
+        let has_a = shape.properties.iter().any(|p| p.name == a);
+        let has_b = shape.properties.iter().any(|p| p.name == b);
+        assert!(has_a && has_b, "member should contain both properties");
+    }
+}
+
 // =========================================================================
 // Template Expression Tests
 // =========================================================================

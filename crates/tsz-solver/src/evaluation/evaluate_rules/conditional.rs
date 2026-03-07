@@ -1241,20 +1241,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// references. The standard `contains_type_parameters` visitor doesn't walk through
     /// `Lazy` refs, so this helper checks for Lazy members directly.
     fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
-        // Only check for Intersection types with type-parameter-like members.
+        // Check for compound types containing unresolved type parameter references.
         // We intentionally skip the `contains_type_parameters` visitor here because
         // it catches KeyOf(TypeParam), StringIntrinsic(_, TypeParam), etc., which
         // TSC evaluates eagerly via constraint resolution (not deferral).
-        // Only intersections like `T & U` need compound deferral.
-        if let Some(TypeData::Intersection(list_id)) = self.interner().lookup(type_id) {
-            let members = self.interner().type_list(list_id);
-            return members.iter().any(|&m| {
-                matches!(
-                    self.interner().lookup(m),
-                    Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::TypeParameter(_))
-                )
-            });
+        //
+        // We handle two compound forms that TSC considers "generic" and defers:
+        // - Intersections like `T & U` with type-parameter-like members
+        // - IndexAccess like `T[K]` where object or index is generic
+        //   (TSC's `isGenericType` returns true for IndexedAccessType with
+        //   generic components, causing conditional type deferral)
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                members.iter().any(|&m| {
+                    matches!(
+                        self.interner().lookup(m),
+                        Some(
+                            TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::TypeParameter(_)
+                        )
+                    )
+                })
+            }
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                // IndexAccess types like T[K] where T or K contains unresolved
+                // type parameters (Lazy/TypeParameter) are genuinely indeterminate.
+                // Example: Extract<M[K], ArrayLike<any>> must stay deferred because
+                // M[K] could resolve to anything once M and K are instantiated.
+                Self::is_generic_ref(self.interner(), obj)
+                    || Self::is_generic_ref(self.interner(), idx)
+            }
+            _ => false,
         }
-        false
+    }
+
+    /// Check if a type is or contains a generic reference (Lazy/TypeParameter/Recursive).
+    /// Recurses into nested `IndexAccess` to handle cases like `T[K1][K2]`.
+    fn is_generic_ref(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+        match db.lookup(type_id) {
+            Some(TypeData::Lazy(_) | TypeData::TypeParameter(_) | TypeData::Recursive(_)) => true,
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
+            }
+            _ => false,
+        }
     }
 }

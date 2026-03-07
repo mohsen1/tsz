@@ -31,6 +31,22 @@ pub(crate) fn collect_single_or_union(db: &dyn TypeDatabase, types: Vec<TypeId>)
     }
 }
 
+/// Like [`collect_single_or_union`] but uses literal-only union reduction
+/// (no subtype reduction). Use this when subtype reduction would incorrectly
+/// discard contextual type information, e.g. when unioning callback types
+/// from union callee members where contravariant parameter subtyping
+/// would absorb the more specific variant.
+pub(crate) fn collect_single_or_union_no_reduce(
+    db: &dyn TypeDatabase,
+    types: Vec<TypeId>,
+) -> Option<TypeId> {
+    match types.len() {
+        0 => None,
+        1 => Some(types[0]),
+        _ => Some(db.union_literal_reduce(types)),
+    }
+}
+
 /// Extract the element type from a rest element's stored type for contextual typing.
 ///
 /// Rest elements in tuples store the full array/tuple type (e.g., `string[]` for
@@ -50,6 +66,14 @@ fn rest_element_contextual_type(db: &dyn TypeDatabase, rest_type: TypeId) -> Typ
     }
     // Fallback: return the type as-is (e.g., type parameters)
     rest_type
+}
+
+fn add_undefined_if_missing(db: &dyn TypeDatabase, ty: TypeId) -> TypeId {
+    if crate::narrowing::type_contains_undefined(db, ty) {
+        ty
+    } else {
+        db.union(vec![ty, TypeId::UNDEFINED])
+    }
 }
 
 // =============================================================================
@@ -442,7 +466,11 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
                 // Extract the element type for contextual typing of individual positions.
                 Some(rest_element_contextual_type(self.db, elem.type_id))
             } else {
-                Some(elem.type_id)
+                let mut ty = elem.type_id;
+                if elem.optional {
+                    ty = add_undefined_if_missing(self.db, ty);
+                }
+                Some(ty)
             }
         } else if let Some(last) = elements.last() {
             if last.rest {
@@ -559,7 +587,11 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
             if prop.name == self.name_atom {
-                return Some(prop.type_id);
+                let mut ty = prop.type_id;
+                if prop.optional {
+                    ty = add_undefined_if_missing(self.db, ty);
+                }
+                return Some(ty);
             }
         }
         // Fall back to index signatures for Object types too
@@ -959,6 +991,19 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
+
+        // tsc's getIntersectedSignatures returns undefined when multiple
+        // signatures are present and ANY is generic. A single generic signature
+        // still provides contextual types (type params act as contextual types).
+        if shape.call_signatures.len() > 1
+            && shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty())
+        {
+            return None;
+        }
+
         // Collect parameter types from all signatures at the given index
         let param_types: Vec<TypeId> = shape
             .call_signatures
@@ -973,14 +1018,38 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         } else {
             // Multiple call signatures with potentially different parameter types.
             // If all signatures agree on the same type, use it.
-            // Otherwise, tsc provides no contextual type (returns None), which causes
-            // TS7006 to be reported when noImplicitAny is enabled. We must NOT create
-            // a union of the parameter types, as that would suppress TS7006 incorrectly.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
-                Some(first)
+                return Some(first);
+            }
+            // When signatures disagree, filter out `any` parameters.
+            // This handles intersection evaluation artifacts where
+            // `T & ((arg: string) => any)` produces a Callable with a degraded
+            // `(any?) => any` signature from the unresolved T alongside the real
+            // `(arg: string) => any` signature. The `any`-parameterized signatures
+            // should not block contextual typing from more specific signatures.
+            let non_any: Vec<TypeId> = param_types
+                .iter()
+                .copied()
+                .filter(|&t| t != TypeId::ANY)
+                .collect();
+            if non_any.is_empty() {
+                // All signatures have `any` at this position — provide `any`
+                // as contextual type to suppress TS7006.
+                Some(TypeId::ANY)
+            } else if non_any.len() == 1 {
+                Some(non_any[0])
             } else {
-                None
+                let first_non_any = non_any[0];
+                if non_any.iter().all(|&t| t == first_non_any) {
+                    Some(first_non_any)
+                } else {
+                    // Genuinely different non-any types: union them.
+                    // tsc creates intersected parameter types across overloaded
+                    // signatures; we union them which also suppresses false TS7006
+                    // (e.g., Callback with (null, T) | (Error, null) overloads).
+                    collect_single_or_union(self.db, non_any)
+                }
             }
         }
     }
@@ -1231,6 +1300,8 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         // For unions, extract parameter types from each member and combine.
+        // Use no-reduce union to preserve all callback type variants — see
+        // collect_single_or_union_no_reduce doc comment for rationale.
         let members = self.db.type_list(TypeListId(list_id));
         let types: Vec<TypeId> = members
             .iter()
@@ -1240,7 +1311,7 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                 extractor.extract(member)
             })
             .collect();
-        collect_single_or_union(self.db, types)
+        collect_single_or_union_no_reduce(self.db, types)
     }
 
     fn default_output() -> Self::Output {

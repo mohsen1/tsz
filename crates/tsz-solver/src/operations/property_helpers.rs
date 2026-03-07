@@ -529,26 +529,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
-        // Resolve the def_id to get the SymbolId, then get the body type
-        let sym_id = match self.db.def_to_symbol_id(def_id) {
-            Some(id) => id,
-            None => {
-                // Can't convert def_id to symbol_id - fall back to structural evaluation
-                let evaluated = self.db.evaluate_type_with_options(
-                    self.interner().application(app.base, app.args.clone()),
-                    self.no_unchecked_indexed_access,
-                );
-                return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+        // Resolve the def_id to get the body type and type parameters.
+        // Try the full resolution chain via SymbolId first, then fall back
+        // to resolve_lazy directly (needed for built-in type aliases like
+        // Readonly, Partial, Required, etc. whose DefId may not have a
+        // SymbolId mapping in the solver database).
+        let (body_type, type_params) = match self.db.def_to_symbol_id(def_id) {
+            Some(sym_id) => {
+                let symbol_ref = crate::SymbolRef(sym_id.0);
+                let body = if let Some(inner_def_id) = self.db.symbol_to_def_id(symbol_ref) {
+                    self.db.resolve_lazy(inner_def_id, self.interner())
+                } else {
+                    self.db.resolve_symbol_ref(symbol_ref, self.interner())
+                };
+                let params = match self.db.get_type_params(symbol_ref) {
+                    Some(p) if !p.is_empty() => Some(p),
+                    _ => self
+                        .db
+                        .get_lazy_type_params(def_id)
+                        .filter(|p| !p.is_empty()),
+                };
+                (body, params)
             }
-        };
-
-        let symbol_ref = crate::SymbolRef(sym_id.0);
-
-        // Resolve the symbol to get its body type
-        let body_type = if let Some(inner_def_id) = self.db.symbol_to_def_id(symbol_ref) {
-            self.db.resolve_lazy(inner_def_id, self.interner())
-        } else {
-            self.db.resolve_symbol_ref(symbol_ref, self.interner())
+            None => {
+                // Direct DefId resolution path for built-in mapped type aliases
+                let body = self.db.resolve_lazy(def_id, self.interner());
+                let params = self
+                    .db
+                    .get_lazy_type_params(def_id)
+                    .filter(|p| !p.is_empty());
+                (body, params)
+            }
         };
 
         let Some(body_type) = body_type else {
@@ -560,20 +571,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
-        // Get type parameters for this symbol (try SymbolRef first, then DefId)
-        let type_params = match self.db.get_type_params(symbol_ref) {
-            Some(params) if !params.is_empty() => params,
-            _ => match self.db.get_lazy_type_params(def_id) {
-                Some(params) if !params.is_empty() => params,
-                _ => {
-                    // No type params - resolve on the body directly
-                    return self.resolve_property_access_inner(
-                        body_type,
-                        prop_name,
-                        Some(prop_atom),
-                    );
-                }
-            },
+        let Some(type_params) = type_params else {
+            // No type params - resolve on the body directly
+            return self.resolve_property_access_inner(body_type, prop_name, Some(prop_atom));
         };
 
         // The body should be an Object type with properties
@@ -660,6 +660,64 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 PropertyAccessResult::PropertyNotFound {
                     type_id: self.interner().application(app.base, app.args.clone()),
                     property_name: prop_atom,
+                }
+            }
+            // Mapped body types (e.g., Readonly<T> = { readonly [K in keyof T]: T[K] })
+            // Instantiate the mapped type's constraint and template with the Application's
+            // type arguments, then resolve the property on the resulting mapped type.
+            // This avoids re-evaluating the Application (which would fail with NoopResolver
+            // and trigger a false recursion-guard cycle).
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner().mapped_type(mapped_id);
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+
+                let inst_constraint =
+                    instantiate_type(self.interner(), mapped.constraint, &substitution);
+                let inst_template =
+                    instantiate_type(self.interner(), mapped.template, &substitution);
+                let inst_name_type = mapped
+                    .name_type
+                    .map(|nt| instantiate_type(self.interner(), nt, &substitution));
+
+                let new_mapped = MappedType {
+                    type_param: mapped.type_param.clone(),
+                    constraint: inst_constraint,
+                    name_type: inst_name_type,
+                    template: inst_template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+                let new_mapped_type = self.interner().mapped(new_mapped);
+                let new_mapped_id = match self.interner().lookup(new_mapped_type) {
+                    Some(TypeData::Mapped(mid)) => mid,
+                    _ => {
+                        return PropertyAccessResult::PropertyNotFound {
+                            type_id: self.interner().application(app.base, app.args.clone()),
+                            property_name: prop_atom,
+                        };
+                    }
+                };
+
+                // Resolve property on the instantiated mapped type
+                if let Some(result) =
+                    self.resolve_mapped_property_lazy(new_mapped_id, prop_name, prop_atom)
+                {
+                    result
+                } else {
+                    // Lazy resolution failed — fall back to evaluating the mapped type
+                    let evaluated = self.db.evaluate_type_with_options(
+                        new_mapped_type,
+                        self.no_unchecked_indexed_access,
+                    );
+                    if evaluated != new_mapped_type {
+                        self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
+                    } else {
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: self.interner().application(app.base, app.args.clone()),
+                            property_name: prop_atom,
+                        }
+                    }
                 }
             }
             // For non-Object body types (e.g., type aliases to unions), fall back to evaluation

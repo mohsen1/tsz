@@ -1162,12 +1162,31 @@ impl BinderState {
             // may need to infer the local variable's type from an expression referencing the
             // global (e.g. `const Symbol = globalThis.Symbol`), and creating a separate
             // symbol breaks that inference path. Functions and classes define their own types.
-            // Interfaces and namespaces still merge (augmentation is correct behavior).
-            if self.lib_symbol_ids.contains(&existing_id)
-                && (flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
-                && (existing_flags & symbol_flags::VALUE) != 0
-                && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
-            {
+            //
+            // In SCRIPT mode: interfaces and namespaces merge with globals (augmentation).
+            // In MODULE mode: interfaces and type aliases shadow globals (no augmentation
+            // at file scope — `declare global {}` is needed for true augmentation).
+            let should_shadow_lib = if self.lib_symbol_ids.contains(&existing_id) {
+                if self.is_external_module {
+                    // In modules, interfaces and type aliases shadow lib symbols
+                    // (they create module-local types, not global augmentation).
+                    // Functions and classes also shadow as before.
+                    (flags
+                        & (symbol_flags::FUNCTION
+                            | symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::TYPE_ALIAS))
+                        != 0
+                } else {
+                    // In scripts, only function/class shadow. Interfaces merge (augmentation).
+                    (flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                        && (existing_flags & symbol_flags::VALUE) != 0
+                        && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
+                }
+            } else {
+                false
+            };
+            if should_shadow_lib {
                 let sym_id = self.symbols.alloc(flags, name.to_string());
                 let container_sym = self
                     .scope_chain

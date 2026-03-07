@@ -8,6 +8,16 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Result from resolving literal string keys against an object type.
+pub(crate) struct LiteralKeysResult {
+    /// The computed result type (union/intersection of found key types).
+    /// `None` only when the lookup itself failed (e.g., object was unknown).
+    pub result_type: Option<TypeId>,
+    /// Keys that were not found as properties on the object type.
+    /// When non-empty, the caller should emit TS2339 for each.
+    pub missing_keys: Vec<String>,
+}
+
 impl<'a> CheckerState<'a> {
     // ============================================================================
     // Section 52: Parameter Type Utilities
@@ -786,11 +796,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         keys: &[tsz_common::interner::Atom],
-    ) -> Option<TypeId> {
+    ) -> LiteralKeysResult {
         use tsz_solver::operations::property::PropertyAccessResult;
 
         if keys.is_empty() {
-            return None;
+            return LiteralKeysResult {
+                result_type: None,
+                missing_keys: Vec::new(),
+            };
         }
 
         // When skip_flow_narrowing is true, we're computing the type of an assignment
@@ -802,14 +815,21 @@ impl<'a> CheckerState<'a> {
         // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
         let resolved_type = self.resolve_type_for_property_access(object_type);
         if resolved_type == TypeId::ANY {
-            return Some(TypeId::ANY);
+            return LiteralKeysResult {
+                result_type: Some(TypeId::ANY),
+                missing_keys: Vec::new(),
+            };
         }
         if resolved_type == TypeId::ERROR {
-            return None;
+            return LiteralKeysResult {
+                result_type: None,
+                missing_keys: Vec::new(),
+            };
         }
 
         let numeric_as_index = self.is_array_like_type(resolved_type);
         let mut types = Vec::with_capacity(keys.len());
+        let mut missing_keys = Vec::new();
 
         for &key in keys {
             let name = self.ctx.types.resolve_atom(key);
@@ -837,10 +857,18 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     types.push(property_type.unwrap_or(TypeId::UNKNOWN));
                 }
-                // IsUnknown: Return None to signal that property access on unknown failed
-                // The caller has node context and will report TS2571 error
-                PropertyAccessResult::IsUnknown | PropertyAccessResult::PropertyNotFound { .. } => {
-                    return None;
+                // IsUnknown: Return immediately — the caller has node context and
+                // will report TS2571 error.
+                PropertyAccessResult::IsUnknown => {
+                    return LiteralKeysResult {
+                        result_type: None,
+                        missing_keys: Vec::new(),
+                    };
+                }
+                // PropertyNotFound: Track the missing key instead of bailing out.
+                // tsc emits TS2339 per missing key, not TS7053 for the whole union.
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    missing_keys.push(name.to_string());
                 }
             }
         }
@@ -848,13 +876,20 @@ impl<'a> CheckerState<'a> {
         // In write context, the value must be assignable to ALL possible property types
         // (intersection), since we don't know which key will be used at runtime.
         // In read context, the result is ANY of the property types (union).
-        if is_write_context {
+        let result_type = if types.is_empty() {
+            None
+        } else if is_write_context {
             Some(tsz_solver::utils::intersection_or_single(
                 self.ctx.types,
                 types,
             ))
         } else {
             Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
+        };
+
+        LiteralKeysResult {
+            result_type,
+            missing_keys,
         }
     }
 

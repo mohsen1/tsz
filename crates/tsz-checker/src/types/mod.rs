@@ -1,5 +1,6 @@
 pub mod class_type;
 pub mod computation;
+pub mod function_iife_inference;
 pub mod function_type;
 pub mod interface_type;
 pub mod literal_type;

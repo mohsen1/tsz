@@ -70,13 +70,19 @@ pub struct InferenceCandidate {
 #[derive(Clone, Debug, Default)]
 pub struct InferenceInfo {
     pub candidates: Vec<InferenceCandidate>,
+    /// Candidates from contravariant positions (e.g., function parameters).
+    /// When only `contra_candidates` exist (no covariant candidates), the
+    /// resolution uses intersection instead of union, matching tsc behavior.
+    pub contra_candidates: Vec<InferenceCandidate>,
     pub upper_bounds: Vec<TypeId>,
     pub resolved: Option<TypeId>,
 }
 
 impl InferenceInfo {
     pub const fn is_empty(&self) -> bool {
-        self.candidates.is_empty() && self.upper_bounds.is_empty()
+        self.candidates.is_empty()
+            && self.contra_candidates.is_empty()
+            && self.upper_bounds.is_empty()
     }
 }
 
@@ -104,6 +110,7 @@ impl UnifyValue for InferenceInfo {
 
         // Deduplicate candidates using helper
         extend_dedup(&mut merged.candidates, &b.candidates);
+        extend_dedup(&mut merged.contra_candidates, &b.contra_candidates);
 
         // Deduplicate upper bounds using helper
         extend_dedup(&mut merged.upper_bounds, &b.upper_bounds);
@@ -865,6 +872,35 @@ impl<'a> InferenceContext<'a> {
     /// Add an inference candidate for a variable.
     pub fn add_candidate(&mut self, var: InferenceVar, ty: TypeId, priority: InferencePriority) {
         self.add_candidate_with_context(var, ty, priority, false, None, None, false);
+    }
+
+    /// Add a contravariant inference candidate for a variable.
+    /// Used when the type parameter appears in a contravariant position
+    /// (e.g., function parameter types). When only `contra_candidates` exist
+    /// (no covariant candidates), resolution uses intersection instead of
+    /// union, matching tsc's `contraCandidates` behavior.
+    pub fn add_contra_candidate(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+    ) {
+        let root = self.table.find(var);
+        let candidate = InferenceCandidate {
+            type_id: ty,
+            priority,
+            is_fresh_literal: is_literal_type(self.interner, ty),
+            from_object_property: false,
+            object_property_index: None,
+            object_property_name: None,
+        };
+        self.table.union_value(
+            root,
+            InferenceInfo {
+                contra_candidates: vec![candidate],
+                ..InferenceInfo::default()
+            },
+        );
     }
 
     /// Add an inference candidate for a variable that originates from an object property.

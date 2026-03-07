@@ -1053,8 +1053,12 @@ function UserName() {{
 
 #[test]
 fn test_jsx_children_callback_union_props_gets_contextual_type() {
-    // Discriminated union props: children callback should get contextual type
-    // from the union of `children` prop types across union members.
+    // Discriminated union props with different children callback signatures:
+    // Per TS spec §3.4, a union's call signatures must be identical (ignoring
+    // return types) for contextual parameter typing. When the children callback
+    // types differ across union members (e.g., (arg: string) => void vs
+    // (arg: number) => void), the union has NO call signatures and TS7006
+    // should fire under noImplicitAny.
     let source = format!(
         r#"
 {JSX_PREAMBLE}
@@ -1073,8 +1077,8 @@ const Test = () => {{
         .filter(|(c, _)| *c == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
         .count();
     assert!(
-        ts7006 == 0,
-        "Should NOT emit TS7006 for children callback in discriminated union props, got: {diags:?}"
+        ts7006 > 0,
+        "Should emit TS7006 for children callback when union props disagree on param types, got: {diags:?}"
     );
 }
 

@@ -479,10 +479,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If there's no default clause, the switch might not execute any case
-        // Properties are only definitely assigned if ALL cases assign them
-        // AND the switch covers all possible values (has default)
-        if !has_default_clause {
+        // Without a default clause, unmatched discriminants can skip the switch body
+        // unless case coverage is exhaustive.
+        if !has_default_clause && !self.switch_has_exhaustive_coverage_cached(switch_data) {
             // Without a default, we can't guarantee any case will execute
             // However, execution CAN continue after the switch (fall-through)
             // Return the incoming assignments to preserve the normal flow

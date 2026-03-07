@@ -1224,28 +1224,51 @@ impl<'a> IRPrinter<'a> {
 
             // Special
             IRNode::Raw(s) => {
-                self.write(s);
+                // Comments stored as Raw nodes bypass IRNode::Comment guards.
+                // Detect and suppress them when removeComments is enabled.
+                if self.remove_comments {
+                    let t = s.trim_start();
+                    if t.starts_with("//") || t.starts_with("/*") {
+                        // Skip comment-like Raw node
+                    } else {
+                        self.write(s);
+                    }
+                } else {
+                    self.write(s);
+                }
             }
             IRNode::Comment { text, is_block } => {
-                if *is_block {
-                    self.write("/*");
-                    self.write(text);
-                    self.write("*/");
-                } else {
-                    self.write("// ");
-                    self.write(text);
+                if !self.remove_comments {
+                    if *is_block {
+                        self.write("/*");
+                        self.write(text);
+                        self.write("*/");
+                    } else {
+                        self.write("// ");
+                        self.write(text);
+                    }
                 }
             }
             IRNode::TrailingComment(text) => {
                 // When encountered outside the body loop, just emit the text.
                 // Inside the body loop, this is consumed by peek-ahead logic.
-                self.write(" ");
-                self.write(text);
+                if !self.remove_comments {
+                    self.write(" ");
+                    self.write(text);
+                }
             }
             IRNode::Sequence(nodes) => {
                 let mut i = 0;
                 while i < nodes.len() {
                     if matches!(&nodes[i], IRNode::TrailingComment(_)) {
+                        i += 1;
+                        continue;
+                    }
+                    // Skip comment nodes when removeComments is enabled
+                    if self.remove_comments
+                        && (matches!(&nodes[i], IRNode::Comment { .. })
+                            || matches!(&nodes[i], IRNode::Raw(s) if s.trim_start().starts_with("//") || s.trim_start().starts_with("/*")))
+                    {
                         i += 1;
                         continue;
                     }
@@ -1274,8 +1297,10 @@ impl<'a> IRPrinter<'a> {
                     if i + 1 < nodes.len()
                         && let IRNode::TrailingComment(text) = &nodes[i + 1]
                     {
-                        self.write(" ");
-                        self.write(text);
+                        if !self.remove_comments {
+                            self.write(" ");
+                            self.write(text);
+                        }
                         i += 1;
                     }
 
@@ -1713,6 +1738,14 @@ impl<'a> IRPrinter<'a> {
                     i += 1;
                     continue;
                 }
+                // Skip comment nodes when removeComments is enabled
+                if self.remove_comments
+                    && (matches!(&body[i], IRNode::Comment { .. })
+                        || matches!(&body[i], IRNode::Raw(s) if s.trim_start().starts_with("//") || s.trim_start().starts_with("/*")))
+                {
+                    i += 1;
+                    continue;
+                }
 
                 if Self::is_noop_statement(&body[i]) {
                     i += 1;
@@ -1731,8 +1764,10 @@ impl<'a> IRPrinter<'a> {
                 if i + 1 < body.len()
                     && let IRNode::TrailingComment(text) = &body[i + 1]
                 {
-                    self.write(" ");
-                    self.write(text);
+                    if !self.remove_comments {
+                        self.write(" ");
+                        self.write(text);
+                    }
                     i += 1; // consume the trailing comment
                 }
                 self.write_line();

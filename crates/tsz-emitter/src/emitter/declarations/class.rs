@@ -8,9 +8,17 @@ use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+use super::super::core::PropertyNameEmit;
+
 /// Entry for a static field initializer that will be emitted after the class body.
 /// Fields: (name, initializer node, member pos, leading comments with source pos, trailing comments)
-type StaticFieldInit = (String, NodeIndex, u32, Vec<(String, u32)>, Vec<String>);
+type StaticFieldInit = (
+    PropertyNameEmit,
+    NodeIndex,
+    u32,
+    Vec<(String, u32)>,
+    Vec<String>,
+);
 type AutoAccessorInfo = (NodeIndex, String, Option<NodeIndex>, bool);
 
 impl<'a> Printer<'a> {
@@ -817,10 +825,10 @@ impl<'a> Printer<'a> {
                     {
                         continue;
                     }
-                    let name = self.get_identifier_text_idx(prop.name);
-                    if name.is_empty() {
+                    let name_emit = self.get_property_name_emit(prop.name);
+                    let Some(name_emit) = name_emit else {
                         continue;
-                    }
+                    };
 
                     // Pre-collect leading comments for this property declaration.
                     // Use the actual token end of the previous member (not its
@@ -860,19 +868,25 @@ impl<'a> Printer<'a> {
                         .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
                     {
                         static_field_inits.push((
-                            name,
+                            name_emit,
                             prop.initializer,
                             member_node.pos,
                             Vec::new(), // leading_comments filled during class body emission
                             Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
+                        // Non-static field inits use String (identifier) names for `this.name = val`.
+                        // Extract the identifier name; skip non-identifier names for now.
+                        let ident_name = match &name_emit {
+                            PropertyNameEmit::Dot(s) => s.clone(),
+                            _ => continue,
+                        };
                         let init_end = self
                             .arena
                             .get(prop.initializer)
                             .map_or(member_node.end, |n| n.end);
                         field_inits.push((
-                            name,
+                            ident_name,
                             prop.initializer,
                             init_end,
                             leading_comments,
@@ -1566,7 +1580,7 @@ impl<'a> Printer<'a> {
         // Emit static field initializers after class body: ClassName.field = value;
         if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
-            for (name, init_idx, _member_pos, leading_comments, trailing_comments) in
+            for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
                 // Emit saved leading comments from the original static property declaration
@@ -1575,10 +1589,16 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 if self.ctx.options.use_define_for_class_fields {
+                    let define_name = match name_emit {
+                        PropertyNameEmit::Dot(s) => format!("\"{s}\""),
+                        PropertyNameEmit::Bracket(s) | PropertyNameEmit::BracketNumeric(s) => {
+                            s.clone()
+                        }
+                    };
                     self.write("Object.defineProperty(");
                     self.write(&class_name);
                     self.write(", ");
-                    self.emit_string_literal_text(name);
+                    self.write(&define_name);
                     self.write(", {");
                     self.write_line();
                     self.increase_indent();
@@ -1595,8 +1615,18 @@ impl<'a> Printer<'a> {
                     self.write("});");
                 } else {
                     self.write(&class_name);
-                    self.write(".");
-                    self.write(name);
+                    match name_emit {
+                        PropertyNameEmit::Dot(name) => {
+                            self.write(".");
+                            self.write(name);
+                        }
+                        PropertyNameEmit::Bracket(name)
+                        | PropertyNameEmit::BracketNumeric(name) => {
+                            self.write("[");
+                            self.write(name);
+                            self.write("]");
+                        }
+                    }
                     self.write(" = ");
                     self.emit_expression(*init_idx);
                     self.write(";");

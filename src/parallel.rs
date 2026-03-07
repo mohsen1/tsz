@@ -28,7 +28,7 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, DeclarationArenaMap};
+use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -738,6 +738,9 @@ pub struct MergedProgram {
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
     pub declaration_arenas: DeclarationArenaMap,
+    /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
+    /// Enables resolving type references in cross-file interface declarations.
+    pub cross_file_node_symbols: CrossFileNodeSymbols,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -934,6 +937,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
     let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
+    let mut cross_file_node_symbols: CrossFileNodeSymbols = FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -1092,39 +1096,118 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 sym.parent = new_parent;
             }
 
-            // Remap exports: replace local IDs with global IDs
-            if let Some(exports) = &lib_sym.exports
-                && let Some(sym) = global_symbols.get_mut(global_id)
-            {
-                if sym.exports.is_none() {
-                    sym.exports = Some(Box::new(SymbolTable::new()));
-                }
-                if let Some(existing) = sym.exports.as_mut() {
+            // Remap exports: replace local IDs with global IDs.
+            // When an export name was already remapped by a previous lib binder,
+            // merge the new symbol's flags/declarations into the existing one
+            // (e.g., INTERFACE from one lib + VALUE from another, like
+            // DateTimeFormat in Intl across es5.d.ts and es2017.intl.d.ts).
+            if let Some(exports) = &lib_sym.exports {
+                let mut new_exports: Vec<(String, SymbolId)> = Vec::new();
+                let mut merge_targets: Vec<(SymbolId, SymbolId)> = Vec::new();
+
+                if let Some(sym) = global_symbols.get(global_id) {
+                    let existing_exports = sym.exports.as_ref();
                     for (name, &export_id) in exports.iter() {
                         if let Some(&new_export_id) =
                             lib_symbol_remap.get(&(lib_binder_ptr, export_id))
                         {
-                            // Always overwrite — Phase 1 alloc_from copied local IDs
-                            // that need to be replaced with global IDs
-                            existing.set(name.clone(), new_export_id);
+                            let prev = existing_exports.and_then(|e| e.get(name));
+                            if let Some(prev_export_id) = prev {
+                                if prev_export_id != new_export_id {
+                                    merge_targets.push((prev_export_id, new_export_id));
+                                }
+                            } else {
+                                new_exports.push((name.clone(), new_export_id));
+                            }
+                        }
+                    }
+                }
+
+                for (dst_id, src_id) in merge_targets {
+                    let src_data = global_symbols
+                        .get(src_id)
+                        .map(|s| (s.flags, s.declarations.clone(), s.value_declaration));
+                    if let Some((src_flags, src_decls, src_value_decl)) = src_data
+                        && let Some(dst) = global_symbols.get_mut(dst_id)
+                    {
+                        dst.flags |= src_flags;
+                        for d in src_decls {
+                            if !dst.declarations.contains(&d) {
+                                dst.declarations.push(d);
+                            }
+                        }
+                        if dst.value_declaration.is_none() && src_value_decl.is_some() {
+                            dst.value_declaration = src_value_decl;
+                        }
+                    }
+                }
+
+                if !new_exports.is_empty()
+                    && let Some(sym) = global_symbols.get_mut(global_id)
+                {
+                    if sym.exports.is_none() {
+                        sym.exports = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.exports.as_mut() {
+                        for (name, id) in new_exports {
+                            existing.set(name, id);
                         }
                     }
                 }
             }
 
-            // Remap members: replace local IDs with global IDs
-            if let Some(members) = &lib_sym.members
-                && let Some(sym) = global_symbols.get_mut(global_id)
-            {
-                if sym.members.is_none() {
-                    sym.members = Some(Box::new(SymbolTable::new()));
-                }
-                if let Some(existing) = sym.members.as_mut() {
+            // Remap members: replace local IDs with global IDs.
+            // Same merge-instead-of-overwrite logic as exports.
+            if let Some(members) = &lib_sym.members {
+                let mut new_members: Vec<(String, SymbolId)> = Vec::new();
+                let mut merge_targets: Vec<(SymbolId, SymbolId)> = Vec::new();
+
+                if let Some(sym) = global_symbols.get(global_id) {
+                    let existing_members = sym.members.as_ref();
                     for (name, &member_id) in members.iter() {
                         if let Some(&new_member_id) =
                             lib_symbol_remap.get(&(lib_binder_ptr, member_id))
                         {
-                            existing.set(name.clone(), new_member_id);
+                            let prev = existing_members.and_then(|m| m.get(name));
+                            if let Some(prev_member_id) = prev {
+                                if prev_member_id != new_member_id {
+                                    merge_targets.push((prev_member_id, new_member_id));
+                                }
+                            } else {
+                                new_members.push((name.clone(), new_member_id));
+                            }
+                        }
+                    }
+                }
+
+                for (dst_id, src_id) in merge_targets {
+                    let src_data = global_symbols
+                        .get(src_id)
+                        .map(|s| (s.flags, s.declarations.clone(), s.value_declaration));
+                    if let Some((src_flags, src_decls, src_value_decl)) = src_data
+                        && let Some(dst) = global_symbols.get_mut(dst_id)
+                    {
+                        dst.flags |= src_flags;
+                        for d in src_decls {
+                            if !dst.declarations.contains(&d) {
+                                dst.declarations.push(d);
+                            }
+                        }
+                        if dst.value_declaration.is_none() && src_value_decl.is_some() {
+                            dst.value_declaration = src_value_decl;
+                        }
+                    }
+                }
+
+                if !new_members.is_empty()
+                    && let Some(sym) = global_symbols.get_mut(global_id)
+                {
+                    if sym.members.is_none() {
+                        sym.members = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.members.as_mut() {
+                        for (name, id) in new_members {
+                            existing.set(name, id);
                         }
                     }
                 }
@@ -1772,22 +1855,19 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         });
     }
 
-    // NOTE: We intentionally do NOT populate globals from merged_symbols here.
-    // merged_symbols contains ALL symbols (including namespace-local ones like `var Symbol`
-    // inside a namespace), but globals should only contain file-level symbols.
-    // File-level symbols are already correctly added to globals at lines 873-880.
-    //
-    // NOTE: lib_binders were collected and processed at the beginning of this function.
-    // Their symbols have been remapped to global IDs and are now in:
-    // - global_symbols: The actual Symbol data
-    // - lib_name_to_global: Name -> global SymbolId mapping
-    // - Each file's remapped_file_locals and globals
+    // Build cross_file_node_symbols: map each arena pointer to its remapped node_symbols.
+    // This enables the checker to resolve type references in cross-file interface declarations.
+    for file in &files {
+        let arena_ptr = Arc::as_ptr(&file.arena) as usize;
+        cross_file_node_symbols.insert(arena_ptr, Arc::new(file.node_symbols.clone()));
+    }
 
     MergedProgram {
         files,
         symbols: global_symbols,
         symbol_arenas,
         declaration_arenas,
+        cross_file_node_symbols,
         globals,
         file_locals: file_locals_list,
         declared_modules,
@@ -2199,6 +2279,7 @@ pub fn create_binder_from_bound_file(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: program.symbol_arenas.clone(),
             declaration_arenas: program.declaration_arenas.clone(),
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),

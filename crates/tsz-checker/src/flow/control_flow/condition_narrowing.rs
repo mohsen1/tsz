@@ -4,7 +4,7 @@
 //! typeof/instanceof/in guards, and boolean comparison narrowing.
 
 use super::FlowAnalyzer;
-use crate::query_boundaries::flow_analysis::is_unit_type;
+use crate::query_boundaries::{common::union_members, flow_analysis::is_unit_type};
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -12,6 +12,80 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    pub(crate) fn narrow_by_switch_true_case_clause(
+        &self,
+        type_id: TypeId,
+        case_block: NodeIndex,
+        clause_idx: NodeIndex,
+        case_expr: NodeIndex,
+        target: NodeIndex,
+    ) -> TypeId {
+        let Some(case_block_node) = self.arena.get(case_block) else {
+            return self.narrow_type_by_condition(
+                type_id,
+                case_expr,
+                target,
+                true,
+                FlowNodeId::NONE,
+            );
+        };
+        let Some(case_block_data) = self.arena.get_block(case_block_node) else {
+            return self.narrow_type_by_condition(
+                type_id,
+                case_expr,
+                target,
+                true,
+                FlowNodeId::NONE,
+            );
+        };
+
+        // For switch(true), direct dispatch into case N requires:
+        // - every preceding case condition is false
+        // - current case condition is true
+        // Fallthrough paths are unioned separately by the switch-clause handler.
+        let mut narrowed = type_id;
+        let mut saw_current = false;
+
+        for &idx in &case_block_data.statements.nodes {
+            let Some(clause_node) = self.arena.get(idx) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                continue;
+            };
+
+            if idx == clause_idx {
+                saw_current = true;
+                if clause.expression.is_some() {
+                    narrowed = self.narrow_type_by_condition(
+                        narrowed,
+                        case_expr,
+                        target,
+                        true,
+                        FlowNodeId::NONE,
+                    );
+                }
+                break;
+            }
+
+            if clause.expression.is_some() {
+                narrowed = self.narrow_type_by_condition(
+                    narrowed,
+                    clause.expression,
+                    target,
+                    false,
+                    FlowNodeId::NONE,
+                );
+            }
+        }
+
+        if saw_current {
+            narrowed
+        } else {
+            self.narrow_type_by_condition(type_id, case_expr, target, true, FlowNodeId::NONE)
+        }
+    }
+
     pub(crate) fn narrow_by_switch_clause(
         &self,
         type_id: TypeId,
@@ -43,6 +117,33 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(case_block) = self.arena.get_block(case_block_node) else {
             return type_id;
         };
+
+        // For switch(true), each case expression is an independent condition.
+        // The default clause should be narrowed by applying the negation (false branch)
+        // of every case expression, equivalent to an if-else chain's final else.
+        if self.is_switch_true(switch_expr) {
+            let mut narrowed = type_id;
+            for &clause_idx in &case_block.statements.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                    continue;
+                };
+                if clause.expression.is_none() {
+                    continue; // Skip the default clause itself
+                }
+                // Apply the false branch of this case condition
+                narrowed = self.narrow_type_by_condition(
+                    narrowed,
+                    clause.expression,
+                    target,
+                    false, // false branch = condition is not true
+                    FlowNodeId::NONE,
+                );
+            }
+            return narrowed;
+        }
 
         // Fast path: if this switch does not reference the target (directly or via discriminant
         // property access like switch(x.kind) when narrowing x), it cannot affect target's type.
@@ -216,6 +317,9 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if cond_node.kind == SyntaxKind::Identifier as u16
+            // Direct truthiness checks (`if (x)`, `x && ...`, `x! && ...`) must narrow
+            // the reference itself. Alias recursion is only for `const alias = guard`.
+            && !self.is_matching_reference(condition_idx, target)
             && let Some((sym_id, initializer)) = self.const_condition_initializer(condition_idx)
             && !visited_aliases.contains(&sym_id)
         {
@@ -437,7 +541,7 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                         if let Some(callee_node) = self.arena.get(call.expression)
                             && let Some(access) = self.arena.get_access_expr(callee_node)
-                            && access.question_dot_token
+                            && self.access_expr_is_optional_chain(callee_node, access)
                             && self.is_matching_reference(access.expression, target)
                         {
                             let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
@@ -468,10 +572,13 @@ impl<'a> FlowAnalyzer<'a> {
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
                 if let Some(access) = self.arena.get_access_expr(cond_node) {
-                    // Handle optional chaining: y?.a
-                    if access.question_dot_token
+                    // Handle optional chaining truthiness: `if (a?.b?.c)`.
+                    // A truthy optional-chain result means every chain prefix that can short-circuit
+                    // must be non-nullish on this branch.
+                    if self.access_expr_is_optional_chain(cond_node, access)
                         && is_true_branch
-                        && self.is_matching_reference(access.expression, target)
+                        && (self.is_matching_reference(access.expression, target)
+                            || self.is_optional_chain_prefix(condition_idx, target))
                     {
                         let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                         let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
@@ -488,12 +595,23 @@ impl<'a> FlowAnalyzer<'a> {
                         &property_path,
                         is_true_branch,
                     );
-                    // Even if narrowed is NEVER, it means no branch matches, so returning NEVER is correct
-                    return narrowed;
+                    // For union types, NEVER means all members were filtered out
+                    // (no member has a truthy/falsy property), which is valid.
+                    // For non-union types (class, mapped, generic), NEVER often
+                    // means the solver couldn't resolve the property (e.g.
+                    // Readonly<P> where P is a type parameter).  tsc does not
+                    // narrow non-union base types by property truthiness, so
+                    // fall through instead of collapsing to NEVER.
+                    if narrowed != TypeId::NEVER
+                        || tsz_solver::is_union_type(self.interner, type_id)
+                    {
+                        return narrowed;
+                    }
                 }
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
-                if self.is_matching_reference(condition_idx, target) {
+                let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
+                if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
                         // Remove null/undefined (truthy narrowing)
                         let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
@@ -508,7 +626,8 @@ impl<'a> FlowAnalyzer<'a> {
             // Truthiness check: if (x)
             // Use Solver-First architecture: delegate to TypeGuard::Truthy
             _ => {
-                if self.is_matching_reference(condition_idx, target) {
+                let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
+                if self.is_matching_reference(condition_ref, target) {
                     return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
                 }
             }
@@ -625,16 +744,32 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+        {
+            if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                return true;
+            }
+            return self.contains_optional_chain(call.expression);
+        }
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
             && let Some(access) = self.arena.get_access_expr(node)
         {
-            if access.question_dot_token {
+            if self.access_expr_is_optional_chain(node, access) {
                 return true;
             }
             return self.contains_optional_chain(access.expression);
         }
         false
+    }
+
+    const fn access_expr_is_optional_chain(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        access: &tsz_parser::parser::node::AccessExprData,
+    ) -> bool {
+        access.question_dot_token || (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
     }
 
     /// Check if `expr` is an optional chain (or typeof of one) that contains `target`
@@ -655,7 +790,98 @@ impl<'a> FlowAnalyzer<'a> {
             }
             return false;
         }
-        self.contains_optional_chain(expr) && self.is_optional_chain_prefix(expr, target)
+        if !self.contains_optional_chain(expr) {
+            return false;
+        }
+        if self.is_optional_chain_prefix(expr, target) {
+            return true;
+        }
+
+        // Fallback for cases like `o?.["foo"]` where structural prefix matching can miss
+        // the target due access-form differences; walk chain bases directly.
+        let mut cur = expr;
+        for _ in 0..64 {
+            if self.is_matching_reference(cur, target) {
+                return true;
+            }
+            let Some(cur_node) = self.arena.get(cur) else {
+                return false;
+            };
+            if cur_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(cur_node)
+            {
+                cur = self
+                    .arena
+                    .skip_parenthesized_and_assertions(call.expression);
+                continue;
+            }
+            if (cur_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || cur_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.arena.get_access_expr(cur_node)
+            {
+                cur = self
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression);
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
+    fn optional_chain_comparison_proves_non_nullish(
+        &self,
+        bin: &BinaryExprData,
+        target: NodeIndex,
+        is_strict: bool,
+        effective_truth: bool,
+    ) -> bool {
+        if !effective_truth {
+            return false;
+        }
+        let Some(node_types) = self.node_types else {
+            return false;
+        };
+
+        for (chain_side, other_side) in [(bin.left, bin.right), (bin.right, bin.left)] {
+            if !self.is_optional_chain_containing_target(chain_side, target) {
+                continue;
+            }
+            let Some(&other_type) = node_types.get(&other_side.0) else {
+                continue;
+            };
+            if !self.comparison_allows_optional_chain_short_circuit(other_type, is_strict) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn comparison_allows_optional_chain_short_circuit(
+        &self,
+        compared_type: TypeId,
+        is_strict: bool,
+    ) -> bool {
+        if compared_type.is_any_or_unknown() || compared_type == TypeId::ERROR {
+            return true;
+        }
+
+        self.type_contains(compared_type, TypeId::UNDEFINED)
+            || (!is_strict && self.type_contains(compared_type, TypeId::NULL))
+    }
+
+    fn type_contains(&self, type_id: TypeId, needle: TypeId) -> bool {
+        if type_id == needle {
+            return true;
+        }
+        union_members(self.interner, type_id)
+            .map(|members| {
+                members
+                    .into_iter()
+                    .any(|member| self.type_contains(member, needle))
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn const_condition_initializer(
@@ -759,6 +985,20 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             !is_true_branch
         };
+        let mut type_id = type_id;
+
+        // Optional-chain equality transport:
+        // when an optional-chain comparison is known-equal to a value that cannot
+        // come from short-circuiting, the chain base/prefix is non-nullish.
+        if self.optional_chain_comparison_proves_non_nullish(
+            bin,
+            target,
+            is_strict,
+            effective_truth,
+        ) {
+            type_id = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+            type_id = narrowing.narrow_excluding_type(type_id, TypeId::UNDEFINED);
+        }
 
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
             // Use unified narrow_type API with TypeGuard::Typeof for both branches
@@ -771,6 +1011,38 @@ impl<'a> FlowAnalyzer<'a> {
             }
             // Unknown typeof string (e.g., host-defined types), no narrowing
             return type_id;
+        }
+
+        // typeof-based discriminant narrowing for unions:
+        // `typeof a.error === 'undefined'` narrows `a` by filtering union members
+        // where the `error` property is (or isn't) undefined.
+        if is_strict
+            && let Some((property_path, is_optional, typeof_literal)) =
+                self.typeof_discriminant_path(bin.left, bin.right, target)
+        {
+            let discriminant_type = match typeof_literal {
+                "undefined" => TypeId::UNDEFINED,
+                _ => {
+                    // For non-undefined typeof checks (e.g., typeof x.y === "string"),
+                    // we can't use discriminant narrowing directly.
+                    TypeId::NEVER
+                }
+            };
+            if discriminant_type != TypeId::NEVER {
+                // Optional-chain discriminants compared to `undefined` are special:
+                // `obj?.prop` can be `undefined` due to nullish short-circuit on the base.
+                // On truthy `===/!== undefined` paths, preserve the incoming type.
+                // Applying discriminant narrowing here can incorrectly collapse to `never`.
+                if is_optional && discriminant_type == TypeId::UNDEFINED && effective_truth {
+                    return type_id;
+                }
+                return narrowing.narrow_by_discriminant_for_type(
+                    type_id,
+                    &property_path,
+                    discriminant_type,
+                    effective_truth,
+                );
+            }
         }
 
         if let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) {
@@ -815,16 +1087,22 @@ impl<'a> FlowAnalyzer<'a> {
                 // Direct discriminant (is_aliased_discriminant = false) always applies.
                 if !(is_aliased_discriminant && (is_property_access || is_mutable)) {
                     let mut base_type = type_id;
-                    if is_optional && effective_truth {
+                    let optional_undefined_truthy =
+                        is_optional && literal_type == TypeId::UNDEFINED && effective_truth;
+                    if is_optional && effective_truth && !optional_undefined_truthy {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
                         base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                     }
-                    return narrowing.narrow_by_discriminant_for_type(
+                    let narrowed = narrowing.narrow_by_discriminant_for_type(
                         base_type,
                         &property_path,
                         literal_type,
                         effective_truth,
                     );
+                    if optional_undefined_truthy {
+                        return type_id;
+                    }
+                    return narrowed;
                 }
                 // Skipped: indirect property access or aliased let-bound variable.
                 // The type will be computed from the already-narrowed base or via literal comparison.

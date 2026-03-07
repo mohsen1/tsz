@@ -409,7 +409,14 @@ impl<'a> CheckerState<'a> {
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                 && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
             {
-                actual_this_type = Some(self.get_type_of_node(access.expression));
+                let receiver_type = self.get_type_of_node(access.expression);
+                actual_this_type = Some(if nullish_cause.is_some() {
+                    let evaluated = self.evaluate_type_with_env(receiver_type);
+                    let (non_nullish, _) = self.split_nullish_type(evaluated);
+                    non_nullish.unwrap_or(evaluated)
+                } else {
+                    receiver_type
+                });
             }
         }
 
@@ -480,7 +487,24 @@ impl<'a> CheckerState<'a> {
              param_type: TypeId,
              index: usize,
              arg_count: usize| {
-                let evaluated = this.evaluate_type_with_env(param_type);
+                // For union types, evaluate each member individually and reconstruct
+                // with literal-only reduction. Direct evaluation of a union triggers
+                // subtype reduction (via evaluate_union → simplify_union_members),
+                // which can absorb callback types due to parameter contravariance.
+                // For example, `(value: string) => U` <: `(value: never) => U`, so
+                // evaluation would reduce the union to just the never-parameterized
+                // callback, losing contextual type information.
+                let evaluated = if let Some(members) =
+                    tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
+                {
+                    let evaluated_members: Vec<_> = members
+                        .iter()
+                        .map(|&m| this.evaluate_type_with_env(m))
+                        .collect();
+                    this.ctx.types.union_literal_reduce(evaluated_members)
+                } else {
+                    this.evaluate_type_with_env(param_type)
+                };
                 if helper.is_rest_parameter_position(index, arg_count) {
                     tsz_solver::rest_argument_element_type(this.ctx.types, evaluated)
                 } else {
@@ -724,10 +748,60 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // Sanitize certain function-literal arg types for the second resolve_call
+                    // pass. The sensitive placeholder `(any?) => any` from Round 1 can
+                    // contaminate the solver's type parameter inference when the shape
+                    // param is a bare type parameter or intersection (e.g., `T` or
+                    // `T & Callback`). In those cases, T gets inferred as `(any?) => any`,
+                    // producing Callable types with conflicting call signatures that break
+                    // contextual typing and cause false TS7006 errors.
+                    //
+                    // However, when the shape param is a generic callable like
+                    // `Predicate<A>`, the placeholder's callable structure is useful for
+                    // inferring inner type params (A = any from placeholder params).
+                    // Replacing with UNKNOWN would lose this inference (A = unknown).
+                    //
+                    // Rule: only sanitize when the shape param IS or CONTAINS a top-level
+                    // type parameter (bare T, T & Callable, etc). Leave generic callables
+                    // like Predicate<A> alone since those handle the placeholder correctly.
+                    let sanitized_arg_types: Vec<TypeId> =
+                        round1_arg_types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &ty)| {
+                                if i < sensitive_args.len()
+                                    && sensitive_args[i]
+                                    && self.ctx.arena.get(args[i]).is_some_and(|n| {
+                                        n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                            || n.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    })
+                                    && shape.params.get(i).is_some_and(|p| {
+                                        // Check if the param type is a bare type parameter
+                                        // or an intersection containing a type parameter
+                                        let pt = p.type_id;
+                                        tsz_solver::type_param_info(self.ctx.types, pt).is_some()
+                                            || tsz_solver::type_queries::get_intersection_members(
+                                                self.ctx.types,
+                                                pt,
+                                            )
+                                            .is_some_and(|members| {
+                                                members.iter().any(|&m| {
+                                                    tsz_solver::type_param_info(self.ctx.types, m)
+                                                        .is_some()
+                                                })
+                                            })
+                                    })
+                                {
+                                    TypeId::UNKNOWN
+                                } else {
+                                    ty
+                                }
+                            })
+                            .collect();
                     let round1_instantiated_params = self
                         .resolve_call_with_checker_adapter(
                             callee_type_for_context,
-                            &round1_arg_types,
+                            &sanitized_arg_types,
                             force_bivariant_callbacks,
                             self.ctx.contextual_type,
                             actual_this_type,
@@ -763,12 +837,113 @@ impl<'a> CheckerState<'a> {
                                         last.rest.then_some((last.type_id, true))
                                     })
                             });
-                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
-                            let instantiated = if round1_instantiated_params.is_some() {
-                                param_type
+                        // For sensitive argument positions, check if the round1-
+                        // instantiated param is a Callable with multiple call
+                        // signatures (a sign of placeholder pollution from the
+                        // `__sensitive_arg__` placeholder). When this happens, fall
+                        // back to the original shape param to avoid conflicting
+                        // contextual types that suppress parameter typing.
+                        let is_sensitive = i < sensitive_args.len() && sensitive_args[i];
+                        let round2_param =
+                            if is_sensitive {
+                                if let Some((param_type, _)) = round2_param {
+                                    let is_polluted = tsz_solver::type_queries::get_callable_shape(
+                                        self.ctx.types,
+                                        param_type,
+                                    )
+                                    .is_some_and(|shape| shape.call_signatures.len() > 1);
+                                    if is_polluted {
+                                        shape.params.get(i).map(|p| (p.type_id, p.rest)).or_else(
+                                            || {
+                                                let last = shape.params.last()?;
+                                                last.rest.then_some((last.type_id, true))
+                                            },
+                                        )
+                                    } else {
+                                        round2_param
+                                    }
+                                } else {
+                                    round2_param
+                                }
                             } else {
-                                instantiate_type(self.ctx.types, param_type, &round2_substitution)
+                                round2_param
                             };
+                        let is_sensitive_fallback = is_sensitive
+                            && round2_param
+                                .map(|(t, _)| shape.params.get(i).is_some_and(|p| p.type_id == t))
+                                .unwrap_or(false);
+                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
+                            let instantiated =
+                                if round1_instantiated_params.is_some() && !is_sensitive_fallback {
+                                    // Round 1 already instantiated the params, but for
+                                    // constrained type parameters whose constraint only
+                                    // references type params from the SAME call signature
+                                    // (e.g., TCallback extends Callback<TFoo, TBar>), the
+                                    // solver resolved them to degraded constraint types with
+                                    // `any` params. Check the ORIGINAL shape param — if it's a
+                                    // TypeParameter with a constraint that becomes fully
+                                    // resolved after instantiation, use that instead.
+                                    let original_param = shape.params.get(i).map(|p| p.type_id);
+                                    if let Some(orig) = original_param
+                                        && let Some(tp_info) =
+                                            tsz_solver::type_param_info(self.ctx.types, orig)
+                                        && let Some(constraint) = tp_info.constraint
+                                    {
+                                        let instantiated_constraint = instantiate_type(
+                                            self.ctx.types,
+                                            constraint,
+                                            &round2_substitution,
+                                        );
+                                        let evaluated =
+                                            self.evaluate_type_with_env(instantiated_constraint);
+                                        // Only use the constraint if it's fully resolved (no
+                                        // remaining type parameters from outer scopes). If it
+                                        // still has unresolved params, fall back to Round 1.
+                                        if !tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            evaluated,
+                                        ) {
+                                            evaluated
+                                        } else {
+                                            param_type
+                                        }
+                                    } else {
+                                        param_type
+                                    }
+                                } else {
+                                    let inst = instantiate_type(
+                                        self.ctx.types,
+                                        param_type,
+                                        &round2_substitution,
+                                    );
+                                    // When the instantiated type is still a bare TypeParameter
+                                    // (not in the substitution), resolve to its CONSTRAINT for
+                                    // contextual typing. This matches tsc where
+                                    // `TCallback extends Callback<TFoo, TBar>` uses
+                                    // `Callback<TFoo, TBar>` as contextual type.
+                                    if let Some(tp_info) =
+                                        tsz_solver::type_param_info(self.ctx.types, inst)
+                                        && let Some(constraint) = tp_info.constraint
+                                    {
+                                        let instantiated_constraint = instantiate_type(
+                                            self.ctx.types,
+                                            constraint,
+                                            &round2_substitution,
+                                        );
+                                        let evaluated =
+                                            self.evaluate_type_with_env(instantiated_constraint);
+                                        if !tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            evaluated,
+                                        ) {
+                                            evaluated
+                                        } else {
+                                            inst
+                                        }
+                                    } else {
+                                        inst
+                                    }
+                                };
                             let evaluated = self.evaluate_type_with_env(instantiated);
                             trace!(
                                 arg_index = i,

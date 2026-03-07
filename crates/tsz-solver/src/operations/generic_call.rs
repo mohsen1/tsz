@@ -59,7 +59,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return result;
         }
 
-        let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
+        let mut infer_ctx = InferenceContext::with_resolver(
+            self.interner.as_type_database(),
+            self.interner.as_type_resolver(),
+        );
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
@@ -128,6 +131,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if tp.default.is_some() {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
+        }
+
+        // Seed inference from generic `this` parameter when present.
+        // For calls like `obj.method<T>(...)`, `this: T` must constrain `T` from
+        // the calling receiver so parameter types like `keyof T` don't collapse.
+        if let Some(expected_this) = func.this_type {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            let expected_this_inst = instantiate_type(self.interner, expected_this, &substitution);
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                actual_this,
+                expected_this_inst,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
         }
 
         // 1.5. Pre-compute which placeholders should have their argument's object
@@ -788,6 +806,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
+
+        // Validate `this` after final substitution so generic `this` params are fully
+        // instantiated (e.g. `this: T` -> `this: Y`).
+        if let Some(expected_this) = func.this_type {
+            let expected_this = instantiate_type(self.interner, expected_this, &final_subst);
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, expected_this) {
+                return CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this,
+                };
+            }
+        }
+
         // Final check: verify arguments against instantiated parameters.
         // When callbacks are contextually typed with the callee's inference placeholders
         // (__infer_0, etc.), those placeholders leak into the arg types. Replace them
@@ -916,7 +948,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .all(|ty| self.is_mergeable_direct_inference_candidate(*ty))
         {
-            return inferred;
+            // Guard: if lower bounds contain literals with different primitive bases
+            // (e.g., "" and 3 → string vs number), fall back to the first candidate.
+            // tsc keeps the first candidate in those cases so later argument checks
+            // can report a proper TS2345 mismatch.
+            if !self.has_conflicting_literal_bases(lower_bounds) {
+                return inferred;
+            }
         }
 
         // Fall back to the first lower-bound candidate so later argument checks
@@ -1046,14 +1084,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if ty.is_nullish() || ty.is_any_or_unknown() || ty == TypeId::NEVER || ty == TypeId::VOID {
             return true;
         }
+        // Primitive base types are safe to merge — they're just as unambiguous as
+        // null/undefined. Literal types (string/number/boolean/bigint literals)
+        // are also safe since they widen to their base primitive during resolution.
+        if matches!(
+            ty,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::OBJECT
+                | TypeId::BOOLEAN_TRUE
+                | TypeId::BOOLEAN_FALSE
+        ) {
+            return true;
+        }
         match self.interner.lookup(ty) {
             Some(
-                TypeData::Object(_)
+                TypeData::Literal(_)
+                | TypeData::Object(_)
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
                 | TypeData::Function(_)
-                | TypeData::Callable(_),
+                | TypeData::Callable(_)
+                | TypeData::Intersection(_),
             ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
@@ -1063,6 +1119,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .all(|member| self.is_mergeable_direct_inference_candidate(*member))
             }
             _ => false,
+        }
+    }
+
+    /// Returns `true` when the lower bounds contain literal types from different
+    /// primitive families (e.g., a string literal and a number literal). This indicates
+    /// heterogeneous candidates that tsc would NOT merge into a union.
+    fn has_conflicting_literal_bases(&self, lower_bounds: &[TypeId]) -> bool {
+        let mut seen_base: Option<TypeId> = None;
+        for &ty in lower_bounds {
+            let base = self.primitive_base_of(ty);
+            if let Some(b) = base {
+                match seen_base {
+                    None => seen_base = Some(b),
+                    Some(prev) if prev != b => return true,
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns the primitive base TypeId for a type if it's a literal or primitive,
+    /// or `None` for non-primitive types (objects, arrays, etc.).
+    fn primitive_base_of(&self, ty: TypeId) -> Option<TypeId> {
+        // Check well-known primitive TypeIds first
+        if matches!(
+            ty,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+        ) {
+            return Some(ty);
+        }
+        if matches!(ty, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE) {
+            return Some(TypeId::BOOLEAN);
+        }
+        match self.interner.lookup(ty) {
+            Some(TypeData::Literal(lit)) => Some(lit.primitive_type_id()),
+            _ => None,
         }
     }
 
@@ -1214,7 +1307,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Save state to prevent pollution if evaluator is reused
         let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
 
-        let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
+        let mut infer_ctx = InferenceContext::with_resolver(
+            self.interner.as_type_database(),
+            self.interner.as_type_resolver(),
+        );
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();

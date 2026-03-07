@@ -1,4 +1,4 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
     array_element_type as get_array_element_type, contains_type_parameters, is_keyof_type,
@@ -108,6 +108,28 @@ pub(crate) fn is_assignable_with_env(
         tsz_solver::RelationContext::default(),
     )
     .is_related()
+}
+
+/// Extract the `DefId` from a `Lazy(DefId)` type, if it is one.
+/// Used by flow-control assignment to resolve lazy types via the `TypeEnvironment`.
+pub(crate) fn get_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
+}
+
+/// If `type_id` is a promise-like application type, return the inner type argument.
+/// Used by flow-control assignment to unwrap `await` RHS types.
+pub(crate) fn unwrap_promise_type_argument(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    if !tsz_solver::type_queries::is_promise_like(db, type_id) {
+        return None;
+    }
+    let (_, args) = tsz_solver::type_queries::get_application_info(db, type_id)?;
+    args.first().copied()
 }
 
 fn types_are_subtype_with_env(

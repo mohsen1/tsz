@@ -69,9 +69,9 @@ pub use extended::{
     classify_literal_key, classify_literal_type, classify_mapped_constraint,
     classify_namespace_member, classify_promise_type, classify_type_query,
     create_number_literal_type, create_string_literal_type, get_application_base,
-    get_invalid_index_type_member, get_literal_property_name, get_number_literal_value,
-    get_string_literal_value, get_tuple_list_id, is_number_literal, is_object_with_index_type,
-    is_string_literal, widen_literal_to_primitive,
+    get_invalid_index_type_member, get_invalid_index_type_member_strict, get_literal_property_name,
+    get_number_literal_value, get_string_literal_value, get_tuple_list_id, is_number_literal,
+    is_object_with_index_type, is_string_literal, widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

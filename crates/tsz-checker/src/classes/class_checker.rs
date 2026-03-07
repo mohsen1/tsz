@@ -848,10 +848,7 @@ impl<'a> CheckerState<'a> {
                 // Unwrap parenthesized expressions to find the actual base expression.
                 // e.g., `class E extends (class { ... })` — the inner expr is a class expression.
                 let mut resolved_expr_idx = expr_idx;
-                loop {
-                    let Some(rn) = self.ctx.arena.get(resolved_expr_idx) else {
-                        break;
-                    };
+                while let Some(rn) = self.ctx.arena.get(resolved_expr_idx) {
                     if rn.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                         && let Some(paren) = self.ctx.arena.get_parenthesized(rn)
                     {

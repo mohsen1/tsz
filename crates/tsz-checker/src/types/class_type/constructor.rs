@@ -108,7 +108,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let instance_type = self.get_class_instance_type(class_idx, class);
+        // NOTE: instance type is computed AFTER static member processing (see below).
+        // This allows us to temporarily cache a partial constructor type with all static
+        // members, so that self-referencing property initializers (e.g., `p = doThing(A)`)
+        // can resolve the class type during instance type computation.
 
         // Get the class symbol for nominal identity
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
@@ -442,6 +445,147 @@ impl<'a> CheckerState<'a> {
                 },
             );
         }
+
+        // Compute instance type NOW, after all static members are processed.
+        //
+        // WHY DEFERRED: Instance type construction evaluates property initializers via
+        // `get_type_of_node`. When an initializer references the enclosing class
+        // (e.g., `p = doThing(A)` inside class A), `get_type_of_symbol(A)` hits the
+        // cache. Without the temporary partial constructor type below, it would find
+        // only the `Lazy(DefId)` placeholder — an opaque type that fails structural
+        // assignability checks, causing false TS2345/TS2322.
+        //
+        // By building a partial constructor type from the already-processed static
+        // members and temporarily caching it for the class symbol, the recursive
+        // `get_type_of_symbol(A)` returns a type with static members visible (e.g.,
+        // `{ n: string }`). The cache is restored afterward so other code paths
+        // (like `resolve_lazy_class_to_constructor` for method return types) continue
+        // to see the original `Lazy(DefId)` placeholder.
+        let instance_type = {
+            let prev_sym_cached = current_sym.and_then(|s| self.ctx.symbol_types.get(&s).copied());
+            let prev_inst_cached =
+                current_sym.and_then(|s| self.ctx.symbol_instance_types.get(&s).copied());
+            if let Some(sym_id) = current_sym {
+                // ── Partial CONSTRUCTOR type (for VALUE references) ──
+                // Build from already-processed static members + inherited base statics.
+                let mut partial_ctor_props: Vec<PropertyInfo> =
+                    properties.values().cloned().collect();
+
+                // Include inherited static properties from base class if available
+                if let Some(ref heritage_clauses) = class.heritage_clauses {
+                    'inherit: for &clause_idx in &heritage_clauses.nodes {
+                        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                            continue;
+                        };
+                        let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                            continue;
+                        };
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        let Some(&type_idx) = heritage.types.nodes.first() else {
+                            break;
+                        };
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            break;
+                        };
+                        let expr_idx = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            expr_type_args.expression
+                        } else {
+                            type_idx
+                        };
+                        if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
+                            && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
+                        {
+                            let base_props = self.static_properties_from_type(base_type);
+                            let own_names: std::collections::HashSet<_> =
+                                partial_ctor_props.iter().map(|p| p.name).collect();
+                            for (name, prop) in base_props {
+                                if !own_names.contains(&name) {
+                                    partial_ctor_props.push(prop);
+                                }
+                            }
+                        }
+                        break 'inherit;
+                    }
+                }
+
+                let partial_ctor = factory.callable(CallableShape {
+                    call_signatures: Vec::new(),
+                    construct_signatures: Vec::new(),
+                    properties: partial_ctor_props,
+                    string_index: static_string_index.clone(),
+                    number_index: static_number_index.clone(),
+                    symbol: current_sym,
+                    is_abstract: false,
+                });
+                self.ctx.symbol_types.insert(sym_id, partial_ctor);
+
+                // ── Partial INSTANCE type (for TYPE references like `Bar<any>`) ──
+                // Build from declared instance properties (those with type annotations).
+                // This allows type references to the class being constructed to resolve
+                // correctly, preventing false TS2339 on property access (e.g.,
+                // `(this as Bar<any>).num` where `num!: number` is declared).
+                let mut inst_props: Vec<PropertyInfo> = Vec::new();
+                for &member_idx in &class.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                        continue;
+                    }
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    // Only NON-static properties WITH type annotations
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    if !prop.type_annotation.is_some() {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name_resolved(prop.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let type_id = self.get_type_from_type_node(prop.type_annotation);
+                    inst_props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id,
+                        write_type: type_id,
+                        optional: prop.question_token,
+                        readonly: self.has_readonly_modifier(&prop.modifiers),
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: self.get_visibility_from_modifiers(&prop.modifiers),
+                        parent_id: current_sym,
+                        declaration_order: 0,
+                    });
+                }
+                if !inst_props.is_empty() {
+                    let partial_instance = factory.object(inst_props);
+                    self.ctx
+                        .symbol_instance_types
+                        .insert(sym_id, partial_instance);
+                }
+            }
+            let result = self.get_class_instance_type(class_idx, class);
+            // Restore the previous cached values (Lazy placeholder / no instance type)
+            // so other code paths continue to work correctly.
+            if let Some(sym_id) = current_sym {
+                if let Some(prev) = prev_sym_cached {
+                    self.ctx.symbol_types.insert(sym_id, prev);
+                }
+                if let Some(prev) = prev_inst_cached {
+                    self.ctx.symbol_instance_types.insert(sym_id, prev);
+                } else {
+                    self.ctx.symbol_instance_types.remove(&sym_id);
+                }
+            }
+            result
+        };
 
         // Class constructor values always expose an implicit `prototype` property
         // whose type is the class instance type.
