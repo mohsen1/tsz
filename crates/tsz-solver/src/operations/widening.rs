@@ -30,7 +30,26 @@ use crate::types::{TypeData, TypeId};
 /// assert_eq!(widened, TypeId::STRING);
 /// ```
 pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
-    match db.lookup(type_id) {
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache)
+}
+
+fn widen_type_cached(
+    db: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+    cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
+) -> TypeId {
+    // Fast path: intrinsic types are never widened
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+
+    if let Some(&cached) = cache.get(&type_id) {
+        return cached;
+    }
+
+    let result = match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
@@ -40,7 +59,10 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
         // Unions: recursively widen all members
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
-            let widened_members: Vec<TypeId> = members.iter().map(|&m| widen_type(db, m)).collect();
+            let widened_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| widen_type_cached(db, m, cache))
+                .collect();
             db.union(widened_members)
         }
 
@@ -55,14 +77,14 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
                 let widened_type = if prop.readonly {
                     prop.type_id
                 } else {
-                    widen_type(db, prop.type_id)
+                    widen_type_cached(db, prop.type_id, cache)
                 };
 
                 // Write type follows read type logic
                 let widened_write_type = if prop.readonly {
                     prop.write_type
                 } else {
-                    widen_type(db, prop.write_type)
+                    widen_type_cached(db, prop.write_type, cache)
                 };
 
                 if widened_type != prop.type_id || widened_write_type != prop.write_type {
@@ -90,7 +112,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 
         // Arrays: recursively widen element type
         Some(TypeData::Array(element_type)) => {
-            let widened = widen_type(db, element_type);
+            let widened = widen_type_cached(db, element_type, cache);
             if widened != element_type {
                 db.array(widened)
             } else {
@@ -104,7 +126,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
             let mut new_elements = Vec::with_capacity(elements.len());
             let mut changed = false;
             for elem in elements.iter() {
-                let widened = widen_type(db, elem.type_id);
+                let widened = widen_type_cached(db, elem.type_id, cache);
                 if widened != elem.type_id {
                     changed = true;
                 }
@@ -127,7 +149,10 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
         // - Enums (nominal identity)
         // - Applications (Array<T>, Promise<T>, etc.)
         _ => type_id,
-    }
+    };
+
+    cache.insert(type_id, result);
+    result
 }
 
 /// Widen only object literal property types (not top-level types or union members).
