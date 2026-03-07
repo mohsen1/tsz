@@ -493,7 +493,8 @@ impl<'a> CheckerState<'a> {
             if !(left_is_valid_arithmetic
                 || (left_has_nullish
                     && left_non_null_is_valid_arithmetic
-                    && should_emit_nullish_error))
+                    && should_emit_nullish_error)
+                || (emitted_nullish_error && left_is_nullish))
                 && let Some(loc) = self.get_source_location(left_idx)
             {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -503,7 +504,8 @@ impl<'a> CheckerState<'a> {
             if !(right_is_valid_arithmetic
                 || (right_has_nullish
                     && right_non_null_is_valid_arithmetic
-                    && should_emit_nullish_error))
+                    && should_emit_nullish_error)
+                || (emitted_nullish_error && right_is_nullish))
                 && let Some(loc) = self.get_source_location(right_idx)
             {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
