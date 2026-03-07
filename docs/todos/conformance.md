@@ -143,6 +143,31 @@ policy helpers.
   use raw shape params + `round2_substitution` instead of solver's `round1_instantiated_params`.
   This fix is medium-risk (affects all two-pass generic calls) but would fix 5+ tests.
 
+**Session notes (2026-03-07 late pm — Round 1 contamination deep dive):**
+- Attempted 4 variants of the Round 2 contextual type fix in `call.rs:756-886`.
+- **Variant 1** (always use shape.params + round2_substitution): +3 improvements, -5 regressions (net -2).
+  Improvements: inferenceContextualReturnTypeUnion3, mappedTypeRecursiveInference2,
+  returnTypeInferenceContextualTypeIgnoreAnyUnknown1.
+  Regressions: contextualParameterAndSelfReferentialConstraint1, nonInferrableTypePropagation1,
+  reverseMappedIntersectionInference1, reverseMappedUnionInference, genericCallWithObjectTypeArgsAndConstraints3.
+- **Variant 2** (split sensitive/non-sensitive): +4, -5 (net -1). Same regressions — all-sensitive-arg
+  tests have no clean round2_substitution data.
+- **Variant 3** (try clean first, fallback to round1): Still regressed — fallback used wrong param source.
+- **Variant 4** (keep original round2_param, only change instantiated for sensitive): +0, -1 (net -1).
+  Lost all improvements because "fallback to original" IS the original code path.
+- **Root cause of the tension**: For tests like `returnTypeInferenceContextualTypeIgnoreAnyUnknown1`,
+  unresolved type params from clean path are BETTER than `any` contamination. For tests like
+  `nonInferrableTypePropagation1` (all args sensitive, no non-sensitive type param data), the
+  contaminated structural shape from round1 is BETTER than completely unresolved type params.
+- **Conclusion**: The fix requires more nuanced logic — e.g., checking whether round2_substitution
+  actually has data for the type params in the param type before choosing clean vs contaminated path.
+  This is a deeper change that needs careful design. The simple "always use shape.params" approach
+  cannot achieve net-positive without regressions in all-sensitive-arg scenarios.
+- **Blocked**: Reverted to baseline. Next attempt should:
+  1. Build a solver query that checks "does round2_substitution cover all type params in this param type?"
+  2. Use clean path only when fully covered, fall back to round1 when partially or un-covered.
+  3. Or: fix the sensitive_placeholder itself to be less contaminating (e.g., use `unknown` instead of `any`).
+
 #### Campaign 4: Contextual typing + generic inference generalization
 
 **Risk: High. ROI: Very high, but medium-term.**
