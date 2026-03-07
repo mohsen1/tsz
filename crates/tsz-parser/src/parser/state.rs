@@ -1587,6 +1587,15 @@ impl ParserState {
                     diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN,
                 );
             }
+
+            // tsc reports the spelling suggestion on the misspelled token and a
+            // follow-up TS1005 on the identifier that trails it:
+            //   "clasd MyClass {}" -> TS1435 on "clasd", then "';' expected" on "MyClass".
+            // Without this, the parser later falls through to TS1434 on the
+            // follow-up identifier, which is the current CI regression.
+            if self.is_token(SyntaxKind::Identifier) && self.should_report_error() {
+                self.error_token_expected(";");
+            }
             return;
         }
 
