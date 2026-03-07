@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-07T08:48:00Z",
-  "git_sha": "3094a661903ee9fb17ca36f6dc6db41312525ec8",
+  "timestamp": "2026-03-07T09:13:17Z",
+  "git_sha": "513847b5b6be268d7430b1caf41a450374d132d4",
   "summary": {
     "total_tests": 12581,
-    "passed": 10131,
-    "failed": 2450,
+    "passed": 10132,
+    "failed": 2449,
     "pass_rate": 80.5
   },
   "areas_by_pass_rate": [
@@ -486,10 +486,10 @@
     },
     {
       "area": "jsdoc/declarations",
-      "total": 91,
-      "passed": 80,
+      "total": 92,
+      "passed": 81,
       "failed": 11,
-      "pass_rate": 87.91
+      "pass_rate": 88.04
     },
     {
       "area": "parser/ecmascript6",
@@ -927,7 +927,7 @@
     },
     {
       "code": "TS2339",
-      "count": 85
+      "count": 83
     },
     {
       "code": "TS2345",
@@ -1274,7 +1274,7 @@
       "count": 5
     },
     {
-      "code": "TS2344",
+      "code": "TS7053",
       "count": 5
     },
     {
@@ -1286,7 +1286,7 @@
       "count": 4
     },
     {
-      "code": "TS7053",
+      "code": "TS2344",
       "count": 4
     },
     {
@@ -1362,11 +1362,11 @@
       "count": 1
     },
     {
-      "code": "TS2536",
+      "code": "TS2662",
       "count": 1
     },
     {
-      "code": "TS2662",
+      "code": "TS2536",
       "count": 1
     },
     {
@@ -1382,11 +1382,11 @@
       "count": 1
     },
     {
-      "code": "TS1235",
+      "code": "TS1213",
       "count": 1
     },
     {
-      "code": "TS1213",
+      "code": "TS1235",
       "count": 1
     },
     {
@@ -1430,11 +1430,11 @@
       "count": 1
     },
     {
-      "code": "TS2312",
+      "code": "TS1028",
       "count": 1
     },
     {
-      "code": "TS1028",
+      "code": "TS2312",
       "count": 1
     },
     {
@@ -1575,7 +1575,7 @@
     },
     {
       "code": "TS2339",
-      "count": 85
+      "count": 83
     },
     {
       "code": "TS2345",
@@ -1760,10 +1760,6 @@
       "count": 19
     },
     {
-      "code": "TS7053",
-      "count": 18
-    },
-    {
       "code": "TS2349",
       "count": 18
     },
@@ -1774,6 +1770,10 @@
     {
       "code": "TS1128",
       "count": 17
+    },
+    {
+      "code": "TS7053",
+      "count": 16
     },
     {
       "code": "TS2503",
