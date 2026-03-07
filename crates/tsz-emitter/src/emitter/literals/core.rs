@@ -78,7 +78,8 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_bigint_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000n → 1000000n
-            let text = if lit.text.contains('_') {
+            // Only strip for targets below ES2021 — separators are valid ES2021+ syntax.
+            let text = if lit.text.contains('_') && !self.ctx.options.target.supports_es2021() {
                 lit.text.chars().filter(|&c| c != '_').collect::<String>()
             } else {
                 lit.text.clone()
@@ -142,8 +143,9 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
+            // Only strip for targets below ES2021 — separators are valid ES2021+ syntax.
             let had_separators = lit.text.contains('_');
-            let text = if had_separators {
+            let text = if had_separators && !self.ctx.options.target.supports_es2021() {
                 lit.text.chars().filter(|&c| c != '_').collect::<String>()
             } else {
                 lit.text.clone()
