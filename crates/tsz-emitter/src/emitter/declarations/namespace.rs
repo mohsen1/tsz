@@ -195,10 +195,15 @@ impl<'a> Printer<'a> {
         }
 
         // Check if the IIFE parameter name conflicts with any declaration
-        // inside the namespace body. TSC renames the parameter (e.g., A → A_1)
-        // when there's a class/function/enum/namespace with the same name inside.
+        // inside the namespace body. TSC renames the parameter with incrementing
+        // suffixes across reopenings: M_1, M_2, M_3, etc.
         let iife_param = if self.namespace_body_has_name_conflict(module, &name) {
-            format!("{name}_1")
+            let counter = self
+                .namespace_iife_param_counter
+                .entry(name.clone())
+                .or_insert(0);
+            *counter += 1;
+            format!("{name}_{counter}")
         } else {
             name.clone()
         };
@@ -275,8 +280,10 @@ impl<'a> Printer<'a> {
         self.write_line();
     }
 
-    /// Check if any declaration in the namespace body has the same name as the namespace.
-    /// TSC renames the IIFE parameter when this happens (e.g., `A` → `A_1`).
+    /// Check if any declaration at any depth in the namespace body has the same
+    /// name as the namespace. TSC renames the IIFE parameter when this happens
+    /// (e.g., `M` → `M_1`). Checks declarations, function parameters, and local
+    /// variables at all depths — not just top-level.
     fn namespace_body_has_name_conflict(
         &self,
         module: &tsz_parser::parser::node::ModuleData,
@@ -286,125 +293,99 @@ impl<'a> Printer<'a> {
             return false;
         };
         if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            // Nested namespace (A.B) — check the inner module name
             if let Some(inner) = self.arena.get_module(body_node) {
                 let inner_name = self.get_identifier_text_idx(inner.name);
                 return inner_name == ns_name;
             }
             return false;
         }
-        let Some(block) = self.arena.get_module_block(body_node) else {
-            return false;
-        };
-        let Some(ref stmts) = block.statements else {
-            return false;
-        };
-        for &stmt_idx in &stmts.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            // Check through export declarations
-            let check_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                self.arena
-                    .get_export_decl(stmt_node)
-                    .map_or(stmt_idx, |e| e.export_clause)
-            } else {
-                stmt_idx
-            };
-            let Some(check_node) = self.arena.get(check_idx) else {
-                continue;
-            };
-            // Variable statements can declare multiple names (var a, b, c).
-            // Structure: VARIABLE_STATEMENT → declarations[VARIABLE_DECLARATION_LIST]
-            //            VARIABLE_DECLARATION_LIST → declarations[VARIABLE_DECLARATION, ...]
-            if check_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                if let Some(var_stmt) = self.arena.get_variable(check_node) {
-                    let decl_lists = var_stmt.declarations.nodes.clone();
-                    for &list_idx in &decl_lists {
-                        if let Some(list_node) = self.arena.get(list_idx)
-                            && let Some(decl_list) = self.arena.get_variable(list_node)
-                        {
-                            let decls = decl_list.declarations.nodes.clone();
-                            for &decl_idx in &decls {
-                                if let Some(decl_node) = self.arena.get(decl_idx)
-                                    && let Some(vd) = self.arena.get_variable_declaration(decl_node)
-                                {
-                                    let name = self.get_identifier_text_idx(vd.name);
-                                    if name == ns_name {
-                                        return true;
-                                    }
+        // Use source text scan: search for the identifier as a binding in the body.
+        // This catches parameters, local vars, nested functions/classes at any depth.
+        if let Some(text) = self.source_text {
+            let body_text =
+                crate::safe_slice::slice(text, body_node.pos as usize, body_node.end as usize);
+            return Self::text_has_binding_named(body_text, ns_name);
+        }
+        false
+    }
+
+    /// Check if source text contains a binding (variable, function, class, parameter,
+    /// catch clause, etc.) with the given name. Uses a simple text scan that looks
+    /// for the identifier in declaration contexts.
+    fn text_has_binding_named(text: &str, name: &str) -> bool {
+        let name_bytes = name.as_bytes();
+        let text_bytes = text.as_bytes();
+        let name_len = name_bytes.len();
+
+        // Scan for occurrences of the identifier that could be bindings
+        let mut i = 0;
+        while i + name_len <= text_bytes.len() {
+            // Find next occurrence of the name
+            if let Some(pos) = text[i..].find(name) {
+                let abs = i + pos;
+                // Check word boundaries
+                let before_ok = abs == 0
+                    || !text_bytes[abs - 1].is_ascii_alphanumeric()
+                        && text_bytes[abs - 1] != b'_'
+                        && text_bytes[abs - 1] != b'$';
+                let after_end = abs + name_len;
+                let after_ok = after_end >= text_bytes.len()
+                    || !text_bytes[after_end].is_ascii_alphanumeric()
+                        && text_bytes[after_end] != b'_'
+                        && text_bytes[after_end] != b'$';
+
+                if before_ok && after_ok {
+                    // Check if this is a binding context by looking at what precedes it.
+                    // Skip whitespace backwards to find the preceding token.
+                    let mut p = abs;
+                    while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
+                        p -= 1;
+                    }
+                    // Check for binding keywords/contexts:
+                    // - `var/let/const NAME`
+                    // - `function NAME`
+                    // - `class NAME`
+                    // - `(NAME` or `, NAME` (function parameters)
+                    // - `catch (NAME`
+                    if p > 0 {
+                        let prev_char = text_bytes[p - 1];
+                        // Parameter context: `(NAME` or `, NAME`
+                        if prev_char == b'(' || prev_char == b',' {
+                            return true;
+                        }
+                        // Check for keywords ending at position p
+                        let preceding = &text[..p];
+                        let keywords: &[&str] = &[
+                            "var",
+                            "let",
+                            "const",
+                            "function",
+                            "class",
+                            "import",
+                            // TS parameter modifiers
+                            "private",
+                            "public",
+                            "protected",
+                            "readonly",
+                            "override",
+                        ];
+                        for &kw in keywords {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || !text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$';
+                                if kw_before_ok {
+                                    return true;
                                 }
                             }
                         }
                     }
                 }
-                continue;
-            }
-            // Import-equals declarations (import X = Y.Z) introduce a name.
-            if check_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                if let Some(import_data) = self.arena.get_import_decl(check_node) {
-                    let name = self.get_identifier_text_idx(import_data.import_clause);
-                    if name == ns_name {
-                        return true;
-                    }
-                }
-                continue;
-            }
-            let decl_name = match check_node.kind {
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    self.arena.get_class(check_node).and_then(|c| {
-                        if self
-                            .arena
-                            .has_modifier(&c.modifiers, SyntaxKind::DeclareKeyword)
-                        {
-                            None
-                        } else {
-                            Some(self.get_identifier_text_idx(c.name))
-                        }
-                    })
-                }
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    self.arena.get_function(check_node).and_then(|f| {
-                        if self
-                            .arena
-                            .has_modifier(&f.modifiers, SyntaxKind::DeclareKeyword)
-                        {
-                            None
-                        } else {
-                            Some(self.get_identifier_text_idx(f.name))
-                        }
-                    })
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    self.arena.get_enum(check_node).and_then(|e| {
-                        if self
-                            .arena
-                            .has_modifier(&e.modifiers, SyntaxKind::DeclareKeyword)
-                        {
-                            None
-                        } else {
-                            Some(self.get_identifier_text_idx(e.name))
-                        }
-                    })
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    self.arena.get_module(check_node).and_then(|m| {
-                        // Skip ambient (declare) and non-instantiated modules
-                        if self
-                            .arena
-                            .has_modifier(&m.modifiers, SyntaxKind::DeclareKeyword)
-                            || !self.is_instantiated_module(m.body)
-                        {
-                            None
-                        } else {
-                            Some(self.get_identifier_text_idx(m.name))
-                        }
-                    })
-                }
-                _ => None,
-            };
-            if decl_name.as_deref() == Some(ns_name) {
-                return true;
+                i = abs + 1;
+            } else {
+                break;
             }
         }
         false
