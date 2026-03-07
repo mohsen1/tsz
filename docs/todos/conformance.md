@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **10,035 / 12,521 (80.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **10,139 / 12,581 (80.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ---
 
@@ -23,6 +23,7 @@
 | Mar 6 19:00 | 10,007 (79.6%) | +2* | TS2639 JSX namespaced React components |
 | Mar 7 | 10,035 (80.1%) | +28 | Tagged templates, mapped type any, deferred indexed access |
 | Mar 7 (pm) | 10,135 (80.6%) | +100 | Emitter, contextual this, TS7053 fresh object literal |
+| Mar 7 (late) | 10,139 (80.6%) | +4 | TS2538/TDZ: remove false TS2538 for any/symbol, skip TDZ in type-only contexts |
 
 ### Failure Anatomy (~2,446 failing tests)
 
@@ -101,6 +102,27 @@ property access, mapped constraints, readonly writes, and numeric/string precede
   module augmentation (18+ tests), generic constraint resolution (14 tests),
   overload resolution (3 tests), spread of union/nullable types (3 tests).
   No single quick-fix invariant found.
+
+**Session notes (2026-03-07 late):**
+- Fixed: false TS2538 for TDZ variables in computed properties. `call_helpers.rs` was
+  manually emitting TS2538 with hardcoded `"any"` type string for TDZ vars in computed
+  property contexts. tsc does NOT emit TS2538 for `any` — `any` is a valid index type
+  (the solver's `get_invalid_index_type_member` correctly returns None for `any`).
+- Fixed: false TS2538 for `symbol`/`unique symbol` in destructuring patterns.
+  `destructuring.rs` had ad-hoc checker-side rejection of `any`, `symbol`, and
+  `unique symbol` as index types, bypassing the solver's validity query.
+  Simplified to delegate entirely to the solver's `get_invalid_index_type_member`.
+- Fixed: false TS2448/TS2449/TS2450 TDZ errors in type-only contexts.
+  `is_variable_used_before_declaration_in_computed_property` didn't check for
+  ambient/type-only contexts. Added `is_in_ambient_context` check and extended
+  `is_in_type_only_context` to include `INTERFACE_DECLARATION` and `TYPE_ALIAS_DECLARATION`.
+  Forward refs in interfaces, type aliases, and declare classes are valid in tsc.
+- Tests fixed: `computedPropertyNamesWithStaticProperty` (+1 PASS),
+  `forwardRefInTypeDeclaration` (+1 PASS), `neverAsDiscriminantType` (diff 5→3).
+- Remaining TS2538 false positives (3 tests): different root causes —
+  `indexSignatures1.ts` (8 extras, complex), `destructuredLateBoundNameHasCorrectTypes.ts`
+  (still missing TS2339/TS2353), `classDeclarationShouldBeOutOfScopeInComputedNames.ts`
+  (extra TS2729, separate property-used-before-init issue).
 
 #### Campaign 3: Big 3 compatibility hardening (TS2322/TS2339/TS2345)
 

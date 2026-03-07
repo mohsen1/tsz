@@ -103,7 +103,10 @@ impl<'a> CheckerState<'a> {
             // TS2729 companion for static property initializers:
             // in `X.Y`, when `X` is in TDZ, tsc also reports that `Y` is used
             // before initialization at the property name site.
+            // Skip when inside a computed property name — those use A.p1 as a
+            // key, not as a value, and tsc doesn't emit TS2729 there.
             if self.is_in_static_property_initializer_ast_context(idx)
+                && self.find_enclosing_computed_property(idx).is_none()
                 && let Some(ext) = self.ctx.arena.get_extended(idx)
                 && ext.parent.is_some()
                 && let Some(parent) = self.ctx.arena.get(ext.parent)
