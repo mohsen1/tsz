@@ -1510,6 +1510,77 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let content = get_jsdoc_content(comment, &source_text);
+
+            // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let comment_text = &source_text
+                    [comment.pos as usize..(comment.end as usize).min(source_text.len())];
+                let mut search_from = 0;
+                while let Some(idx) = comment_text[search_from..].find("@import") {
+                    let abs_idx = search_from + idx;
+                    let after_import = abs_idx + "@import".len();
+                    if after_import < comment_text.len() {
+                        let next = comment_text.as_bytes()[after_import];
+                        if next.is_ascii_alphanumeric() || next == b'_' {
+                            search_from = after_import;
+                            continue;
+                        }
+                    }
+                    let rest_full = &comment_text[after_import..];
+                    let next_tag = rest_full
+                        .lines()
+                        .skip(1)
+                        .enumerate()
+                        .find_map(|(i, line)| {
+                            let trimmed = line.trim_start().trim_start_matches('*').trim();
+                            if trimmed.starts_with('@') {
+                                let offset: usize =
+                                    rest_full.lines().take(i + 1).map(|l| l.len() + 1).sum();
+                                Some(offset)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(rest_full.len());
+                    let raw_slice = rest_full[..next_tag]
+                        .trim_end()
+                        .trim_end_matches("*/")
+                        .trim_end();
+                    let joined: String = raw_slice
+                        .lines()
+                        .map(|l| l.trim().trim_start_matches('*').trim())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let joined = joined.trim();
+
+                    if joined.is_empty() {
+                        self.ctx
+                            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                comment.pos + after_import as u32,
+                                1,
+                                diagnostic_messages::EXPRESSION_EXPECTED,
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            ));
+                    } else if joined.contains("from")
+                        && !joined.contains('"')
+                        && !joined.contains('\'')
+                        && let Some(from_off) = rest_full[..next_tag].rfind("from")
+                    {
+                        self.ctx
+                            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                comment.pos + after_import as u32 + from_off as u32 + 4,
+                                1,
+                                diagnostic_messages::EXPRESSION_EXPECTED,
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            ));
+                    }
+                    search_from = after_import;
+                }
+            }
+
             for (_name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
                 if typedef_info.callback.is_some() {
                     continue;

@@ -253,6 +253,19 @@ impl ParserState {
             })
     }
 
+    /// Check if we're in a JavaScript file (not TypeScript).
+    pub(crate) fn is_js_file(&self) -> bool {
+        std::path::Path::new(&self.file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("js")
+                    || ext.eq_ignore_ascii_case("cjs")
+                    || ext.eq_ignore_ascii_case("mjs")
+                    || ext.eq_ignore_ascii_case("jsx")
+            })
+    }
+
     /// Get current token
     #[inline]
     pub(crate) const fn token(&self) -> SyntaxKind {
@@ -736,6 +749,7 @@ impl ParserState {
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
+            SyntaxKind::FromKeyword => "from",
             _ => "token",
         }
     }
@@ -1540,26 +1554,25 @@ impl ParserState {
     /// the missing semicolon.
     pub(crate) fn parse_error_for_missing_semicolon_after(&mut self, expression: NodeIndex) {
         use crate::parser::spelling;
-        use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some((pos, len, expression_text)) =
             self.missing_semicolon_after_expression_text(expression)
         else {
             // For non-identifier expressions (postfix, literals, etc.),
-            // emit a plain TS1005 "';' expected" if no prior error within the
-            // expression's range. Errors inside the expression indicate parsing
-            // already went wrong and adding TS1005 would be noise.
-            if self.should_report_error() {
-                let expr_had_error = if let Some(node) = self.arena.get(expression) {
-                    self.last_error_pos > 0
-                        && self.last_error_pos >= node.pos
-                        && self.last_error_pos <= node.end
-                } else {
-                    false
-                };
-                if !expr_had_error {
-                    self.error_token_expected(";");
-                }
+            // emit a plain TS1005 "';' expected" via parse_error_at which
+            // deduplicates by exact start position (matching tsc's
+            // parseErrorAtCurrentToken). Skip if an error already exists
+            // within the expression's range (the expression itself had errors).
+            let expr_had_error = if let Some(node) = self.arena.get(expression) {
+                self.last_error_pos > 0
+                    && self.last_error_pos >= node.pos
+                    && self.last_error_pos <= node.end
+            } else {
+                false
+            };
+            if !expr_had_error {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;
         };
@@ -1603,11 +1616,16 @@ impl ParserState {
             return;
         }
 
-        // tsc emits TS1005 "';' expected" rather than TS1434 "Unexpected keyword or identifier"
-        // when an expression is followed by keywords. Convert TS1434 case to TS1005.
-        if self.should_report_error() {
-            self.error_token_expected(";");
-        }
+        // tsc emits TS1434 "Unexpected keyword or identifier" at the expression
+        // position for any identifier that isn't a recognized keyword/type.
+        // Use parse_error_at (position-based) to bypass distance-based suppression,
+        // matching tsc's parseErrorAt which only deduplicates by exact start position.
+        self.parse_error_at(
+            pos,
+            len,
+            diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+        );
     }
 
     fn missing_semicolon_after_expression_text(

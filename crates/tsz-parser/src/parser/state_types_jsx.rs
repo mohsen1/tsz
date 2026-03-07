@@ -630,21 +630,26 @@ impl ParserState {
         // Parse tag name
         let tag_name = self.parse_jsx_element_name();
 
-        // Parse optional type arguments
-        let type_arguments = self
-            .is_less_than_or_compound()
-            .then(|| self.parse_type_arguments());
+        // Parse optional type arguments (not in JS files, matching tsc's
+        // `(contextFlags & NodeFlags.JavaScriptFile) === 0 ? tryParseTypeArguments() : undefined`)
+        let type_arguments = if !self.is_js_file() && self.is_less_than_or_compound() {
+            Some(self.parse_type_arguments())
+        } else {
+            None
+        };
 
         // Parse attributes
         let attributes = self.parse_jsx_attributes();
 
-        // Check for self-closing: />
-        if self.is_token(SyntaxKind::SlashToken) {
-            self.next_token(); // consume /
+        // Check for opening element: >
+        // Must check > first (matching tsc order) so that error tokens
+        // (like stray `<`) fall through to the self-closing path, which
+        // avoids attempting to parse children/closing for malformed JSX.
+        if self.is_token(SyntaxKind::GreaterThanToken) {
             let end_pos = self.token_end();
-            self.parse_expected(SyntaxKind::GreaterThanToken);
+            self.next_token(); // consume >
             return self.arena.add_jsx_opening(
-                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                syntax_kind_ext::JSX_OPENING_ELEMENT,
                 start_pos,
                 end_pos,
                 crate::parser::node::JsxOpeningData {
@@ -655,11 +660,14 @@ impl ParserState {
             );
         }
 
-        // Opening element: consume > and continue parsing children
+        // Self-closing element: /> or error recovery
+        self.parse_expected(SyntaxKind::SlashToken);
         let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::GreaterThanToken);
+        if self.parse_expected(SyntaxKind::GreaterThanToken) {
+            // Consumed >; no further action needed
+        }
         self.arena.add_jsx_opening(
-            syntax_kind_ext::JSX_OPENING_ELEMENT,
+            syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
             start_pos,
             end_pos,
             crate::parser::node::JsxOpeningData {
@@ -701,8 +709,28 @@ impl ParserState {
             let pos = self.token_pos();
             self.next_token();
             let end_pos = self.token_end();
-            self.arena
-                .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos)
+            let this_node = self
+                .arena
+                .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos);
+
+            // Check for namespaced name (this:b) — same as identifier path
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token(); // consume :
+                self.scanner.scan_jsx_identifier();
+                let local_name = self.parse_identifier_name();
+                let ns_end = self.token_end();
+                return self.arena.add_jsx_namespaced_name(
+                    syntax_kind_ext::JSX_NAMESPACED_NAME,
+                    start_pos,
+                    ns_end,
+                    crate::parser::node::JsxNamespacedNameData {
+                        namespace: this_node,
+                        name: local_name,
+                    },
+                );
+            }
+
+            this_node
         } else {
             // scan_jsx_identifier handles both identifiers and keywords,
             // extending the token to include hyphens (e.g., public-foo)
@@ -757,13 +785,19 @@ impl ParserState {
             && !self.is_token(SyntaxKind::SlashToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
             && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::LessThanToken)
         {
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 // Spread attribute: {...props}
                 properties.push(self.parse_jsx_spread_attribute());
-            } else {
+            } else if self.is_identifier_or_keyword() {
                 // Regular attribute: name="value" or name={expr} or just name
                 properties.push(self.parse_jsx_attribute());
+            } else {
+                // Token can't start an attribute — break to avoid consuming tokens
+                // that belong to an outer parsing context (e.g., numeric literals
+                // in `<1234> x` should not be swallowed as attributes).
+                break;
             }
         }
 
