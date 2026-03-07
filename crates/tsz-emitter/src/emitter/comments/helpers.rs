@@ -585,6 +585,50 @@ impl<'a> Printer<'a> {
         trailing
     }
 
+    /// Collect leading comment texts in a source range.
+    /// Scans `all_comments` from the beginning (not `comment_emit_idx`) to find
+    /// comments between `range_start` and the actual token start of `node_pos`
+    /// (skipping trivia).  Does NOT advance the cursor.
+    /// Used during pre-scan phases where `comment_emit_idx` may not have
+    /// advanced to the relevant position yet.
+    pub(in crate::emitter) fn collect_leading_comments_in_range(
+        &self,
+        range_start: u32,
+        node_pos: u32,
+    ) -> Vec<String> {
+        if self.ctx.options.remove_comments {
+            return Vec::new();
+        }
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        // node_pos is typically the start of leading trivia; skip past trivia
+        // to find the actual token start so we can find comments within the trivia.
+        let actual_start = self.skip_trivia_forward(node_pos, node_pos + 2048);
+        let mut result = Vec::new();
+        let bytes = text.as_bytes();
+        for c in &self.all_comments {
+            if c.pos >= range_start && c.end <= actual_start {
+                // Only collect block comments (/* ... */), not line comments (// ...).
+                // Line comments between members are trailing comments of the previous
+                // member (e.g. `get p() { ... } // error`), not leading comments of
+                // the next property being lowered into the constructor.
+                if c.pos as usize + 1 < bytes.len()
+                    && bytes[c.pos as usize] == b'/'
+                    && bytes[c.pos as usize + 1] == b'*'
+                {
+                    let comment_text =
+                        crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                    result.push(comment_text.to_string());
+                }
+            }
+            if c.pos >= actual_start {
+                break;
+            }
+        }
+        result
+    }
+
     /// Collect leading comment texts for a node at the given position.
     /// Returns (text, `source_pos`) tuples for comments whose end is before `pos`
     /// and that haven't been emitted yet.

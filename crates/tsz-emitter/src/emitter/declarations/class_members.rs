@@ -471,7 +471,7 @@ impl<'a> Printer<'a> {
         &mut self,
         block_idx: NodeIndex,
         param_props: &[String],
-        field_inits: &[(String, NodeIndex, u32, Vec<String>)],
+        field_inits: &[crate::emitter::core::FieldInit],
         auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         let Some(block_node) = self.arena.get(block_idx) else {
@@ -660,7 +660,7 @@ impl<'a> Printer<'a> {
     fn emit_constructor_prologue(
         &mut self,
         param_props: &[String],
-        field_inits: &[(String, NodeIndex, u32, Vec<String>)],
+        field_inits: &[crate::emitter::core::FieldInit],
         auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         for name in param_props {
@@ -671,7 +671,12 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
-        for (name, init_idx, init_end, trailing_comments) in field_inits {
+        for (name, init_idx, init_end, leading_comments, trailing_comments) in field_inits {
+            // Emit leading comments from the original property declaration
+            for comment in leading_comments {
+                self.write_comment(comment);
+                self.write_line();
+            }
             if self.ctx.options.use_define_for_class_fields {
                 self.write("Object.defineProperty(this, ");
                 self.emit_string_literal_text(name);
