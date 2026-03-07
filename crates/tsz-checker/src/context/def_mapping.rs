@@ -293,8 +293,12 @@ impl<'a> CheckerContext<'a> {
         }
 
         // 1. Try to get DefId from Lazy type - Phase 4.2+
+        // Use with_fallback because get_or_create_def_id can invalidate per-context
+        // DefId→SymbolId mappings when the same symbol gets a new DefId (e.g., lib
+        // types like Promise referenced multiple times). The DefinitionStore retains
+        // the symbol_id even after the per-context map entry is removed.
         if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
-            return self.def_to_symbol_id(def_id);
+            return self.def_to_symbol_id_with_fallback(def_id);
         }
 
         // 2. Try to get DefId from Enum type

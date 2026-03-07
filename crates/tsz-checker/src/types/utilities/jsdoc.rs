@@ -53,7 +53,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
         use tsz_solver::SymbolRef;
-        let factory = self.ctx.types.factory();
 
         match query::classify_type_query(self.ctx.types, type_id) {
             query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
@@ -94,15 +93,20 @@ impl<'a> CheckerState<'a> {
                     stack.insert(sym_id);
                 }
 
-                // Resolve the base type
-                let base = self.get_type_of_symbol(SymbolId(sym_id));
+                // Create a Lazy(DefId) base for the symbol rather than resolving
+                // to the raw structural Object. get_type_of_symbol would return an
+                // Object with no symbol, causing evaluate_application_type_inner to
+                // fail (it needs resolve_type_to_symbol_id to find type params).
+                // Lazy(DefId) preserves the DefId→SymbolId connection so the
+                // Application can be properly instantiated.
+                let base = self.ctx.create_lazy_type_ref(SymbolId(sym_id));
 
                 // Unmark after resolution
                 if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
                     stack.remove(&sym_id);
                 }
 
-                factory.application(base, args)
+                self.ctx.types.application(base, args)
             }
             query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }
