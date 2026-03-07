@@ -257,7 +257,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Handles arrays, tuples, unions, strings, and custom iterators via
     /// the `[Symbol.iterator]().next().value` protocol.
-    pub fn for_of_element_type(&mut self, iterable_type: TypeId) -> TypeId {
+    pub fn for_of_element_type(&mut self, iterable_type: TypeId, is_async: bool) -> TypeId {
         if iterable_type == TypeId::ANY
             || iterable_type == TypeId::UNKNOWN
             || iterable_type == TypeId::ERROR
@@ -273,7 +273,20 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy types (type aliases) before computing element type
         let iterable_type = self.resolve_lazy_type(iterable_type);
 
-        self.for_of_element_type_classified(iterable_type, 0)
+        if is_async {
+            // For for-await-of: try async iterator protocol first (AsyncIterable<T> → T),
+            // then fall back to sync iterator + Promise unwrapping (Iterable<Promise<T>> → T)
+            if let Some(info) =
+                tsz_solver::operations::get_iterator_info(self.ctx.types, iterable_type, true)
+            {
+                return info.yield_type;
+            }
+            // Fall back to sync iterator protocol + Promise unwrapping
+            let elem_type = self.for_of_element_type_classified(iterable_type, 0);
+            self.unwrap_promise_type(elem_type).unwrap_or(elem_type)
+        } else {
+            self.for_of_element_type_classified(iterable_type, 0)
+        }
     }
 
     /// Internal helper that uses the solver's classification enum to compute element type.
