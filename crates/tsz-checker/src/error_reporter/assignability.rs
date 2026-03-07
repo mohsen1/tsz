@@ -19,7 +19,7 @@ fn is_builtin_wrapper_name(name: &str) -> bool {
 /// Returns true if the property name is a standard Object.prototype method.
 /// These are implicitly available on all interfaces/objects through the Object
 /// prototype chain. When such a property appears as "missing" in a subtype check,
-/// it typically means the source type inherits it implicitly but its ObjectShape
+/// it typically means the source type inherits it implicitly but its `ObjectShape`
 /// doesn't include it. In this case, the mismatch is a type compatibility issue
 /// (TS2322), not a missing property issue (TS2741).
 fn is_object_prototype_method(name: &str) -> bool {
