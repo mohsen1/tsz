@@ -81,7 +81,6 @@ FAIL TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs1.ts
 FAIL TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts
 FAIL TypeScript/tests/cases/compiler/classImplementsClass2.ts
 FAIL TypeScript/tests/cases/compiler/classImplementsClass4.ts
-FAIL TypeScript/tests/cases/compiler/classImplementsMethodWIthTupleArgs.ts
 FAIL TypeScript/tests/cases/compiler/classImplementsPrimitive.ts
 FAIL TypeScript/tests/cases/compiler/classMemberWithMissingIdentifier2.ts
 FAIL TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
@@ -170,7 +169,6 @@ FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts
 FAIL TypeScript/tests/cases/compiler/crashInsourcePropertyIsRelatableToTargetProperty.ts
 FAIL TypeScript/tests/cases/compiler/crashInYieldStarInAsyncFunction.ts
 FAIL TypeScript/tests/cases/compiler/crashRegressionTest.ts
-FAIL TypeScript/tests/cases/compiler/customAsyncIterator.ts
 FAIL TypeScript/tests/cases/compiler/dataViewConstructor.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitClassMixinLocalClassDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitCommonJsModuleReferencedType.ts
@@ -2200,7 +2198,6 @@ FAIL TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/con
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations/contextuallyTypedBindingInitializerNegative.ts
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionInferenceWithTypeParameter.ts
-FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.1.ts
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.2.ts
 FAIL TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.3.ts
 FAIL TypeScript/tests/cases/conformance/types/import/importTypeLocalMissing.ts
@@ -3074,6 +3071,7 @@ PASS TypeScript/tests/cases/compiler/classImplementsClass5.ts
 PASS TypeScript/tests/cases/compiler/classImplementsClass6.ts
 PASS TypeScript/tests/cases/compiler/classImplementsClass7.ts
 PASS TypeScript/tests/cases/compiler/classImplementsImportedInterface.ts
+PASS TypeScript/tests/cases/compiler/classImplementsMethodWIthTupleArgs.ts
 PASS TypeScript/tests/cases/compiler/classInConvertedLoopES5.ts
 PASS TypeScript/tests/cases/compiler/classIndexer.ts
 PASS TypeScript/tests/cases/compiler/classIndexer2.ts
@@ -3636,6 +3634,7 @@ PASS TypeScript/tests/cases/compiler/createArray.ts
 PASS TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
 PASS TypeScript/tests/cases/compiler/ctsFileInEsnextHelpers.ts
 PASS TypeScript/tests/cases/compiler/curiousNestedConditionalEvaluationResult.ts
+PASS TypeScript/tests/cases/compiler/customAsyncIterator.ts
 PASS TypeScript/tests/cases/compiler/customEventDetail.ts
 PASS TypeScript/tests/cases/compiler/cyclicGenericTypeInstantiation.ts
 PASS TypeScript/tests/cases/compiler/cyclicGenericTypeInstantiationInference.ts
@@ -11794,6 +11793,7 @@ PASS TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations/contextuallyTypedObjectLiteralMethodDeclaration01.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionInferenceError.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionWitoutTypeParameter.ts
+PASS TypeScript/tests/cases/conformance/types/forAwait/types.forAwait.es2018.1.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbient.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmbientMissing.ts
 PASS TypeScript/tests/cases/conformance/types/import/importTypeAmdBundleRewrite.ts
