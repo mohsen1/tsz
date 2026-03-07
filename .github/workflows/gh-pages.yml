@@ -56,7 +56,9 @@ jobs:
 
   benchmark:
     needs: check
-    if: needs.check.outputs.should_deploy == 'true'
+    # Only run benchmarks on schedule/manual triggers — they take ~20min and get
+    # cancelled by push-triggered runs. Push deploys use cached benchmark data.
+    if: needs.check.outputs.should_deploy == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
