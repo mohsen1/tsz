@@ -148,7 +148,6 @@ FAIL TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInT
 FAIL TypeScript/tests/cases/compiler/contextualTypeCaching.ts
 FAIL TypeScript/tests/cases/compiler/contextualTypeForInitalizedVariablesFiltersUndefined.ts
 FAIL TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
-FAIL TypeScript/tests/cases/compiler/contextualTypeOfIndexedAccessParameter.ts
 FAIL TypeScript/tests/cases/compiler/contextualTypeShouldBeLiteral.ts
 FAIL TypeScript/tests/cases/compiler/contextualTypesNegatedTypeLikeConstraintInGenericMappedType2.ts
 FAIL TypeScript/tests/cases/compiler/contextualTyping11.ts
@@ -531,7 +530,6 @@ FAIL TypeScript/tests/cases/compiler/indexAt.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessPrivateMemberOfGenericConstraint.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts
-FAIL TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithFreshObjectLiteral.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithVariableElement.ts
 FAIL TypeScript/tests/cases/compiler/indexerConstraints.ts
@@ -3497,6 +3495,7 @@ PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInT
 PASS TypeScript/tests/cases/compiler/contextualTypeIterableUnions.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeLogicalOr.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeObjectSpreadExpression.ts
+PASS TypeScript/tests/cases/compiler/contextualTypeOfIndexedAccessParameter.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeOnYield1.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeOnYield2.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeSelfReferencing.ts
@@ -5119,6 +5118,7 @@ PASS TypeScript/tests/cases/compiler/indexedAccessConstraints.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessImplicitlyAny.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessKeyofNestedSimplifiedSubstituteUnwrapped.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessNormalization.ts
+PASS TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessToThisTypeOnIntersection01.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessTypeConstraints.ts
 PASS TypeScript/tests/cases/compiler/indexer.ts

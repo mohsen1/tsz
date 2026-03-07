@@ -22,8 +22,8 @@ use crate::types::{
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
-    enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
-    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
+    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, string_intrinsic_components,
     template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
     unique_symbol_ref,
@@ -755,16 +755,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
-            // Trace: Intrinsic type mismatch (boxed primitive check failed)
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
+            // When target is an unevaluated IndexAccess (e.g., Obj[K] where K is a
+            // type parameter), don't return False early. The IndexAccess fallback
+            // (check_generic_index_access_subtype) after the visitor dispatch can
+            // resolve the access by distributing over K's constraint literals.
+            if index_access_parts(self.interner, target).is_none() {
+                // Trace: Intrinsic type mismatch (boxed primitive check failed)
+                if let Some(tracer) = &mut self.tracer
+                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    })
+                {
+                    return SubtypeResult::False;
+                }
                 return SubtypeResult::False;
             }
-            return SubtypeResult::False;
         }
 
         if let (Some(lit), Some(t_kind)) = (
