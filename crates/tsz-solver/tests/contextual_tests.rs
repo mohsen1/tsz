@@ -669,7 +669,7 @@ fn test_apply_contextual_same_type() {
 // =============================================================================
 
 /// When union members have call signatures with different parameter types,
-/// the solver currently provides a synthesized contextual parameter type.
+/// no contextual type is provided (per TS spec §3.4).
 #[test]
 fn test_contextual_union_function_different_params_no_contextual_type() {
     let interner = TypeInterner::new();
@@ -707,7 +707,7 @@ fn test_contextual_union_function_different_params_no_contextual_type() {
 
     let ctx = ContextualTypeContext::with_expected(&interner, union);
 
-    assert!(ctx.get_parameter_type(0).is_some());
+    assert!(ctx.get_parameter_type(0).is_none());
 }
 
 #[test]
