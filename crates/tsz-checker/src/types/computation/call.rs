@@ -393,9 +393,18 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        // Unwrap parentheses, non-null assertions, and type assertions from the
+        // callee expression to find the underlying property/element access.
+        // This ensures `o.test!()`, `(o.test)()`, `(o.test!)()` etc. are all
+        // recognized as method calls with `o` as the `this` receiver.
+        let unwrapped_callee = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(call.expression);
+
         // Overload candidates need signature-specific contextual typing.
         let force_bivariant_callbacks = matches!(
-            self.ctx.arena.get(call.expression).map(|n| n.kind),
+            self.ctx.arena.get(unwrapped_callee).map(|n| n.kind),
             Some(
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
@@ -403,7 +412,7 @@ impl<'a> CheckerState<'a> {
         );
 
         let mut actual_this_type = None;
-        if let Some(callee_node) = self.ctx.arena.get(call.expression) {
+        if let Some(callee_node) = self.ctx.arena.get(unwrapped_callee) {
             use tsz_parser::parser::syntax_kind_ext;
             if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
