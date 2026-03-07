@@ -361,6 +361,25 @@ fn test_contextual_property() {
     assert_eq!(ctx.get_property_type("z"), None);
 }
 
+#[test]
+fn test_contextual_optional_property_includes_undefined() {
+    let interner = TypeInterner::new();
+
+    let mut optional = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
+    optional.optional = true;
+    let obj = interner.object(vec![optional]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, obj);
+    let ty = ctx
+        .get_property_type("x")
+        .expect("expected contextual property type");
+    let members = crate::type_queries::data::get_union_members(&interner, ty)
+        .expect("optional contextual property should include undefined");
+
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
+}
+
 // =============================================================================
 // Nested Context
 // =============================================================================
@@ -385,6 +404,28 @@ fn test_contextual_nested_property() {
     let nested_ctx = ctx.for_property("nested");
     assert!(nested_ctx.has_context());
     assert_eq!(nested_ctx.get_property_type("value"), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_contextual_optional_tuple_element_includes_undefined() {
+    let interner = TypeInterner::new();
+
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: true,
+        rest: false,
+    }]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, tuple);
+    let ty = ctx
+        .get_tuple_element_type(0)
+        .expect("expected contextual tuple element type");
+    let members = crate::type_queries::data::get_union_members(&interner, ty)
+        .expect("optional tuple element should include undefined");
+
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
 }
 
 #[test]

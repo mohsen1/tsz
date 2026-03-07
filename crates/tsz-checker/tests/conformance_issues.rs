@@ -233,6 +233,38 @@ const bad: number = options?.nested?.flags?.safe ?? false;
 }
 
 #[test]
+fn test_destructure_tuple_with_rest_reports_nullish_not_string_array_property_error() {
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type NonEmptyStringArray = [string, ...Array<string>];
+const strings: NonEmptyStringArray = ['one', 'two'];
+const [s0, s1, s2] = strings;
+s0.toUpperCase();
+s1.toUpperCase();
+s2.toUpperCase();
+"#,
+        options,
+    );
+
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2339_count = non_lib.iter().filter(|(code, _)| *code == 2339).count();
+
+    assert_eq!(
+        ts2339_count, 0,
+        "Expected no TS2339 string[] property error for destructured rest elements, got: {non_lib:?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
