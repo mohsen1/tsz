@@ -269,12 +269,9 @@ impl<'a> Printer<'a> {
             self.write(&name);
             self.write(" = {}));");
         }
-        // Emit trailing comment from the namespace's closing brace line
-        // (e.g., `namespace X { ... } // comment` → `})(X || (X = {})); // comment`)
-        if let Some(body_node) = self.arena.get(module.body) {
-            let body_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
-            self.emit_trailing_comments(body_end);
-        }
+        // Don't emit trailing comments here — the source_file statement
+        // loop handles them with proper next-sibling bounds, preventing
+        // us from stealing comments that belong to subsequent statements.
         self.write_line();
     }
 
