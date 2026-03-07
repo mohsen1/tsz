@@ -1630,8 +1630,16 @@ impl ParserState {
 
         // tsc emits TS1434 "Unexpected keyword or identifier" at the expression
         // position for any identifier that isn't a recognized keyword/type.
-        // Use parse_error_at (position-based) to bypass distance-based suppression,
-        // matching tsc's parseErrorAt which only deduplicates by exact start position.
+        // Suppress when the following token is a closing delimiter (`)`, `]`)
+        // that cannot start a new statement — the identifier is part of
+        // cascading recovery from an earlier syntax error, not a standalone
+        // statement missing a semicolon.
+        if matches!(
+            self.token(),
+            SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+        ) {
+            return;
+        }
         self.parse_error_at(
             pos,
             len,
