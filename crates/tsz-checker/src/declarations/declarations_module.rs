@@ -331,7 +331,19 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
 
             // TS2666/TS2667: Imports/exports are not permitted in module augmentations
-            if has_declare && is_string_named && self.is_external_module() {
+            // Only check the body if the augmentation target module actually exists.
+            // tsc uses the Transient flag (set only on merged augmentations) to skip
+            // this check for unresolved targets — avoiding cascading errors.
+            let module_augmentation_target_exists = has_declare
+                && is_string_named
+                && self.is_external_module()
+                && self
+                    .ctx
+                    .arena
+                    .get(module.name)
+                    .and_then(|n| self.ctx.arena.get_literal(n))
+                    .is_some_and(|lit| self.module_exists(&lit.text));
+            if module_augmentation_target_exists {
                 let module_specifier = self
                     .ctx
                     .arena

@@ -1968,19 +1968,12 @@ impl<'a> CheckerState<'a> {
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
-            // Suppress TS2536 when either the index or the object type is
-            // deferred (conditional, application, keyof, error). TSC defers
-            // these checks to instantiation time.
-            // Check both pre-evaluation and post-evaluation forms: evaluation
-            // may partially resolve an Application into a union of conditionals,
-            // losing the top-level Application marker.
+            // Suppress TS2536 for deferred types (conditional, application, keyof,
+            // error, index-access). tsc defers these checks to instantiation time.
             if is_deferred_type(index_type_for_check)
                 || is_deferred_type(index_type)
                 || is_deferred_type(object_type_for_check)
                 || is_deferred_type(object_type)
-                // An IndexAccess that survives evaluation is still generic/deferred.
-                // tsc defers these checks to instantiation time. Only check on
-                // evaluated forms — unevaluated IndexAccess may resolve to concrete types.
                 || tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
             {
