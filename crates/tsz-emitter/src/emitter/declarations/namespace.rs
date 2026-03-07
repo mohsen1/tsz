@@ -533,6 +533,43 @@ impl<'a> Printer<'a> {
                 local_exports.remove(name);
             }
             self.namespace_exported_names = local_exports;
+
+            // Skip comments on the same line as the opening `{` of the module block.
+            // When the namespace is transformed to an IIFE, tsc drops trailing
+            // comments on the opening brace (e.g., `namespace _this { //Error`
+            // becomes `(function (_this) {` without `//Error`).
+            // Only skip comments on the `{` line — comments on subsequent lines
+            // (e.g., JSDoc before the first statement) must be preserved.
+            if let Some(text) = self.source_text {
+                let bytes = text.as_bytes();
+                let brace_pos = body_node.pos as usize;
+                // Find the end of the `{` line
+                let mut brace_line_end = brace_pos;
+                while brace_line_end < bytes.len()
+                    && bytes[brace_line_end] != b'\n'
+                    && bytes[brace_line_end] != b'\r'
+                {
+                    brace_line_end += 1;
+                }
+                // Only skip comments that start on the `{` line AND before the first
+                // statement. Comments after `}` on the same line (single-line namespaces)
+                // should not be skipped.
+                let first_stmt_pos = stmts
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(body_close_pos, |n| n.pos);
+                let skip_boundary = std::cmp::min(brace_line_end as u32, first_stmt_pos);
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    if c_pos < skip_boundary {
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
