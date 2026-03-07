@@ -1129,7 +1129,7 @@ impl<'a> CheckerState<'a> {
         let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
         let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
 
-        if is_type_alias || (has_type && !has_value) {
+        if !has_value && (is_type_alias || has_type) {
             // Type parameters only shadow in type contexts, not value contexts.
             // `new A()` where `A` is a type param shadowing an outer class should
             // resolve to the outer class, not emit TS2693.
