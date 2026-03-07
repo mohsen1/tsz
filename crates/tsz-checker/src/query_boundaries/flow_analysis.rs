@@ -10,6 +10,12 @@ pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId
     tsz_solver::utils::union_or_single(db, members)
 }
 
+pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::visitor::enum_components(db, type_id)
+        .map(|(_def_id, members)| members)
+        .unwrap_or(type_id)
+}
+
 pub(crate) fn are_types_mutually_subtype(
     db: &dyn TypeDatabase,
     left: TypeId,

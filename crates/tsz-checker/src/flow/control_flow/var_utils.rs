@@ -6,6 +6,7 @@
 //! - **Definite assignment**: worklist-based graph traversal (`check_definite_assignment`)
 //! - **Variable declaration inspection**: type annotation presence, mutability, destructuring
 
+use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
@@ -100,6 +101,7 @@ impl<'a> FlowAnalyzer<'a> {
         else {
             return false;
         };
+        let switch_type = query::enum_member_domain(self.interner, switch_type);
         let case_types = self.case_types_for_exhaustiveness(switch_data.case_block);
         if case_types.is_empty()
             || matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
