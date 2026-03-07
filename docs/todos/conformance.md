@@ -1,11 +1,11 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **~10,007 / 12,570 (79.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Current score**: **10,035 / 12,521 (80.1%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
 
 ---
 
-## Strategic Analysis (2026-03-05)
+## Strategic Analysis (2026-03-07)
 
 ### Trajectory
 
@@ -21,93 +21,193 @@
 | Mar 6 09:00 | 10,039 (79.9%) | +3* | Fix TS2339 on mapped types with unconstrained keyof |
 | Mar 6 14:00 | 10,037 (79.8%) | +2 | Fix mapped type param name & modifiers in diagnostics |
 | Mar 6 19:00 | 10,007 (79.6%) | +2* | TS2639 JSX namespaced React components |
+| Mar 7 | 10,035 (80.1%) | +28 | Tagged templates, mapped type any, deferred indexed access |
 
-**Velocity**: ~2.8 tests/hour over 37 hours. 74 fix commits, 100+ sessions, 3.0 tests/session average.
-
-### Failure Anatomy (~2,541 failing tests)
+### Failure Anatomy (~2,486 failing tests)
 
 | Category | Count | % | Description |
 |----------|------:|--:|-------------|
-| **Type-only diff** | 1,531 | 60% | Core type system gaps (inference, assignability, narrowing) |
-| **All missing** | 439 | 17% | We emit 0 errors, tsc expects some |
-| **False positives** | 253 | 10% | We emit errors, tsc expects none |
-| **Mixed parser+type** | 185 | 7% | Both layers wrong |
-| **Parser-only** | 133 | 5% | Scanner/parser differences (TS1xxx) |
+| **Wrong codes** | 1,813 | 73% | Both emit errors, but codes differ (inference, assignability, narrowing) |
+| **All missing** | 410 | 16% | We emit 0 errors, tsc expects some |
+| **False positives** | 263 | 11% | We emit errors, tsc expects none |
 
 ### Quick Win Ceiling
 
 | Action | Tests | Projected Score |
 |--------|------:|-----------------|
-| Current | — | ~10,028 (79.8%) |
-| Fix 602 one-code-off tests | +602 | **~10,630 (84.6%)** |
-| Fix all diff≤2 tests | +1,388 | **~11,416 (90.8%)** |
-| Fix everything | +2,541 | 12,570 (100%) |
+| Current | — | 10,035 (80.1%) |
+| Add 1 missing code (0 extra) | +200 | **~10,235 (81.7%)** |
+| Remove 1 extra code (0 missing) | +191 | **~10,226 (81.7%)** |
+| Fix all diff≤2 tests | +1,532 | **~11,567 (92.4%)** |
+| Fix everything | +2,486 | 12,521 (100%) |
 
-### The Big 3 Codes
+### Root-Cause Campaigns (priority order)
 
-TS2322/TS2339/TS2345 dominate both false positives AND missing codes:
+Per-diagnostic fixes have diminishing returns. The path to 85%+ requires campaign-driven work
+targeting shared root causes. Campaigns are ordered by actionability and expected gain/week, not
+raw test count (campaigns overlap heavily since the Big 3 codes cut across all of them).
 
-| Code | Missing in | Extra in | Net issue |
-|------|--------:|--------:|-----------|
-| TS2322 (not assignable) | 100 | 145 | Solver assignability too strict + gaps |
-| TS2339 (prop not found) | 87 | 127 | Property resolution, narrowing, generics |
-| TS2345 (arg not assignable) | 56 | 98 | Same root causes as TS2322 at call sites |
+**IMPORTANT**: JSDoc, JSX, and Salsa are regression baskets, not first-choice root causes (per
+AGENTS spec). They surface the same solver/checker gaps as other campaigns. Fix the underlying
+mechanics, and these areas improve as a side effect.
+
+#### Campaign 1: Parser recovery + driver/config parity
+
+**Risk: Low. ROI: Highest per week. Clears noise for all other campaigns.**
+
+| Code | Missing | Root Issue |
+|------|---------|------------|
+| TS1005 (`'X' expected`) | 80 | Over-eager catch-all recovery; emitted instead of context-specific codes |
+| TS1128 (`Declaration expected`) | 37 | Co-occurs with TS1005/TS1434; recovery at wrong statement level |
+| TS1109 (`Expression expected`) | 36 | Missing in complex async/arrow/default param contexts |
+| TS1434 (`Duplicate modifier`) | 27 | Duplicate modifier detection not triggered; TS1005 emitted instead |
+| TS5107 (deprecated option) | 40 extra | Driver suppression heuristic misaligned with tsc |
+
+Parser-recovery campaign impacts ~186 tests. TS1005 is the root — fixing its over-eager emission
+in import/export/class member recovery would cascade-fix many TS1128 and TS1434 cases. TS5107
+is a driver/conformance-wrapper fix, not a parser fix.
+
+Key insight: parser noise forces semantic code to suppress parse-recovery fallout (see
+`should_suppress_assignability_for_parse_recovery()` in `assignability_checker.rs`, called from
+6 sites). Cleaning parser recovery reduces coupling between parser and checker.
+
+#### Campaign 2: Property resolution + index access proof semantics
+
+**Risk: Medium. ROI: High near-term. Most concrete root causes already documented.**
+
+Impact: 293 failing tests. Top codes: TS2339=210, TS2304=57, TS7053=29.
+
+Known root causes:
+- `get_type_of_element_access_expr` defers `IndexAccess(T, K)` too eagerly (blocks TS2536 in
+  `mappedTypeRelationships.ts`)
+- Numeric vs string index precedence wrong on write targets (`staticIndexSignature2.ts`)
+- `NoopResolver` leaves `keyof P` unresolved when `P` is `Lazy(DefId)`, so property proof
+  logic stays symbolic too long
+- Mapped-constraint proof semantics incomplete
+
+Fix: Create one resolver-aware "key proven for object?" API and use it for element access,
+property access, mapped constraints, readonly writes, and numeric/string precedence.
+
+#### Campaign 3: Big 3 compatibility hardening (TS2322/TS2339/TS2345)
+
+**Risk: Medium-high. ROI: Very high structural upside.**
+
+The Big 3 dominate both false positives AND missing codes:
+
+| Code | Missing in | Extra in | Quick-win add-1 | Quick-win remove-1 |
+|------|--------:|--------:|----------------:|-------------------:|
+| TS2322 (not assignable) | 88 | — | 40 | 60 |
+| TS2339 (prop not found) | 86 | — | 43 | 47 |
+| TS2345 (arg not assignable) | 52 | — | 34 | 50 |
 
 These aren't "implement error X" fixes — they're symptoms of deeper inference/narrowing/assignability
 gaps producing both false positives AND false negatives simultaneously.
 
-### TS5107 False Positive Problem (59 tests)
+The assignability gateway already exists (`query_boundaries/assignability.rs` →
+`assignability_checker.rs::check_assignable_gate_with_overrides()`), but not all callers use it.
+Key drift: `jsx_checker.rs` makes 30+ direct `tsz_solver::type_queries::*` calls for semantic
+decisions, and bails out on generic class components at line 867 instead of inferring through them.
 
-TS5107 (deprecated option warning) is extra in 59 tests. Root cause: when tests specify `@strict: false`,
-the conformance wrapper expands to `alwaysStrict: false` which is deprecated in tsc 6.0. Our driver's
-TS5107 suppression logic (which drops TS5107 when "reliable grammar errors" exist) is misaligned with
-tsc's behavior — we suppress when we shouldn't, or don't suppress when we should. Fixing the TS5107
-suppression heuristic alone could recover up to 59 tests.
+Fix: Make every TS2322/TS2345/TS2416/TS2769 producer call the same boundary object. Move
+feature-specific mismatch decisions out of feature modules and into relation flags / boundary
+policy helpers.
 
-### Parser Code Analysis (133 parser-only failures)
+#### Campaign 4: Contextual typing + generic inference generalization
 
-| Code | Missing | Clean Quick Wins | Root Issue |
-|------|---------|------------------|------------|
-| TS1005 (`'X' expected`) | 80 | 33 | Over-eager catch-all recovery; emitted instead of context-specific codes |
-| TS1128 (`Declaration expected`) | 37 | 2 | Co-occurs with TS1005/TS1434; recovery at wrong statement level |
-| TS1109 (`Expression expected`) | 36 | 14 | Missing in complex async/arrow/default param contexts |
-| TS1434 (`Duplicate modifier`) | 27 | 7 | Duplicate modifier detection not triggered; TS1005 emitted instead |
+**Risk: High. ROI: Very high, but medium-term.**
 
-**Key insight**: TS1005 is the root — fixing its over-eager emission in import/export/class member
-recovery would cascade-fix many TS1128 and TS1434 cases.
+Impact: 428 failing tests. Top codes: TS2322=234, TS2345=158, TS7006=60.
 
-### Projections at Current Velocity (2.8 tests/hour)
+Known architectural gap: reverse-mapped tuple/Application inference needs a general "infer through
+any template" capability rather than special-casing specific template shapes. Same gap shows up in:
+- Variadic tuple contextual typing
+- Application-in-rest-parameter evaluation
+- JSX generic component props
+- Higher-order function return type inference
 
-| Target | Tests Needed | Hours | Feasibility |
-|--------|-------------|-------|-------------|
-| **80%** (10,056) | +31 | ~11h | Practically achieved |
-| **85%** (10,685) | +660 | ~232h | Requires strategy shift |
-| **90%** (11,313) | +1,288 | ~454h | Requires systemic solver fixes |
-| **95%** (11,941) | +1,916 | ~675h | Long-term goal |
+Fix: Add a solver-owned, resolver-aware contextual typing / reverse-inference service that can
+infer through `Application`, template, and indexed access shapes. Remove checker-side workarounds
+once that exists.
 
-### Recommended Strategy Shifts for 85%+
+#### Campaign 5: Narrowing / control-flow parity
 
-1. **TS5107 suppression fix**: Single conformance wrapper change could recover up to 59 tests
-2. **Big 3 root causes**: Focus on solver-level assignability/narrowing fixes that affect 40+ tests
-   each rather than individual test fixes
-3. **Parser TS1005 recovery**: Fix diagnostic selection in parser error recovery to cascade-fix
-   TS1128/TS1434 (potential ~50 tests)
-4. **Unimplemented codes**: TS2323 (8), TS7017 (6), TS2742 (5), TS2550 (5) — batch implement
-5. **False positive reduction**: TS2322 (66 FP), TS2345 (47 FP), TS2339 (40 FP) — solver strictness
+**Risk: High. ROI: High structural upside. Mandatory for 100%.**
 
-### Lowest Pass Rate Areas (biggest concentration of failures)
+Impact: 571 failing tests. Top codes: TS2322=234, TS2339=210, TS2345=158, TS18048=25.
 
-| Pass Rate | Failed | Area |
-|-----------|-------:|------|
-| 57.7% | 11 | types/mapped |
-| 68.2% | 14 | types/literal |
-| 68.2% | 20 | expressions/typeGuards |
-| 68.3% | 79 | jsdoc |
-| 68.4% | 18 | controlFlow |
-| 69.5% | 58 | jsx |
-| 69.5% | 58 | salsa |
-| 69.9% | 22 | node |
-| 70.0% | 59 | classes/members |
+Known gaps (binder CFG + solver narrowing):
+- Optional-chain CFA tracking
+- Assertion predicates
+- Loop back-edge widening
+- Exhaustive-switch narrowing
+- IIFE control-flow inlining (partially fixed)
+
+Fix: Keep CFG shape fixes in binder, not in checker heuristics. Make solver narrowing consume
+those facts through one AST-agnostic guard API. Every correct CFG edge fixes many diagnostics.
+
+### Known Architecture Drift
+
+These are specific findings that should be addressed as part of campaign work:
+
+1. **JSX checker bypasses boundary model**: `jsx_checker.rs` makes 30+ direct
+   `tsz_solver::type_queries::*` calls and bails on generic class components (line 867).
+   Semantic decisions about evaluation, property existence, and assignability should route
+   through `query_boundaries`.
+
+2. **DefId migration incomplete**: `context/resolver.rs` still has deprecated `resolve_ref()`
+   with `TypeData::Ref` compatibility shim. `context/def_mapping.rs` has `SymbolId` fallbacks
+   for duplicated DefIds. These should be cleaned up as part of the DefId-first model.
+
+3. **Relation precondition staging**: `ensure_relation_input_ready()` is called from 30+ sites
+   across checker code. While the routing through one method is correct (architecture tests
+   enforce it), the precondition *discovery* logic itself could move closer to solver boundaries.
+
+4. **Parser-recovery suppression coupling**: `should_suppress_assignability_for_parse_recovery()`
+   in `assignability_checker.rs` (6 call sites) shows parser and checker are still coupled.
+   Cleaning parser recovery (Campaign 1) reduces this.
+
+### Unimplemented Codes (batch-implement candidates)
+
+| Code | Tests needing it | Description |
+|------|----------------:|-------------|
+| TS2323 | 8 | Cannot redeclare exported variable |
+| TS7017 | 6 | Element implicitly has 'any' type (index signature) |
+| TS2742 | 5 | Inferred type cannot be named |
+| TS2550 | 5 | Property does not exist (did you mean?) |
+| TS17019 | 5 | Definite assignment in ambient context |
+| TS1181 | 5 | Line break not permitted here |
+| TS2657 | 5 | JSX expressions must have one parent |
+
+### Projections
+
+| Target | Tests Needed | Feasibility |
+|--------|-------------|-------------|
+| **82%** (10,267) | +232 | Quick wins + parser recovery |
+| **85%** (10,643) | +608 | Requires campaigns 1-3 |
+| **90%** (11,269) | +1,234 | Requires campaigns 1-5 |
+| **95%** (11,895) | +1,860 | Requires boundary pivot |
+| **100%** (12,521) | +2,486 | Full semantic kernel completion |
+
+### Path to 100%: Boundary Pivot (Not Rewrite)
+
+100% does not require rewriting the codebase, but it does require a **boundary pivot**:
+
+> Make resolver-aware evaluation, property/index proof, and contextual inference solver-owned
+> boundary services. Stop letting checker feature modules decide when to defer, evaluate, bail
+> out, or reinterpret semantic state.
+
+Evidence this is necessary:
+- `NoopResolver` limitations force checker workarounds for rest-param Applications and tuple
+  rest contextual extraction
+- `jsx_checker.rs` bails on generic class components instead of inferring through them
+- `resolver.rs` and `def_mapping.rs` still carry `TypeData::Ref` and raw-SymbolId fallbacks
+- Property proof logic stays symbolic when `Lazy(DefId)` constraints are unresolved
+
+The pivot is concrete:
+1. All relation inputs canonicalized through one resolver-aware solver boundary
+2. All property/index validity proofs solver-owned
+3. All contextual typing / reverse inference through `Lazy`/`Application`/template shapes solver-owned
+4. Checker becomes span selection + policy flags + diagnostic rendering
 
 ---
 
