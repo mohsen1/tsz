@@ -365,14 +365,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None => return SubtypeResult::False,
         };
 
-        // Verify: for each discriminant value combination, the narrowed source
-        // must be assignable to at least one matching target member.
-        // Use the first discriminant for per-value checking.
-        let (disc_name, disc_source_type) = disc_props[0];
-        let source_values = get_discriminant_values(self.interner, disc_source_type);
+        // Verify: for each combination of discriminant values across ALL
+        // discriminant properties, narrow the source by all of them and check
+        // that the fully-narrowed source is assignable to at least one matching
+        // target member. This is critical for cases like:
+        //   source: { kind: "a"|"b", value: number|undefined }
+        //   target: { kind: "a"|"b", value: number } | { kind: "a", value: undefined } | ...
+        // Narrowing by only `kind` leaves `value` too wide; we must narrow both.
+        let disc_values: Vec<Vec<TypeId>> = disc_props
+            .iter()
+            .map(|&(_, source_prop_type)| get_discriminant_values(self.interner, source_prop_type))
+            .collect();
 
-        for &value in &source_values {
-            let narrowed = narrow_object_property(self.interner, source_shape_id, disc_name, value);
+        // Check total combinations don't exceed limit
+        let total_combinations: usize = disc_values.iter().map(|v| v.len()).product();
+        if total_combinations > MAX_DISCRIMINANT_COMBINATIONS {
+            return SubtypeResult::False;
+        }
+
+        // Iterate over all combinations using index-based enumeration
+        let mut combo_indices = vec![0usize; disc_values.len()];
+        loop {
+            // Build the narrowed source by applying ALL discriminant narrowings
+            let narrowed = narrow_object_properties(
+                self.interner,
+                source_shape_id,
+                &disc_props,
+                &disc_values,
+                &combo_indices,
+            );
+
             let mut found = false;
             for (i, &target_member) in target_members.iter().enumerate() {
                 if !candidates[i] {
@@ -385,6 +407,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if !found {
                 return SubtypeResult::False;
+            }
+
+            // Advance to next combination (odometer-style)
+            let mut carry = true;
+            for d in (0..disc_values.len()).rev() {
+                if carry {
+                    combo_indices[d] += 1;
+                    if combo_indices[d] >= disc_values[d].len() {
+                        combo_indices[d] = 0;
+                    } else {
+                        carry = false;
+                    }
+                }
+            }
+            if carry {
+                break; // All combinations exhausted
             }
         }
 
@@ -500,9 +538,6 @@ fn find_discriminant_properties<R: TypeResolver>(
 /// Resolves `Lazy(DefId)` property types before checking identity-comparability,
 /// since enum member types like `E.A` may still be stored as `Lazy(DefId)` in
 /// object shapes even after top-level evaluation.
-/// Resolves `Lazy(DefId)` property types before checking identity-comparability,
-/// since enum member types like `E.A` may still be stored as `Lazy(DefId)` in
-/// object shapes even after top-level evaluation.
 fn is_discriminant_for_union<R: TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
@@ -552,29 +587,31 @@ fn is_discriminant_for_union<R: TypeResolver>(
     has_unit && seen_types.len() > 1
 }
 
-/// Create a new object type by narrowing one property to a specific type.
+/// Create a new object type by narrowing MULTIPLE properties simultaneously.
 ///
-/// When narrowing for discriminated union checking, the property is being
-/// constrained to a specific discriminant value, which means the property
-/// must be present (not missing). Therefore we always set `optional = false`
-/// on the narrowed property — even when the narrowed type is `undefined`,
-/// because the check asserts the property exists with that exact type.
-fn narrow_object_property(
+/// Used for multi-discriminant union checking where the source must be narrowed
+/// by all discriminant properties at once. `combo_indices[d]` selects which
+/// value from `disc_values[d]` to use for discriminant property `disc_props[d]`.
+fn narrow_object_properties(
     db: &dyn TypeDatabase,
     shape_id: ObjectShapeId,
-    prop_name: Atom,
-    narrowed_type: TypeId,
+    disc_props: &[(Atom, TypeId)],
+    disc_values: &[Vec<TypeId>],
+    combo_indices: &[usize],
 ) -> TypeId {
     let shape = db.object_shape(shape_id);
     let mut new_props: Vec<PropertyInfo> = shape.properties.to_vec();
 
-    if let Ok(idx) = new_props.binary_search_by(|p| p.name.cmp(&prop_name)) {
-        new_props[idx] = PropertyInfo {
-            type_id: narrowed_type,
-            write_type: narrowed_type,
-            optional: false,
-            ..new_props[idx].clone()
-        };
+    for (d, &(prop_name, _)) in disc_props.iter().enumerate() {
+        let value = disc_values[d][combo_indices[d]];
+        if let Ok(idx) = new_props.binary_search_by(|p| p.name.cmp(&prop_name)) {
+            new_props[idx] = PropertyInfo {
+                type_id: value,
+                write_type: value,
+                optional: false,
+                ..new_props[idx].clone()
+            };
+        }
     }
 
     db.object(new_props)

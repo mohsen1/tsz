@@ -235,4 +235,18 @@ mod tests {
             Some(&"false".to_string())
         );
     }
+
+    #[test]
+    fn test_expand_option_variants_does_not_split_nolib() {
+        let mut options = HashMap::new();
+        options.insert("nolib".to_string(), "true,false".to_string());
+        options.insert("module".to_string(), "esnext,commonjs".to_string());
+
+        let variants = expand_option_variants(&options);
+
+        assert_eq!(variants.len(), 2);
+        assert!(variants
+            .iter()
+            .all(|v| v.get("nolib") == Some(&"true,false".to_string())));
+    }
 }

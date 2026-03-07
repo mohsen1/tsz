@@ -251,6 +251,153 @@ switch (x) {
 }
 
 #[test]
+fn test_switch_true_duplicate_case_narrows_to_never() {
+    let source = r#"
+let shape: { kind: "circle", radius: number } | { kind: "square", sideLength: number };
+switch (true) {
+  case shape.kind === "circle":
+    shape;
+    break;
+  case shape.kind === "circle":
+    shape;
+    break;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let radius_name = types.intern_string("radius");
+    let side_name = types.intern_string("sideLength");
+    let lit_circle = types.literal_string("circle");
+    let lit_square = types.literal_string("square");
+
+    let circle = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_circle,
+            write_type: lit_circle,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: radius_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+        },
+    ]);
+    let square = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_square,
+            write_type: lit_square,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: side_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+        },
+    ]);
+    let union = types.union(vec![circle, square]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let first_case_expr = get_switch_clause_expression(arena, switch_idx, 0);
+    let second_case_expr = get_switch_clause_expression(arena, switch_idx, 1);
+
+    let flow_first = binder
+        .get_node_flow(first_case_expr)
+        .expect("flow for case 1");
+    let narrowed_first = analyzer.get_flow_type(first_case_expr, union, flow_first);
+    assert_eq!(narrowed_first, circle);
+
+    let flow_second = binder
+        .get_node_flow(second_case_expr)
+        .expect("flow for case 2");
+    let narrowed_second = analyzer.get_flow_type(second_case_expr, union, flow_second);
+    assert_eq!(narrowed_second, TypeId::NEVER);
+}
+
+#[test]
+fn test_switch_true_case_uses_previous_false_constraints() {
+    let source = r#"
+let x: 1 | 2 | "a";
+switch (true) {
+  case x === 1:
+    x;
+    break;
+  case typeof x === "number":
+    x;
+    break;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let lit_one = types.literal_number(1.0);
+    let lit_two = types.literal_number(2.0);
+    let lit_a = types.literal_string("a");
+    let union = types.union(vec![lit_one, lit_two, lit_a]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let first_case_expr = get_switch_clause_expression(arena, switch_idx, 0);
+    let second_case_expr = get_switch_clause_expression(arena, switch_idx, 1);
+
+    let flow_first = binder
+        .get_node_flow(first_case_expr)
+        .expect("flow for case 1");
+    let narrowed_first = analyzer.get_flow_type(first_case_expr, union, flow_first);
+    assert_eq!(narrowed_first, lit_one);
+
+    let flow_second = binder
+        .get_node_flow(second_case_expr)
+        .expect("flow for case 2");
+    let narrowed_second = analyzer.get_flow_type(second_case_expr, union, flow_second);
+    assert_eq!(narrowed_second, lit_two);
+}
+
+#[test]
 fn test_instanceof_narrows_to_object_union_members() {
     let source = r"
 let x: string | { a: number };
@@ -2692,6 +2839,149 @@ function test() {
     assert!(
         !has_ts2454,
         "Should NOT have TS2454 error when variable has initializer"
+    );
+}
+
+/// Exhaustive switch without default should satisfy return-path checking.
+#[test]
+fn test_ts2366_not_emitted_for_exhaustive_switch_without_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+function f(v: 0 | 1): number {
+    switch (v) {
+        case 0:
+            return 1;
+        case 1:
+            return 2;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    assert!(
+        !has_ts2366,
+        "Exhaustive switch should not fall through; got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_typeof_switch_exhaustive_unknown_reports_unreachable_not_ts2366() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+const unreachable = (x: unknown): number => {
+    switch (typeof x) {
+        case "string": return 0;
+        case "number": return 0;
+        case "bigint": return 0;
+        case "boolean": return 0;
+        case "symbol": return 0;
+        case "undefined": return 0;
+        case "object": return 0;
+        case "function": return 0;
+    }
+    x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    let has_ts7027 = checker.ctx.diagnostics.iter().any(|d| d.code == 7027);
+    assert!(
+        !has_ts2366,
+        "Exhaustive typeof switch should not produce TS2366; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        has_ts7027,
+        "Exhaustive typeof switch tail should be unreachable (TS7027); diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_typeof_switch_exhaustive_any_reports_unreachable_not_ts2366() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+const unreachable = (x: any): number => {
+    switch (typeof x) {
+        case "string": return 0;
+        case "number": return 0;
+        case "bigint": return 0;
+        case "boolean": return 0;
+        case "symbol": return 0;
+        case "undefined": return 0;
+        case "object": return 0;
+        case "function": return 0;
+    }
+    x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    let has_ts7027 = checker.ctx.diagnostics.iter().any(|d| d.code == 7027);
+    assert!(
+        !has_ts2366,
+        "Exhaustive typeof switch should not produce TS2366; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        has_ts7027,
+        "Exhaustive typeof switch tail should be unreachable (TS7027); diagnostics: {:?}",
+        checker.ctx.diagnostics
     );
 }
 

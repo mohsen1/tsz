@@ -233,6 +233,70 @@ const bad: number = options?.nested?.flags?.safe ?? false;
 }
 
 #[test]
+fn test_destructure_tuple_with_rest_reports_nullish_not_string_array_property_error() {
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type NonEmptyStringArray = [string, ...Array<string>];
+const strings: NonEmptyStringArray = ['one', 'two'];
+const [s0, s1, s2] = strings;
+s0.toUpperCase();
+s1.toUpperCase();
+s2.toUpperCase();
+"#,
+        options,
+    );
+
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2339_count = non_lib.iter().filter(|(code, _)| *code == 2339).count();
+
+    assert_eq!(
+        ts2339_count, 0,
+        "Expected no TS2339 string[] property error for destructured rest elements, got: {non_lib:?}"
+    );
+}
+
+#[test]
+fn test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access() {
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const numMapPoint: { x: number, y: number} & { [s: string]: number };
+const { x, ...q } = numMapPoint;
+x.toFixed();
+q.y.toFixed();
+q.z.toFixed();
+"#,
+        options,
+    );
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&non_lib, 2339),
+        "Expected no TS2339 for q.z when index signature is preserved; got: {non_lib:?}"
+    );
+    assert!(
+        has_error(&non_lib, 18048),
+        "Expected TS18048 for q.z possibly undefined under noUncheckedIndexedAccess; got: {non_lib:?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -1213,6 +1277,448 @@ function f01(x: string | undefined) {
     assert!(
         semantic_errors.is_empty(),
         "Should emit no semantic errors - x is narrowed to string after never-returning call.\nActual errors: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_undefined_equality_does_not_narrow_to_never() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (o?.foo === undefined) {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 (no over-narrow to never). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_typeof_undefined_does_not_narrow_to_never() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (typeof o?.foo === "undefined") {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 (no over-narrow to never). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_not_undefined_narrows_to_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (o?.foo !== undefined) {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 in non-undefined optional-chain branch. Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 in non-undefined optional-chain branch. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_assert_nonnull_optional_chain_narrows_base_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Thing = { foo: string | number };
+declare function assertNonNull<T>(x: T): asserts x is NonNullable<T>;
+function f(o: Thing | undefined) {
+    assertNonNull(o?.foo);
+    o.foo;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertNonNull(o?.foo). Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 after assertNonNull(o?.foo). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_assert_optional_chain_discriminant_narrows_base_union_member() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Cat {
+    type: 'cat';
+    canMeow: true;
+}
+interface Dog {
+    type: 'dog';
+    canBark: true;
+}
+type Animal = Cat | Dog;
+declare function assertEqual<T>(value: any, type: T): asserts value is T;
+
+function f(animalOrUndef: Animal | undefined) {
+    assertEqual(animalOrUndef?.type, 'cat' as const);
+    animalOrUndef.canMeow;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertEqual(animalOrUndef?.type, 'cat'). Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 after assertEqual(animalOrUndef?.type, 'cat'). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_assert_optional_chain_then_assert_nonnull_keeps_base_narrowed() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Thing = { foo: string | number };
+declare function assert(x: unknown): asserts x;
+declare function assertNonNull<T>(x: T): asserts x is NonNullable<T>;
+function f(o: Thing | undefined) {
+    assert(typeof o?.foo === "number");
+    o.foo;
+    assertNonNull(o?.foo);
+    o.foo;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertion optional-chain sequence. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_strict_equality_transports_non_nullish_to_base() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: number, bar(): number };
+function f(o: Thing | null, value: number) {
+    if (o?.foo === value) {
+        o.foo;
+    }
+    if (o?.["foo"] === value) {
+        o["foo"];
+    }
+    if (o?.bar() === value) {
+        o.bar;
+    }
+    if (o?.bar() == value) {
+        o.bar;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 after o?.foo === value. Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after o?.foo === value. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_non_null_assertion_condition_narrows_underlying_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+const m = ''.match('');
+m! && m[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for m! && m[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_non_null_assertion_on_optional_chain_condition_narrows_underlying_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+const m = ''.match('');
+m?.[0]! && m[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for m?.[0]! && m[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_truthiness_narrows_all_prefixes_on_true_branch() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type T = { x?: { y?: { z: number } } };
+declare const o: T;
+if (o.x?.y?.z) {
+    o.x.y.z;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 in true branch after o.x?.y?.z truthiness check. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_truthiness_does_not_over_narrow_false_branch() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type T = { x?: { y?: { z: number } } };
+declare const o: T;
+if (o.x?.y?.z) {
+} else {
+    o.x.y.z;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected TS18048 in false branch after o.x?.y?.z truthiness check. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_direct_identifier_truthiness_guard_narrows_in_and_rhs() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const x: string[] | null = null as any;
+x && x[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for x && x[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_call_generic_this_inference_uses_receiver_type() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Y {
+    foo<T>(this: T, arg: keyof T): void;
+    a: number;
+    b: string;
+}
+declare const value: Y | undefined;
+if (value) {
+    value?.foo("a");
+}
+value?.foo("a");
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2345),
+        "Expected no TS2345 for optional-call generic this inference. Actual: {semantic_errors:#?}"
+    );
+}
+
+/// Assignment-based narrowing should use declared annotation types, not initializer flow types.
+///
+/// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`
+/// Previously, flow assignment compatibility could read `x` as `undefined` and skip narrowing.
+#[test]
+fn test_assignment_narrowing_prefers_declared_annotation_type() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+// @strict: true
+type Browser = { close(): void };
+declare function makeBrowser(): Browser;
+declare function consumeBrowser(b: Browser): void;
+
+function test() {
+    let browser: Browser | undefined = undefined;
+    try {
+        browser = makeBrowser();
+        consumeBrowser(browser);
+        browser.close();
+    } finally {
+    }
+}
+        "#,
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors
+            .iter()
+            .any(|(code, _)| *code == 2345 || *code == 18048),
+        "Should not emit TS2345/TS18048 after assignment narrowing, got: {semantic_errors:#?}"
     );
 }
 
@@ -4131,6 +4637,34 @@ const h: Handler = (() => ({ handle: x => x.length }))();
     assert!(
         !has_error(&relevant, 7006),
         "IIFE returning object with callback should contextually type callback params. Got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_iife_optional_parameters_preserve_undefined_in_body() {
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+((j?) => j + 1)(12);
+((k?) => k + 1)();
+((l, o?) => l + o)(12);
+"#,
+        options,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts18048_count = relevant.iter().filter(|(code, _)| *code == 18048).count();
+    assert!(
+        ts18048_count >= 3,
+        "Expected TS18048 for optional IIFE params used in arithmetic. Got: {relevant:#?}"
     );
 }
 

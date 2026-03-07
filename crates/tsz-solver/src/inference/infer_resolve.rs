@@ -211,6 +211,7 @@ impl<'a> InferenceContext<'a> {
         let mut upper_bounds = Vec::new();
         let mut seen_upper_bounds = FxHashSet::default();
         let mut candidates = info.candidates;
+        let contra_candidates = info.contra_candidates;
         for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
                 continue;
@@ -247,12 +248,19 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        let upper_bounds_only = candidates.is_empty() && !upper_bounds.is_empty();
+        let upper_bounds_only =
+            candidates.is_empty() && contra_candidates.is_empty() && !upper_bounds.is_empty();
 
         let declared_constraint = self.declared_constraints.get(&root).copied();
 
         let result = if !candidates.is_empty() {
+            // Covariant candidates exist: use union/BCT (matches tsc's getInferredType)
             self.resolve_from_candidates(&candidates, is_const, &upper_bounds, declared_constraint)
+        } else if !contra_candidates.is_empty() {
+            // Only contravariant candidates: use intersection (matches tsc behavior).
+            // In tsc, when only contraCandidates exist, getIntersectionType is used.
+            let contra_types: Vec<TypeId> = contra_candidates.iter().map(|c| c.type_id).collect();
+            self.interner.intersection(contra_types)
         } else if !upper_bounds.is_empty() {
             // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
             // This matches TypeScript: un-inferred generics default to their constraint.
@@ -1169,6 +1177,7 @@ impl<'a> InferenceContext<'a> {
                     resolved: Some(result),
                     // Keep candidates and upper_bounds for later validation
                     candidates: info.candidates,
+                    contra_candidates: info.contra_candidates,
                     upper_bounds: info.upper_bounds,
                 },
             );

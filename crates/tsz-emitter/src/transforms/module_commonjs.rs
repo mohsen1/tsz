@@ -272,27 +272,65 @@ pub fn build_value_declaration_names(
 pub fn build_type_only_declaration_names(
     arena: &NodeArena,
     statements: &[NodeIndex],
+    preserve_const_enums: bool,
 ) -> rustc_hash::FxHashSet<String> {
     let mut type_only_names = rustc_hash::FxHashSet::default();
 
-    for &stmt_idx in statements {
-        let Some(node) = arena.get(stmt_idx) else {
-            continue;
-        };
-        match node.kind {
+    // Helper to classify a declaration node as type-only
+    let mut add_type_only = |decl_node: &Node| {
+        match decl_node.kind {
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                if let Some(iface) = arena.get_interface(node)
+                if let Some(iface) = arena.get_interface(decl_node)
                     && let Some(name) = get_identifier_text(arena, iface.name)
                 {
                     type_only_names.insert(name);
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(type_alias) = arena.get_type_alias(node)
+                if let Some(type_alias) = arena.get_type_alias(decl_node)
                     && let Some(name) = get_identifier_text(arena, type_alias.name)
                 {
                     type_only_names.insert(name);
                 }
+            }
+            // Const enums without preserveConstEnums have no runtime value
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if !preserve_const_enums
+                    && let Some(enum_decl) = arena.get_enum(decl_node)
+                    && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                    && let Some(name) = get_identifier_text(arena, enum_decl.name)
+                {
+                    type_only_names.insert(name);
+                }
+            }
+            // Non-instantiated namespaces (type-only content) have no runtime value
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(decl_node)
+                    && !super::emit_utils::is_instantiated_module_ext(
+                        arena,
+                        module.body,
+                        preserve_const_enums,
+                    )
+                    && let Some(name) = get_identifier_text(arena, module.name)
+                {
+                    type_only_names.insert(name);
+                }
+            }
+            _ => {}
+        }
+    };
+
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION
+                || k == syntax_kind_ext::MODULE_DECLARATION =>
+            {
+                add_type_only(node);
             }
             // Also handle wrapped export declarations
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
@@ -300,23 +338,7 @@ pub fn build_type_only_declaration_names(
                     && export_decl.module_specifier.is_none()
                     && let Some(clause_node) = arena.get(export_decl.export_clause)
                 {
-                    match clause_node.kind {
-                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                            if let Some(iface) = arena.get_interface(clause_node)
-                                && let Some(name) = get_identifier_text(arena, iface.name)
-                            {
-                                type_only_names.insert(name);
-                            }
-                        }
-                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                            if let Some(type_alias) = arena.get_type_alias(clause_node)
-                                && let Some(name) = get_identifier_text(arena, type_alias.name)
-                            {
-                                type_only_names.insert(name);
-                            }
-                        }
-                        _ => {}
-                    }
+                    add_type_only(clause_node);
                 }
             }
             _ => {}
@@ -447,7 +469,11 @@ pub fn collect_export_names_with_options(
                                 )
                             });
                             let ton = type_only_names.get_or_insert_with(|| {
-                                build_type_only_declaration_names(arena, statements)
+                                build_type_only_declaration_names(
+                                    arena,
+                                    statements,
+                                    preserve_const_enums,
+                                )
                             });
                             for &spec_idx in &named_exports.elements.nodes {
                                 if let Some(spec) = arena.get_specifier_at(spec_idx) {
@@ -597,6 +623,19 @@ pub fn collect_export_names_categorized(
         {
             func_decl_names.push(name);
         }
+        // Also look inside EXPORT_DECLARATION wrappers for function declarations
+        // (e.g., `export default function f() {}` wraps FUNCTION_DECLARATION in EXPORT_DECLARATION)
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_decl) = arena.get_export_decl(node)
+            && export_decl.module_specifier.is_none()
+            && let Some(clause_node) = arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = arena.get_function(clause_node)
+            && let Some(name) = get_identifier_text(arena, func.name)
+            && !func_decl_names.contains(&name)
+        {
+            func_decl_names.push(name);
+        }
     }
 
     // Second pass: categorize exports as function (hoisted) vs other
@@ -709,8 +748,8 @@ pub fn collect_export_names_categorized(
                 let Some(node) = arena.get(stmt_idx) else {
                     return false;
                 };
-                // Check direct VARIABLE_STATEMENT with export modifier
-                let check_var = |n: &Node| -> bool {
+                // Check if a VARIABLE_STATEMENT contains the target name
+                let var_has_name = |n: &Node| -> bool {
                     if n.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(var_stmt) = arena.get_variable(n)
                         && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
@@ -724,15 +763,24 @@ pub fn collect_export_names_categorized(
                     false
                 };
                 match node.kind {
-                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => check_var(node),
-                    // Also handle EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT
+                    // Direct VARIABLE_STATEMENT must be exported to count
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = arena.get_variable(node)
+                            && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                        {
+                            var_has_name(node)
+                        } else {
+                            false
+                        }
+                    }
+                    // EXPORT_DECLARATION wrapping a VARIABLE_STATEMENT is already exported
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                         if let Some(export_decl) = arena.get_export_decl(node)
                             && !export_decl.is_type_only
                             && export_decl.module_specifier.is_none()
                             && let Some(clause_node) = arena.get(export_decl.export_clause)
                         {
-                            check_var(clause_node)
+                            var_has_name(clause_node)
                         } else {
                             false
                         }

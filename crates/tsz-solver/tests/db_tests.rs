@@ -251,3 +251,30 @@ fn query_cache_caches_object_spread_properties() {
     assert_eq!(props_again.len(), 2);
     assert_eq!(db.object_spread_properties_cache_len(), 1);
 }
+
+#[test]
+fn type_interner_query_db_tracks_no_unchecked_indexed_access() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+
+    assert!(!db.no_unchecked_indexed_access());
+    db.set_no_unchecked_indexed_access(true);
+    assert!(db.no_unchecked_indexed_access());
+    db.set_no_unchecked_indexed_access(false);
+    assert!(!db.no_unchecked_indexed_access());
+}
+
+#[test]
+fn type_interner_element_access_respects_no_unchecked_indexed_access() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+
+    let array = interner.array(TypeId::STRING);
+    let without_flag = db.resolve_element_access_type(array, TypeId::NUMBER, None);
+    assert_eq!(without_flag, TypeId::STRING);
+
+    db.set_no_unchecked_indexed_access(true);
+    let with_flag = db.resolve_element_access_type(array, TypeId::NUMBER, None);
+    assert_ne!(with_flag, TypeId::STRING);
+    assert!(crate::type_contains_undefined(&interner, with_flag));
+}

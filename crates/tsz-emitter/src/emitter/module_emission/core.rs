@@ -54,13 +54,16 @@ impl<'a> Printer<'a> {
         }
 
         let prev_module = self.ctx.options.module;
+        let prev_original = self.ctx.original_module_kind;
         self.ctx.options.module = ModuleKind::None;
+        self.ctx.original_module_kind = Some(prev_module);
 
         let before_len = self.writer.len();
         emit_inner(self);
         let inner_emitted = self.writer.len() > before_len;
 
         self.ctx.options.module = prev_module;
+        self.ctx.original_module_kind = prev_original;
 
         // If the inner emit produced nothing (e.g., variable declaration with
         // no initializer where only the type annotation was stripped), skip
@@ -597,6 +600,38 @@ impl<'a> Printer<'a> {
     /// Get identifier text from a node index
     pub(in crate::emitter) fn get_identifier_text_idx(&self, idx: NodeIndex) -> String {
         crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
+    }
+
+    /// Get property name emit info: identifier → Dot, string literal → Bracket,
+    /// numeric literal → `BracketNumeric`. Returns None for computed names.
+    pub(in crate::emitter) fn get_property_name_emit(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<crate::emitter::core::PropertyNameEmit> {
+        use crate::emitter::core::PropertyNameEmit;
+        use tsz_parser::parser::node::NodeAccess;
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::PrivateIdentifier as u16 =>
+            {
+                let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(PropertyNameEmit::Dot(text))
+                }
+            }
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                let text = self.arena.get_literal_text(idx)?;
+                Some(PropertyNameEmit::Bracket(format!("\"{text}\"")))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let text = self.arena.get_literal_text(idx)?;
+                Some(PropertyNameEmit::BracketNumeric(text.to_string()))
+            }
+            _ => None,
+        }
     }
 
     pub(in crate::emitter) fn emit_entity_name(&mut self, idx: NodeIndex) {

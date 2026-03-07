@@ -17,7 +17,7 @@ use crate::types::{
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
-    TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+    TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -306,6 +306,68 @@ impl<'a> QueryCache<'a> {
                 }
 
                 merged.into_values().collect()
+            }
+            TypeData::Union(members_id) => {
+                let members = self.interner.type_list(members_id);
+                // Collect properties from non-nullish union members.
+                // Nullish members (null, undefined, void) spread to {} and
+                // contribute no properties. Properties that don't appear in
+                // every non-nullish member become optional.
+                let has_nullish = members.iter().any(|m| m.is_nullable());
+                let non_nullish: Vec<TypeId> = members
+                    .iter()
+                    .copied()
+                    .filter(|m| !m.is_nullable())
+                    .collect();
+
+                if non_nullish.is_empty() {
+                    return Vec::new();
+                }
+
+                // Collect properties per member
+                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::new();
+                for &member in &non_nullish {
+                    all_props.push(self.collect_object_spread_properties_inner(member, visited));
+                }
+
+                // Merge: a property appears in the result if it exists in at
+                // least one member. Its type is the union of types across
+                // members where it appears. It is optional if it doesn't
+                // appear in all non-nullish members or if any nullish member
+                // exists (since the spread could be null/undefined → {}).
+                let mut merged: FxHashMap<Atom, (TypeId, bool, usize)> = FxHashMap::default();
+                for member_props in &all_props {
+                    for prop in member_props {
+                        let entry =
+                            merged
+                                .entry(prop.name)
+                                .or_insert((prop.type_id, prop.optional, 0));
+                        if entry.0 != prop.type_id {
+                            entry.0 = self.interner.union(vec![entry.0, prop.type_id]);
+                        }
+                        entry.1 = entry.1 && prop.optional;
+                        entry.2 += 1;
+                    }
+                }
+
+                merged
+                    .into_iter()
+                    .map(|(name, (type_id, was_optional, count))| {
+                        let optional = was_optional || has_nullish || count < non_nullish.len();
+                        PropertyInfo {
+                            name,
+                            type_id,
+                            optional,
+                            readonly: false,
+                            write_type: type_id,
+                            is_class_prototype: false,
+                            is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: 0,
+                        }
+                    })
+                    .collect()
             }
             _ => Vec::new(),
         };
@@ -608,6 +670,10 @@ impl TypeResolver for QueryCache<'_> {
 
 impl QueryDatabase for QueryCache<'_> {
     fn as_type_database(&self) -> &dyn TypeDatabase {
+        self
+    }
+
+    fn as_type_resolver(&self) -> &dyn TypeResolver {
         self
     }
 

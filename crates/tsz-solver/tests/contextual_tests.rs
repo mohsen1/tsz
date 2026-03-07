@@ -192,11 +192,11 @@ fn test_contextual_callable_overload_union() {
     // Use no_implicit_any: true
     let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, true);
 
-    // When multiple call signatures disagree on parameter types, tsc provides
-    // no contextual type (None), which causes TS7006 under noImplicitAny.
-    // This matches tsc behavior: overloaded callables with different param types
-    // do not produce a union contextual type for parameters.
-    assert_eq!(ctx.get_parameter_type(0), None);
+    // When multiple call signatures disagree on parameter types, tsc unions
+    // them to provide a contextual type. This prevents false TS7006 for
+    // overloaded callables like `Callback<T>` with different param types.
+    let expected_param0 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(ctx.get_parameter_type(0), Some(expected_param0));
     assert_eq!(ctx.get_parameter_type(1), Some(TypeId::BOOLEAN));
 
     // Return types and this types are still unioned from all signatures
@@ -361,6 +361,25 @@ fn test_contextual_property() {
     assert_eq!(ctx.get_property_type("z"), None);
 }
 
+#[test]
+fn test_contextual_optional_property_includes_undefined() {
+    let interner = TypeInterner::new();
+
+    let mut optional = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
+    optional.optional = true;
+    let obj = interner.object(vec![optional]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, obj);
+    let ty = ctx
+        .get_property_type("x")
+        .expect("expected contextual property type");
+    let members = crate::type_queries::data::get_union_members(&interner, ty)
+        .expect("optional contextual property should include undefined");
+
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
+}
+
 // =============================================================================
 // Nested Context
 // =============================================================================
@@ -385,6 +404,28 @@ fn test_contextual_nested_property() {
     let nested_ctx = ctx.for_property("nested");
     assert!(nested_ctx.has_context());
     assert_eq!(nested_ctx.get_property_type("value"), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_contextual_optional_tuple_element_includes_undefined() {
+    let interner = TypeInterner::new();
+
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: true,
+        rest: false,
+    }]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, tuple);
+    let ty = ctx
+        .get_tuple_element_type(0)
+        .expect("expected contextual tuple element type");
+    let members = crate::type_queries::data::get_union_members(&interner, ty)
+        .expect("optional tuple element should include undefined");
+
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
 }
 
 #[test]
@@ -628,7 +669,7 @@ fn test_apply_contextual_same_type() {
 // =============================================================================
 
 /// When union members have call signatures with different parameter types,
-/// the solver currently provides a synthesized contextual parameter type.
+/// no contextual type is provided (per TS spec §3.4).
 #[test]
 fn test_contextual_union_function_different_params_no_contextual_type() {
     let interner = TypeInterner::new();
@@ -666,7 +707,7 @@ fn test_contextual_union_function_different_params_no_contextual_type() {
 
     let ctx = ContextualTypeContext::with_expected(&interner, union);
 
-    assert!(ctx.get_parameter_type(0).is_some());
+    assert!(ctx.get_parameter_type(0).is_none());
 }
 
 #[test]
@@ -1220,8 +1261,9 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
     // Use no_implicit_any: false - should return None for parameter type
     let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, false);
 
-    // With noImplicitAny: false, different parameter types result in None (falls back to `any`)
-    assert_eq!(ctx.get_parameter_type(0), None);
+    // With noImplicitAny: false, different parameter types are unioned
+    let expected_param0 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(ctx.get_parameter_type(0), Some(expected_param0));
 }
 
 // =============================================================================

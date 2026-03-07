@@ -709,15 +709,85 @@ impl<'a> Printer<'a> {
         }
 
         if needs_parens {
-            self.write("(");
-        }
-        self.emit(expr_stmt.expression);
-        if needs_parens {
-            self.write(")");
+            // TSC special case: when the expression (after type erasure) is a
+            // CallExpression whose direct callee is a function/object expression,
+            // wrap only the callee — producing `(function(){})()` instead of
+            // `(function(){}())`.
+            if self.is_call_with_function_or_object_callee(expr_stmt.expression) {
+                self.ctx.flags.paren_leftmost_function_or_object = true;
+                self.emit(expr_stmt.expression);
+                self.ctx.flags.paren_leftmost_function_or_object = false;
+            } else {
+                self.write("(");
+                self.emit(expr_stmt.expression);
+                self.write(")");
+            }
+        } else {
+            self.emit(expr_stmt.expression);
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    /// Check if an expression (after skipping type assertions) is a `CallExpression`
+    /// whose direct callee (after skipping type assertions) is a `FunctionExpression`
+    /// or `ObjectLiteralExpression`. Used for TSC-style IIFE parenthesization.
+    fn is_call_with_function_or_object_callee(&self, mut idx: NodeIndex) -> bool {
+        // Skip type assertions
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                _ => break,
+            }
+        }
+        // Check if it's a CallExpression
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return false;
+        };
+        // Skip type assertions on the callee
+        let mut callee_idx = call.expression;
+        loop {
+            let Some(callee_node) = self.arena.get(callee_idx) else {
+                return false;
+            };
+            match callee_node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(callee_node) {
+                        callee_idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                _ => break,
+            }
+        }
+        let Some(callee_node) = self.arena.get(callee_idx) else {
+            return false;
+        };
+        callee_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || callee_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the

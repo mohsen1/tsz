@@ -9,7 +9,8 @@ use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{TemplateSpan, TypeData, TypeId};
+use crate::types::{ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use tsz_common::interner::Atom;
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -68,8 +69,87 @@ pub fn compute_conditional_expression_type(
         return true_type;
     }
 
+    if let Some((adjusted_true, adjusted_false)) =
+        complement_fresh_object_literal_union(interner, true_type, false_type)
+    {
+        return interner.union2(adjusted_true, adjusted_false);
+    }
+
     // Default: return union of both branches
     interner.union2(true_type, false_type)
+}
+
+fn complement_fresh_object_literal_union(
+    interner: &dyn TypeDatabase,
+    left: TypeId,
+    right: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    let left_shape = fresh_literal_shape(interner, left)?;
+    let right_shape = fresh_literal_shape(interner, right)?;
+
+    // Keep this narrowly scoped to plain fresh object literals.
+    if left_shape.symbol.is_some()
+        || right_shape.symbol.is_some()
+        || left_shape.string_index.is_some()
+        || left_shape.number_index.is_some()
+        || right_shape.string_index.is_some()
+        || right_shape.number_index.is_some()
+    {
+        return None;
+    }
+
+    let mut names: Vec<Atom> = left_shape.properties.iter().map(|p| p.name).collect();
+    for name in right_shape.properties.iter().map(|p| p.name) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    let left_completed = add_missing_optional_properties(&left_shape.properties, &names);
+    let right_completed = add_missing_optional_properties(&right_shape.properties, &names);
+    let left_type = interner.object_with_flags(left_completed, left_shape.flags);
+    let right_type = interner.object_with_flags(right_completed, right_shape.flags);
+    Some((left_type, right_type))
+}
+
+fn fresh_literal_shape(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::ObjectShape> {
+    let shape_id = match interner.lookup(type_id)? {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => id,
+        _ => return None,
+    };
+    let shape = interner.object_shape(shape_id);
+    if !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+        return None;
+    }
+    Some((*shape).clone())
+}
+
+fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) -> Vec<PropertyInfo> {
+    let mut out: Vec<PropertyInfo> = existing.to_vec();
+    let mut next_order = out
+        .iter()
+        .map(|p| p.declaration_order)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+
+    for &name in names {
+        if out.iter().any(|p| p.name == name) {
+            continue;
+        }
+        let mut prop = PropertyInfo::opt(name, TypeId::UNDEFINED);
+        prop.declaration_order = next_order;
+        next_order = next_order.saturating_add(1);
+        out.push(prop);
+    }
+    out
 }
 
 /// Computes the type of a template literal expression.

@@ -113,9 +113,19 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // Normalize optional/nullish parameter wrappers so object-literal elaboration
+        // still reports property-level TS2322 for cases like `{...} | undefined`.
+        let effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
+            self.split_nullish_type(param_type)
+        {
+            non_nullish
+        } else {
+            param_type
+        };
+
         // When the target type is `never`, don't elaborate into property-level TS2322 errors.
         // tsc emits a single TS2345 on the whole argument instead.
-        if param_type == TypeId::NEVER {
+        if effective_param_type == TypeId::NEVER {
             return false;
         }
 
@@ -161,7 +171,7 @@ impl<'a> CheckerState<'a> {
 
             // Look up the expected property type in the target parameter type
             let target_prop_type = match self
-                .resolve_property_access_with_env(param_type, &prop_name)
+                .resolve_property_access_with_env(effective_param_type, &prop_name)
             {
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id, ..

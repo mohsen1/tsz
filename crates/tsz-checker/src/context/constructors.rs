@@ -129,7 +129,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
@@ -294,7 +294,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
@@ -450,7 +450,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
@@ -616,7 +616,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
@@ -775,7 +775,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
@@ -952,7 +952,7 @@ impl<'a> CheckerContext<'a> {
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
-            instantiation_depth: RefCell::new(0),
+            instantiation_depth: Cell::new(0),
             depth_exceeded: RefCell::new(false),
             // Propagate depth from parent to prevent infinite recursion across arena boundaries
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_initial_depth(

@@ -8,6 +8,14 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
+        if tsz_solver::type_contains_undefined(self.ctx.types, ty) {
+            ty
+        } else {
+            self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED])
+        }
+    }
+
     pub(crate) fn report_empty_array_destructuring_bounds(
         &mut self,
         pattern_idx: NodeIndex,
@@ -492,11 +500,20 @@ impl<'a> CheckerState<'a> {
                         };
                         elem_types.push(elem_type);
                     } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
+                        let mut elem = elem;
+                        if self.ctx.no_unchecked_indexed_access() {
+                            elem = self.add_undefined_if_missing_for_destructuring(elem);
+                        }
                         elem_types.push(elem);
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member)
-                        && let Some(e) = elems.get(element_index)
-                    {
-                        elem_types.push(e.type_id);
+                    } else if query::tuple_elements(self.ctx.types, member).is_some() {
+                        let elem = self.get_element_access_type(
+                            member,
+                            TypeId::NUMBER,
+                            Some(element_index),
+                        );
+                        if elem != TypeId::ERROR {
+                            elem_types.push(elem);
+                        }
                     }
                 }
                 if elem_types.is_empty() && !element_data.dot_dot_dot_token {
@@ -552,10 +569,16 @@ impl<'a> CheckerState<'a> {
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                elem
+                if self.ctx.no_unchecked_indexed_access() {
+                    self.add_undefined_if_missing_for_destructuring(elem)
+                } else {
+                    elem
+                }
             } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                if let Some(e) = elems.get(element_index) {
-                    e.type_id
+                let elem =
+                    self.get_element_access_type(array_like, TypeId::NUMBER, Some(element_index));
+                if elem != TypeId::ERROR {
+                    elem
                 } else {
                     let has_rest_tail = elems.last().is_some_and(|element| element.rest);
                     // When a binding element has a default value (e.g., `[a, b = a] = [1]`),
@@ -605,51 +628,22 @@ impl<'a> CheckerState<'a> {
                 let key_is_number = key_type == TypeId::NUMBER;
 
                 // TS2538: Type cannot be used as an index type.
-                // In destructuring, only string-like and number-like types are valid
-                // computed index types. Unlike element access (obj[x]) where `any` is
-                // allowed, destructuring rejects `any`, `symbol`, and `unique symbol`.
+                // Use the strict validity check matching tsc's `isValidIndexType`:
+                // only `string`, `number`, `bigint`, and their literal subtypes plus
+                // template literals / string mappings are valid. `any`, `symbol`,
+                // `unique symbol`, `unknown`, and structural types are rejected.
+                // Note: ERROR types from failed expressions are treated as `any`
+                // for this check — tsc cascades TS2538 after prior expression errors.
                 if !key_is_string && !key_is_number && key_type != TypeId::NEVER {
-                    let resolved_key = self.resolve_lazy_type(key_type);
-                    // Check for any/error types (always invalid in destructuring)
-                    let is_any_or_error = matches!(key_type, TypeId::ANY | TypeId::ERROR)
-                        || matches!(resolved_key, TypeId::ANY | TypeId::ERROR);
-                    // Check for symbol/unique symbol — invalid unless the parent type
-                    // has a matching symbol property (late-bound property access).
-                    // For type parameters, skip the symbol check since the constraint
-                    // may have matching symbol properties we can't resolve statically.
-                    let is_symbol =
-                        query::is_symbol_or_unique_symbol_type(self.ctx.types, resolved_key);
-                    let symbol_should_report = if !is_symbol {
-                        false
-                    } else if query::is_type_parameter_like(self.ctx.types, parent_type) {
-                        // Type parameter: constraint may have matching symbol properties
-                        false
+                    let check_key = if key_type == TypeId::ERROR {
+                        TypeId::ANY
                     } else {
-                        // Concrete type: check for actual named property (not index sigs)
-                        tsz_solver::visitor::unique_symbol_ref(self.ctx.types, resolved_key)
-                            .is_none_or(|sym_ref| {
-                                !query::type_has_property(
-                                    self.ctx.types,
-                                    parent_type,
-                                    &format!("__unique_{}", sym_ref.0),
-                                )
-                            })
+                        self.resolve_lazy_type(key_type)
                     };
-                    // Check for structurally invalid types (void, null, boolean, etc.)
-                    let has_structural_invalid =
-                        query::invalid_index_type_member(self.ctx.types, resolved_key);
-                    let should_report =
-                        is_any_or_error || symbol_should_report || has_structural_invalid.is_some();
-                    if should_report {
-                        let display_type =
-                            if key_type == TypeId::ERROR || resolved_key == TypeId::ERROR {
-                                TypeId::ANY
-                            } else if let Some(invalid) = has_structural_invalid {
-                                invalid
-                            } else {
-                                resolved_key
-                            };
-                        let key_type_str = self.format_type(display_type);
+                    if let Some(invalid_member) =
+                        query::invalid_index_type_member_strict(self.ctx.types, check_key)
+                    {
+                        let key_type_str = self.format_type(invalid_member);
                         let message = crate::diagnostics::format_message(
                             crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[&key_type_str],
@@ -940,7 +934,20 @@ impl<'a> CheckerState<'a> {
             .cloned()
             .collect();
 
-        self.ctx.types.factory().object(remaining_props)
+        // Preserve index signatures/flags/symbol for object-rest types.
+        // Dropping them causes false TS2339 on reads like `q.z` and suppresses
+        // downstream nullish diagnostics under noUncheckedIndexedAccess.
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            let mut rest_shape = shape.as_ref().clone();
+            rest_shape.properties = remaining_props;
+            self.ctx.types.factory().object_with_index(rest_shape)
+        } else {
+            self.ctx.types.factory().object_with_flags_and_symbol(
+                remaining_props,
+                shape.flags,
+                shape.symbol,
+            )
+        }
     }
 
     /// Rest bindings from tuple members should produce an array type.
@@ -1029,58 +1036,68 @@ impl<'a> CheckerState<'a> {
     /// positional tuple types (a=number, b=string) instead of a widened union.
     ///
     /// - Array binding patterns → tuple types with `any` elements
-    /// - Object binding patterns → object types with `any` properties
+    /// - Object binding patterns → object types with properties typed from defaults
     /// - Nested patterns → recursively structured contextual types
+    ///
+    /// When a binding element has a default initializer (e.g., `{ f = (x: string) => x.length }`),
+    /// the default's type is used instead of `any`. This enables contextual typing to flow
+    /// from binding pattern defaults into generic function return type seeding.
     pub(crate) fn build_contextual_type_from_pattern(
-        &self,
+        &mut self,
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
         let pattern_data = self.ctx.arena.get_binding_pattern(pattern_node)?;
+        let elem_indices: Vec<NodeIndex> = pattern_data.elements.nodes.clone();
+        let pattern_kind = pattern_node.kind;
         let factory = self.ctx.types.factory();
 
-        if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            let tuple_elements: Vec<tsz_solver::TupleElement> = pattern_data
-                .elements
-                .nodes
-                .iter()
-                .map(|&elem_idx| {
-                    // For nested binding patterns, recursively build the contextual type.
-                    let elem_type = self
-                        .ctx
-                        .arena
-                        .get(elem_idx)
-                        .and_then(|elem_node| self.ctx.arena.get_binding_element(elem_node))
-                        .and_then(|elem_data| {
-                            let name_node = self.ctx.arena.get(elem_data.name)?;
-                            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            {
-                                self.build_contextual_type_from_pattern(elem_data.name)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(TypeId::ANY);
-
-                    tsz_solver::TupleElement {
-                        type_id: elem_type,
-                        optional: false,
-                        rest: false,
-                        name: None,
-                    }
-                })
-                .collect();
+        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let mut tuple_elements = Vec::new();
+            for &elem_idx in &elem_indices {
+                let elem_type = self
+                    .ctx
+                    .arena
+                    .get(elem_idx)
+                    .and_then(|elem_node| self.ctx.arena.get_binding_element(elem_node))
+                    .and_then(|elem_data| {
+                        let name_node = self.ctx.arena.get(elem_data.name)?;
+                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        {
+                            Some(elem_data.name)
+                        } else {
+                            None
+                        }
+                    });
+                let elem_type = if let Some(pattern_name) = elem_type {
+                    self.build_contextual_type_from_pattern(pattern_name)
+                        .unwrap_or(TypeId::ANY)
+                } else {
+                    TypeId::ANY
+                };
+                tuple_elements.push(tsz_solver::TupleElement {
+                    type_id: elem_type,
+                    optional: false,
+                    rest: false,
+                    name: None,
+                });
+            }
             Some(factory.tuple(tuple_elements))
-        } else if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+        } else if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let mut properties = Vec::new();
-            for &elem_idx in &pattern_data.elements.nodes {
+            for &elem_idx in &elem_indices {
                 let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                     continue;
                 };
                 let Some(elem_data) = self.ctx.arena.get_binding_element(elem_node) else {
                     continue;
                 };
+
+                // Skip rest elements — `...rest` is not a named property in the contextual type.
+                if elem_data.dot_dot_dot_token {
+                    continue;
+                }
 
                 // Get the property name
                 let prop_name = if elem_data.property_name.is_some() {
@@ -1101,21 +1118,36 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // For nested patterns, recursively build contextual type
-                let prop_type = self
-                    .ctx
-                    .arena
-                    .get(elem_data.name)
-                    .and_then(|name_node| {
-                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        {
-                            self.build_contextual_type_from_pattern(elem_data.name)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(TypeId::ANY);
+                let initializer = elem_data.initializer;
+                let name_idx = elem_data.name;
+
+                // For nested patterns, recursively build contextual type.
+                // For elements with default initializers, use the default's type
+                // instead of `any` so the contextual type carries useful info
+                // (e.g., `{ f = (x: string) => x.length }` → f: (x: string) => number).
+                let name_kind = self.ctx.arena.get(name_idx).map(|n| n.kind);
+                let prop_type = if matches!(
+                    name_kind,
+                    Some(
+                        k
+                    ) if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                ) {
+                    self.build_contextual_type_from_pattern(name_idx)
+                        .unwrap_or(TypeId::ANY)
+                } else if initializer.is_some() {
+                    let init_type = self.get_type_of_node(initializer);
+                    if init_type != TypeId::ANY
+                        && init_type != TypeId::UNKNOWN
+                        && init_type != TypeId::ERROR
+                    {
+                        init_type
+                    } else {
+                        TypeId::ANY
+                    }
+                } else {
+                    TypeId::ANY
+                };
 
                 let atom = self.ctx.types.intern_string(&name_str);
                 properties.push(tsz_solver::PropertyInfo::new(atom, prop_type));

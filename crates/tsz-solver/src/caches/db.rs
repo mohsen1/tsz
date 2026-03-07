@@ -413,6 +413,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 
+    /// Expose the `TypeResolver` view for inference contexts that need
+    /// to expand type alias Applications (variance-aware inference).
+    fn as_type_resolver(&self) -> &dyn TypeResolver;
+
     /// Expose the checked construction surface for type constructors.
     #[inline]
     fn factory(&self) -> TypeFactory<'_> {
@@ -722,6 +726,10 @@ impl QueryDatabase for TypeInterner {
         self
     }
 
+    fn as_type_resolver(&self) -> &dyn TypeResolver {
+        self
+    }
+
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.set_array_base_type(type_id, type_params);
     }
@@ -889,6 +897,37 @@ impl QueryDatabase for TypeInterner {
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        let mut evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(TypeInterner::no_unchecked_indexed_access(self));
+        evaluator.resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        match self.resolve_element_access(object_type, index_type, literal_index) {
+            ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        }
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        TypeInterner::no_unchecked_indexed_access(self)
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        TypeInterner::set_no_unchecked_indexed_access(self, enabled);
     }
 
     fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {

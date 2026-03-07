@@ -383,6 +383,29 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2862: Type '{0}' is generic and can only be indexed for reading.
+    pub fn error_generic_only_indexed_for_reading(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let type_name = self.format_type(object_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+                &[&type_name],
+            );
+            let diag = Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+            );
+            self.ctx.diagnostics.push(diag);
+        }
+    }
+
     /// Report TS2803: Cannot assign to private method. Private methods are not writable.
     pub fn error_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {

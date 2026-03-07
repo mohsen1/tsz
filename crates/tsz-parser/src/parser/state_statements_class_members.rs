@@ -827,6 +827,7 @@ impl ParserState {
         }
 
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
+        let diag_len_before_modifiers = self.parse_diagnostics.len();
         let parsed_modifiers = self.parse_class_member_modifiers();
         let had_keyword_modifiers = parsed_modifiers.is_some();
 
@@ -870,14 +871,48 @@ impl ParserState {
         }
 
         // Handle static block after modifiers: { ... }
+        // Case 1: `static` not yet consumed (no preceding modifiers or only decorators)
         if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
-            if modifiers.is_some() {
-                self.parse_error_at_current_token(
-                    "Modifiers cannot appear on a static block.",
-                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                );
+            if let Some(ref mods) = modifiers {
+                // Truncate modifier-ordering diagnostics (TS1028/TS1029) emitted
+                // during parse_class_member_modifiers — tsc only emits TS1184 here.
+                self.parse_diagnostics.truncate(diag_len_before_modifiers);
+                if let Some(first_node) = self.arena.get(mods.nodes[0]) {
+                    self.parse_error_at(
+                        first_node.pos,
+                        first_node.end - first_node.pos,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
             }
             return self.parse_static_block();
+        }
+        // Case 2: `static` was consumed as a modifier and `{` follows (e.g. `async static {`)
+        // The last modifier is `static` and current token is `{` — this is a static block
+        // with invalid preceding modifiers.
+        if self.is_token(SyntaxKind::OpenBraceToken)
+            && let Some(ref mods) = modifiers
+        {
+            let last_is_static = mods
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16);
+            if last_is_static {
+                // Truncate modifier-ordering diagnostics — tsc only emits TS1184.
+                self.parse_diagnostics.truncate(diag_len_before_modifiers);
+                // Emit TS1184 at the first modifier's position (matches tsc).
+                if let Some(first_node) = self.arena.get(mods.nodes[0]) {
+                    self.parse_error_at(
+                        first_node.pos,
+                        first_node.end - first_node.pos,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                return self.parse_static_block();
+            }
         }
 
         // Handle constructor

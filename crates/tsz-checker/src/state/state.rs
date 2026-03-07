@@ -1089,6 +1089,22 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    // Don't recurse into `super` — its cached type from
+                    // build_type_environment is correct and clearing it
+                    // causes false errors in static contexts.
+                    let is_super =
+                        self.ctx.arena.get(access.expression).is_some_and(|n| {
+                            n.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
+                        });
+                    if !is_super {
+                        self.clear_type_cache_recursive(access.expression);
+                    }
+                }
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
                     self.clear_type_cache_recursive(bin.left);

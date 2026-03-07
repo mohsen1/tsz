@@ -1339,8 +1339,15 @@ impl<'a> CheckerState<'a> {
                 // reference in computed property name) is properly emitted.
                 let prev = self.ctx.checking_computed_property_name;
                 self.ctx.checking_computed_property_name = Some(name_idx);
+                // Preserve literal types so that string literal expressions like
+                // ["computed"] resolve to the literal type "computed" rather than
+                // widening to `string`. Without this, get_literal_property_name
+                // cannot extract the property name from the widened type.
+                let prev_preserve = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
                 // Evaluate the expression type and get the property name
                 let expr_type = self.get_type_of_node(computed.expression);
+                self.ctx.preserve_literal_types = prev_preserve;
                 self.ctx.checking_computed_property_name = prev;
                 if let Some(name) =
                     tsz_solver::type_queries::get_literal_property_name(self.ctx.types, expr_type)
@@ -1443,6 +1450,11 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .map(|arc| (decl_idx, arc.as_ref()))
                                 .collect::<Vec<_>>()
+                        } else if has_declaration_arenas {
+                            // This symbol has lib declarations (with declaration_arenas
+                            // entries) but THIS declaration has no entry — it was added
+                            // during user-file binding and lives in the user arena.
+                            vec![(decl_idx, self.ctx.arena)]
                         } else {
                             vec![(decl_idx, fallback_arena)]
                         }

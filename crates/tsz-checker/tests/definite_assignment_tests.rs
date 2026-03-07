@@ -253,6 +253,88 @@ fn test_ts2454_not_emitted_when_initialized() {
     );
 }
 
+#[test]
+fn test_ts2454_not_emitted_for_exhaustive_switch_implicit_default_path() {
+    let source = r"
+        function functionB(key: string): string {
+            return key;
+        }
+
+        function functionC(): void {
+            let unionVal: 'A' | 'B' = 'A';
+            while (true) {
+                let key: string;
+                switch (unionVal) {
+                    case 'A': {
+                        key = 'AA';
+                        break;
+                    }
+                    case 'B': {
+                        key = 'BB';
+                        break;
+                    }
+                }
+                functionB(key);
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Expected no TS2454 for exhaustive switch assignment, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_not_emitted_when_switch_discriminant_is_flow_literal() {
+    let source = r"
+        declare function functionB(key: string): string;
+
+        function functionC(): void {
+            let unionVal: 'A' | 'B' = 'A';
+            while (true) {
+                let key: string;
+                switch (unionVal) {
+                    case 'A': {
+                        key = 'AA';
+                        break;
+                    }
+                }
+                functionB(key);
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Expected no TS2454 when flow narrows switch discriminant to a covered literal, got: {diags:?}"
+    );
+}
+
 /// TS2454 should not fire when the type includes `undefined` (assignment is not required).
 #[test]
 fn test_ts2454_skipped_for_undefined_type() {
@@ -479,5 +561,83 @@ fn test_ts2454_simple_assignment_counts_as_definite() {
         ts2454_for_y.len(),
         0,
         "Should not emit TS2454 for `x` after `x = 1`, got: {diags:?}"
+    );
+}
+
+/// Optional-chain RHS expressions execute only on the present branch.
+/// Assignments inside optional element/call RHS must not count as definite assignment.
+#[test]
+fn test_ts2454_optional_chain_rhs_assignment_not_definite() {
+    let source = r"
+        declare const o: undefined | {
+            [key: string]: any;
+            (arg: number): void;
+            x(arg: number): void;
+        };
+
+        let a: number;
+        o?.[a = 1];
+        a.toFixed();
+
+        let b: number;
+        o?.(b = 1);
+        b.toFixed();
+
+        let c: number;
+        o?.x(c = 1);
+        c.toFixed();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 3,
+        "Expected TS2454 for assignments guarded by optional chaining, got: {diags:?}"
+    );
+}
+
+/// Non-optional element/call RHS expressions execute unconditionally.
+#[test]
+fn test_ts2454_non_optional_rhs_assignment_definite() {
+    let source = r"
+        declare const o: {
+            [key: string]: any;
+            (arg: number): void;
+            x(arg: number): void;
+        };
+
+        let a: number;
+        o[a = 1];
+        a.toFixed();
+
+        let b: number;
+        o(b = 1);
+        b.toFixed();
+
+        let c: number;
+        o.x(c = 1);
+        c.toFixed();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Non-optional RHS assignments should count as definite assignment, got: {diags:?}"
     );
 }

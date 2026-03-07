@@ -741,18 +741,9 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
             }
-            // Emit function exports: exports.compile = compile;
-            // For aliased exports (export { bar as baz }), emit: exports.baz = bar;
-            for (exported_name, local_name) in &func_exports {
-                self.write("exports.");
-                self.write(exported_name);
-                self.write(" = ");
-                self.write(local_name);
-                self.write(";");
-                self.write_line();
-            }
             // Emit hoisted default function exports: exports.default = funcName;
             // `export default function func() {}` is hoisted like named exports.
+            // tsc emits default exports before named function exports.
             // Multiple defaults can exist in error recovery (tsc emits all of them).
             let default_func_exports = if self.ctx.module_state.has_export_assignment {
                 Vec::new()
@@ -762,6 +753,16 @@ impl<'a> Printer<'a> {
             for name in &default_func_exports {
                 self.write("exports.default = ");
                 self.write(name);
+                self.write(";");
+                self.write_line();
+            }
+            // Emit function exports: exports.compile = compile;
+            // For aliased exports (export { bar as baz }), emit: exports.baz = bar;
+            for (exported_name, local_name) in &func_exports {
+                self.write("exports.");
+                self.write(exported_name);
+                self.write(" = ");
+                self.write(local_name);
                 self.write(";");
                 self.write_line();
             }

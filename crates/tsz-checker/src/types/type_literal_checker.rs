@@ -282,6 +282,21 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
+                // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
+                // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
+                // Without this, bare Lazy(DefId) misses the default instantiation and causes false
+                // TS2322 when compared against an explicit Application (e.g., Uint8Array<ArrayBuffer>).
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> = type_params
+                        .iter()
+                        .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                        .collect();
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx.insert_def_type_params(def_id, type_params);
+                    let base_type_id = factory.lazy(def_id);
+                    return factory.application(base_type_id, default_args);
+                }
                 // Use Lazy(DefId) instead of Ref(SymbolRef)
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
@@ -384,6 +399,12 @@ impl<'a> CheckerState<'a> {
         let mut string_index = None;
         let mut number_index = None;
         let mut has_abstract_construct_sig = false;
+        // Collect method signatures grouped by name to support overloaded methods.
+        // Each entry maps method name -> list of (CallSignature, optional, readonly).
+        let mut method_overloads: FxHashMap<Atom, Vec<(CallSignature, bool, bool)>> =
+            FxHashMap::default();
+        // Track insertion order for method overloads to preserve declaration_order.
+        let mut method_overload_order: Vec<Atom> = Vec::new();
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -458,29 +479,22 @@ impl<'a> CheckerState<'a> {
                                     sig.type_annotation,
                                     &params,
                                 );
-                            let shape = FunctionShape {
+                            let call_sig = CallSignature {
                                 type_params,
                                 params,
                                 this_type,
                                 return_type,
                                 type_predicate,
-                                is_constructor: false,
                                 is_method: true,
                             };
-                            let method_type = factory.function(shape);
                             self.pop_type_parameters(type_param_updates);
-                            properties.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: method_type,
-                                write_type: method_type,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: true,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: (properties.len()) as u32,
-                            });
+                            let optional = sig.question_token;
+                            let readonly = self.has_readonly_modifier(&sig.modifiers);
+                            let entry = method_overloads.entry(name_atom).or_default();
+                            if entry.is_empty() {
+                                method_overload_order.push(name_atom);
+                            }
+                            entry.push((call_sig, optional, readonly));
                         } else {
                             let type_id = if sig.type_annotation.is_some() {
                                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
@@ -628,6 +642,51 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: (properties.len()) as u32,
             });
+        }
+
+        // Merge overloaded method signatures into properties.
+        // Single-signature methods become Function types; multi-signature become Callable types.
+        for name_atom in method_overload_order {
+            if let Some(sigs) = method_overloads.remove(&name_atom) {
+                let optional = sigs.iter().all(|(_, opt, _)| *opt);
+                let readonly = sigs.iter().any(|(_, _, ro)| *ro);
+                let method_type = if sigs.len() == 1 {
+                    let (sig, _, _) = sigs.into_iter().next().unwrap();
+                    factory.function(FunctionShape {
+                        type_params: sig.type_params,
+                        params: sig.params,
+                        this_type: sig.this_type,
+                        return_type: sig.return_type,
+                        type_predicate: sig.type_predicate,
+                        is_constructor: false,
+                        is_method: true,
+                    })
+                } else {
+                    let merged_sigs: Vec<CallSignature> =
+                        sigs.into_iter().map(|(sig, _, _)| sig).collect();
+                    factory.callable(CallableShape {
+                        call_signatures: merged_sigs,
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    })
+                };
+                properties.push(PropertyInfo {
+                    name: name_atom,
+                    type_id: method_type,
+                    write_type: method_type,
+                    optional,
+                    readonly,
+                    is_method: true,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: (properties.len()) as u32,
+                });
+            }
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {

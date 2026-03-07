@@ -7,6 +7,7 @@ use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestParameterExtractor, RestPositionCheckExtractor, ReturnTypeExtractor,
     ThisTypeExtractor, ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
+    collect_single_or_union_no_reduce,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -158,10 +159,15 @@ impl<'a> ContextualTypeContext<'a> {
             if !has_callable_member || param_types.is_empty() {
                 return None;
             }
-            // If all callable members that contribute agree on the same type, use it.
-            // If they disagree, return a union of the parameter types (tsc behavior:
-            // contextual type is the union of parameter types across union members).
-            return collect_single_or_union(self.interner, param_types);
+            // Per TS spec §3.4: union call signatures must be identical (ignoring
+            // return types) for contextual parameter typing to apply. When callable
+            // members disagree on a parameter type at the same index, no contextual
+            // type is provided — this triggers TS7006 under noImplicitAny.
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                return Some(first);
+            }
+            return None;
         }
 
         // Handle Application explicitly.
@@ -203,9 +209,13 @@ impl<'a> ContextualTypeContext<'a> {
             return None;
         }
 
-        // Handle Mapped, Conditional, and Lazy types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
                 let cond = self.interner.conditional_type(cond_id);
@@ -290,7 +300,14 @@ impl<'a> ContextualTypeContext<'a> {
             return Some(TypeId::ANY);
         }
 
-        // Handle Union explicitly - collect parameter types from all members
+        // Handle Union explicitly - collect parameter types from all members.
+        // Use literal-only union reduction (no subtype reduction) to preserve
+        // all callback type variants. Full subtype reduction can incorrectly
+        // absorb callback types due to parameter contravariance. For example,
+        // with `Array<string>.map | Array<never>.map`, the callback
+        // `(value: string) => U` is a subtype of `(value: never) => U`
+        // (contravariant params), so subtype reduction would discard the
+        // string variant, losing contextual type information for parameters.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let param_types: Vec<TypeId> = members
@@ -301,7 +318,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return collect_single_or_union(self.interner, param_types);
+            return collect_single_or_union_no_reduce(self.interner, param_types);
         }
 
         // Handle Application explicitly.
@@ -340,9 +357,13 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
-        // Handle Mapped, Conditional, and Lazy types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
                 let cond = self.interner.conditional_type(cond_id);
@@ -770,7 +791,27 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
-        // Handle Mapped, Conditional, and Application types.
+        // Handle Intersection explicitly - collect property types from all members.
+        // This must go through get_property_type() per member (not the PropertyExtractor
+        // visitor) so that each member gets the full handling pipeline, including
+        // mapped-type-template extraction for patterns like T & {[P in keyof T]: V}.
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let mut result: Option<TypeId> = None;
+            for &m in members.iter() {
+                let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                if let Some(ty) = ctx.get_property_type(name)
+                    && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
+                {
+                    result = Some(ty);
+                }
+            }
+            if result.is_some() {
+                return result;
+            }
+        }
+
+        // Handle Mapped, Conditional, Application, and IndexAccess types.
         // These complex types need to be resolved to concrete object types before
         // property extraction can work.
         match self.interner.lookup(expected) {
@@ -845,7 +886,7 @@ impl<'a> ContextualTypeContext<'a> {
                     }
                 }
             }
-            Some(TypeData::Conditional(_) | TypeData::Lazy(_)) => {
+            Some(TypeData::Conditional(_) | TypeData::Lazy(_) | TypeData::IndexAccess(_, _)) => {
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);

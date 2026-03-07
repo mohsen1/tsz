@@ -40,5 +40,9 @@ path = "tests/optional_chaining_tests.rs"
 name = "computed_property_es5_tests"
 path = "tests/computed_property_es5_tests.rs"
 
+[[test]]
+name = "jsx_spread_tests"
+path = "tests/jsx_spread_tests.rs"
+
 [lints]
 workspace = true

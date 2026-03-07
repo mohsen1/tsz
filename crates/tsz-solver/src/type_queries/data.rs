@@ -968,6 +968,43 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+/// Instantiate a mapped type template for a specific property key, handling
+/// name collisions between the mapped key parameter and outer type parameters.
+///
+/// When a mapped type template is `IndexAccess(T, K)` and the object type `T`
+/// is a `TypeParameter` with the **same name atom** as the mapped key parameter,
+/// name-based `TypeSubstitution` would incorrectly replace both `T` and `K`
+/// with the key literal.  This happens with e.g. `Readonly<P>` where the lib
+/// defines `type Readonly<T> = { readonly [P in keyof T]: T[P] }` and the user
+/// has a type parameter also named `P`.
+///
+/// Returns `IndexAccess(T, key_literal)` when a collision is detected (bypassing
+/// substitution), or the normally-substituted template otherwise.
+pub fn instantiate_mapped_template_for_property(
+    db: &dyn TypeDatabase,
+    template: TypeId,
+    key_param_name: Atom,
+    key_literal: TypeId,
+) -> TypeId {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    // Check if template is IndexAccess(obj, key) where obj is a TypeParameter
+    // sharing the same name as the mapped key parameter.
+    if let Some((idx_obj, idx_key)) = get_index_access_types(db, template)
+        && idx_obj != idx_key
+        && let Some(info) = get_type_parameter_info(db, idx_obj)
+        && info.name == key_param_name
+    {
+        // Name collision detected — construct IndexAccess directly
+        return db.index_access(idx_obj, key_literal);
+    }
+
+    // Normal path: substitute the key parameter name with the key literal
+    let mut subst = TypeSubstitution::new();
+    subst.insert(key_param_name, key_literal);
+    instantiate_type(db, template, &subst)
+}
+
 /// Find the private brand name for a type.
 ///
 /// Private members in TypeScript classes use a "brand" property for nominal typing.

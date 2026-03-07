@@ -9,6 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::type_queries::is_unit_type;
 use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
@@ -353,7 +354,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Check if the switch expression is the literal `true` keyword.
     /// `switch(true)` is a pattern where each case clause acts as an independent
     /// type guard condition, not a comparison against the switch expression.
-    fn is_switch_true(&self, switch_expr: NodeIndex) -> bool {
+    pub(crate) fn is_switch_true(&self, switch_expr: NodeIndex) -> bool {
         self.arena
             .get(switch_expr)
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
@@ -946,7 +947,10 @@ impl<'a> FlowAnalyzer<'a> {
                                     .filter(|sym| sym.value_declaration.is_some())
                                     .and_then(|sym| {
                                         self.node_types.and_then(|nt| {
-                                            nt.get(&sym.value_declaration.0).copied()
+                                            self.annotation_type_from_var_decl_node(
+                                                sym.value_declaration,
+                                            )
+                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
                                         })
                                     });
                                 let narrowing_base = declared_type.unwrap_or(initial_type);
@@ -955,7 +959,26 @@ impl<'a> FlowAnalyzer<'a> {
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
                             // The value HAS changed, so we can't continue to antecedent
-                            current_type
+                            if self.is_await_assignment_for_reference(flow.node, reference) {
+                                // `x = await expr` assigns a realized value. When RHS typing
+                                // isn't available yet, keep this sound by at least excluding
+                                // `undefined` from the assignment base.
+                                let declared_type = symbol_id
+                                    .and_then(|sid| self.binder.get_symbol(sid))
+                                    .filter(|sym| sym.value_declaration.is_some())
+                                    .and_then(|sym| {
+                                        self.node_types.and_then(|nt| {
+                                            self.annotation_type_from_var_decl_node(
+                                                sym.value_declaration,
+                                            )
+                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
+                                        })
+                                    })
+                                    .unwrap_or(initial_type);
+                                tsz_solver::remove_undefined(self.interner, declared_type)
+                            } else {
+                                current_type
+                            }
                         }
                     } else {
                         // For any/error types: Don't apply narrowing - continue to antecedent
@@ -1046,7 +1069,8 @@ impl<'a> FlowAnalyzer<'a> {
                                         flow_flags::CONDITION
                                             | flow_flags::CALL
                                             | flow_flags::BRANCH_LABEL
-                                            | flow_flags::ASSIGNMENT,
+                                            | flow_flags::ASSIGNMENT
+                                            | flow_flags::SWITCH_CLAUSE,
                                     )
                                 });
                             if ant_needs_defer {
@@ -1373,14 +1397,14 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         } else if self.is_switch_true(switch_data.expression) {
-            // For switch(true), each case expression is an independent condition.
-            // Treat `case expr:` as `if (expr)` rather than `if (true === expr)`.
-            self.narrow_type_by_condition(
+            // For switch(true), dispatch to a case requires prior cases to be false
+            // and the current case condition to be true.
+            self.narrow_by_switch_true_case_clause(
                 pre_switch_type,
+                switch_data.case_block,
+                clause_idx,
                 clause.expression,
                 reference,
-                true,
-                FlowNodeId::NONE,
             )
         } else {
             self.narrow_by_switch_clause(
@@ -1464,10 +1488,29 @@ impl<'a> FlowAnalyzer<'a> {
             return self.apply_type_predicate_narrowing(pre_type, &resolved_predicate, true);
         }
 
+        // Optional-chain intermediate transport for assertion predicates:
+        // `assertNonNull(o?.foo)` and similar predicates prove that the chain
+        // reached its tail value, so prefix references (`o`, `o.foo` intermediates)
+        // must be non-nullish after the assertion.
+        //
+        // IMPORTANT: do not return early here. We still need to run discriminant
+        // and condition-based assertion narrowing on top of this transport.
+        let mut narrowed_pre_type = pre_type;
+        let mut applied_optional_chain_transport = false;
+        if self.contains_optional_chain(predicate_target)
+            && self.is_optional_chain_prefix(predicate_target, reference)
+        {
+            let narrowing = NarrowingContext::new(self.interner);
+            let narrowed = narrowing.narrow_excluding_type(pre_type, TypeId::NULL);
+            narrowed_pre_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            applied_optional_chain_transport = true;
+        }
+
         // Discriminant narrowing: if the predicate target is a property access on the
         // reference (e.g., assertEqual(animal.type, 'cat') narrows animal from Cat|Dog to Cat),
         // extract the property path and narrow the parent object by discriminant.
         if let Some(predicate_type) = resolved_predicate.type_id
+            && is_unit_type(self.interner, predicate_type)
             && let Some((property_path, _is_optional, base)) =
                 self.discriminant_property_info(predicate_target, reference)
             && self.is_matching_reference(base, reference)
@@ -1483,7 +1526,11 @@ impl<'a> FlowAnalyzer<'a> {
                 env_borrow = env.borrow();
                 narrowing = narrowing.with_resolver(&*env_borrow);
             }
-            return narrowing.narrow_by_discriminant(pre_type, &property_path, predicate_type);
+            return narrowing.narrow_by_discriminant(
+                narrowed_pre_type,
+                &property_path,
+                predicate_type,
+            );
         }
 
         // Condition-based assertion narrowing: for `assert(condition)` where the predicate
@@ -1494,7 +1541,7 @@ impl<'a> FlowAnalyzer<'a> {
         if resolved_predicate.type_id.is_none() {
             let antecedent_id = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
             return self.narrow_type_by_condition(
-                pre_type,
+                narrowed_pre_type,
                 predicate_target,
                 reference,
                 true,
@@ -1502,6 +1549,10 @@ impl<'a> FlowAnalyzer<'a> {
             );
         }
 
-        pre_type
+        if applied_optional_chain_transport {
+            narrowed_pre_type
+        } else {
+            pre_type
+        }
     }
 }

@@ -101,12 +101,15 @@ impl<'a> CheckerState<'a> {
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
-        // Eagerly resolve lib types referenced by Array's method signatures.
-        // When Array<T> is lowered, type references like ConcatArray<T> become
-        // Lazy(DefId). Without registering these types' bodies in TypeEnvironment,
-        // the solver's resolve_lazy falls through to a SymbolId-based fallback
-        // that can produce wrong types due to DefId/SymbolId value collisions.
-        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
+        // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
+        // method signatures. Without registering these types' bodies in TypeEnvironment,
+        // the solver's resolve_lazy falls through to a SymbolId-based fallback that can
+        // produce wrong types due to DefId/SymbolId value collisions.
+        // NOTE: ArrayIterator is NOT eagerly resolved here — it costs ~55ms due to deep
+        // interface merging chains (ArrayIterator → IteratorObject → Iterator + Disposable
+        // + esnext.iterator). Since the TypeInterner (DashMap) is shared across parallel
+        // checkers, ArrayIterator is resolved lazily on first use and cached globally.
+        for array_dep in &["ConcatArray", "FlatArray"] {
             let _ = self.resolve_lib_type_by_name(array_dep);
         }
 

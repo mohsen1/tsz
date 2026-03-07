@@ -29,7 +29,9 @@
 
 use crate::context::emit::EmitContext;
 use crate::context::transform::TransformContext;
-use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
+use crate::emitter::{
+    JsxEmit, ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget,
+};
 use crate::lowering::LoweringPass;
 use std::io::{self, Write};
 use tsz_parser::parser::NodeIndex;
@@ -55,6 +57,8 @@ pub struct PrintOptions {
     pub single_quote: bool,
     /// Enable source map generation
     pub source_map: bool,
+    /// JSX emit mode
+    pub jsx: JsxEmit,
 }
 
 impl PrintOptions {
@@ -99,6 +103,7 @@ impl PrintOptions {
             remove_comments: self.remove_comments,
             single_quote: self.single_quote,
             downlevel_iteration: false,
+            jsx: self.jsx,
             ..Default::default()
         }
     }

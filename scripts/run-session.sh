@@ -141,6 +141,56 @@ run_with_capture() {
   return $rc
 }
 
+# Runs a claude command with --output-format stream-json, parsing the NDJSON
+# stream to pretty-print progress to the terminal while saving raw JSON to file.
+# Usage: run_claude_streaming <outfile> <timeout_secs> <cmd...>
+run_claude_streaming() {
+  local outfile="$1" secs="$2"; shift 2
+
+  local full_cmd=("$@")
+  if [[ -n "$TIMEOUT_BIN" ]]; then
+    full_cmd=("$TIMEOUT_BIN" --foreground "$secs" "$@")
+  fi
+
+  "${full_cmd[@]}" < /dev/null 2>&1 | python3 -u -c "
+import sys, json
+
+outfile = '$outfile'
+with open(outfile, 'w') as raw:
+    for line in sys.stdin:
+        stripped = line.rstrip('\n')
+        raw.write(stripped + '\n')
+        raw.flush()
+        if not stripped:
+            continue
+        try:
+            ev = json.loads(stripped)
+        except json.JSONDecodeError:
+            print(stripped, file=sys.stderr, flush=True)
+            continue
+        t = ev.get('type', '')
+        if t == 'assistant':
+            msg = ev.get('message', {})
+            if msg.get('type') == 'text':
+                print(msg.get('text', ''), end='', file=sys.stderr, flush=True)
+        elif t == 'content_block_delta':
+            delta = ev.get('delta', {})
+            if delta.get('type') == 'text_delta':
+                print(delta.get('text', ''), end='', file=sys.stderr, flush=True)
+        elif t == 'tool_use':
+            name = ev.get('name', ev.get('tool', '???'))
+            print(f'\n\033[2m⚙  {name}\033[0m', file=sys.stderr, flush=True)
+        elif t == 'result':
+            text = ev.get('result', '')
+            if isinstance(text, str) and text:
+                print('\n' + text, file=sys.stderr, flush=True)
+    print('', file=sys.stderr, flush=True)
+"
+  local rc=${PIPESTATUS[0]}
+  sleep 0.1
+  return $rc
+}
+
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
 TMPFILES=()
 
@@ -243,22 +293,17 @@ discover_runners() {
     [[ -d "$dir" && -f "$dir/.claude.json" ]] && RUNNERS+=("claude:$dir")
   done
 
-  # Codex (if installed) — register spark and standard as separate runners
-  # (they have independent credit pools)
+  # Codex (if installed)
   if command -v codex >/dev/null 2>&1; then
-    RUNNERS+=("codex-spark:gpt-5.3-codex-spark")
-    RUNNERS+=("codex:gpt-5.3-codex")
+    RUNNERS+=("codex:gpt-5.4-codex")
   fi
 
-  # Apply filter ("codex" matches both codex and codex-spark)
+  # Apply filter
   if [[ -n "$RUNNER_FILTER" ]]; then
     local filtered=()
     for r in "${RUNNERS[@]}"; do
       local rtype="${r%%:*}"
-      case "$RUNNER_FILTER" in
-        codex)  [[ "$rtype" == codex || "$rtype" == codex-spark ]] && filtered+=("$r") ;;
-        *)      [[ "$rtype" == "$RUNNER_FILTER" ]] && filtered+=("$r") ;;
-      esac
+      [[ "$rtype" == "$RUNNER_FILTER" ]] && filtered+=("$r")
     done
     RUNNERS=("${filtered[@]}")
   fi
@@ -275,8 +320,6 @@ runner_label() {
     local dir_name
     dir_name="$(basename "$path")"
     echo "claude($dir_name)"
-  elif [[ "$type" == "codex-spark" ]]; then
-    echo "codex-spark($path)"
   elif [[ "$type" == "codex" ]]; then
     echo "codex($path)"
   else
@@ -416,7 +459,7 @@ check_output_for_drain() {
         return 0
       fi
     done
-  elif [[ "$type" == "codex" || "$type" == "codex-spark" ]]; then
+  elif [[ "$type" == "codex" ]]; then
     for pat in "${CODEX_DRAIN_PATTERNS[@]}"; do
       if echo "$combined_output" | grep -qi "$pat"; then
         return 0
@@ -452,27 +495,23 @@ try_runner() {
   local exit_code=0
 
   if [[ "$type" == "claude" ]]; then
-    local cmd=(claude --dangerously-skip-permissions -p "$prompt")
+    local cmd=(claude --dangerously-skip-permissions --verbose --output-format stream-json -p "$prompt")
 
     if $DRY_RUN; then
-      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=$CLAUDE_AGENT_TEAMS claude --dangerously-skip-permissions -p <${SESSION_NAME:-session.sh}>"
+      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=$CLAUDE_AGENT_TEAMS claude --dangerously-skip-permissions --verbose --output-format stream-json -p <${SESSION_NAME:-session.sh}>"
       return 0
     fi
 
     set +e
-    CLAUDE_CONFIG_DIR="$path" CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="$CLAUDE_AGENT_TEAMS" run_with_capture "$output_tmp" \
+    CLAUDE_CONFIG_DIR="$path" CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="$CLAUDE_AGENT_TEAMS" run_claude_streaming "$output_tmp" \
       "$TIMEOUT_SECONDS" "${cmd[@]}"
     exit_code=$?
     set -e
 
-  elif [[ "$type" == "codex-spark" || "$type" == "codex" ]]; then
-    # path holds the model name (e.g. gpt-5.3-codex-spark)
+  elif [[ "$type" == "codex" ]]; then
+    # path holds the model name (e.g. gpt-5.4-codex)
     local model="$path"
-    local effort="medium"
-    if [[ "$type" == "codex-spark" ]]; then
-      effort="xhigh"
-    fi
-    local cmd=(codex exec --model="$model" --config "model_reasoning_effort=$effort" --dangerously-bypass-approvals-and-sandbox "$prompt")
+    local cmd=(codex exec --model="$model" --dangerously-bypass-approvals-and-sandbox "$prompt")
 
     if $DRY_RUN; then
       log "[DRY-RUN] Would execute: codex exec --model=$model ... -p <${SESSION_NAME:-session.sh}>"

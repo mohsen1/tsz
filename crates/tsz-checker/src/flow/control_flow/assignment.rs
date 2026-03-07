@@ -6,8 +6,8 @@
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, fallback_compound_assignment_result, get_array_element_type,
-    is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,
-    widen_literal_to_primitive,
+    get_lazy_def_id, is_compound_assignment_operator, map_compound_assignment_to_binary,
+    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -193,6 +193,9 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
+                let rhs_type = self
+                    .assigned_type_for_await_rhs(rhs, rhs_type)
+                    .unwrap_or(rhs_type);
                 tracing::trace!(
                     "get_assigned_type: node_types HIT for rhs {:?} -> {:?}",
                     rhs,
@@ -213,7 +216,14 @@ impl<'a> FlowAnalyzer<'a> {
                         .and_then(|sym| self.binder.get_symbol(sym))
                         .map(|sym| sym.value_declaration)
                         .filter(|decl| decl.is_some())
-                        .and_then(|decl| node_types.get(&decl.0).copied())
+                        .and_then(|decl| {
+                            // Prefer explicit type annotations when available.
+                            // `node_types[decl]` can hold a flow-initialized value type
+                            // (e.g. `undefined`) instead of the declared annotation type,
+                            // which would incorrectly block assignment-based narrowing.
+                            self.annotation_type_from_var_decl_node(decl)
+                                .or_else(|| node_types.get(&decl.0).copied())
+                        })
                         .or_else(|| node_types.get(&bin.left.0).copied());
 
                     if let Some(lhs_type) = declared_target_type
@@ -284,6 +294,39 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn assigned_type_for_await_rhs(&self, rhs: NodeIndex, rhs_type: TypeId) -> Option<TypeId> {
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+            return None;
+        }
+
+        // If the await node itself was cached as a promise-like application, unwrap once.
+        if let Some(inner) = unwrap_promise_type_argument(self.interner, rhs_type) {
+            return Some(inner);
+        }
+
+        // Fallback: derive from operand type (for cases where await-node cache
+        // carries the pre-unwrapped promise-like type).
+        let unary = self.arena.get_unary_expr_ex(rhs_node)?;
+        let operand_type = self
+            .node_types
+            .and_then(|nt| nt.get(&unary.expression.0).copied())?;
+        if let Some(inner) = unwrap_promise_type_argument(self.interner, operand_type) {
+            return Some(inner);
+        }
+        None
+    }
+
+    pub(crate) fn is_await_assignment_for_reference(
+        &self,
+        assignment_node: NodeIndex,
+        target: NodeIndex,
+    ) -> bool {
+        self.assignment_rhs_for_reference(assignment_node, target)
+            .and_then(|rhs| self.arena.get(rhs))
+            .is_some_and(|rhs_node| rhs_node.kind == syntax_kind_ext::AWAIT_EXPRESSION)
     }
 
     /// Compute the type of a for-in loop variable.
@@ -923,6 +966,14 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
+        // Resolve Lazy(DefId) types to their concrete representations via the
+        // TypeEnvironment before structural subtype comparison. node_types may
+        // store unevaluated type alias references when a variable was inferred
+        // (no annotation), while union members are already resolved. Without this,
+        // the bare SubtypeChecker used by are_types_mutually_subtype cannot match
+        // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
+        let assigned_type = self.resolve_lazy_via_env(assigned_type);
+
         let mut kept = Vec::new();
         for &m in &members {
             if are_types_mutually_subtype(self.interner, assigned_type, m) {
@@ -936,6 +987,21 @@ impl<'a> FlowAnalyzer<'a> {
             kept[0]
         } else {
             self.interner.union(kept)
+        }
+    }
+
+    /// Resolve a `Lazy(DefId)` type to its concrete representation using the
+    /// `TypeEnvironment`. Returns the original type if not lazy or if the
+    /// environment is unavailable / doesn't contain the DefId.
+    fn resolve_lazy_via_env(&self, type_id: TypeId) -> TypeId {
+        if let Some(def_id) = get_lazy_def_id(self.interner, type_id) {
+            if let Some(ref env) = self.type_environment {
+                env.borrow().get_def(def_id).unwrap_or(type_id)
+            } else {
+                type_id
+            }
+        } else {
+            type_id
         }
     }
 }

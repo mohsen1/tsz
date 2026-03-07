@@ -52,6 +52,7 @@ Run options:
   --workers N       Number of parallel workers (default: 16)
   --profile NAME    Cargo build profile (default: dist-fast)
   --no-cache        Force cache regeneration even if cache exists
+  --force           Override snapshot safety guards (dirty-tree + regression check)
 
 Analyze options:
   --campaigns       Show recommended root-cause campaigns
@@ -583,6 +584,18 @@ snapshot_tests() {
     local git_sha
     git_sha="$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo 'unknown')"
 
+    # Guard 1: Dirty-tree check — prevent snapshots from uncommitted or worktree builds
+    if [ "$FORCE_SNAPSHOT" != "true" ]; then
+        local dirty
+        dirty="$(cd "$REPO_ROOT" && git status --porcelain -- crates/ src/ Cargo.toml Cargo.lock 2>/dev/null | head -1)"
+        if [ -n "$dirty" ]; then
+            echo -e "${YELLOW}ERROR: Working tree has uncommitted changes to source files.${NC}"
+            echo -e "${YELLOW}Snapshot would record a score that doesn't match any commit.${NC}"
+            echo -e "${YELLOW}Commit or stash your changes first, or use --force to override.${NC}"
+            return 1
+        fi
+    fi
+
     echo -e "${GREEN}Running full conformance snapshot (run + analyze + areas)...${NC}"
 
     cd "$REPO_ROOT"
@@ -625,6 +638,31 @@ json.dump({'total': total, 'passed': passed, 'failed': total - passed, 'rate': r
     passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
     failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
     pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
+
+    # Guard 2: Regression check — abort if score dropped >5% from previous snapshot
+    if [ "$FORCE_SNAPSHOT" != "true" ] && [ -f "$snapshot_file" ]; then
+        local prev_rate
+        prev_rate=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d['summary']['pass_rate'])
+except: print(0)
+" "$snapshot_file")
+        local drop
+        drop=$(python3 -c "
+prev, curr = float('$prev_rate'), float('$pass_rate')
+print(f'{prev - curr:.1f}')
+")
+        local is_regression
+        is_regression=$(python3 -c "print('yes' if float('$drop') > 5.0 else 'no')")
+        if [ "$is_regression" = "yes" ]; then
+            echo -e "${YELLOW}ERROR: Snapshot score dropped ${drop}% (${prev_rate}% -> ${pass_rate}%).${NC}"
+            echo -e "${YELLOW}This likely indicates a stale build or broken binary.${NC}"
+            echo -e "${YELLOW}Use --force to save the snapshot anyway.${NC}"
+            return 1
+        fi
+    fi
 
     # 3) Build per-test detail snapshot (compact JSON with all failure data)
     local detail_file="$REPO_ROOT/scripts/conformance-detail.json"
@@ -730,12 +768,15 @@ fi
 
 # Check for flags
 NO_CACHE=false
+FORCE_SNAPSHOT=false
 REMAINING_ARGS=()
 i=0
 while [ $i -lt ${#@} ]; do
     arg="${@:$((i+1)):1}"
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
+    elif [ "$arg" = "--force" ]; then
+        FORCE_SNAPSHOT=true
     elif [ "$arg" = "--workers" ]; then
         i=$((i + 1))
         WORKERS="${@:$((i+1)):1}"

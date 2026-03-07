@@ -989,6 +989,32 @@ fn test_ts2322_target_es3_vs_target_es2015_jsdoc_annotation_mismatch() {
 }
 
 #[test]
+fn test_call_object_literal_optional_param_prefers_property_ts2322_over_ts2345() {
+    let source = r#"
+function foo({ x, y, z }?: { x: string; y: number; z: boolean }) {}
+foo({ x: false, y: 0, z: "" });
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    let has_ts2345 = diagnostics.iter().any(|(code, _)| {
+        *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+    });
+
+    assert!(
+        ts2322_count >= 2,
+        "Expected property-level TS2322 diagnostics for mismatched object literal fields, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2345,
+        "Expected no top-level TS2345 when property-level TS2322 elaboration applies, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
     let source = r#"
         // @ts-check
