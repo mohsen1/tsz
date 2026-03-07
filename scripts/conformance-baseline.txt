@@ -21,6 +21,7 @@ FAIL TypeScript/tests/cases/compiler/arraySigChecking.ts
 FAIL TypeScript/tests/cases/compiler/arrayToLocaleStringES2015.ts
 FAIL TypeScript/tests/cases/compiler/arrayToLocaleStringES2020.ts
 FAIL TypeScript/tests/cases/compiler/arrowFunctionsMissingTokens.ts
+FAIL TypeScript/tests/cases/compiler/assertionFunctionsCanNarrowByDiscriminant.ts
 FAIL TypeScript/tests/cases/compiler/assigningFromObjectToAnythingElse.ts
 FAIL TypeScript/tests/cases/compiler/assignmentCompat1.ts
 FAIL TypeScript/tests/cases/compiler/assignmentCompatability35.ts
@@ -1485,6 +1486,7 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameter
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration6.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration8.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration9.ts
+FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterProperties1.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterProperties2.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterProperties3.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterProperties4.ts
@@ -2669,7 +2671,6 @@ PASS TypeScript/tests/cases/compiler/asiInES6Classes.ts
 PASS TypeScript/tests/cases/compiler/asiPublicPrivateProtected.ts
 PASS TypeScript/tests/cases/compiler/asiReturn.ts
 PASS TypeScript/tests/cases/compiler/assertInWrapSomeTypeParameter.ts
-PASS TypeScript/tests/cases/compiler/assertionFunctionsCanNarrowByDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/assertionFunctionWildcardImport1.ts
 PASS TypeScript/tests/cases/compiler/assertionFunctionWildcardImport2.ts
 PASS TypeScript/tests/cases/compiler/assign1.ts
@@ -8789,7 +8790,6 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameter
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration5.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration7ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration7ES5iterable.ts
-PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterProperties1.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringReassignsRightHandSide.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringSameNames.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringTypeAssertionsES5_1.ts
