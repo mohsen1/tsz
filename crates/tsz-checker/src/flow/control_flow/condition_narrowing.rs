@@ -317,6 +317,9 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if cond_node.kind == SyntaxKind::Identifier as u16
+            // Direct truthiness checks (`if (x)`, `x && ...`, `x! && ...`) must narrow
+            // the reference itself. Alias recursion is only for `const alias = guard`.
+            && !self.is_matching_reference(condition_idx, target)
             && let Some((sym_id, initializer)) = self.const_condition_initializer(condition_idx)
             && !visited_aliases.contains(&sym_id)
         {
