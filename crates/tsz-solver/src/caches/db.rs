@@ -98,6 +98,18 @@ pub trait TypeDatabase {
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
 
+    /// Create a string intrinsic type by name ("Uppercase", "Lowercase", "Capitalize", "Uncapitalize").
+    /// Returns `TypeId::ERROR` for unrecognized names.
+    fn string_intrinsic_by_name(&self, name: &str, type_arg: TypeId) -> TypeId {
+        match name {
+            "Uppercase" => self.string_intrinsic(StringIntrinsicKind::Uppercase, type_arg),
+            "Lowercase" => self.string_intrinsic(StringIntrinsicKind::Lowercase, type_arg),
+            "Capitalize" => self.string_intrinsic(StringIntrinsicKind::Capitalize, type_arg),
+            "Uncapitalize" => self.string_intrinsic(StringIntrinsicKind::Uncapitalize, type_arg),
+            _ => TypeId::ERROR,
+        }
+    }
+
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.

@@ -288,7 +288,20 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ERROR;
                 }
-                if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                // Compiler-intrinsic types (NoInfer, string manipulation) must go
+                // through the lowering path which creates the correct TypeData
+                // variants (NoInfer, StringIntrinsic). The lib binder fallback
+                // below would create generic Application(Lazy(DefId), args) which
+                // can't be evaluated because intrinsic types have no body.
+                let is_intrinsic_type = matches!(
+                    name,
+                    "NoInfer" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
+                );
+                if !is_intrinsic_type
+                    && !is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                {
                     // Only try resolving from lib binders if lib files are loaded (noLib is false)
                     if has_libs {
                         // Try resolving from lib binders before falling back to UNKNOWN
