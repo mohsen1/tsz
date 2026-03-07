@@ -5306,3 +5306,39 @@ class Base {
          Got: {ts2339:?}"
     );
 }
+
+// =============================================================================
+// Closure narrowing for destructured parameter bindings
+// =============================================================================
+
+#[test]
+fn test_destructured_parameter_preserves_narrowing_in_closure() {
+    // Destructured parameter bindings (like `a` from `{ a, b }`) are const-like
+    // because they cannot be reassigned. Narrowing should persist in closures.
+    let source = r#"
+function ff({ a, b }: { a: string | undefined, b: () => void }) {
+  if (a !== undefined) {
+    b = () => {
+      const x: string = a;
+    }
+  }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Destructured parameter binding 'a' should preserve narrowing in closure.\n\
+         Expected 0 TS2322 errors, got {}: {ts2322:?}",
+        ts2322.len()
+    );
+}
