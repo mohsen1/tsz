@@ -6306,3 +6306,43 @@ A safe shared fix requires separating:
 3. diagnostic code/site selection policy (TS2345 vs TS2322) for nested object/rest mismatches.
 
 A local tweak in call checker risks broad regressions across Big3 and JSX/call sites. No conformance-affecting fix was committed in this slice.
+
+## Session 2026-03-07j — big3: object-literal arg elaboration for optional param unions (+1 conformance)
+
+### Campaign
+- **Primary campaign status**: Narrowing-flow remained blocked (no basket movement).
+- **Follow-on claimed**: **big3** (per queue).
+
+### Representative basket
+- `optionalBindingParameters2.ts`
+- `coAndContraVariantInferences6.ts`
+- `genericRestParameters1.ts`
+
+### Shared invariant
+When a call-argument mismatch comes from object-literal member value incompatibility and the parameter type is wrapped in a nullish union (e.g. `{...} | undefined`), diagnostics should elaborate to member-level `TS2322` instead of top-level `TS2345`.
+
+### Root cause
+`try_elaborate_object_literal_arg_error` used the raw parameter type for property lookup. For optional/nullish parameter unions, property resolution failed early, so elaboration returned `false` and call handling emitted fallback `TS2345`.
+
+### Fix
+- **File**: `crates/tsz-checker/src/error_reporter/call_errors.rs`
+- **Change**: In `try_elaborate_object_literal_properties`, normalize `param_type` via `split_nullish_type` before property lookup/elaboration.
+- Keeps existing routing architecture (`CallResult::ArgumentTypeMismatch` -> elaboration path -> fallback) and avoids checker-local ad-hoc call-site heuristics.
+
+### Tests
+- Added focused regression:
+  - `crates/tsz-checker/tests/ts2322_tests.rs`
+  - `test_call_object_literal_optional_param_prefers_property_ts2322_over_ts2345`
+
+### Validation
+- `cargo nextest run -p tsz-checker --test ts2322_tests test_call_object_literal_optional_param_prefers_property_ts2322_over_ts2345`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter optionalBindingParameters2 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+
+### Result
+- **Flipped to PASS**: `optionalBindingParameters2.ts`
+- **Still failing**: `coAndContraVariantInferences6.ts` (separate call inference/index routing path)
+- Snapshot refreshed:
+  - `scripts/conformance-snapshot.json`
+  - `scripts/conformance-detail.json`
+  - `scripts/conformance-baseline.txt`
