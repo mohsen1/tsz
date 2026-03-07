@@ -1005,14 +1005,35 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         } else {
             // Multiple call signatures with potentially different parameter types.
             // If all signatures agree on the same type, use it.
-            // Otherwise, tsc provides no contextual type (returns None), which causes
-            // TS7006 to be reported when noImplicitAny is enabled. We must NOT create
-            // a union of the parameter types, as that would suppress TS7006 incorrectly.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
-                Some(first)
+                return Some(first);
+            }
+            // When signatures disagree, filter out `any` parameters.
+            // This handles intersection evaluation artifacts where
+            // `T & ((arg: string) => any)` produces a Callable with a degraded
+            // `(any?) => any` signature from the unresolved T alongside the real
+            // `(arg: string) => any` signature. The `any`-parameterized signatures
+            // should not block contextual typing from more specific signatures.
+            let non_any: Vec<TypeId> = param_types
+                .iter()
+                .copied()
+                .filter(|&t| t != TypeId::ANY)
+                .collect();
+            if non_any.is_empty() {
+                // All signatures have `any` at this position — provide `any`
+                // as contextual type to suppress TS7006.
+                Some(TypeId::ANY)
+            } else if non_any.len() == 1 {
+                Some(non_any[0])
             } else {
-                None
+                let first_non_any = non_any[0];
+                if non_any.iter().all(|&t| t == first_non_any) {
+                    Some(first_non_any)
+                } else {
+                    // Genuinely different non-any types: no contextual type (TS7006).
+                    None
+                }
             }
         }
     }
