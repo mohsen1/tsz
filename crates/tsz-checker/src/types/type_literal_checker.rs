@@ -282,6 +282,21 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
+                // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
+                // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
+                // Without this, bare Lazy(DefId) misses the default instantiation and causes false
+                // TS2322 when compared against an explicit Application (e.g., Uint8Array<ArrayBuffer>).
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> = type_params
+                        .iter()
+                        .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                        .collect();
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx.insert_def_type_params(def_id, type_params);
+                    let base_type_id = factory.lazy(def_id);
+                    return factory.application(base_type_id, default_args);
+                }
                 // Use Lazy(DefId) instead of Ref(SymbolRef)
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
