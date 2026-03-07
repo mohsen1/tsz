@@ -1566,16 +1566,17 @@ impl<'a> CheckerState<'a> {
                     } else if joined.contains("from")
                         && !joined.contains('"')
                         && !joined.contains('\'')
-                        && let Some(from_off) = rest_full[..next_tag].rfind("from") {
-                            self.ctx
-                                .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                                    self.ctx.file_name.clone(),
-                                    comment.pos + after_import as u32 + from_off as u32 + 4,
-                                    1,
-                                    diagnostic_messages::EXPRESSION_EXPECTED,
-                                    diagnostic_codes::EXPRESSION_EXPECTED,
-                                ));
-                        }
+                        && let Some(from_off) = rest_full[..next_tag].rfind("from")
+                    {
+                        self.ctx
+                            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                comment.pos + after_import as u32 + from_off as u32 + 4,
+                                1,
+                                diagnostic_messages::EXPRESSION_EXPECTED,
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            ));
+                    }
                     search_from = after_import;
                 }
             }

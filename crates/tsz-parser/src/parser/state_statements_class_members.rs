@@ -759,10 +759,11 @@ impl ParserState {
                 members.push(member);
 
                 // After a successfully parsed member without a trailing semicolon,
-                // if the next token cannot start a new class member, emit TS1005
-                // "';' expected" and skip. This matches tsc's behavior when expression
-                // continuations across line breaks (e.g., `= 0[e2]`) leave trailing
-                // tokens like `:` or `{` that can't start a class member.
+                // if the next token cannot start a new class member, emit TS1068
+                // and skip. This matches tsc's parseList/abortParsingListOrMoveToNextToken
+                // behavior for ClassMembers context. If a prior TS1005 was already emitted
+                // at this exact position (from parseSemicolon within the member), the
+                // parse_error_at dedup will suppress this TS1068, preserving the TS1005.
                 if !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                     && !self.is_token(SyntaxKind::SemicolonToken)
@@ -770,7 +771,10 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::AsteriskToken) // generator method
                     && !self.is_property_name()
                 {
-                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.parse_error_at_current_token(
+                        "Unexpected token. A constructor, method, accessor, or property was expected.",
+                        diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                    );
                     self.next_token();
                 }
             }
