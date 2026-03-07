@@ -741,10 +741,60 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // Sanitize certain function-literal arg types for the second resolve_call
+                    // pass. The sensitive placeholder `(any?) => any` from Round 1 can
+                    // contaminate the solver's type parameter inference when the shape
+                    // param is a bare type parameter or intersection (e.g., `T` or
+                    // `T & Callback`). In those cases, T gets inferred as `(any?) => any`,
+                    // producing Callable types with conflicting call signatures that break
+                    // contextual typing and cause false TS7006 errors.
+                    //
+                    // However, when the shape param is a generic callable like
+                    // `Predicate<A>`, the placeholder's callable structure is useful for
+                    // inferring inner type params (A = any from placeholder params).
+                    // Replacing with UNKNOWN would lose this inference (A = unknown).
+                    //
+                    // Rule: only sanitize when the shape param IS or CONTAINS a top-level
+                    // type parameter (bare T, T & Callable, etc). Leave generic callables
+                    // like Predicate<A> alone since those handle the placeholder correctly.
+                    let sanitized_arg_types: Vec<TypeId> =
+                        round1_arg_types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &ty)| {
+                                if i < sensitive_args.len()
+                                    && sensitive_args[i]
+                                    && self.ctx.arena.get(args[i]).is_some_and(|n| {
+                                        n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                            || n.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    })
+                                    && shape.params.get(i).is_some_and(|p| {
+                                        // Check if the param type is a bare type parameter
+                                        // or an intersection containing a type parameter
+                                        let pt = p.type_id;
+                                        tsz_solver::type_param_info(self.ctx.types, pt).is_some()
+                                            || tsz_solver::type_queries::get_intersection_members(
+                                                self.ctx.types,
+                                                pt,
+                                            )
+                                            .is_some_and(|members| {
+                                                members.iter().any(|&m| {
+                                                    tsz_solver::type_param_info(self.ctx.types, m)
+                                                        .is_some()
+                                                })
+                                            })
+                                    })
+                                {
+                                    TypeId::UNKNOWN
+                                } else {
+                                    ty
+                                }
+                            })
+                            .collect();
                     let round1_instantiated_params = self
                         .resolve_call_with_checker_adapter(
                             callee_type_for_context,
-                            &round1_arg_types,
+                            &sanitized_arg_types,
                             force_bivariant_callbacks,
                             self.ctx.contextual_type,
                             actual_this_type,
