@@ -317,6 +317,12 @@ pub struct CheckerContext<'a> {
     /// Avoids recomputing constructor inheritance checks in class-heavy programs.
     pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
 
+    /// Shared evaluation cache for `evaluate_type_with_env` results.
+    /// Avoids re-evaluating the same `TypeId` through recursive mapped/conditional
+    /// types on every call (e.g., `DeepPartial<Normalize<T>>` accessed 11k+ times
+    /// in optional-chain-heavy benchmarks). Analogous to `node_types` for nodes.
+    pub env_eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
     pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,

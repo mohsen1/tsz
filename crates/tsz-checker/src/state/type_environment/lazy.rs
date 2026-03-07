@@ -81,6 +81,16 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::TypeEvaluator;
 
+        // Fast path: intrinsic types don't need evaluation
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        // Check shared evaluation cache
+        if let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
+            return cached;
+        }
+
         self.ensure_relation_input_ready(type_id);
 
         // Use type_env (not type_environment) because type_env is updated during
@@ -98,7 +108,7 @@ impl<'a> CheckerState<'a> {
 
         // If the result still contains IndexAccess types, try again with the full
         // checker context as resolver (which can resolve type parameters etc.)
-        if query::index_access_types(self.ctx.types, result).is_some() {
+        let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
@@ -107,7 +117,14 @@ impl<'a> CheckerState<'a> {
             result
         } else {
             result
-        }
+        };
+
+        // Cache the final result
+        self.ctx
+            .env_eval_cache
+            .borrow_mut()
+            .insert(type_id, final_result);
+        final_result
     }
 
     pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {
