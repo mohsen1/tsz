@@ -605,7 +605,6 @@ FAIL TypeScript/tests/cases/compiler/invalidLetInForOfAndForIn_ES6.ts
 FAIL TypeScript/tests/cases/compiler/invalidOptionalChainFromNewExpression.ts
 FAIL TypeScript/tests/cases/compiler/invalidReferenceSyntax1.ts
 FAIL TypeScript/tests/cases/compiler/invalidSplice.ts
-FAIL TypeScript/tests/cases/compiler/invalidThisEmitInContextualObjectLiteral.ts
 FAIL TypeScript/tests/cases/compiler/invariantGenericErrorElaboration.ts
 FAIL TypeScript/tests/cases/compiler/ipromise2.ts
 FAIL TypeScript/tests/cases/compiler/ipromise4.ts
@@ -729,7 +728,6 @@ FAIL TypeScript/tests/cases/compiler/manyCompilerErrorsInTheTwoFiles.ts
 FAIL TypeScript/tests/cases/compiler/mapGroupBy.ts
 FAIL TypeScript/tests/cases/compiler/mappedToToIndexSignatureInference.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeAsStringTemplate.ts
-FAIL TypeScript/tests/cases/compiler/mappedTypeContextualTypesApplied.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericWithKnownKeys.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccess.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts
@@ -5419,6 +5417,7 @@ PASS TypeScript/tests/cases/compiler/intrinsics.ts
 PASS TypeScript/tests/cases/compiler/invalidConstraint1.ts
 PASS TypeScript/tests/cases/compiler/invalidStaticField.ts
 PASS TypeScript/tests/cases/compiler/invalidSymbolInTypeParameter1.ts
+PASS TypeScript/tests/cases/compiler/invalidThisEmitInContextualObjectLiteral.ts
 PASS TypeScript/tests/cases/compiler/invalidTripleSlashReference.ts
 PASS TypeScript/tests/cases/compiler/invalidTypeNames.ts
 PASS TypeScript/tests/cases/compiler/invalidUnicodeEscapeSequance.ts
@@ -5718,6 +5717,7 @@ PASS TypeScript/tests/cases/compiler/mapOnTupleTypes02.ts
 PASS TypeScript/tests/cases/compiler/mappedArrayTupleIntersections.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeAndIndexSignatureRelation.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeCircularReferenceInAccessor.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeContextualTypesApplied.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericIndexedAccess.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesHomomorphism.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesInlineForm.ts
@@ -10289,7 +10289,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
