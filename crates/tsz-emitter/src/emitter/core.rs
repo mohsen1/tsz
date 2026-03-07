@@ -15,6 +15,17 @@ use tsz_scanner::SyntaxKind;
 /// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
 
+/// How a class property name should be emitted in `ClassName.name = ...` assignments.
+#[derive(Clone)]
+pub(crate) enum PropertyNameEmit {
+    /// Identifier: `ClassName.foo = ...`
+    Dot(String),
+    /// String literal: `ClassName["foo"] = ...`
+    Bracket(String),
+    /// Numeric literal: `ClassName[0] = ...`
+    BracketNumeric(String),
+}
+
 // =============================================================================
 // Emitter Options
 // =============================================================================
