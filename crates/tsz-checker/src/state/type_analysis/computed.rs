@@ -54,8 +54,8 @@ impl<'a> CheckerState<'a> {
             && let Some(node) = self.ctx.arena.get(decl_idx)
             && let Some(class) = self.ctx.arena.get_class(node)
         {
-            // Compute both constructor and instance types
             let ctor_type = self.get_class_constructor_type(decl_idx, class);
+            self.ctx.symbol_types.insert(sym_id, ctor_type);
             let instance_type = self.get_class_instance_type(decl_idx, class);
 
             // Cache instance type for TYPE position resolution
