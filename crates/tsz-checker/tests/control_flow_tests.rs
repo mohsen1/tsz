@@ -2736,6 +2736,108 @@ function f(v: 0 | 1): number {
     );
 }
 
+#[test]
+fn test_typeof_switch_exhaustive_unknown_reports_unreachable_not_ts2366() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+const unreachable = (x: unknown): number => {
+    switch (typeof x) {
+        case "string": return 0;
+        case "number": return 0;
+        case "bigint": return 0;
+        case "boolean": return 0;
+        case "symbol": return 0;
+        case "undefined": return 0;
+        case "object": return 0;
+        case "function": return 0;
+    }
+    x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    let has_ts7027 = checker.ctx.diagnostics.iter().any(|d| d.code == 7027);
+    assert!(
+        !has_ts2366,
+        "Exhaustive typeof switch should not produce TS2366; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        has_ts7027,
+        "Exhaustive typeof switch tail should be unreachable (TS7027); diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_typeof_switch_exhaustive_any_reports_unreachable_not_ts2366() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+const unreachable = (x: any): number => {
+    switch (typeof x) {
+        case "string": return 0;
+        case "number": return 0;
+        case "bigint": return 0;
+        case "boolean": return 0;
+        case "symbol": return 0;
+        case "undefined": return 0;
+        case "object": return 0;
+        case "function": return 0;
+    }
+    x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    let has_ts7027 = checker.ctx.diagnostics.iter().any(|d| d.code == 7027);
+    assert!(
+        !has_ts2366,
+        "Exhaustive typeof switch should not produce TS2366; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        has_ts7027,
+        "Exhaustive typeof switch tail should be unreachable (TS7027); diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 /// Test that && creates intermediate flow condition nodes for the right operand.
 ///
 /// For `typeof x === 'object' && x`, the `x` on the right side of `&&` should
