@@ -201,6 +201,22 @@ Known gaps (binder CFG + solver narrowing):
 Fix: Keep CFG shape fixes in binder, not in checker heuristics. Make solver narrowing consume
 those facts through one AST-agnostic guard API. Every correct CFG edge fixes many diagnostics.
 
+**Session notes (2026-03-07 evening):**
+- Root invariant: equality/typeof checks on optional-chain expressions should transport
+  non-nullish facts to chain prefixes (`o`, `o.foo`) when the compared value cannot come
+  from optional-chain short-circuiting.
+- Implemented shared condition-narrowing transport for optional-chain comparisons in
+  `flow/control_flow/condition_narrowing.rs` (strict and loose equality handling).
+- Expanded optional-chain target discovery to include call-chain shapes (`o?.bar()`), not just
+  property/element access chains.
+- Added focused checker tests:
+  - `test_optional_chain_strict_equality_transports_non_nullish_to_base`
+  - `test_non_null_assertion_condition_narrows_underlying_reference`
+- Targeted conformance impact:
+  - `controlFlowOptionalChain.ts`: extra TS18047 removed at code level (still fingerprint deltas).
+  - `controlFlowOptionalChain2.ts` and `controlFlowOptionalChain3.tsx` remain passing.
+  - `narrowingWithNonNullExpression.ts` remains failing (separate non-null assertion transport path).
+
 ### Known Architecture Drift
 
 These are specific findings that should be addressed as part of campaign work:
