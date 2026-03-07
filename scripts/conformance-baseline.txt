@@ -21,7 +21,6 @@ FAIL TypeScript/tests/cases/compiler/arrayFakeFlatNoCrashInferenceDeclarations.t
 FAIL TypeScript/tests/cases/compiler/arraySigChecking.ts
 FAIL TypeScript/tests/cases/compiler/arrayToLocaleStringES2015.ts
 FAIL TypeScript/tests/cases/compiler/arrayToLocaleStringES2020.ts
-FAIL TypeScript/tests/cases/compiler/arrowFunctionParsingGenericInObject.ts
 FAIL TypeScript/tests/cases/compiler/arrowFunctionsMissingTokens.ts
 FAIL TypeScript/tests/cases/compiler/assigningFromObjectToAnythingElse.ts
 FAIL TypeScript/tests/cases/compiler/assignmentCompat1.ts
@@ -31,8 +30,6 @@ FAIL TypeScript/tests/cases/compiler/assignmentCompatFunctionsWithOptionalArgs.t
 FAIL TypeScript/tests/cases/compiler/assignmentIndexedToPrimitives.ts
 FAIL TypeScript/tests/cases/compiler/assignmentToAnyArrayRestParameters.ts
 FAIL TypeScript/tests/cases/compiler/asyncFunctionReturnExpressionErrorSpans.ts
-FAIL TypeScript/tests/cases/compiler/asyncFunctionReturnType.2.ts
-FAIL TypeScript/tests/cases/compiler/asyncFunctionReturnType.ts
 FAIL TypeScript/tests/cases/compiler/asyncIteratorExtraParameters.ts
 FAIL TypeScript/tests/cases/compiler/asyncYieldStarContextualType.ts
 FAIL TypeScript/tests/cases/compiler/augmentedTypesClass2a.ts
@@ -51,9 +48,7 @@ FAIL TypeScript/tests/cases/compiler/bluebirdStaticThis.ts
 FAIL TypeScript/tests/cases/compiler/booleanLiteralsContextuallyTypedFromUnion.tsx
 FAIL TypeScript/tests/cases/compiler/builtinIterator.ts
 FAIL TypeScript/tests/cases/compiler/callbacksDontShareTypes.ts
-FAIL TypeScript/tests/cases/compiler/callsOnComplexSignatures.tsx
 FAIL TypeScript/tests/cases/compiler/cannotIndexGenericWritingError.ts
-FAIL TypeScript/tests/cases/compiler/castTest.ts
 FAIL TypeScript/tests/cases/compiler/checkerInitializationCrash.ts
 FAIL TypeScript/tests/cases/compiler/checkingObjectWithThisInNamePositionNoCrash.ts
 FAIL TypeScript/tests/cases/compiler/checkJsdocTypeTagOnExportAssignment1.ts
@@ -112,7 +107,6 @@ FAIL TypeScript/tests/cases/compiler/complicatedIndexesOfIntersectionsAreInferen
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1_ES6.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertiesNarrowed.ts
-FAIL TypeScript/tests/cases/compiler/computedPropertiesWithSetterAssignment.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/conditionalDoesntLeakUninstantiatedTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/conditionalExpression1.ts
@@ -135,7 +129,6 @@ FAIL TypeScript/tests/cases/compiler/constructorParametersThatShadowExternalName
 FAIL TypeScript/tests/cases/compiler/constructorReturningAPrimitive.ts
 FAIL TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
 FAIL TypeScript/tests/cases/compiler/contextualComputedNonBindablePropertyType.ts
-FAIL TypeScript/tests/cases/compiler/contextuallyTypeAsyncFunctionReturnTypeFromUnion.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedOptionalProperty.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersOptionalInJSDoc.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersWithQuestionToken.ts
@@ -202,7 +195,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitLateBoundAssignments.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitLateBoundJSAssignments.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitLocalClassHasRequiredDeclare.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
-FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypePreservesTypeParameterConstraint.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitNoInvalidCommentReuse2.ts
@@ -227,7 +219,6 @@ FAIL TypeScript/tests/cases/compiler/declarationTypecheckNoUseBeforeReferenceChe
 FAIL TypeScript/tests/cases/compiler/declareClassInterfaceImplementation.ts
 FAIL TypeScript/tests/cases/compiler/declareModifierOnImport1.ts
 FAIL TypeScript/tests/cases/compiler/declFileGenericType.ts
-FAIL TypeScript/tests/cases/compiler/decoratorMetadataPromise.ts
 FAIL TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts
 FAIL TypeScript/tests/cases/compiler/decoratorUsedBeforeDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/deepElaborationsIntoArrowExpressions.ts
@@ -246,7 +237,6 @@ FAIL TypeScript/tests/cases/compiler/destructionAssignmentError.ts
 FAIL TypeScript/tests/cases/compiler/destructureCatchClause.ts
 FAIL TypeScript/tests/cases/compiler/destructureComputedProperty.ts
 FAIL TypeScript/tests/cases/compiler/destructuredLateBoundNameHasCorrectTypes.ts
-FAIL TypeScript/tests/cases/compiler/destructureOfVariableSameAsShorthand.ts
 FAIL TypeScript/tests/cases/compiler/destructureTupleWithVariableElement.ts
 FAIL TypeScript/tests/cases/compiler/destructuringAssignment_private.ts
 FAIL TypeScript/tests/cases/compiler/destructuringAssignmentWithDefault.ts
@@ -327,6 +317,7 @@ FAIL TypeScript/tests/cases/compiler/errorCause.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType01.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType02.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts
+FAIL TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 FAIL TypeScript/tests/cases/compiler/errorInUnnamedClassExpression.ts
 FAIL TypeScript/tests/cases/compiler/errorMessageOnObjectLiteralType.ts
 FAIL TypeScript/tests/cases/compiler/errorMessagesIntersectionTypes02.ts
@@ -500,6 +491,7 @@ FAIL TypeScript/tests/cases/compiler/hugeDeclarationOutputGetsTruncatedWithError
 FAIL TypeScript/tests/cases/compiler/identicalTypesNoDifferByCheckOrder.ts
 FAIL TypeScript/tests/cases/compiler/identifierStartAfterNumericLiteral.ts
 FAIL TypeScript/tests/cases/compiler/identityForSignaturesWithTypeParametersAndAny.ts
+FAIL TypeScript/tests/cases/compiler/ignoredJsxAttributes.tsx
 FAIL TypeScript/tests/cases/compiler/illegalSuperCallsInConstructor.ts
 FAIL TypeScript/tests/cases/compiler/implementArrayInterface.ts
 FAIL TypeScript/tests/cases/compiler/implementGenericWithMismatchedTypes.ts
@@ -539,7 +531,6 @@ FAIL TypeScript/tests/cases/compiler/indexAt.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessPrivateMemberOfGenericConstraint.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts
-FAIL TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithFreshObjectLiteral.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithVariableElement.ts
 FAIL TypeScript/tests/cases/compiler/indexerConstraints.ts
@@ -561,7 +552,6 @@ FAIL TypeScript/tests/cases/compiler/inferenceAndHKTs.ts
 FAIL TypeScript/tests/cases/compiler/inferenceAndSelfReferentialConstraint.ts
 FAIL TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion3.ts
 FAIL TypeScript/tests/cases/compiler/inferenceDoesNotAddUndefinedOrNull.ts
-FAIL TypeScript/tests/cases/compiler/inferenceErasedSignatures.ts
 FAIL TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts
 FAIL TypeScript/tests/cases/compiler/inferenceOfNullableObjectTypesWithCommonBase.ts
 FAIL TypeScript/tests/cases/compiler/inferenceOuterResultNotIncorrectlyInstantiatedWithInnerResult.ts
@@ -686,15 +676,12 @@ FAIL TypeScript/tests/cases/compiler/jsFunctionWithPrototypeNoErrorTruncationNoC
 FAIL TypeScript/tests/cases/compiler/jsNoImplicitAnyNoCascadingReferenceErrors.ts
 FAIL TypeScript/tests/cases/compiler/jsPropertyAssignedAfterMethodDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/jsxAttributeWithoutExpressionReact.tsx
+FAIL TypeScript/tests/cases/compiler/jsxCallElaborationCheckNoCrash1.tsx
 FAIL TypeScript/tests/cases/compiler/jsxChildrenGenericContextualTypes.tsx
-FAIL TypeScript/tests/cases/compiler/jsxChildrenIndividualErrorElaborations.tsx
 FAIL TypeScript/tests/cases/compiler/jsxClassAttributeResolution.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
-FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteral.tsx
-FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteralWithGeneric.tsx
 FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild2.tsx
-FAIL TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentAndFactoryUsedOnFragmentUse.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx
 FAIL TypeScript/tests/cases/compiler/jsxImportSourceNonPragmaComment.tsx
@@ -856,7 +843,6 @@ FAIL TypeScript/tests/cases/compiler/neverNullishThroughParentheses.ts
 FAIL TypeScript/tests/cases/compiler/newAbstractInstance2.ts
 FAIL TypeScript/tests/cases/compiler/newMap.ts
 FAIL TypeScript/tests/cases/compiler/newOperator.ts
-FAIL TypeScript/tests/cases/compiler/noAsConstNameLookup.ts
 FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter1.ts
 FAIL TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter2.ts
 FAIL TypeScript/tests/cases/compiler/noCrashOnImportShadowing.ts
@@ -982,7 +968,6 @@ FAIL TypeScript/tests/cases/compiler/privacyFunctionReturnTypeDeclFile.ts
 FAIL TypeScript/tests/cases/compiler/privacyImportParseErrors.ts
 FAIL TypeScript/tests/cases/compiler/privateFieldsInClassExpressionDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/privateNameJsx.tsx
-FAIL TypeScript/tests/cases/compiler/promiseAllOnAny01.ts
 FAIL TypeScript/tests/cases/compiler/promiseChaining1.ts
 FAIL TypeScript/tests/cases/compiler/promiseChaining2.ts
 FAIL TypeScript/tests/cases/compiler/promiseIdentity.ts
@@ -999,13 +984,11 @@ FAIL TypeScript/tests/cases/compiler/protectedAccessThroughContextualThis.ts
 FAIL TypeScript/tests/cases/compiler/pushTypeGetTypeOfAlias.ts
 FAIL TypeScript/tests/cases/compiler/qualifiedName_entity-name-resolution-does-not-affect-class-heritage.ts
 FAIL TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts
-FAIL TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks2.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks3.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksIgnored.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts
-FAIL TypeScript/tests/cases/compiler/reactDefaultPropsInferenceSuccess.tsx
 FAIL TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx
 FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
@@ -1223,9 +1206,7 @@ FAIL TypeScript/tests/cases/compiler/typePredicateInLoop.ts
 FAIL TypeScript/tests/cases/compiler/typePredicatesInUnion3.ts
 FAIL TypeScript/tests/cases/compiler/typePredicateStructuralMatch.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives11.ts
-FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives2.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives7.ts
-FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives8.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectiveScopedPackageCustomTypeRoot.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectiveWithFailedFromTypeRoot.ts
 FAIL TypeScript/tests/cases/compiler/typeReferenceDirectiveWithTypeAsFile.ts
@@ -1314,30 +1295,12 @@ FAIL TypeScript/tests/cases/conformance/ambient/ambientModuleDeclarationWithRese
 FAIL TypeScript/tests/cases/conformance/async/es2017/asyncArrowFunction/asyncArrowFunction_allowJs.ts
 FAIL TypeScript/tests/cases/conformance/async/es2017/asyncArrowFunction/asyncArrowFunction9_es2017.ts
 FAIL TypeScript/tests/cases/conformance/async/es2017/await_incorrectThisType.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression3_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression5_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression2_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression3_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression4_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression6_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression7_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression8_es2017.ts
-FAIL TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration14_es2017.ts
 FAIL TypeScript/tests/cases/conformance/async/es5/asyncArrowFunction/asyncArrowFunction9_es5.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncArrowFunction/asyncArrowFunction9_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncDeclare_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncImportedPromise_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncMethodWithSuper_es6.ts
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncQualifiedReturnType_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression3_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression5_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression2_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression3_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression4_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression6_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression7_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression8_es6.ts
-FAIL TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration14_es6.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractClinterfaceAssignability.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractManyKeywords.ts
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractMethodWithImplementation.ts
@@ -1445,7 +1408,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowGenericTypes.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrors.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrorsAsync.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts
-FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowParameter.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/definiteAssignmentAssertions.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/definiteAssignmentAssertionsWithObjectShortHand.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/dependentDestructuredVariables.ts
@@ -1472,7 +1434,6 @@ FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
 FAIL TypeScript/tests/cases/conformance/directives/ts-ignore.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionGrammarError.ts
-FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS2.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionIncorrect1.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionIncorrect2.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNoModuleKindSpecified.ts
@@ -1603,8 +1564,6 @@ FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsTypeA
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsTypeArgumentInferenceES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithIncompatibleTypedTags.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithIncompatibleTypedTagsES6.ts
-FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressions.ts
-FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressionsES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution1_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution1.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3_ES6.ts
@@ -1938,7 +1897,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxGenericTagHasCorrectInferences.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxNamespaceNamesQuestionableForms.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/checkJsxSubtleSkipContextSensitiveBug.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/inline/inlineJsxAndJsxFragPragma.tsx
@@ -2247,7 +2205,6 @@ FAIL TypeScript/tests/cases/conformance/types/any/narrowFromAnyWithInstanceof.ts
 FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts
-FAIL TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionAwaitOperand.ts
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionReturnType.ts
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations/contextuallyTypedBindingInitializerNegative.ts
@@ -2690,6 +2647,7 @@ PASS TypeScript/tests/cases/compiler/arrowFunctionInExpressionStatement2.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionJSDocAnnotation.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionMissingCurlyWithSemicolon.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionParsingDoesNotConfuseParenthesizedObjectForArrowHead.ts
+PASS TypeScript/tests/cases/compiler/arrowFunctionParsingGenericInObject.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionWithObjectLiteralBody1.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionWithObjectLiteralBody2.ts
 PASS TypeScript/tests/cases/compiler/arrowFunctionWithObjectLiteralBody3.ts
@@ -2788,6 +2746,8 @@ PASS TypeScript/tests/cases/compiler/asyncArrowInClassES5.ts
 PASS TypeScript/tests/cases/compiler/asyncAwaitWithCapturedBlockScopeVar.ts
 PASS TypeScript/tests/cases/compiler/asyncFunctionContextuallyTypedReturns.ts
 PASS TypeScript/tests/cases/compiler/asyncFunctionNoReturnType.ts
+PASS TypeScript/tests/cases/compiler/asyncFunctionReturnType.2.ts
+PASS TypeScript/tests/cases/compiler/asyncFunctionReturnType.ts
 PASS TypeScript/tests/cases/compiler/asyncFunctionsAcrossFiles.ts
 PASS TypeScript/tests/cases/compiler/asyncFunctionsAndStrictNullChecks.ts
 PASS TypeScript/tests/cases/compiler/asyncFunctionTempVariableScoping.ts
@@ -2993,6 +2953,7 @@ PASS TypeScript/tests/cases/compiler/castNewObjectBug.ts
 PASS TypeScript/tests/cases/compiler/castOfAwait.ts
 PASS TypeScript/tests/cases/compiler/castOfYield.ts
 PASS TypeScript/tests/cases/compiler/castParentheses.ts
+PASS TypeScript/tests/cases/compiler/castTest.ts
 PASS TypeScript/tests/cases/compiler/catch.ts
 PASS TypeScript/tests/cases/compiler/catchClauseWithInitializer1.ts
 PASS TypeScript/tests/cases/compiler/cf.ts
@@ -3382,6 +3343,7 @@ PASS TypeScript/tests/cases/compiler/computedEnumTypeWidening.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2_ES6.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesTransformedInOtherwiseNonTSClasses.ts
+PASS TypeScript/tests/cases/compiler/computedPropertiesWithSetterAssignment.ts
 PASS TypeScript/tests/cases/compiler/computedPropertyNameAndTypeParameterConflict.ts
 PASS TypeScript/tests/cases/compiler/computedPropertyNameWithImportedKey.ts
 PASS TypeScript/tests/cases/compiler/computedTypesKeyofNoIndexSignatureType.ts
@@ -3504,6 +3466,7 @@ PASS TypeScript/tests/cases/compiler/constWithNonNull.ts
 PASS TypeScript/tests/cases/compiler/contextSensitiveReturnTypeInference.ts
 PASS TypeScript/tests/cases/compiler/contextualExpressionTypecheckingDoesntBlowStack.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypeArgumentsKeyword.ts
+PASS TypeScript/tests/cases/compiler/contextuallyTypeAsyncFunctionReturnTypeFromUnion.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedBooleanLiterals.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion2.ts
@@ -3807,6 +3770,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitLambdaWithMissingTypeParamet
 PASS TypeScript/tests/cases/compiler/declarationEmitLateBoundAssignments2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLocalClassDeclarationMixin.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypeDistributivityPreservesConstraints.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePreservesTypeParameterConstraint.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePropertyFromNumericStringKey.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMergedAliasWithConst.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMethodDeclaration.ts
@@ -4018,6 +3982,7 @@ PASS TypeScript/tests/cases/compiler/decoratorMetadataGenericTypeVariableInScope
 PASS TypeScript/tests/cases/compiler/decoratorMetadataNoLibIsolatedModulesTypes.ts
 PASS TypeScript/tests/cases/compiler/decoratorMetadataNoStrictNull.ts
 PASS TypeScript/tests/cases/compiler/decoratorMetadataOnInferredType.ts
+PASS TypeScript/tests/cases/compiler/decoratorMetadataPromise.ts
 PASS TypeScript/tests/cases/compiler/decoratorMetadataRestParameterWithImportedType.ts
 PASS TypeScript/tests/cases/compiler/decoratorMetadataTypeOnlyExport.ts
 PASS TypeScript/tests/cases/compiler/decoratorMetadataTypeOnlyImport.ts
@@ -4089,6 +4054,7 @@ PASS TypeScript/tests/cases/compiler/derivedTypeCallingBaseImplWithOptionalParam
 PASS TypeScript/tests/cases/compiler/derivedTypeIncompatibleSignatures.ts
 PASS TypeScript/tests/cases/compiler/destructuredDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/destructuredMaappedTypeIsNotImplicitlyAny.ts
+PASS TypeScript/tests/cases/compiler/destructureOfVariableSameAsShorthand.ts
 PASS TypeScript/tests/cases/compiler/destructureOptionalParameter.ts
 PASS TypeScript/tests/cases/compiler/destructuringAssignmentWithExportedName.ts
 PASS TypeScript/tests/cases/compiler/destructuringAssignmentWithStrictNullChecks.ts
@@ -5162,6 +5128,7 @@ PASS TypeScript/tests/cases/compiler/indexedAccessConstraints.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessImplicitlyAny.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessKeyofNestedSimplifiedSubstituteUnwrapped.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessNormalization.ts
+PASS TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessToThisTypeOnIntersection01.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessTypeConstraints.ts
 PASS TypeScript/tests/cases/compiler/indexer.ts
@@ -5196,6 +5163,7 @@ PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion1.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion2.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion4.ts
 PASS TypeScript/tests/cases/compiler/inferenceDoesntCompareAgainstUninstantiatedTypeParameter.ts
+PASS TypeScript/tests/cases/compiler/inferenceErasedSignatures.ts
 PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties1.ts
 PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties2.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromGenericClassNoCrash1.ts
@@ -5597,6 +5565,7 @@ PASS TypeScript/tests/cases/compiler/jsxChildrenSingleChildConfusableWithMultipl
 PASS TypeScript/tests/cases/compiler/jsxChildrenWrongType.tsx
 PASS TypeScript/tests/cases/compiler/jsxChildWrongType.tsx
 PASS TypeScript/tests/cases/compiler/jsxContainsOnlyTriviaWhiteSpacesNotCountedAsChild.tsx
+PASS TypeScript/tests/cases/compiler/jsxDeclarationsWithEsModuleInteropNoCrash.tsx
 PASS TypeScript/tests/cases/compiler/jsxElementClassTooManyParams.tsx
 PASS TypeScript/tests/cases/compiler/jsxElementsAsIdentifierNames.tsx
 PASS TypeScript/tests/cases/compiler/jsxEmitAttributeWithPreserve.tsx
@@ -5617,6 +5586,7 @@ PASS TypeScript/tests/cases/compiler/jsxFactoryQualifiedNameResolutionError.ts
 PASS TypeScript/tests/cases/compiler/jsxFactoryQualifiedNameWithEs5.ts
 PASS TypeScript/tests/cases/compiler/jsxFragmentFactoryReference.tsx
 PASS TypeScript/tests/cases/compiler/jsxFragReactReferenceErrors.tsx
+PASS TypeScript/tests/cases/compiler/jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx
 PASS TypeScript/tests/cases/compiler/jsxHash.tsx
 PASS TypeScript/tests/cases/compiler/jsxHasLiteralType.tsx
 PASS TypeScript/tests/cases/compiler/jsxImportInAttribute.tsx
@@ -6079,6 +6049,7 @@ PASS TypeScript/tests/cases/compiler/newMissingIdentifier.ts
 PASS TypeScript/tests/cases/compiler/newNamesInGlobalAugmentations1.ts
 PASS TypeScript/tests/cases/compiler/newNonReferenceType.ts
 PASS TypeScript/tests/cases/compiler/newOnInstanceSymbol.ts
+PASS TypeScript/tests/cases/compiler/noAsConstNameLookup.ts
 PASS TypeScript/tests/cases/compiler/noBundledEmitFromNodeModules.ts
 PASS TypeScript/tests/cases/compiler/noCatchBlock.ts
 PASS TypeScript/tests/cases/compiler/noCircularDefinitionOnExportOfPrivateInMergedNamespace.ts
@@ -6513,6 +6484,7 @@ PASS TypeScript/tests/cases/compiler/privatePropertyInUnion.ts
 PASS TypeScript/tests/cases/compiler/privatePropertyUsingObjectType.ts
 PASS TypeScript/tests/cases/compiler/privateVisibility.ts
 PASS TypeScript/tests/cases/compiler/privateVisibles.ts
+PASS TypeScript/tests/cases/compiler/promiseAllOnAny01.ts
 PASS TypeScript/tests/cases/compiler/promiseChaining.ts
 PASS TypeScript/tests/cases/compiler/promiseDefinitionTest.ts
 PASS TypeScript/tests/cases/compiler/promiseEmptyTupleNoException.ts
@@ -6576,6 +6548,7 @@ PASS TypeScript/tests/cases/compiler/quotedPropertyName2.ts
 PASS TypeScript/tests/cases/compiler/quotedPropertyName3.ts
 PASS TypeScript/tests/cases/compiler/raiseErrorOnParameterProperty.ts
 PASS TypeScript/tests/cases/compiler/ramdaToolsNoInfinite.ts
+PASS TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts
 PASS TypeScript/tests/cases/compiler/randomSemicolons1.ts
 PASS TypeScript/tests/cases/compiler/reachabilityChecks1.ts
 PASS TypeScript/tests/cases/compiler/reachabilityChecks10.ts
@@ -7372,10 +7345,12 @@ PASS TypeScript/tests/cases/compiler/typeReferenceDirectives1.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives10.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives12.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives13.ts
+PASS TypeScript/tests/cases/compiler/typeReferenceDirectives2.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives3.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives4.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives5.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives6.ts
+PASS TypeScript/tests/cases/compiler/typeReferenceDirectives8.ts
 PASS TypeScript/tests/cases/compiler/typeReferenceDirectives9.ts
 PASS TypeScript/tests/cases/compiler/typeResolution.ts
 PASS TypeScript/tests/cases/compiler/typeRootsFromMultipleNodeModulesDirectories.ts
@@ -7695,9 +7670,17 @@ PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es201
 PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression1_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression2_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression3_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression4_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression5_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression1_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression2_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression3_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression4_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression5_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression6_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression7_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression8_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitClassExpression_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitInheritedPromise_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration1_es2017.ts
@@ -7705,6 +7688,7 @@ PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncF
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration11_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration12_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration13_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration14_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration2_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration3_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration4_es2017.ts
@@ -7808,9 +7792,17 @@ PASS TypeScript/tests/cases/conformance/async/es6/await_unaryExpression_es6_3.ts
 PASS TypeScript/tests/cases/conformance/async/es6/await_unaryExpression_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression1_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression2_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression3_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression4_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression5_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression1_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression2_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression3_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression4_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression5_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression6_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression7_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/awaitCallExpression/awaitCallExpression8_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitClassExpression_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/awaitUnion_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration1_es6.ts
@@ -7818,6 +7810,7 @@ PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunc
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration11_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration12_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration13_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration14_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration15_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration2_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration3_es6.ts
@@ -8234,6 +8227,7 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNoIntermediateErrors.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNullishCoalesce.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain2.ts
+PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowParameter.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowStringIndex.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowSuperPropertyAccess.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowTruthiness.ts
@@ -8376,6 +8370,7 @@ PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInAMD2
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInAMD3.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInAMD4.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS1.ts
+PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS2.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS3.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS4.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionInCJS5.ts
@@ -9080,6 +9075,8 @@ PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsPlain
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes01.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02.ts
+PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressions.ts
+PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressionsES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution2_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution2.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithTagNamedDeclare.ts
@@ -10415,6 +10412,7 @@ PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty7.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty9.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxIntersectionElementPropsType.tsx
+PASS TypeScript/tests/cases/conformance/jsx/checkJsxSubtleSkipContextSensitiveBug.tsx
 PASS TypeScript/tests/cases/conformance/jsx/commentEmittingInPreserveJsx1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/correctlyMarkAliasAsReferences4.tsx
@@ -11727,6 +11725,7 @@ PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends1
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtendsDependingOnTypeVariables.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/variance.ts
+PASS TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionAwaitOperand.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator01.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator02.ts
 PASS TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator03.ts
