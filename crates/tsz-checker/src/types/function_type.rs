@@ -447,19 +447,25 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
-                    // Infer from contextual type, default to ANY for implicit any parameters
-                    // TypeScript uses `any` (with TS7006) when no contextual type is available.
+                    let iife_arg_type = if contextual_type.is_none() {
+                        self.infer_iife_parameter_type_from_arguments(
+                            idx,
+                            contextual_index,
+                            param.dot_dot_dot_token,
+                            param.question_token || param.initializer.is_some(),
+                        )
+                    } else {
+                        None
+                    };
                     let inferred_type = if let Some(jsdoc_type) = jsdoc_param_type {
                         jsdoc_type
                     } else if is_js_file {
-                        // In checkJs mode, contextual `unknown` from weak callback types
-                        // (e.g. `(...args: unknown[]) => T`) should not force parameters
-                        // to become `unknown`; TypeScript treats these as effectively `any`.
                         contextual_type
                             .filter(|t| *t != TypeId::UNKNOWN)
+                            .or(iife_arg_type)
                             .unwrap_or(TypeId::ANY)
                     } else {
-                        contextual_type.unwrap_or(TypeId::ANY)
+                        contextual_type.or(iife_arg_type).unwrap_or(TypeId::ANY)
                     };
 
                     if inferred_type == TypeId::ANY && param.initializer.is_some() {
@@ -489,10 +495,6 @@ impl<'a> CheckerState<'a> {
 
                 let type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some() {
-                        // When there's an explicit type annotation (e.g. `{ name }: Robot`),
-                        // always use the annotation type for the function signature parameter.
-                        // Using the destructured pattern type would lose properties not
-                        // destructured, causing false TS2353 excess property errors at call sites.
                         type_id
                     } else if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
                         if self.is_assignable_to(type_id, pattern_type) {
@@ -501,9 +503,6 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types.factory().union(vec![type_id, pattern_type])
                         }
                     } else {
-                        // When the initializer type is `any` or `unknown`, preserve it
-                        // rather than narrowing to the pattern type. A destructuring
-                        // param with default `{} as any` should keep `any`.
                         type_id
                     }
                 } else {

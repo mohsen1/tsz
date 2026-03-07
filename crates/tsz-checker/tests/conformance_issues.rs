@@ -4551,6 +4551,34 @@ const h: Handler = (() => ({ handle: x => x.length }))();
     );
 }
 
+#[test]
+fn test_iife_optional_parameters_preserve_undefined_in_body() {
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+((j?) => j + 1)(12);
+((k?) => k + 1)();
+((l, o?) => l + o)(12);
+"#,
+        options,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts18048_count = relevant.iter().filter(|(code, _)| *code == 18048).count();
+    assert!(
+        ts18048_count >= 3,
+        "Expected TS18048 for optional IIFE params used in arithmetic. Got: {relevant:#?}"
+    );
+}
+
 // =========================================================================
 // Array spread into variadic tuple rest params — no false TS2556
 // =========================================================================
