@@ -1373,6 +1373,48 @@ function f(o: Thing | undefined) {
 }
 
 #[test]
+fn test_assert_optional_chain_discriminant_narrows_base_union_member() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface Cat {
+    type: 'cat';
+    canMeow: true;
+}
+interface Dog {
+    type: 'dog';
+    canBark: true;
+}
+type Animal = Cat | Dog;
+declare function assertEqual<T>(value: any, type: T): asserts value is T;
+
+function f(animalOrUndef: Animal | undefined) {
+    assertEqual(animalOrUndef?.type, 'cat' as const);
+    animalOrUndef.canMeow;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertEqual(animalOrUndef?.type, 'cat'). Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 after assertEqual(animalOrUndef?.type, 'cat'). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
 fn test_assert_optional_chain_then_assert_nonnull_keeps_base_narrowed() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
