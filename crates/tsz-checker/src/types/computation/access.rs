@@ -770,7 +770,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Fresh object literal implicit index signature: tsc allows indexing a
+        // directly-written object literal with `string` (or `number`) even when
+        // the type has no explicit index signature. The solver already computes
+        // the union of all property types as the result, so we only need to
+        // suppress the checker's independent TS7053 check.
+        let is_fresh_object_literal = self.ctx.arena.get(access.expression).is_some_and(|n| {
+            n.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        });
+
         if use_index_signature_check
+            && !is_fresh_object_literal
             && self.should_report_no_index_signature(
                 object_type_for_access,
                 index_type,
