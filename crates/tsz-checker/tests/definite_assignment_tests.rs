@@ -481,3 +481,81 @@ fn test_ts2454_simple_assignment_counts_as_definite() {
         "Should not emit TS2454 for `x` after `x = 1`, got: {diags:?}"
     );
 }
+
+/// Optional-chain RHS expressions execute only on the present branch.
+/// Assignments inside optional element/call RHS must not count as definite assignment.
+#[test]
+fn test_ts2454_optional_chain_rhs_assignment_not_definite() {
+    let source = r"
+        declare const o: undefined | {
+            [key: string]: any;
+            (arg: number): void;
+            x(arg: number): void;
+        };
+
+        let a: number;
+        o?.[a = 1];
+        a.toFixed();
+
+        let b: number;
+        o?.(b = 1);
+        b.toFixed();
+
+        let c: number;
+        o?.x(c = 1);
+        c.toFixed();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 3,
+        "Expected TS2454 for assignments guarded by optional chaining, got: {diags:?}"
+    );
+}
+
+/// Non-optional element/call RHS expressions execute unconditionally.
+#[test]
+fn test_ts2454_non_optional_rhs_assignment_definite() {
+    let source = r"
+        declare const o: {
+            [key: string]: any;
+            (arg: number): void;
+            x(arg: number): void;
+        };
+
+        let a: number;
+        o[a = 1];
+        a.toFixed();
+
+        let b: number;
+        o(b = 1);
+        b.toFixed();
+
+        let c: number;
+        o.x(c = 1);
+        c.toFixed();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Non-optional RHS assignments should count as definite assignment, got: {diags:?}"
+    );
+}
