@@ -9700,13 +9700,18 @@ fn test_union_call_no_this_requirements_succeeds() {
 }
 
 /// When ALL union members have multiple overloads and no pair of signatures is
-/// compatible across members, the union should be `NotCallable` (→ TS2349).
+/// compatible across members, per-member resolution still runs. If `this` type
+/// constraints prevent any overload from matching, the result is
+/// `NoOverloadMatch` (→ TS2769) rather than `NotCallable` (→ TS2349),
+/// because each member IS individually callable — it's the `this` context
+/// that fails. This fallthrough behavior matches tsc's handling of union
+/// method calls like `(A[] | B[]).filter(cb)`.
 ///
 /// Mirrors: `type F3 = { (this: A): void; (this: B): void; }`
 ///          `type F4 = { (this: C): void; (this: D): void; }`
-///          `(f3_or_f4: F3 | F4) => f3_or_f4()` → TS2349
+///          `(f3_or_f4: F3 | F4) => f3_or_f4()` — per-member overload resolution
 #[test]
-fn test_union_multi_overload_incompatible_not_callable() {
+fn test_union_multi_overload_incompatible_per_member_resolution() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
@@ -9774,12 +9779,17 @@ fn test_union_multi_overload_incompatible_not_callable() {
         ..Default::default()
     });
 
-    // Union F3 | F4 — no compatible pair → NotCallable
+    // Union F3 | F4 — no compatible pair across members, but per-member
+    // resolution runs: each member's overloads fail on `this` mismatch,
+    // producing NoOverloadMatch rather than NotCallable.
     let union = interner.union(vec![f3, f4]);
     let result = evaluator.resolve_call(union, &[]);
     assert!(
-        matches!(result, CallResult::NotCallable { .. }),
-        "Expected NotCallable for incompatible multi-overload union, got {result:?}"
+        matches!(
+            result,
+            CallResult::NotCallable { .. } | CallResult::NoOverloadMatch { .. }
+        ),
+        "Expected NotCallable or NoOverloadMatch for incompatible multi-overload union, got {result:?}"
     );
 }
 
