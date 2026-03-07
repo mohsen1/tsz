@@ -74,8 +74,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
-        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+        let (_, left_cause) = self.split_nullish_type(left_type);
+        let (_, right_cause) = self.split_nullish_type(right_type);
+        let left_is_nullish = left_cause.is_some();
+        let right_is_nullish = right_cause.is_some();
         let mut emitted_nullish_error = false;
         let should_emit_nullish_error = matches!(
             op,
@@ -109,13 +111,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if left_is_nullish && should_emit_nullish_error {
-            self.emit_nullish_operand_error(left_idx, left_type);
+        if let Some(cause) = left_cause
+            && should_emit_nullish_error
+        {
+            self.emit_nullish_operand_error(left_idx, cause);
             emitted_nullish_error = true;
         }
 
-        if right_is_nullish && should_emit_nullish_error {
-            self.emit_nullish_operand_error(right_idx, right_type);
+        if let Some(cause) = right_cause
+            && should_emit_nullish_error
+        {
+            self.emit_nullish_operand_error(right_idx, cause);
             emitted_nullish_error = true;
         }
 
@@ -126,15 +132,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// - If the expression is the literal `null`/`undefined` keyword → TS18050
     /// - If the expression is a variable with a null/undefined type → TS18048/TS18047
-    fn emit_nullish_operand_error(&mut self, idx: NodeIndex, operand_type: TypeId) {
+    fn emit_nullish_operand_error(&mut self, idx: NodeIndex, cause: TypeId) {
         let is_literal = self.is_literal_null_or_undefined_node(idx);
 
         if is_literal {
             // Literal null/undefined keyword → TS18050 "The value 'X' cannot be used here."
-            let value_name = if operand_type == TypeId::NULL {
+            let value_name = if cause == TypeId::NULL {
                 "null"
-            } else {
+            } else if cause == TypeId::UNDEFINED {
                 "undefined"
+            } else {
+                "null | undefined"
             };
             if let Some(loc) = self.get_source_location(idx) {
                 let message = format_message(
@@ -150,24 +158,24 @@ impl<'a> CheckerState<'a> {
                 ));
             }
         } else {
-            // Variable/expression with null/undefined type → TS18047/TS18048
-            let name = self
-                .ctx
-                .arena
-                .get(idx)
-                .and_then(|node| self.ctx.arena.get_identifier(node))
-                .map(|ident| ident.escaped_text.clone());
+            // Variable/expression with nullish type → TS18047/TS18048/TS18049
+            let name = self.expression_text(idx);
 
             if let Some(ref name) = name {
-                let (code, message) = if operand_type == TypeId::NULL {
+                let (code, message) = if cause == TypeId::NULL {
                     (
                         diagnostic_codes::IS_POSSIBLY_NULL,
                         format!("'{name}' is possibly 'null'."),
                     )
-                } else {
+                } else if cause == TypeId::UNDEFINED {
                     (
                         diagnostic_codes::IS_POSSIBLY_UNDEFINED,
                         format!("'{name}' is possibly 'undefined'."),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
+                        format!("'{name}' is possibly 'null' or 'undefined'."),
                     )
                 };
                 if let Some(loc) = self.get_source_location(idx) {
@@ -181,10 +189,12 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 // Non-identifier expression with nullish type — fall back to TS18050
-                let value_name = if operand_type == TypeId::NULL {
+                let value_name = if cause == TypeId::NULL {
                     "null"
-                } else {
+                } else if cause == TypeId::UNDEFINED {
                     "undefined"
+                } else {
+                    "null | undefined"
                 };
                 if let Some(loc) = self.get_source_location(idx) {
                     let message = format_message(
@@ -394,6 +404,10 @@ impl<'a> CheckerState<'a> {
         // e.g., DeepPartial<number> | number → number
         let eval_left = self.evaluate_type_for_binary_ops(left_type);
         let eval_right = self.evaluate_type_for_binary_ops(right_type);
+        let (left_non_null, left_cause) = self.split_nullish_type(eval_left);
+        let (right_non_null, right_cause) = self.split_nullish_type(eval_right);
+        let left_has_nullish = left_cause.is_some();
+        let right_has_nullish = right_cause.is_some();
 
         // Suppress operator errors when an operand is an inference placeholder.
         //
@@ -430,6 +444,10 @@ impl<'a> CheckerState<'a> {
         let right_is_valid_arithmetic = !right_is_symbol
             && (evaluator.is_arithmetic_operand(eval_right)
                 || (snc_off && (eval_right == TypeId::NULL || eval_right == TypeId::UNDEFINED)));
+        let left_non_null_is_valid_arithmetic =
+            left_non_null.is_some_and(|t| evaluator.is_arithmetic_operand(t));
+        let right_non_null_is_valid_arithmetic =
+            right_non_null.is_some_and(|t| evaluator.is_arithmetic_operand(t));
 
         // For + operator, TSC emits TS2365 ("Operator '+' cannot be applied to types"),
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
@@ -460,14 +478,20 @@ impl<'a> CheckerState<'a> {
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             // tsc suppresses TS2362/TS2363 when TS18050 was already emitted for the operand.
             let mut emitted_specific_error = emitted_nullish_error;
-            if !(left_is_valid_arithmetic || left_is_nullish && should_emit_nullish_error)
+            if !(left_is_valid_arithmetic
+                || (left_has_nullish
+                    && left_non_null_is_valid_arithmetic
+                    && should_emit_nullish_error))
                 && let Some(loc) = self.get_source_location(left_idx)
             {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                 self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
                 emitted_specific_error = true;
             }
-            if !(right_is_valid_arithmetic || right_is_nullish && should_emit_nullish_error)
+            if !(right_is_valid_arithmetic
+                || (right_has_nullish
+                    && right_non_null_is_valid_arithmetic
+                    && should_emit_nullish_error))
                 && let Some(loc) = self.get_source_location(right_idx)
             {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();

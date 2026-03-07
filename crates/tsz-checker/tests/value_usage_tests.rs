@@ -1107,6 +1107,108 @@ var r = x < 1;
 }
 
 #[test]
+fn test_union_with_undefined_in_binary_op_prefers_ts18048_over_ts2365() {
+    let source = r"
+let x: number | undefined = Math.random() ? 1 : undefined;
+let r = x < 1;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18048_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .count();
+    assert!(
+        ts18048_count >= 1,
+        "Expected TS18048 for `number | undefined` operand, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    let ts2365_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2365)
+        .count();
+    assert_eq!(
+        ts2365_count, 0,
+        "Should suppress TS2365 when TS18048 is emitted, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_optional_property_chain_in_binary_op_uses_ts18048_name() {
+    let source = r"
+declare const item: { id?: number };
+let r = item.id < 5;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18048 = checker.ctx.diagnostics.iter().find(|d| d.code == 18048);
+    assert!(
+        ts18048.is_some(),
+        "Expected TS18048 for optional property comparison, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    let has_item_dot_id_message = checker.ctx.diagnostics.iter().any(|d| {
+        d.code == 18048
+            && d.message_text
+                .contains("'item.id' is possibly 'undefined'.")
+    });
+    assert!(
+        has_item_dot_id_message,
+        "Expected TS18048 message for 'item.id', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    let ts2365_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2365)
+        .count();
+    assert_eq!(
+        ts2365_count, 0,
+        "Should suppress TS2365 for optional property nullish check, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
 fn test_literal_null_in_binary_op_emits_ts18050() {
     // When the literal `null` keyword is used in a binary operation,
     // tsc emits TS18050 "The value 'null' cannot be used here."
