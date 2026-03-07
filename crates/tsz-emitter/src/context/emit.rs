@@ -338,6 +338,22 @@ impl EmitContext {
     pub const fn is_commonjs(&self) -> bool {
         self.options.module.is_commonjs()
     }
+
+    /// Check if we're effectively in `CommonJS` mode, even when the module kind
+    /// is temporarily set to `None` inside export body emission.
+    ///
+    /// During CJS export emission, `options.module` is temporarily set to `None`
+    /// to prevent re-applying CJS transforms. But JSX calls still need to know
+    /// the true module kind to emit `(0, jsx_runtime_1.jsx)()` vs `_jsx()`.
+    pub const fn is_effectively_commonjs(&self) -> bool {
+        if self.options.module.is_commonjs() {
+            return true;
+        }
+        if let Some(original) = self.original_module_kind {
+            return original.is_commonjs();
+        }
+        false
+    }
 }
 
 impl Default for EmitContext {
