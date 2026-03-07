@@ -204,9 +204,13 @@ impl<'a> ContextualTypeContext<'a> {
             return None;
         }
 
-        // Handle Mapped, Conditional, and Lazy types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
                 let cond = self.interner.conditional_type(cond_id);
@@ -348,9 +352,13 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
-        // Handle Mapped, Conditional, and Lazy types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
                 let cond = self.interner.conditional_type(cond_id);
@@ -778,7 +786,27 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
-        // Handle Mapped, Conditional, and Application types.
+        // Handle Intersection explicitly - collect property types from all members.
+        // This must go through get_property_type() per member (not the PropertyExtractor
+        // visitor) so that each member gets the full handling pipeline, including
+        // mapped-type-template extraction for patterns like T & {[P in keyof T]: V}.
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let mut result: Option<TypeId> = None;
+            for &m in members.iter() {
+                let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                if let Some(ty) = ctx.get_property_type(name)
+                    && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
+                {
+                    result = Some(ty);
+                }
+            }
+            if result.is_some() {
+                return result;
+            }
+        }
+
+        // Handle Mapped, Conditional, Application, and IndexAccess types.
         // These complex types need to be resolved to concrete object types before
         // property extraction can work.
         match self.interner.lookup(expected) {
@@ -853,7 +881,7 @@ impl<'a> ContextualTypeContext<'a> {
                     }
                 }
             }
-            Some(TypeData::Conditional(_) | TypeData::Lazy(_)) => {
+            Some(TypeData::Conditional(_) | TypeData::Lazy(_) | TypeData::IndexAccess(_, _)) => {
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
