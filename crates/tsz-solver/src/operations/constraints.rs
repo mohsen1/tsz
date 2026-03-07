@@ -2363,13 +2363,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // via intersection (not union).
         if let Some(&var) = var_map.get(&target_param) {
             ctx.add_contra_candidate(var, source_param, priority);
+            // Also do the reverse constraint (target→source) for bidirectional inference.
+            // But skip it when source_param is a type parameter that is NOT an inference
+            // placeholder. This avoids leaking original type parameter names (from contextual
+            // typing) as covariant candidates, which would produce false unions like
+            // `A | {BLAH:33}` instead of just `{BLAH:33}`.
+            let source_is_non_placeholder_type_param = matches!(
+                self.interner.lookup(source_param),
+                Some(TypeData::TypeParameter(_))
+            ) && !var_map.contains_key(&source_param);
+            if !source_is_non_placeholder_type_param {
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
+            }
         } else {
             let mut placeholder_visited = FxHashSet::default();
             if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
                 self.constrain_types(ctx, var_map, source_param, target_param, priority);
             }
+            self.constrain_types(ctx, var_map, target_param, source_param, priority);
         }
-        self.constrain_types(ctx, var_map, target_param, source_param, priority);
     }
 
     /// Constrain each element type against the string and number index signatures
