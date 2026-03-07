@@ -6689,3 +6689,109 @@ In several call/inference contexts, tsz emits top-level argument mismatch `TS234
 - `crates/tsz-checker/src/query_boundaries/assignability.rs`
 
 No code changes were made for big3 in this run.
+
+## Session 2026-03-07r — narrowing-flow variadic tuple destructuring lane (investigation only, no commit)
+
+### Campaign classification (written before coding)
+- **CAMPAIGN**: Narrowing / control-flow parity
+- **REPRESENTATIVE TEST BASKET**:
+  - `controlFlowOptionalChain.ts`
+  - `contextuallyTypedOptionalProperty.ts`
+  - `destructureTupleWithVariableElement.ts`
+  - `useRegexpGroups.ts`
+- **SHARED INVARIANT**: Maybe-absent values should be transported as nullish facts (`undefined`/`null`) into use sites; they must not degrade into container-shape errors (`TS2339`) or disappear entirely.
+
+### Root cause layer
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+### Specific gap investigated
+- `destructureTupleWithVariableElement.ts` still emits extra `TS2339` on `s1/s4` (`string[]`) while missing `TS18048`.
+- The failing shape suggests array-binding element typing for variadic tuple rest positions is drifting before nullish diagnostics can fire.
+
+### What was tried (and reverted)
+- Added a tuple-element value extraction helper in:
+  - `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+  - attempted to unwrap rest elements to element value types and add `undefined` for non-guaranteed indices.
+- Added focused checker tests in `crates/tsz-checker/tests/spread_rest_tests.rs` for:
+  - `[string, ...string[]]` destructuring under `noUncheckedIndexedAccess`
+  - `[string, ...string[], string]` middle/trailing behavior
+- Added a temporary boundary helper in:
+  - `crates/tsz-checker/src/query_boundaries/state/checking.rs`
+
+### Validation run and outcome
+- Unit tests passed in isolation (`cargo nextest run -p tsz-checker --test spread_rest_tests ...`).
+- Rebuilt `dist-fast` and reran targeted conformance:
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
+- **Result**: No conformance movement; `destructureTupleWithVariableElement.ts` unchanged (extra `TS2339`, missing `TS18048`).
+- Also reproduced directly with CLI:
+  - `./.target/dist-fast/tsz --strict --noUncheckedIndexedAccess --target es2015 --noEmit --pretty false TypeScript/tests/cases/compiler/destructureTupleWithVariableElement.ts`
+  - still shows `TS2339` on `s1/s4`.
+
+### Conclusion / why blocked
+- The attempted checker-local tuple element transport changes are insufficient for conformance-harness behavior.
+- There is likely an upstream divergence between:
+  1. declaration-time binding element typing,
+  2. flow-time assigned type acquisition for destructured symbols,
+  3. and nullish diagnostic emission path selection.
+- Because targeted conformance did not improve, all experimental code/tests were reverted.
+
+### Exact owning boundary to change next
+- `crates/tsz-checker/src/flow/control_flow/assignment.rs`
+  - `match_destructuring_rhs` / `get_assigned_type` interactions for array binding targets when RHS is non-literal tuple-typed identifiers.
+- `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+  - verify which path truly feeds symbol type used at read sites in conformance mode.
+- Potentially shared flow type acquisition in:
+  - `crates/tsz-checker/src/flow/control_flow/core.rs`
+
+### Estimated real-fix scope
+- ~150-280 LOC across destructuring assignment-to-flow transport + symbol type source unification.
+
+### Expected tests to flip if fixed correctly
+- Primary: `destructureTupleWithVariableElement.ts`
+- Likely nearby: `destructuringControlFlow.ts` (`TS18048`/`TS2322` skew), plus other missing `TS18048` baskets where maybe-absent transport is currently dropped.
+
+## Session 2026-03-07s — follow-on campaign claim: big3 triage (`TS2345` extra vs nested `TS2322`) (no commit)
+
+Narrowing-flow remained blocked in this run, so follow-on campaign claimed per queue: **big3**.
+
+### Representative basket
+- `coAndContraVariantInferences6.ts`
+- `genericContextualTypes1.ts`
+- `controlFlowForCatchAndFinally.ts`
+
+### Shared invariant candidate
+For several generic call sites, tsz emits top-level argument mismatch `TS2345` where tsc emits nested/member-level `TS2322` (or no top-level call error), indicating post-relation diagnostic routing/elaboration drift in call paths.
+
+### What was verified
+- `./scripts/conformance.sh analyze --campaign big3`
+- `python3 scripts/query-conformance.py --campaign big3`
+- `python3 scripts/query-conformance.py --code TS2345`
+- `python3 scripts/query-conformance.py --extra-code TS2345`
+- Targeted verbose conformance:
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
+
+### Key diffs observed
+- `coAndContraVariantInferences6.ts`:
+  - missing nested `TS2322` on object literal member (`"C"` vs `"A" | "B"`)
+  - extra top-level `TS2345` on call argument type
+- `genericContextualTypes1.ts`:
+  - extra `TS2322` + extra `TS2345` (code-level mismatch only)
+- `controlFlowForCatchAndFinally.ts`:
+  - extra `TS2345` only (code-level mismatch only)
+
+### Likely owning boundary
+- `crates/tsz-checker/src/checkers/call_checker.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors.rs`
+- `crates/tsz-checker/src/query_boundaries/assignability.rs`
+
+### Why no patch landed
+- A safe fix requires a shared mapping layer from relation failure reason -> preferred diagnostic site/code (`TS2322` vs `TS2345`) across generic-call contexts.
+- Local call-checker tweaks are likely to regress JSX/call sites and other Big3 baskets; no conformance-affecting change was committed.
