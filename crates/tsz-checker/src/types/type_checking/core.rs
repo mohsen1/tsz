@@ -1966,8 +1966,6 @@ impl<'a> CheckerState<'a> {
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
-                    || tsz_solver::is_type_parameter(self.ctx.types, ty)
-                    || tsz_solver::is_index_access_type(self.ctx.types, ty)
             };
             // Suppress TS2536 when either the index or the object type is
             // deferred (conditional, application, keyof, error). TSC defers
