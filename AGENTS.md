@@ -158,6 +158,11 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
+## 20.25) Multi-Session Work
+- When work is intentionally split across multiple concurrent Claude sessions, prefer Claude agent teams over unrelated standalone sessions.
+- For conformance campaigns, use teams to divide the campaign into distinct root-cause lanes rather than duplicating the same investigation.
+- `scripts/run-session.sh` should enable Claude agent teams by default so session runners can coordinate instead of drifting into parallel whack-a-mole work.
+
 ## 20.5) Conformance Analysis Tools
 
 ### CRITICAL: Avoid re-running the full conformance suite

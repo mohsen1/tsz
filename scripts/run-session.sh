@@ -19,6 +19,7 @@ COOLDOWN_FALLBACK=1800    # 30 min fallback when reset time can't be parsed
 LOOP_SLEEP=10             # seconds between loop iterations
 MAX_LOG_MB=500            # prune oldest logs when total exceeds this
 MIN_DISK_GB=5             # warn and skip run if free disk below this
+CLAUDE_AGENT_TEAMS=1      # enable Claude agent teams by default
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -78,12 +79,13 @@ Options:
   -h, --help         Show this help
 
 Available sessions:
-  conformance-1      Conformance: targets #1 worst-pass-rate area
-  conformance-2      Conformance: targets #2 worst-pass-rate area
-  conformance-3      Conformance: targets #3 worst-pass-rate area
-  conformance-4      Conformance: targets #4 worst-pass-rate area
+  conformance-1      Conformance: parser recovery + driver/config parity
+  conformance-2      Conformance: property resolution + index access proof
+  conformance-3      Conformance: Big 3 compatibility hardening
+  conformance-4      Conformance: contextual typing + generic inference
   emit               Emit: JS output + declaration file generation
-  architect          Conformance: targets #7 worst-pass-rate area
+  architect          Conformance: narrowing / control-flow parity
+  lsp                Conformance: JSDoc / JSX / Salsa regression baskets
   perf               Performance benchmarking + optimization
 
 Runners are auto-discovered from:
@@ -453,12 +455,12 @@ try_runner() {
     local cmd=(claude --dangerously-skip-permissions -p "$prompt")
 
     if $DRY_RUN; then
-      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path claude --dangerously-skip-permissions -p <${SESSION_NAME:-session.sh}>"
+      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=$CLAUDE_AGENT_TEAMS claude --dangerously-skip-permissions -p <${SESSION_NAME:-session.sh}>"
       return 0
     fi
 
     set +e
-    CLAUDE_CONFIG_DIR="$path" run_with_capture "$output_tmp" \
+    CLAUDE_CONFIG_DIR="$path" CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="$CLAUDE_AGENT_TEAMS" run_with_capture "$output_tmp" \
       "$TIMEOUT_SECONDS" "${cmd[@]}"
     exit_code=$?
     set -e

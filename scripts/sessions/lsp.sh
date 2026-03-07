@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# lsp: targets the #6 worst-pass-rate area (redirected from LSP to conformance)
+# lsp: JSDoc / JSX / Salsa regression baskets
 source "$(git rev-parse --show-toplevel)/scripts/sessions/_conformance-core.sh"
-emit_prompt 6
+emit_prompt jsdoc-jsx-salsa
