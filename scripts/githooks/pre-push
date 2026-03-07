@@ -35,18 +35,10 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
 
     # Note: tsz-core (root) excluded — its integration tests require special
     # environment setup (lib directory) that CI provides but local dev may not.
-    ALL_CRATES="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-lowering tsz-emitter tsz-lsp"
-    NEXTEST_FILTER=""
-    for crate in $ALL_CRATES; do
-        if [ -z "$NEXTEST_FILTER" ]; then
-            NEXTEST_FILTER="package($crate)"
-        else
-            NEXTEST_FILTER="$NEXTEST_FILTER | package($crate)"
-        fi
-    done
+    ALL_CRATES="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-lowering -p tsz-emitter -p tsz-lsp"
 
     if cargo nextest --version >/dev/null 2>&1; then
-        TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass -E "$NEXTEST_FILTER" 2>&1) || {
+        TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass $ALL_CRATES 2>&1) || {
             echo ""
             echo "$TEST_OUTPUT" | tail -30
             echo ""
@@ -56,7 +48,7 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
         }
         echo "$TEST_OUTPUT" | tail -5
     else
-        TEST_OUTPUT=$(cargo test --workspace 2>&1) || {
+        TEST_OUTPUT=$(cargo test $ALL_CRATES 2>&1) || {
             echo ""
             echo "$TEST_OUTPUT" | tail -30
             echo ""
