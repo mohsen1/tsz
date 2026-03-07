@@ -1524,14 +1524,51 @@ impl BinderState {
                 return;
             }
 
-            // Property access (e.g., x.foo) or element access (e.g., x[0])
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
+            // Property access (e.g., x.foo)
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = arena.get_access_expr(node) {
                     self.bind_expression(arena, access.expression);
-                    // For element access, also bind the argument
-                    if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                }
+                return;
+            }
+
+            // Element access (e.g., x[0], x?.[expr])
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = arena.get_access_expr(node) {
+                    self.bind_expression(arena, access.expression);
+
+                    // Optional chaining short-circuits RHS evaluation.
+                    // For `obj?.[expr]`, `expr` is evaluated only when `obj` is present.
+                    let expr_has_optional_chain =
+                        arena.get(access.expression).is_some_and(|expr| {
+                            (u32::from(expr.flags) & node_flags::OPTIONAL_CHAIN) != 0
+                        });
+                    if access.question_dot_token
+                        || (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0
+                        || expr_has_optional_chain
+                    {
+                        let after_base = self.current_flow;
+
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+                        self.current_flow = true_flow;
+                        self.bind_expression(arena, access.name_or_argument);
+                        let after_element = self.current_flow;
+
+                        let false_flow = self.create_flow_condition(
+                            flow_flags::FALSE_CONDITION,
+                            after_base,
+                            access.expression,
+                        );
+
+                        let merge = self.create_branch_label();
+                        self.add_antecedent(merge, after_element);
+                        self.add_antecedent(merge, false_flow);
+                        self.current_flow = merge;
+                    } else {
                         self.bind_expression(arena, access.name_or_argument);
                     }
                 }
@@ -1542,18 +1579,56 @@ impl BinderState {
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = arena.get_call_expr(node) {
                     self.bind_expression(arena, call.expression);
-                    if let Some(args) = &call.arguments {
-                        for &arg in &args.nodes {
-                            self.bind_expression(arena, arg);
+
+                    let is_optional_call =
+                        (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0;
+                    if is_optional_call {
+                        let after_callee = self.current_flow;
+
+                        // Optional calls short-circuit argument evaluation when callee is absent.
+                        let true_flow = self.create_flow_condition(
+                            flow_flags::TRUE_CONDITION,
+                            after_callee,
+                            call.expression,
+                        );
+                        self.current_flow = true_flow;
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_expression(arena, arg);
+                            }
                         }
-                    }
-                    // Create CALL flow node for all call expressions
-                    let flow = self.create_flow_call(idx);
-                    self.current_flow = flow;
-                    // Also create ARRAY_MUTATION flow node if it's an array mutation
-                    if Self::is_array_mutation_call(arena, idx) {
-                        let flow = self.create_flow_array_mutation(idx);
+                        let flow = self.create_flow_call(idx);
                         self.current_flow = flow;
+                        if Self::is_array_mutation_call(arena, idx) {
+                            let flow = self.create_flow_array_mutation(idx);
+                            self.current_flow = flow;
+                        }
+                        let after_call = self.current_flow;
+
+                        let false_flow = self.create_flow_condition(
+                            flow_flags::FALSE_CONDITION,
+                            after_callee,
+                            call.expression,
+                        );
+
+                        let merge = self.create_branch_label();
+                        self.add_antecedent(merge, after_call);
+                        self.add_antecedent(merge, false_flow);
+                        self.current_flow = merge;
+                    } else {
+                        if let Some(args) = &call.arguments {
+                            for &arg in &args.nodes {
+                                self.bind_expression(arena, arg);
+                            }
+                        }
+                        // Create CALL flow node for all call expressions
+                        let flow = self.create_flow_call(idx);
+                        self.current_flow = flow;
+                        // Also create ARRAY_MUTATION flow node if it's an array mutation
+                        if Self::is_array_mutation_call(arena, idx) {
+                            let flow = self.create_flow_array_mutation(idx);
+                            self.current_flow = flow;
+                        }
                     }
                 }
                 return;
