@@ -23,6 +23,10 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -84,6 +88,14 @@ jobs:
           path: artifacts/bench-vs-tsgo-*.json
           retention-days: 7
 
+      # Persist benchmark data in GH Actions cache so future runs can use it
+      # even if this benchmark job gets cancelled by cancel-in-progress
+      - name: Cache benchmark data
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/bench-vs-tsgo-*.json
+          key: benchmark-data-${{ github.sha }}
+
   wasm:
     needs: check
     if: needs.check.outputs.should_deploy == 'true'
@@ -115,8 +127,8 @@ jobs:
           retention-days: 7
 
   build:
-    needs: [check, benchmark, wasm]
-    if: ${{ always() && needs.check.outputs.should_deploy == 'true' && !cancelled() && needs.wasm.result == 'success' }}
+    needs: [check, wasm]
+    if: ${{ needs.check.outputs.should_deploy == 'true' && needs.wasm.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,12 +149,22 @@ jobs:
           path: .ci-metrics
         continue-on-error: true
 
-      - name: Download benchmark data
+      # Try current run's benchmark artifact first, fall back to cached data
+      - name: Download benchmark artifact
+        id: bench-artifact
         uses: actions/download-artifact@v4
         with:
           name: benchmark-data
           path: website/data
         continue-on-error: true
+
+      - name: Restore cached benchmark data
+        if: steps.bench-artifact.outcome != 'success'
+        uses: actions/cache/restore@v4
+        with:
+          path: website/data
+          key: benchmark-data-${{ github.sha }}
+          restore-keys: benchmark-data-
 
       - name: Download WASM
         uses: actions/download-artifact@v4
@@ -158,7 +180,7 @@ jobs:
             mv website/data/bench-vs-tsgo-*.json website/data/benchmarks.json
             echo "Benchmark data ready"
           else
-            echo "No benchmark data available"
+            echo "No benchmark data available, will use sample data"
           fi
 
       - name: Install dependencies
@@ -175,9 +197,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    concurrency:
-      group: pages-deploy
-      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
