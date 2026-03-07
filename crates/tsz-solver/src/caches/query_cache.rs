@@ -611,6 +611,10 @@ impl QueryDatabase for QueryCache<'_> {
         self
     }
 
+    fn as_type_resolver(&self) -> &dyn TypeResolver {
+        self
+    }
+
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.interner.set_array_base_type(type_id, type_params);
     }
