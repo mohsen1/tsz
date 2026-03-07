@@ -28,7 +28,7 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, DeclarationArenaMap};
+use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -738,6 +738,9 @@ pub struct MergedProgram {
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
     pub declaration_arenas: DeclarationArenaMap,
+    /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
+    /// Enables resolving type references in cross-file interface declarations.
+    pub cross_file_node_symbols: CrossFileNodeSymbols,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -934,6 +937,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
     let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
+    let mut cross_file_node_symbols: CrossFileNodeSymbols = FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -1772,22 +1776,19 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         });
     }
 
-    // NOTE: We intentionally do NOT populate globals from merged_symbols here.
-    // merged_symbols contains ALL symbols (including namespace-local ones like `var Symbol`
-    // inside a namespace), but globals should only contain file-level symbols.
-    // File-level symbols are already correctly added to globals at lines 873-880.
-    //
-    // NOTE: lib_binders were collected and processed at the beginning of this function.
-    // Their symbols have been remapped to global IDs and are now in:
-    // - global_symbols: The actual Symbol data
-    // - lib_name_to_global: Name -> global SymbolId mapping
-    // - Each file's remapped_file_locals and globals
+    // Build cross_file_node_symbols: map each arena pointer to its remapped node_symbols.
+    // This enables the checker to resolve type references in cross-file interface declarations.
+    for file in &files {
+        let arena_ptr = Arc::as_ptr(&file.arena) as usize;
+        cross_file_node_symbols.insert(arena_ptr, Arc::new(file.node_symbols.clone()));
+    }
 
     MergedProgram {
         files,
         symbols: global_symbols,
         symbol_arenas,
         declaration_arenas,
+        cross_file_node_symbols,
         globals,
         file_locals: file_locals_list,
         declared_modules,
@@ -2199,6 +2200,7 @@ pub fn create_binder_from_bound_file(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: program.symbol_arenas.clone(),
             declaration_arenas: program.declaration_arenas.clone(),
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
