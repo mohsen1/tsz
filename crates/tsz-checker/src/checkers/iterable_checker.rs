@@ -253,10 +253,14 @@ impl<'a> CheckerState<'a> {
     // For-Of Element Type Computation
     // =========================================================================
 
-    /// Compute the element type produced by a `for (... of expr)` loop.
+    /// Compute the element type produced by a `for (... of expr)` or
+    /// `for await (... of expr)` loop.
     ///
     /// Handles arrays, tuples, unions, strings, and custom iterators via
     /// the `[Symbol.iterator]().next().value` protocol.
+    ///
+    /// When `is_async` is true (`for await...of`), the element type is awaited,
+    /// so `Iterable<Promise<T>>` yields `T` instead of `Promise<T>`.
     pub fn for_of_element_type(&mut self, iterable_type: TypeId, is_async: bool) -> TypeId {
         if iterable_type == TypeId::ANY
             || iterable_type == TypeId::UNKNOWN
