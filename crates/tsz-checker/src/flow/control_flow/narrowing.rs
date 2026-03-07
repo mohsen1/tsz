@@ -1354,4 +1354,33 @@ impl<'a> FlowAnalyzer<'a> {
         }
         None
     }
+
+    /// For `typeof a.prop === "undefined"`, extract the property path from
+    /// the typeof operand relative to `target` and the comparison literal.
+    /// Returns (`property_path`, `typeof_literal_string`) if the typeof operand
+    /// is a property access chain rooted at `target`.
+    pub(super) fn typeof_discriminant_path(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<(Vec<Atom>, &str)> {
+        // Try left = typeof expr, right = string literal
+        if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(left))
+            && let Some((path, _is_optional)) = self.relative_discriminant_path(operand, target)
+            && !path.is_empty()
+            && let Some(lit) = self.literal_string_from_node(right)
+        {
+            return Some((path, lit));
+        }
+        // Try right = typeof expr, left = string literal
+        if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(right))
+            && let Some((path, _is_optional)) = self.relative_discriminant_path(operand, target)
+            && !path.is_empty()
+            && let Some(lit) = self.literal_string_from_node(left)
+        {
+            return Some((path, lit));
+        }
+        None
+    }
 }
