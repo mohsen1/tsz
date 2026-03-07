@@ -1454,12 +1454,39 @@ impl<'a> CheckerState<'a> {
                     // TS2698: Spread types may only be created from object types
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    if !crate::query_boundaries::type_computation::access::is_valid_spread_type(
-                        self.ctx.types,
-                        resolved_spread,
-                    ) {
+                    let is_valid_spread =
+                        crate::query_boundaries::type_computation::access::is_valid_spread_type(
+                            self.ctx.types,
+                            resolved_spread,
+                        );
+                    if !is_valid_spread {
                         self.report_spread_not_object_type(elem_idx);
                     }
+
+                    // Short-circuit: when the object literal is a single spread
+                    // of a type parameter (e.g., `{ ...item }` where `item: T`),
+                    // preserve the type parameter as the result type. Expanding
+                    // to the constraint's properties would lose generic type
+                    // information, causing false TS2322 errors like
+                    // `Type '{ name: string }' is not assignable to type 'T'`.
+                    // Only when the spread is valid (no TS2698) — invalid spreads
+                    // like `T extends undefined` must not short-circuit.
+                    if is_valid_spread
+                        && obj.elements.nodes.len() == 1
+                        && properties.is_empty()
+                        && (tsz_solver::type_param_info(self.ctx.types, spread_type).is_some()
+                            || tsz_solver::type_queries::contains_type_parameters_db(
+                                self.ctx.types,
+                                spread_type,
+                            ))
+                    {
+                        // Pop this type from stack if we pushed it earlier
+                        if marker_this_type.is_some() {
+                            self.ctx.this_type_stack.pop();
+                        }
+                        return spread_type;
+                    }
+
                     // Check if the spread type is a union — if so, distribute
                     // the spread over each union member: { ...A|B } → { ...A } | { ...B }
                     let union_members_opt = tsz_solver::type_queries::get_union_members(
