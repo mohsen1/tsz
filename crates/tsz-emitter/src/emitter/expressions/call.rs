@@ -165,9 +165,12 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = false;
         self.ctx.flags.nullish_coalescing_needs_parens = false;
         if let Some(ref args) = call.arguments {
+            // Filter out NodeIndex::NONE (omitted arguments from parser error recovery).
+            // In call expressions, `foo(a,,b)` should emit `foo(a, b)`, not `foo(a, , b)`.
+            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
             // For the first argument, emit any comments between '(' and the argument
             // This handles: func(/*comment*/ arg)
-            if let Some(first_arg) = args.nodes.first()
+            if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
                 // Use node.end of the call expression to approximate '(' position
@@ -175,7 +178,7 @@ impl<'a> Printer<'a> {
                 let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
                 self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
             }
-            self.emit_comma_separated(&args.nodes);
+            self.emit_comma_separated(&valid_args);
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
@@ -194,13 +197,14 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = false;
         self.ctx.flags.nullish_coalescing_needs_parens = false;
         if let Some(args) = args {
-            if let Some(first_arg) = args.nodes.first()
+            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
                 let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
                 self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
             }
-            self.emit_comma_separated(&args.nodes);
+            self.emit_comma_separated(&valid_args);
         }
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;

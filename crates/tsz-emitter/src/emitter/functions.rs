@@ -623,6 +623,21 @@ impl<'a> Printer<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                // Skip parameters with no name (parser error recovery artifacts).
+                // e.g., `function f(a,¬)` should emit `function f(a)`.
+                if param.name.is_none() {
+                    continue;
+                }
+                // Skip parameters where the name is an empty/missing identifier
+                // (parser error recovery for invalid characters like ¬).
+                if let Some(name_node) = self.arena.get(param.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.arena.get_identifier(name_node)
+                    && ident.escaped_text.is_empty()
+                {
+                    continue;
+                }
+
                 // Skip `this` parameter - it's TypeScript-only and erased in JS emit.
                 // The parser may represent `this` as either a ThisKeyword token
                 // or as an Identifier with text "this".
@@ -927,6 +942,53 @@ mod tests {
         assert!(
             !output.contains("function foo() /** nothing */"),
             "Comment should not drift after closing paren.\nOutput: {output}"
+        );
+    }
+
+    /// Parameters with empty/missing identifier names (from parser error recovery)
+    /// should be dropped, matching tsc behavior.
+    #[test]
+    fn empty_param_name_dropped() {
+        let source = "function f(a,\u{00AC}) {}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("function f(a)"),
+            "Invalid character parameter should be dropped.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(a, )"),
+            "Should not have trailing comma for dropped param.\nOutput:\n{output}"
+        );
+    }
+
+    /// Omitted arguments in call expressions should be dropped.
+    #[test]
+    fn omitted_call_args_dropped() {
+        let source = "foo(a,,b);";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("foo(a, b)"),
+            "Omitted argument should be dropped.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("foo(a, , b)"),
+            "Should not have extra comma for omitted arg.\nOutput:\n{output}"
         );
     }
 }
