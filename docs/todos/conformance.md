@@ -6214,3 +6214,95 @@ Both attempts were reverted to avoid leaving partial/non-improving behavior in t
 - **TS18003**: `TypeScript/tests/cases/compiler/tripleSlashReferenceAbsoluteWindowsPath.ts` — still missing TS18003 because `@Filename: C:\...` is materialized inside tmpdir as a local file; fixing needs virtual-drive path semantics in conformance harness, not a small checker/driver patch.
 - **TS5052**: `TypeScript/tests/cases/compiler/checkJsFiles6.ts` — now emits TS18003 after preserving explicit `allowJs: false`, but still misses TS5052 because config validation does not report `checkJs`/`allowJs` incompatibility when `allowJs` is explicitly false.
 - **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — attempted targeted `try`-destructuring fallback in checker did not move conformance output; root issue appears deeper in flow-node assignment modeling for destructuring, not a boundary guard.
+
+## Session 2026-03-07h — narrowing-flow investigation: optional-chain `=== undefined` collapses base to `never` (no commit)
+
+### Campaign
+- **Campaign**: Narrowing / control-flow parity
+- **Representative basket**:
+  - `controlFlowOptionalChain.ts`
+  - `exhaustiveSwitchStatements1.ts`
+  - `narrowingByTypeofInSwitch.ts`
+  - `controlFlowForCatchAndFinally.ts`
+  - `typePredicateInLoop.ts`
+
+### Shared invariant
+For optional-chain comparisons to `undefined` (e.g. `o?.foo === undefined` and the effective-equality side of `o?.foo !== undefined`), CFA must preserve the short-circuit branch instead of collapsing the base reference to `never`.
+
+### What was verified
+- Offline triage first:
+  - `./scripts/conformance.sh analyze --campaigns`
+  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
+- Targeted verbose runs (no full suite):
+  - `.target/dist-fast/tsz-conformance --filter controlFlowOptionalChain --verbose --print-fingerprints`
+  - `.target/dist-fast/tsz-conformance --filter exhaustiveSwitchStatements1 --verbose --print-fingerprints`
+  - `.target/dist-fast/tsz-conformance --filter narrowingByTypeofInSwitch --verbose --print-fingerprints`
+  - `.target/dist-fast/tsz-conformance --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
+  - `.target/dist-fast/tsz-conformance --filter typePredicateInLoop --verbose --print-fingerprints`
+- Repro probe against local `tsz`:
+  - `function a(o: {foo: string} | undefined) { o.foo; }` emits TS18048 (baseline expected)
+  - `if (o?.foo === undefined) { o.foo; }` emits false TS2339 (`never`) instead of TS18048.
+
+### Root-cause layer
+- **Primary owner**: Checker flow narrowing boundary (control-flow narrowing transport)
+- **Likely exact owners**:
+  - `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+    - `narrow_type_by_condition_inner` binary fast-path (`extract_type_guard` route)
+    - optional-chain prefix transport block before `narrow_by_binary_expr`
+    - strict discriminant branch inside `narrow_by_binary_expr`
+  - `crates/tsz-checker/src/flow/control_flow/type_guards.rs`
+    - `extract_binary_guard` / discriminant extraction for optional-chain comparisons
+
+### tsc vs tsz difference
+- **tsc behavior**: `o?.foo === undefined` does not make base `o` become `never`; diagnostics remain in nullish family (TS18048/TS18047) depending on branch and base type.
+- **tsz behavior**: effective-equality side frequently collapses base reference to `never`, producing false TS2339 (`Property 'foo' does not exist on type 'never'`) and related unreachable artifacts.
+
+### Why this is blocked in one session
+Attempted edits in `condition_narrowing.rs` did not change targeted outcomes; direct regression tests for this scenario stayed red. The bug path likely bypasses the attempted branch (or recomputes through another guard route), so partial edits were reverted to avoid leaving half-working narrowing logic.
+
+### Next fix (concrete)
+Implement one shared optional-chain-undefined transport helper and route both fast and fallback binary paths through it:
+1. Detect optional-chain comparison to `undefined` with normalized equality sense.
+2. Compute branch result as:
+   - non-short-circuit discriminant narrowing result (if any), unioned with
+   - base nullish short-circuit branch when on the equality-effective side.
+3. Use the same helper in:
+   - `extract_type_guard` fast-path application,
+   - optional-chain prefix transport,
+   - strict discriminant branch in `narrow_by_binary_expr`.
+
+### Estimated real-fix scope
+- ~80-140 LOC in checker flow narrowing path, plus 2-4 focused checker tests in an active test target.
+- Expected blast radius: `controlFlowOptionalChain.ts` TS2339/TS18048 cluster and related optional-chain CFA regressions.
+
+## Session 2026-03-07i — big3 follow-on triage: TS2322 missing + TS2345 extra family (no commit)
+
+Narrowing-flow was blocked (see Session 2026-03-07h), so follow-on campaign claimed: **big3**.
+
+### Representative basket sampled
+- `coAndContraVariantInferences6.ts`
+- `optionalBindingParameters2.ts`
+- `genericRestParameters1.ts`
+
+### Shared invariant candidate
+In several call/inference scenarios, tsz reports a top-level call-argument incompatibility (TS2345) where tsc reports nested/member-level assignability (TS2322). This indicates mismatch in diagnostic routing/priority after relation failure, not just relation truth value.
+
+### Observations
+- `coAndContraVariantInferences6.ts`: expected TS2322 at props literal member (`"C"` not in `"A"|"B"`), actual TS2345 on first argument type.
+- `optionalBindingParameters2.ts`: expected property-level TS2322 pair inside object literal argument, actual one top-level TS2345 at call site.
+- `genericRestParameters1.ts`: broad TS2345 extras around rest tuple callability; expected TS2322 at specific assignment site.
+
+### Likely ownership
+- Checker call diagnostic routing and assignability failure rendering boundary:
+  - `crates/tsz-checker/src/checkers/call_checker.rs`
+  - `crates/tsz-checker/src/query_boundaries/assignability.rs`
+- Potentially contextual inference upstream for selected cases.
+
+### Why no patch landed
+A safe shared fix requires separating:
+1. relation decision (`assignable`),
+2. primary failure reason classification,
+3. diagnostic code/site selection policy (TS2345 vs TS2322) for nested object/rest mismatches.
+
+A local tweak in call checker risks broad regressions across Big3 and JSX/call sites. No conformance-affecting fix was committed in this slice.
