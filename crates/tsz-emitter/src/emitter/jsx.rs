@@ -466,13 +466,46 @@ impl<'a> Printer<'a> {
                 && let Some(spread) = self.arena.get_jsx_spread_attribute(prop_node)
             {
                 result.has_spread = true;
-                result.attrs.push(JsxAttrInfo::Spread {
-                    expr: spread.expression,
-                });
+                // Flatten spread of object literal with only spread properties:
+                // {...{...a, ...b}} → ...a, ...b
+                if let Some(inner_spreads) = self.get_spread_only_object_literal(spread.expression)
+                {
+                    for inner_expr in inner_spreads {
+                        result.attrs.push(JsxAttrInfo::Spread { expr: inner_expr });
+                    }
+                } else {
+                    result.attrs.push(JsxAttrInfo::Spread {
+                        expr: spread.expression,
+                    });
+                }
             }
         }
 
         result
+    }
+
+    /// Check if a node is an `ObjectLiteralExpression` with only `SpreadAssignment`
+    /// properties. If so, return the expression of each spread. This enables
+    /// JSX spread flattening: `{...{...a, ...b}}` → `...a, ...b`.
+    fn get_spread_only_object_literal(&self, expr: NodeIndex) -> Option<Vec<NodeIndex>> {
+        let node = self.arena.get(expr)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let lit = self.arena.get_literal_expr(node)?;
+        if lit.elements.nodes.is_empty() {
+            return None;
+        }
+        let mut result = Vec::new();
+        for &prop in &lit.elements.nodes {
+            let prop_node = self.arena.get(prop)?;
+            if prop_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let spread = self.arena.get_spread(prop_node)?;
+            result.push(spread.expression);
+        }
+        Some(result)
     }
 
     /// Get the name of a JSX attribute (identifier or namespaced).
