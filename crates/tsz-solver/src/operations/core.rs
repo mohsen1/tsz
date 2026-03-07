@@ -1382,27 +1382,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
 
         if has_multi_overload_members >= 2
-            && let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists) {
-                // Compatible signatures found — check `this` type constraint.
-                // The unified signatures have intersected `this` types from
-                // the matched overloads across all members.
-                let unified_this = unified_sigs
-                    .iter()
-                    .filter_map(|s| s.this_type)
-                    .reduce(|a, b| self.interner.intersection2(a, b));
+            && let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists)
+        {
+            // Compatible signatures found — check `this` type constraint.
+            // The unified signatures have intersected `this` types from
+            // the matched overloads across all members.
+            let unified_this = unified_sigs
+                .iter()
+                .filter_map(|s| s.this_type)
+                .reduce(|a, b| self.interner.intersection2(a, b));
 
-                if let Some(combined_this) = unified_this {
-                    let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-                    if !self.checker.is_assignable_to(actual_this, combined_this) {
-                        return CallResult::ThisTypeMismatch {
-                            expected_this: combined_this,
-                            actual_this,
-                        };
-                    }
+            if let Some(combined_this) = unified_this {
+                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                if !self.checker.is_assignable_to(actual_this, combined_this) {
+                    return CallResult::ThisTypeMismatch {
+                        expected_this: combined_this,
+                        actual_this,
+                    };
                 }
             }
-            // No compatible signatures found — fall through to per-member
-            // resolution which resolves each member's overloads independently.
+        }
+        // No compatible signatures found — fall through to per-member
+        // resolution which resolves each member's overloads independently.
 
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)
