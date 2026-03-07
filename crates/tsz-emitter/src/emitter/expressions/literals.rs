@@ -561,10 +561,25 @@ impl<'a> Printer<'a> {
             self.write("{");
             self.write_line();
             self.increase_indent();
+            // Find the opening `{` position for leading comment scanning
+            let open_brace_end = self.source_text.map_or(node.pos + 1, |text| {
+                let bytes = text.as_bytes();
+                let start = node.pos as usize;
+                let end = std::cmp::min(node.end as usize, bytes.len());
+                bytes[start..end]
+                    .iter()
+                    .position(|&b| b == b'{')
+                    .map(|off| (start + off + 1) as u32)
+                    .unwrap_or(node.pos + 1)
+            });
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
                 let Some(prop_node) = self.arena.get(prop) else {
                     continue;
                 };
+                // Emit leading comments before the first property (e.g. /** own x*/)
+                if i == 0 {
+                    self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                }
                 self.emit_object_property(prop);
 
                 let is_last = i == obj.elements.nodes.len() - 1;
