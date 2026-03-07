@@ -1221,7 +1221,7 @@ impl<'a> CheckerState<'a> {
 
             // Check if the base type is a type parameter with a constraint
             let Some(constraint_type) =
-                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, base_type)
+                class_query::type_parameter_constraint(self.ctx.types, base_type)
             else {
                 return;
             };
@@ -1283,7 +1283,7 @@ impl<'a> CheckerState<'a> {
     fn constraint_has_abstract_construct(&self, constraint_type: TypeId) -> bool {
         // Direct callable check
         if let Some(callable) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, constraint_type)
+            class_query::callable_shape_for_type(self.ctx.types, constraint_type)
             && callable.is_abstract
             && !callable.construct_signatures.is_empty()
         {
@@ -1291,12 +1291,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Intersection: check each member
-        if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, constraint_type)
-        {
+        if let Some(members) = class_query::intersection_members(self.ctx.types, constraint_type) {
             for &member in members.iter() {
-                if let Some(callable) =
-                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, member)
+                if let Some(callable) = class_query::callable_shape_for_type(self.ctx.types, member)
                     && callable.is_abstract
                     && !callable.construct_signatures.is_empty()
                 {
