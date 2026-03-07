@@ -40,7 +40,11 @@ fn widen_type_cached(
     type_id: TypeId,
     cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
 ) -> TypeId {
-    // Fast path: intrinsic types are never widened
+    // Fast path: most intrinsic types are never widened, but boolean
+    // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return TypeId::BOOLEAN;
+    }
     if type_id.is_intrinsic() {
         return type_id;
     }

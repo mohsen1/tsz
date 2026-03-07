@@ -7,7 +7,7 @@ use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, fallback_compound_assignment_result, get_array_element_type,
     is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,
-    widen_literal_to_primitive,
+    unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -303,11 +303,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // If the await node itself was cached as a promise-like application, unwrap once.
-        if tsz_solver::type_queries::is_promise_like(self.interner, rhs_type)
-            && let Some((_, args)) =
-                tsz_solver::type_queries::get_application_info(self.interner, rhs_type)
-            && let Some(&inner) = args.first()
-        {
+        if let Some(inner) = unwrap_promise_type_argument(self.interner, rhs_type) {
             return Some(inner);
         }
 
@@ -317,11 +313,7 @@ impl<'a> FlowAnalyzer<'a> {
         let operand_type = self
             .node_types
             .and_then(|nt| nt.get(&unary.expression.0).copied())?;
-        if tsz_solver::type_queries::is_promise_like(self.interner, operand_type)
-            && let Some((_, args)) =
-                tsz_solver::type_queries::get_application_info(self.interner, operand_type)
-            && let Some(&inner) = args.first()
-        {
+        if let Some(inner) = unwrap_promise_type_argument(self.interner, operand_type) {
             return Some(inner);
         }
         None
