@@ -17,6 +17,23 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallResult, ContextualTypeContext, TypeId};
 
+/// Count the number of non-`any` parameter types in a callable type.
+///
+/// Used to compare contextual type candidates: whichever has more specific
+/// (non-`any`) parameter types provides better contextual typing for callbacks.
+/// Returns 0 for non-callable types.
+fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, ty) {
+        shape
+            .params
+            .iter()
+            .filter(|p| p.type_id != TypeId::ANY)
+            .count()
+    } else {
+        0
+    }
+}
+
 struct CallResultContext<'a> {
     callee_expr: NodeIndex,
     call_idx: NodeIndex,
@@ -882,37 +899,58 @@ impl<'a> CheckerState<'a> {
                                 .map(|(t, _)| shape.params.get(i).is_some_and(|p| p.type_id == t))
                                 .unwrap_or(false);
                         let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
-                            let instantiated =
-                                if round1_instantiated_params.is_some() && !is_sensitive_fallback {
-                                    // Round 1 already instantiated the params, but for
-                                    // constrained type parameters whose constraint only
-                                    // references type params from the SAME call signature
-                                    // (e.g., TCallback extends Callback<TFoo, TBar>), the
-                                    // solver resolved them to degraded constraint types with
-                                    // `any` params. Check the ORIGINAL shape param — if it's a
-                                    // TypeParameter with a constraint that becomes fully
-                                    // resolved after instantiation, use that instead.
-                                    let original_param = shape.params.get(i).map(|p| p.type_id);
-                                    if let Some(orig) = original_param
-                                        && let Some(tp_info) =
-                                            tsz_solver::type_param_info(self.ctx.types, orig)
-                                        && let Some(constraint) = tp_info.constraint
-                                    {
-                                        let instantiated_constraint = instantiate_type(
+                            let instantiated = if round1_instantiated_params.is_some() {
+                                // Round 1 already instantiated the params, but for
+                                // constrained type parameters whose constraint only
+                                // references type params from the SAME call signature
+                                // (e.g., TCallback extends Callback<TFoo, TBar>), the
+                                // solver resolved them to degraded constraint types with
+                                // `any` params. Check the ORIGINAL shape param — if it's a
+                                // TypeParameter with a constraint that becomes fully
+                                // resolved after instantiation, use that instead.
+                                //
+                                // When the solver correctly inferred T from the return
+                                // type context (e.g., `deprecate<T extends Function>(fn: T,
+                                // msg: string): T` with contextual type `MyCallback`), the
+                                // Round 1 param type may already have specific callable
+                                // parameter types. Compare both options (constraint-derived
+                                // vs Round 1 result) and pick whichever provides more
+                                // specific callable parameter types for contextual typing.
+                                let original_param = shape.params.get(i).map(|p| p.type_id);
+                                if let Some(orig) = original_param
+                                    && let Some(tp_info) =
+                                        tsz_solver::type_param_info(self.ctx.types, orig)
+                                    && let Some(constraint) = tp_info.constraint
+                                {
+                                    let instantiated_constraint = instantiate_type(
+                                        self.ctx.types,
+                                        constraint,
+                                        &round2_substitution,
+                                    );
+                                    let evaluated_constraint =
+                                        self.evaluate_type_with_env(instantiated_constraint);
+                                    // Only consider the constraint if it's fully resolved
+                                    // (no remaining type parameters from outer scopes).
+                                    if !tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        evaluated_constraint,
+                                    ) {
+                                        // Pick whichever provides more specific callable
+                                        // parameter types. The constraint-derived type may
+                                        // have specific params (e.g., Callback<number, string>)
+                                        // while Round 1 may have degraded `any` params from
+                                        // the sensitive placeholder. Conversely, the Round 1
+                                        // result may have specific params from return type
+                                        // inference while the constraint is broad (e.g.,
+                                        // `Function`).
+                                        let constraint_specificity = callable_param_specificity(
                                             self.ctx.types,
-                                            constraint,
-                                            &round2_substitution,
+                                            evaluated_constraint,
                                         );
-                                        let evaluated =
-                                            self.evaluate_type_with_env(instantiated_constraint);
-                                        // Only use the constraint if it's fully resolved (no
-                                        // remaining type parameters from outer scopes). If it
-                                        // still has unresolved params, fall back to Round 1.
-                                        if !tsz_solver::type_queries::contains_type_parameters_db(
-                                            self.ctx.types,
-                                            evaluated,
-                                        ) {
-                                            evaluated
+                                        let round1_specificity =
+                                            callable_param_specificity(self.ctx.types, param_type);
+                                        if constraint_specificity >= round1_specificity {
+                                            evaluated_constraint
                                         } else {
                                             param_type
                                         }
