@@ -508,6 +508,18 @@ impl<'a> CheckerState<'a> {
                                 if params.is_empty() {
                                     env.insert_def(def_id, ty);
                                 } else {
+                                    env.insert_def_with_params(def_id, ty, params.clone());
+                                }
+                            }
+                            // Also register in type_environment (Rc-wrapped) for FlowAnalyzer.
+                            // type_env and type_environment are separate TypeEnvironment instances
+                            // that are only synchronized once at startup. Without this, narrowing
+                            // contexts can't resolve Application types for cross-file lib interfaces
+                            // (e.g., ArrayLike<any> in type predicate narrowing).
+                            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                                if params.is_empty() {
+                                    env.insert_def(def_id, ty);
+                                } else {
                                     env.insert_def_with_params(def_id, ty, params);
                                 }
                             }
@@ -536,6 +548,11 @@ impl<'a> CheckerState<'a> {
                                     // evaluate_application can resolve it via resolve_lazy(def_id).
                                     // Without this, Partial<T>, Pick<T,K>, etc. resolve to unknown.
                                     if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                        env.insert_def_with_params(def_id, ty, params.clone());
+                                    }
+                                    // Also register in type_environment for FlowAnalyzer.
+                                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
+                                    {
                                         env.insert_def_with_params(def_id, ty, params);
                                     }
 
