@@ -743,7 +743,12 @@ impl<'a> Printer<'a> {
                 && self
                     .commonjs_exported_var_names
                     .contains(ident.escaped_text.as_str());
-            if has_import_subst || has_export_var {
+            let has_ns_qualification = self.in_namespace_iife
+                && !self.suppress_ns_qualification
+                && self
+                    .namespace_exported_names
+                    .contains(ident.escaped_text.as_str());
+            if has_import_subst || has_export_var || has_ns_qualification {
                 self.write_identifier(&ident.escaped_text);
                 self.write(": ");
                 self.emit(shorthand.name);
