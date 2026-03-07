@@ -74,16 +74,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // tsc does not treat bare `void` as nullish in binary operator contexts.
-        // `void` means "don't use this value" and gets operator-specific errors
-        // (TS2362/TS2363/TS2365), not nullish diagnostics (TS18048/TS18050).
+        // Standalone `void` should not produce TS18048/TS18047 in binary operators.
+        // tsc handles void-typed variables through operator-specific checks (TS18050,
+        // TS2362, TS2363, TS2365, etc.) rather than through the nullish operand path.
+        // Only `void` inside unions (e.g., `string | void`) should be treated as nullable.
         let (_, left_cause) = if left_type == TypeId::VOID {
-            (Some(left_type), None)
+            (None, None)
         } else {
             self.split_nullish_type(left_type)
         };
         let (_, right_cause) = if right_type == TypeId::VOID {
-            (Some(right_type), None)
+            (None, None)
         } else {
             self.split_nullish_type(right_type)
         };
