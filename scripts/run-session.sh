@@ -243,22 +243,17 @@ discover_runners() {
     [[ -d "$dir" && -f "$dir/.claude.json" ]] && RUNNERS+=("claude:$dir")
   done
 
-  # Codex (if installed) — register spark and standard as separate runners
-  # (they have independent credit pools)
+  # Codex (if installed)
   if command -v codex >/dev/null 2>&1; then
-    RUNNERS+=("codex-spark:gpt-5.3-codex-spark")
-    RUNNERS+=("codex:gpt-5.3-codex")
+    RUNNERS+=("codex:gpt-5.4-codex")
   fi
 
-  # Apply filter ("codex" matches both codex and codex-spark)
+  # Apply filter
   if [[ -n "$RUNNER_FILTER" ]]; then
     local filtered=()
     for r in "${RUNNERS[@]}"; do
       local rtype="${r%%:*}"
-      case "$RUNNER_FILTER" in
-        codex)  [[ "$rtype" == codex || "$rtype" == codex-spark ]] && filtered+=("$r") ;;
-        *)      [[ "$rtype" == "$RUNNER_FILTER" ]] && filtered+=("$r") ;;
-      esac
+      [[ "$rtype" == "$RUNNER_FILTER" ]] && filtered+=("$r")
     done
     RUNNERS=("${filtered[@]}")
   fi
@@ -275,8 +270,6 @@ runner_label() {
     local dir_name
     dir_name="$(basename "$path")"
     echo "claude($dir_name)"
-  elif [[ "$type" == "codex-spark" ]]; then
-    echo "codex-spark($path)"
   elif [[ "$type" == "codex" ]]; then
     echo "codex($path)"
   else
@@ -416,7 +409,7 @@ check_output_for_drain() {
         return 0
       fi
     done
-  elif [[ "$type" == "codex" || "$type" == "codex-spark" ]]; then
+  elif [[ "$type" == "codex" ]]; then
     for pat in "${CODEX_DRAIN_PATTERNS[@]}"; do
       if echo "$combined_output" | grep -qi "$pat"; then
         return 0
@@ -465,14 +458,10 @@ try_runner() {
     exit_code=$?
     set -e
 
-  elif [[ "$type" == "codex-spark" || "$type" == "codex" ]]; then
-    # path holds the model name (e.g. gpt-5.3-codex-spark)
+  elif [[ "$type" == "codex" ]]; then
+    # path holds the model name (e.g. gpt-5.4-codex)
     local model="$path"
-    local effort="medium"
-    if [[ "$type" == "codex-spark" ]]; then
-      effort="xhigh"
-    fi
-    local cmd=(codex exec --model="$model" --config "model_reasoning_effort=$effort" --dangerously-bypass-approvals-and-sandbox "$prompt")
+    local cmd=(codex exec --model="$model" --dangerously-bypass-approvals-and-sandbox "$prompt")
 
     if $DRY_RUN; then
       log "[DRY-RUN] Would execute: codex exec --model=$model ... -p <${SESSION_NAME:-session.sh}>"
