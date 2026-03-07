@@ -1111,13 +1111,11 @@ impl ParserState {
                 // In parameter-default context, `await =>` should report missing operand.
                 // Consume `=>` and the following token to prevent cascading errors
                 // (e.g., TS1359 for `await` used as arrow body in async context).
+                // tsc emits only TS1109 here, not TS1005.
                 if self.in_parameter_default_context()
                     && self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 {
-                    self.error_token_expected(",");
                     self.next_token(); // consume `=>`
-                    // Emit TS1109 directly (bypassing should_report_error suppression
-                    // since TS1005 was just emitted nearby — tsc emits both codes)
                     {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
