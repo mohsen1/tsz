@@ -463,6 +463,13 @@ impl<'a> CheckerState<'a> {
     /// constructor type). This method replaces `Lazy(DefId)` for CLASS symbols
     /// with `TypeQuery(SymbolRef)`, which correctly resolves to the constructor
     /// type in both relation checks and property access resolution.
+    ///
+    /// IMPORTANT: Only converts to TypeQuery when the class symbol is currently
+    /// being resolved (i.e., in `class_instance_resolution_set` or
+    /// `class_constructor_resolution_set`). If the class is NOT being resolved,
+    /// the `Lazy(DefId)` came from contextual parameter/return typing (e.g., a
+    /// parameter `p: Point` typed as `Lazy(DefId_of_Point)`) and should remain
+    /// as the instance type, not be converted to the constructor type.
     pub(crate) fn resolve_lazy_class_to_constructor(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::SymbolRef;
         use tsz_solver::lazy_def_id;
@@ -482,6 +489,19 @@ impl<'a> CheckerState<'a> {
         };
 
         if symbol.flags & tsz_binder::symbol_flags::CLASS == 0 {
+            return type_id;
+        }
+
+        // Only convert to TypeQuery when we're actively building the type for
+        // this class symbol (circular resolution). If the class is not currently
+        // in a resolution set, the Lazy(DefId) came from contextual typing of an
+        // instance (e.g., `p: Point` typed as Lazy during class body construction),
+        // and converting it to TypeQuery would incorrectly make instance types
+        // appear as constructor types (causing false TS2741 "prototype missing" errors).
+        let in_instance_resolution = self.ctx.class_instance_resolution_set.contains(&sym_id);
+        let in_constructor_resolution = self.ctx.class_constructor_resolution_set.contains(&sym_id);
+
+        if !in_instance_resolution && !in_constructor_resolution {
             return type_id;
         }
 
