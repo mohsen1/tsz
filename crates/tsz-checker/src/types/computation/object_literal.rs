@@ -1036,13 +1036,11 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_of_node(computed.expression);
                 }
-                // Check for missing body - error 1005 at end of accessor
-                if accessor.body.is_none() {
-                    use crate::diagnostics::diagnostic_codes;
-                    // Report at accessor.end - 1 (pointing to the closing paren)
-                    let end_pos = elem_node.end.saturating_sub(1);
-                    self.error_at_position(end_pos, 1, "'{' expected.", diagnostic_codes::EXPECTED);
-                }
+                // Missing body for accessors in object literals is a grammar error.
+                // tsc does NOT emit TS1005 here; it defers to TS2378/TS1049
+                // ("A 'get' accessor must have a body"). We skip TS1005 to avoid
+                // false positives that incorrectly suppress TS5107 deprecation
+                // warnings in the driver's grammar-error priority logic.
 
                 // For setters, check implicit any on parameters (error 7006) and on
                 // the property name itself (error 7032).

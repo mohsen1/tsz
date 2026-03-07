@@ -680,6 +680,7 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
     // for tests where tsc expects TS5107)
     || matches!(code,
         1003  // Identifier expected
+        | 1005  // 'X' expected (colon, comma, semicolon, etc.)
         | 1011  // '(' or '<' expected
         | 1109 // Expression expected
         | 1121 // Octal literals are not allowed in strict mode
