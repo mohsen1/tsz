@@ -894,10 +894,6 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 round2_param
                             };
-                        let is_sensitive_fallback = is_sensitive
-                            && round2_param
-                                .map(|(t, _)| shape.params.get(i).is_some_and(|p| p.type_id == t))
-                                .unwrap_or(false);
                         let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
                             let instantiated = if round1_instantiated_params.is_some() {
                                 // Round 1 already instantiated the params, but for
@@ -958,39 +954,42 @@ impl<'a> CheckerState<'a> {
                                         param_type
                                     }
                                 } else {
-                                    let inst = instantiate_type(
+                                    param_type
+                                }
+                            } else {
+                                let inst = instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &round2_substitution,
+                                );
+                                // When the instantiated type is still a bare TypeParameter
+                                // (not in the substitution), resolve to its CONSTRAINT for
+                                // contextual typing. This matches tsc where
+                                // `TCallback extends Callback<TFoo, TBar>` uses
+                                // `Callback<TFoo, TBar>` as contextual type.
+                                if let Some(tp_info) =
+                                    tsz_solver::type_param_info(self.ctx.types, inst)
+                                    && let Some(constraint) = tp_info.constraint
+                                {
+                                    let instantiated_constraint = instantiate_type(
                                         self.ctx.types,
-                                        param_type,
+                                        constraint,
                                         &round2_substitution,
                                     );
-                                    // When the instantiated type is still a bare TypeParameter
-                                    // (not in the substitution), resolve to its CONSTRAINT for
-                                    // contextual typing. This matches tsc where
-                                    // `TCallback extends Callback<TFoo, TBar>` uses
-                                    // `Callback<TFoo, TBar>` as contextual type.
-                                    if let Some(tp_info) =
-                                        tsz_solver::type_param_info(self.ctx.types, inst)
-                                        && let Some(constraint) = tp_info.constraint
-                                    {
-                                        let instantiated_constraint = instantiate_type(
-                                            self.ctx.types,
-                                            constraint,
-                                            &round2_substitution,
-                                        );
-                                        let evaluated =
-                                            self.evaluate_type_with_env(instantiated_constraint);
-                                        if !tsz_solver::type_queries::contains_type_parameters_db(
-                                            self.ctx.types,
-                                            evaluated,
-                                        ) {
-                                            evaluated
-                                        } else {
-                                            inst
-                                        }
+                                    let evaluated =
+                                        self.evaluate_type_with_env(instantiated_constraint);
+                                    if !tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        evaluated,
+                                    ) {
+                                        evaluated
                                     } else {
                                         inst
                                     }
-                                };
+                                } else {
+                                    inst
+                                }
+                            };
                             let evaluated = self.evaluate_type_with_env(instantiated);
                             trace!(
                                 arg_index = i,
