@@ -404,7 +404,6 @@ FAIL TypeScript/tests/cases/compiler/flatArrayNoExcessiveStackDepth.ts
 FAIL TypeScript/tests/cases/compiler/forInStrictNullChecksNoError.ts
 FAIL TypeScript/tests/cases/compiler/formatToPartsFractionalSecond.ts
 FAIL TypeScript/tests/cases/compiler/forwardRefInEnum.ts
-FAIL TypeScript/tests/cases/compiler/forwardRefInTypeDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/functionArgShadowing.ts
 FAIL TypeScript/tests/cases/compiler/functionCall12.ts
 FAIL TypeScript/tests/cases/compiler/functionCall14.ts
@@ -696,6 +695,7 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
@@ -704,6 +704,7 @@ FAIL TypeScript/tests/cases/compiler/knockout.ts
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts
 FAIL TypeScript/tests/cases/compiler/largeControlFlowGraph.ts
 FAIL TypeScript/tests/cases/compiler/lastPropertyInLiteralWins.ts
+FAIL TypeScript/tests/cases/compiler/lateBoundDestructuringImplicitAnyError.ts
 FAIL TypeScript/tests/cases/compiler/letAndVarRedeclaration.ts
 FAIL TypeScript/tests/cases/compiler/letAsIdentifier.ts
 FAIL TypeScript/tests/cases/compiler/letAsIdentifierInStrictMode.ts
@@ -1468,7 +1469,6 @@ FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyN
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType7_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType8_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType9_ES6.ts
-FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesWithStaticProperty.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringAssignabilityCheck.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringControlFlow.ts
@@ -1508,6 +1508,7 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParamet
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/restElementWithAssignmentPattern2.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/restElementWithAssignmentPattern4.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/restElementWithInitializer2.ts
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of-excess-declarations.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of15.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of16.ts
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of29.ts
@@ -4712,6 +4713,7 @@ PASS TypeScript/tests/cases/compiler/forOfTransformsExpression.ts
 PASS TypeScript/tests/cases/compiler/forStatementInnerComments.ts
 PASS TypeScript/tests/cases/compiler/forwardDeclaredCommonTypes01.ts
 PASS TypeScript/tests/cases/compiler/forwardRefInClassProperties.ts
+PASS TypeScript/tests/cases/compiler/forwardRefInTypeDeclaration.ts
 PASS TypeScript/tests/cases/compiler/freshLiteralInference.ts
 PASS TypeScript/tests/cases/compiler/freshLiteralTypesInIntersections.ts
 PASS TypeScript/tests/cases/compiler/fromAsIdentifier1.ts
@@ -5652,7 +5654,6 @@ PASS TypeScript/tests/cases/compiler/lateBoundAssignmentCandidateJS1.ts
 PASS TypeScript/tests/cases/compiler/lateBoundAssignmentCandidateJS2.ts
 PASS TypeScript/tests/cases/compiler/lateBoundAssignmentCandidateJS3.ts
 PASS TypeScript/tests/cases/compiler/lateBoundConstraintTypeChecksCorrectly.ts
-PASS TypeScript/tests/cases/compiler/lateBoundDestructuringImplicitAnyError.ts
 PASS TypeScript/tests/cases/compiler/lateBoundFunctionMemberAssignmentDeclarations.ts
 PASS TypeScript/tests/cases/compiler/lateBoundMethodNameAssigmentJS.ts
 PASS TypeScript/tests/cases/compiler/letAsIdentifier2.ts
@@ -8742,6 +8743,7 @@ PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyN
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesSourceMap1_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesSourceMap2_ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesSourceMap2_ES6.ts
+PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesWithStaticProperty.ts
 PASS TypeScript/tests/cases/conformance/es6/decorators/class/accessor/decoratorOnClassAccessor1.es6.ts
 PASS TypeScript/tests/cases/conformance/es6/decorators/class/decoratorOnClass1.es6.ts
 PASS TypeScript/tests/cases/conformance/es6/decorators/class/decoratorOnClass2.es6.ts
@@ -8870,7 +8872,6 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/restElementWithBinding
 PASS TypeScript/tests/cases/conformance/es6/destructuring/restElementWithInitializer1.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/restElementWithNullInitializer.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/restPropertyWithBindingPattern.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of-excess-declarations.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of1.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of10.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of11.ts
