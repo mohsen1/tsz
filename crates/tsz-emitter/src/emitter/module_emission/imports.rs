@@ -108,9 +108,9 @@ impl<'a> Printer<'a> {
         crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
     }
 
-    /// Check if an import alias name is referenced anywhere in the remaining
-    /// source — including type positions.  Used for namespace-scoped import
-    /// alias elision where tsc elides only truly unreferenced aliases.
+    /// Check if an import alias name has value usage in the remaining source.
+    /// Used for namespace-scoped import alias elision: tsc erases `import X = Y`
+    /// inside namespaces when X is only used in type positions.
     fn import_alias_is_referenced_after_node(
         &self,
         node: &Node,
@@ -124,10 +124,11 @@ impl<'a> Printer<'a> {
             return true;
         };
         let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
-        // Strip only full type-declaration lines (interface, type, declare,
-        // other imports) but NOT inline type annotations — any reference
-        // (value or type position) counts as "referenced" for alias elision.
-        let stripped = crate::import_usage::strip_type_declaration_lines(haystack);
+        // Strip type-only content including inline type annotations so that
+        // type-position references (e.g., `p1: modes.IMode`) don't count as
+        // value usage. This matches tsc which erases namespace import aliases
+        // when the alias is only referenced in type positions.
+        let stripped = crate::import_usage::strip_type_only_content(haystack);
         crate::import_usage::contains_identifier_occurrence(&stripped, &name)
     }
 
