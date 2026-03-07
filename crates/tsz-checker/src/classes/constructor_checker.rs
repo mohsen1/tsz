@@ -805,20 +805,15 @@ impl<'a> CheckerState<'a> {
 
         let call_expr = self.ctx.arena.get_call_expr_at(idx)?;
 
-        // Get the expression being instantiated
-        let ident = self.ctx.arena.get_identifier_at(call_expr.expression)?;
-
-        // Try to find the symbol
+        // Use scope-aware resolution first (handles namespaces, nested scopes)
         let sym_id = self
             .ctx
             .binder
-            .get_node_symbol(call_expr.expression)
-            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))
+            .resolve_identifier(self.ctx.arena, call_expr.expression)
+            .or_else(|| self.ctx.binder.get_node_symbol(call_expr.expression))
             .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_symbols()
-                    .find_by_name(&ident.escaped_text)
+                let ident = self.ctx.arena.get_identifier_at(call_expr.expression)?;
+                self.ctx.binder.file_locals.get(&ident.escaped_text)
             })?;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -895,11 +890,46 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the display name of a symbol for error messages.
+    ///
+    /// For generic classes, includes type parameters: `D<T>` instead of `D`.
+    /// This matches tsc's behavior in TS2673/TS2674 diagnostics.
     fn get_symbol_display_name(&self, sym_id: SymbolId) -> String {
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            symbol.escaped_name.clone()
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return "<unknown>".to_string();
+        };
+        let name = symbol.escaped_name.clone();
+
+        // Check if the class declaration has type parameters.
+        // Try value_declaration first, then fall back to declarations list.
+        let decl_indices: Vec<tsz_parser::parser::NodeIndex> = if symbol.value_declaration.is_some()
+        {
+            vec![symbol.value_declaration]
         } else {
-            "<unknown>".to_string()
+            symbol.declarations.clone()
+        };
+
+        for decl_idx in decl_indices {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(class_data) = self.ctx.arena.get_class(node) else {
+                continue;
+            };
+            if let Some(ref type_params) = class_data.type_parameters {
+                let param_names: Vec<&str> = type_params
+                    .nodes
+                    .iter()
+                    .filter_map(|&idx| {
+                        let tp = self.ctx.arena.get_type_parameter_at(idx)?;
+                        let ident = self.ctx.arena.get_identifier_at(tp.name)?;
+                        Some(ident.escaped_text.as_str())
+                    })
+                    .collect();
+                if !param_names.is_empty() {
+                    return format!("{}<{}>", name, param_names.join(", "));
+                }
+            }
         }
+        name
     }
 }
