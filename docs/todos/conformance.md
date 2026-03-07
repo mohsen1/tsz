@@ -22,8 +22,9 @@
 | Mar 6 14:00 | 10,037 (79.8%) | +2 | Fix mapped type param name & modifiers in diagnostics |
 | Mar 6 19:00 | 10,007 (79.6%) | +2* | TS2639 JSX namespaced React components |
 | Mar 7 | 10,035 (80.1%) | +28 | Tagged templates, mapped type any, deferred indexed access |
+| Mar 7 (pm) | 10,135 (80.6%) | +100 | Emitter, contextual this, TS7053 fresh object literal |
 
-### Failure Anatomy (~2,486 failing tests)
+### Failure Anatomy (~2,446 failing tests)
 
 | Category | Count | % | Description |
 |----------|------:|--:|-------------|
@@ -88,6 +89,19 @@ Known root causes:
 Fix: Create one resolver-aware "key proven for object?" API and use it for element access,
 property access, mapped constraints, readonly writes, and numeric/string precedence.
 
+**Session notes (2026-03-07 pm):**
+- Fixed: false TS7053 on fresh object literal element access (`indexedAccessWithFreshObjectLiteral.ts`).
+  The solver's `evaluate_object_index` already returns the union of all property types for `Object[string]`,
+  but the checker's `should_report_no_index_signature` was firing independently. Suppressed for
+  ObjectLiteralExpression in `access.rs:773-780`.
+- Remaining false TS7053 (4 tests): require binder-level late-bound name support for
+  declarationEmitLateBound* tests, and computed property name implicit index signatures for
+  declarationEmitSimpleComputedNames1/declarationEmitComputedNameWithQuestionToken.
+- Remaining false TS2339 (37 one-extra tests): heterogeneous root causes including
+  module augmentation (18+ tests), generic constraint resolution (14 tests),
+  overload resolution (3 tests), spread of union/nullable types (3 tests).
+  No single quick-fix invariant found.
+
 #### Campaign 3: Big 3 compatibility hardening (TS2322/TS2339/TS2345)
 
 **Risk: Medium-high. ROI: Very high structural upside.**
@@ -111,6 +125,23 @@ decisions, and bails out on generic class components at line 867 instead of infe
 Fix: Make every TS2322/TS2345/TS2416/TS2769 producer call the same boundary object. Move
 feature-specific mismatch decisions out of feature modules and into relation flags / boundary
 policy helpers.
+
+**Session notes (2026-03-07 pm):**
+- 52 tests would PASS by removing single extra TS2322. Sampled 8 representative tests.
+  Root causes are highly heterogeneous — no single invariant found:
+  - Generic type ref resolution in type alias properties (2 tests)
+  - Contextual typing through intersection with interface refs (1)
+  - Indexed access with template literal types on intersections (1)
+  - Type guard narrowing not eliminating union members (1)
+  - Const narrowing for enum literal members (1) — `const e: E = E.ONE` should narrow to `E.ONE`
+  - Generic spread type preservation (1) — `{ ...item }` loses generic type
+  - Complex conditional type narrowing via assertion (1)
+- 13 tests would PASS by removing single extra TS7006. 5/6 sampled tests share one root cause:
+  **Round 1 sensitive placeholder contamination** in `call.rs:784`. The `sensitive_placeholder`
+  function `(any?) => any` contaminates type param inference, then the instantiated params used
+  for Round 2 contextual types carry the contamination. Fix location: `call.rs:784-788` should
+  use raw shape params + `round2_substitution` instead of solver's `round1_instantiated_params`.
+  This fix is medium-risk (affects all two-pass generic calls) but would fix 5+ tests.
 
 #### Campaign 4: Contextual typing + generic inference generalization
 
