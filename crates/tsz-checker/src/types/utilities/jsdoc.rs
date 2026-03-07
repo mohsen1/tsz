@@ -53,7 +53,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
         use tsz_solver::SymbolRef;
-        let factory = self.ctx.types.factory();
 
         match query::classify_type_query(self.ctx.types, type_id) {
             query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
@@ -79,30 +78,14 @@ impl<'a> CheckerState<'a> {
 
                 result
             }
-            query::TypeQueryKind::ApplicationWithTypeQuery {
-                base_sym_ref: SymbolRef(sym_id),
-                args,
-            } => {
-                // Check for cycle in typeof resolution (scoped borrow)
-                let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
-                if is_cycle {
-                    return TypeId::ERROR;
-                }
-
-                // Mark as visiting (use try_borrow_mut to avoid panic on nested borrow)
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.insert(sym_id);
-                }
-
-                // Resolve the base type
-                let base = self.get_type_of_symbol(SymbolId(sym_id));
-
-                // Unmark after resolution
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.remove(&sym_id);
-                }
-
-                factory.application(base, args)
+            query::TypeQueryKind::ApplicationWithTypeQuery { .. } => {
+                // Application(TypeQuery(SymbolRef), args) comes from lowering class
+                // type annotations like `Bar<number>`. The solver already handles these
+                // correctly via evaluate_application (resolves TypeQuery → DefId → instance type).
+                // Resolving the TypeQuery here would incorrectly produce Application(Callable, args)
+                // (the constructor type), which the solver cannot evaluate — breaking union
+                // assignability checks for generic class instances.
+                type_id
             }
             query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }

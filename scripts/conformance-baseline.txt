@@ -439,14 +439,11 @@ FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
 FAIL TypeScript/tests/cases/compiler/genericClassWithStaticFactory.ts
 FAIL TypeScript/tests/cases/compiler/genericCloduleInModule2.ts
-FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes.ts
 FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes2.ts
 FAIL TypeScript/tests/cases/compiler/genericConstraintOnExtendedBuiltinTypes.ts
 FAIL TypeScript/tests/cases/compiler/genericConstructorFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericDefaults.ts
 FAIL TypeScript/tests/cases/compiler/genericDefaultsErrors.ts
-FAIL TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase.ts
-FAIL TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase2.ts
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference2.ts
 FAIL TypeScript/tests/cases/compiler/genericFunctionsWithOptionalParameters1.ts
@@ -462,7 +459,6 @@ FAIL TypeScript/tests/cases/compiler/genericMemberFunction.ts
 FAIL TypeScript/tests/cases/compiler/genericMethodOverspecialization.ts
 FAIL TypeScript/tests/cases/compiler/genericOfACloduleType1.ts
 FAIL TypeScript/tests/cases/compiler/genericOfACloduleType2.ts
-FAIL TypeScript/tests/cases/compiler/genericPrototypeProperty3.ts
 FAIL TypeScript/tests/cases/compiler/genericRecursiveImplicitConstructorErrors2.ts
 FAIL TypeScript/tests/cases/compiler/genericRecursiveImplicitConstructorErrors3.ts
 FAIL TypeScript/tests/cases/compiler/genericRestArgs.ts
@@ -481,8 +477,6 @@ FAIL TypeScript/tests/cases/compiler/genericTypeWithNonGenericBaseMisMatch.ts
 FAIL TypeScript/tests/cases/compiler/genericUnboundedTypeParamAssignability.ts
 FAIL TypeScript/tests/cases/compiler/genericWithNoConstraintComparableWithCurlyCurly.ts
 FAIL TypeScript/tests/cases/compiler/genericWithOpenTypeParameters1.ts
-FAIL TypeScript/tests/cases/compiler/getAndSetNotIdenticalType2.ts
-FAIL TypeScript/tests/cases/compiler/getAndSetNotIdenticalType3.ts
 FAIL TypeScript/tests/cases/compiler/gettersAndSettersAccessibility.ts
 FAIL TypeScript/tests/cases/compiler/gettersAndSettersErrors.ts
 FAIL TypeScript/tests/cases/compiler/getterSetterSubtypeAssignment.ts
@@ -1351,7 +1345,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/classTypes/instancePrope
 FAIL TypeScript/tests/cases/conformance/classes/members/classTypes/instancePropertyInClassType.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/classTypes/staticPropertyNotInClassType.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassOverridesPublicMembers.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassTransitivity3.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateInstanceShadowingPublicInstance.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateStaticShadowingPublicStatic.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedGenericClassWithAny.ts
@@ -1450,7 +1443,6 @@ FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionGramma
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionIncorrect1.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionIncorrect2.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNoModuleKindSpecified.ts
-FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionReturnPromiseOfAny.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionWithTypeArgument.ts
 FAIL TypeScript/tests/cases/conformance/enums/enumConstantMembers.ts
 FAIL TypeScript/tests/cases/conformance/enums/enumErrorOnConstantBindingWithInitializer.ts
@@ -4901,6 +4893,7 @@ PASS TypeScript/tests/cases/compiler/genericClassPropertyInheritanceSpecializati
 PASS TypeScript/tests/cases/compiler/genericClassStaticMethod.ts
 PASS TypeScript/tests/cases/compiler/genericClassWithStaticsUsingTypeArguments.ts
 PASS TypeScript/tests/cases/compiler/genericCloduleInModule.ts
+PASS TypeScript/tests/cases/compiler/genericCloneReturnTypes.ts
 PASS TypeScript/tests/cases/compiler/genericCombinators2.ts
 PASS TypeScript/tests/cases/compiler/genericConditionalConstrainedToUnknownNotAssignableToConcreteObject.ts
 PASS TypeScript/tests/cases/compiler/genericConstraint1.ts
@@ -4913,6 +4906,8 @@ PASS TypeScript/tests/cases/compiler/genericConstructInvocationWithNoTypeArg.ts
 PASS TypeScript/tests/cases/compiler/genericConstructSignatureInInterface.ts
 PASS TypeScript/tests/cases/compiler/genericContextualTypingSpecialization.ts
 PASS TypeScript/tests/cases/compiler/genericDefaultsJs.ts
+PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase.ts
+PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase2.ts
 PASS TypeScript/tests/cases/compiler/genericFunctionCallSignatureReturnTypeMismatch.ts
 PASS TypeScript/tests/cases/compiler/genericFunctionHasFreshTypeArgs.ts
 PASS TypeScript/tests/cases/compiler/genericFunctions0.ts
@@ -4950,6 +4945,7 @@ PASS TypeScript/tests/cases/compiler/genericOverloadSignatures.ts
 PASS TypeScript/tests/cases/compiler/genericParameterAssignability1.ts
 PASS TypeScript/tests/cases/compiler/genericPrototypeProperty.ts
 PASS TypeScript/tests/cases/compiler/genericPrototypeProperty2.ts
+PASS TypeScript/tests/cases/compiler/genericPrototypeProperty3.ts
 PASS TypeScript/tests/cases/compiler/genericRecursiveImplicitConstructorErrors1.ts
 PASS TypeScript/tests/cases/compiler/genericReduce.ts
 PASS TypeScript/tests/cases/compiler/genericRestTypes.ts
@@ -4992,6 +4988,8 @@ PASS TypeScript/tests/cases/compiler/genericWithIndexerOfTypeParameterType2.ts
 PASS TypeScript/tests/cases/compiler/getAccessorWithImpliedReturnTypeAndFunctionClassMerge.ts
 PASS TypeScript/tests/cases/compiler/getAndSetAsMemberNames.ts
 PASS TypeScript/tests/cases/compiler/getAndSetNotIdenticalType.ts
+PASS TypeScript/tests/cases/compiler/getAndSetNotIdenticalType2.ts
+PASS TypeScript/tests/cases/compiler/getAndSetNotIdenticalType3.ts
 PASS TypeScript/tests/cases/compiler/getParameterNameAtPosition.ts
 PASS TypeScript/tests/cases/compiler/getSetEnumerable.ts
 PASS TypeScript/tests/cases/compiler/getsetReturnTypes.ts
@@ -8030,6 +8028,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassOverridesWithoutSubtype.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassTransitivity.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassTransitivity2.ts
+PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassTransitivity3.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassTransitivity4.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithAny.ts
 PASS TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateInstanceShadowingProtectedInstance.ts
@@ -8440,6 +8439,7 @@ PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNested
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNestedSystem2.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNestedUMD.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionNestedUMD2.ts
+PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionReturnPromiseOfAny.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionShouldNotGetParen.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionSpecifierNotStringTypeError.ts
 PASS TypeScript/tests/cases/conformance/emitter/es2015/asyncGenerators/emitter.asyncGenerators.classMethods.es2015.ts
