@@ -1,5 +1,6 @@
 //! Code reachability and fall-through analysis.
 
+use crate::query_boundaries::flow_analysis as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -58,6 +59,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
+        let switch_type = query::enum_member_domain(self.ctx.types, switch_type);
         if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
             || case_types.is_empty()
         {
