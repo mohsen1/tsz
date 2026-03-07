@@ -7330,3 +7330,52 @@ FIX BELONGS IN:
 - Ran: `./scripts/conformance.sh snapshot`
 - Result: **10,118 / 12,581 (80.4%)**
 - Representative movement: `callChainInference.ts` now PASS; adjacent TS18047/TS18048 optional-chain/nullish lanes remain open.
+
+## Session 2026-03-07ad — narrowing-flow IIFE optional-parameter undefined transport (no snapshot yet)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `contextuallyTypedIifeStrict.ts`
+- `contextuallyTypedOptionalProperty.ts`
+- `circularOptionalityRemoval.ts`
+
+SHARED INVARIANT: IIFE parameter typing must preserve optional/missing-argument `undefined` in function bodies so control-flow/binary nullish diagnostics (`TS18048`) are emitted from the same declared-type path as non-IIFE functions.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP:
+- Unannotated parameters in immediately-invoked function/arrow expressions were falling back to `any` when no contextual signature existed.
+- `TS7006` was intentionally suppressed for IIFE params, so this fallback also suppressed downstream `TS18048` nullish diagnostics inside IIFE bodies.
+- Missing optional args in IIFEs were not represented as `undefined` at parameter-type construction time.
+
+FIX BELONGS IN:
+- `crates/tsz-checker/src/types/function_type.rs`
+
+ESTIMATED SCOPE: ~60-100 LOC + one focused checker regression test  
+BLAST RADIUS: IIFE control-flow/nullish diagnostics (`TS18048`) and related contextual parameter typing in immediately-invoked function/arrow patterns.
+
+### What changed
+- `crates/tsz-checker/src/types/function_type.rs`
+  - Added `infer_iife_parameter_type_from_arguments(...)` to infer unannotated IIFE parameter types from the immediate invocation arguments.
+  - Missing optional IIFE arguments now map to `undefined` for parameter typing.
+  - Rest parameters in IIFEs now derive from remaining call arguments (array of union element type, or `never[]` when empty).
+  - Wired this IIFE argument-based inference as a fallback when no contextual/JSDoc type exists for a parameter.
+- `crates/tsz-checker/tests/conformance_issues.rs`
+  - Added `test_iife_optional_parameters_preserve_undefined_in_body`.
+
+### Validation
+- `cargo nextest run -p tsz-checker test_iife_optional_parameters_preserve_undefined_in_body test_iife_contextual_return_type_for_callback test_iife_parenthesized_contextual_return_type test_iife_contextual_return_type_object_with_callback` ✅
+- Targeted conformance:
+  - `./.target/dist-fast/tsz-conformance --filter contextuallyTypedIifeStrict.ts --verbose --print-fingerprints`
+    - **Improved**: removed missing `TS18048` and extra `TS7006`; remaining mismatch is only extra `TS2554` fingerprints.
+  - `./.target/dist-fast/tsz-conformance --filter contextuallyTypedOptionalProperty.ts --verbose --print-fingerprints`
+    - unchanged (still missing `TS18048`).
+  - `./.target/dist-fast/tsz-conformance --filter circularOptionalityRemoval.ts --verbose --print-fingerprints`
+    - unchanged (still missing `TS18048` + other deltas).
