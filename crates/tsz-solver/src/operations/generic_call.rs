@@ -228,6 +228,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
             .collect();
 
+        // Track bare return type placeholder for conditional seeding after Round 1
+        let mut return_type_bare_var: Option<(crate::inference::infer::InferenceVar, TypeId)> =
+            None;
+
         // 2.5. Seed contextual constraints from return type BEFORE argument processing
         // This enables downward inference: `let x: string = id(...)` should infer T = string
         // Contextual hints use lower priority so explicit arguments can override
@@ -250,6 +254,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ctx_type,                      // target
                 crate::types::InferencePriority::ReturnType,
             );
+
+            // Track whether the return type is a bare type parameter placeholder.
+            // If so, we may need to add a ReturnType candidate AFTER Round 1
+            // (see below, before fix_current_variables).
+            if let Some(&var) = var_map.get(&return_type_with_placeholders) {
+                return_type_bare_var = Some((var, ctx_type));
+            }
 
             // For same-base Application types (e.g., Promise<__infer_0> vs Promise<Obj>),
             // also constrain type arguments directly. The general constraint engine
@@ -285,6 +296,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
         let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
         let mut has_context_sensitive_args = false;
+        // Track whether any deferred (context-sensitive) arg's target type
+        // contains the return type bare var's placeholder. If so, Round 2 will
+        // provide a better candidate for that var, and we should NOT seed from
+        // the contextual return type.
+        let mut deferred_arg_covers_return_var = false;
 
         // === Round 1: Process non-contextual arguments ===
         // These are arguments like arrays, primitives, and objects that don't need
@@ -307,6 +323,46 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.contextual_round1_arg_types(arg_type, target_type)
             else {
                 has_context_sensitive_args = true;
+                // Check if this deferred arg is a concrete function (all non-`any`
+                // params) whose target type references the return type bare var.
+                // If so, Round 2 will get inference for that var from the concrete
+                // function, and we should NOT pre-seed the var from the contextual
+                // return type.
+                //
+                // We only suppress the seed for concrete functions — lambdas with
+                // `any`-typed params genuinely need the var pre-fixed for contextual
+                // typing.
+                if !deferred_arg_covers_return_var && let Some((_, _)) = return_type_bare_var {
+                    let is_concrete_function = match self.interner.lookup(arg_type) {
+                        Some(TypeData::Function(shape_id)) => {
+                            let shape = self.interner.function_shape(shape_id);
+                            !shape.params.is_empty()
+                                && shape.params.iter().all(|p| p.type_id != TypeId::ANY)
+                        }
+                        Some(TypeData::Callable(shape_id)) => {
+                            let shape = self.interner.callable_shape(shape_id);
+                            shape
+                                .call_signatures
+                                .iter()
+                                .chain(shape.construct_signatures.iter())
+                                .any(|sig| {
+                                    !sig.params.is_empty()
+                                        && sig.params.iter().all(|p| p.type_id != TypeId::ANY)
+                                })
+                        }
+                        _ => false,
+                    };
+                    if is_concrete_function {
+                        placeholder_visited.clear();
+                        if self.type_contains_placeholder(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_visited,
+                        ) {
+                            deferred_arg_covers_return_var = true;
+                        }
+                    }
+                }
                 continue;
             };
             if self.is_contextually_sensitive(arg_type) {
@@ -425,6 +481,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     crate::types::InferencePriority::NakedTypeVariable,
                 );
             }
+        }
+
+        // When the return type is a bare type parameter (e.g., `function wrap<T>(...): T`),
+        // and Round 1 did NOT provide any candidates for that variable, AND no deferred
+        // argument can provide candidates in Round 2, add the contextual type as a
+        // ReturnType candidate. This enables fix_current_variables to fix T to the
+        // contextual type, so Round 2 can use it for lambda parameter types.
+        //
+        // We defer this to AFTER Round 1 to avoid polluting inference when:
+        // - A concrete argument already provides a better NakedTypeVariable candidate
+        // - A deferred argument references the same type variable (Round 2 will infer
+        //   it from that argument, e.g., `o4?.(incr)` where incr provides T = number)
+        if let Some((var, ctx_type)) = return_type_bare_var
+            && !infer_ctx.var_has_candidates(var)
+            && !deferred_arg_covers_return_var
+        {
+            infer_ctx.add_candidate(var, ctx_type, crate::types::InferencePriority::ReturnType);
         }
 
         // === Fixing: Resolve variables with enough information ===

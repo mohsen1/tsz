@@ -133,7 +133,6 @@ FAIL TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedByDiscriminableUnion2.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren.tsx
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx
-FAIL TypeScript/tests/cases/compiler/contextuallyTypedOptionalProperty.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersOptionalInJSDoc.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersWithQuestionToken.ts
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedSymbolNamedProperties.ts
@@ -3463,6 +3462,7 @@ PASS TypeScript/tests/cases/compiler/contextuallyTypedBooleanLiterals.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedGenericAssignment.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
+PASS TypeScript/tests/cases/compiler/contextuallyTypedOptionalProperty.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers1.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers2.ts
 PASS TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers3.ts
