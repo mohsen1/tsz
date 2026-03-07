@@ -31,6 +31,22 @@ pub(crate) fn collect_single_or_union(db: &dyn TypeDatabase, types: Vec<TypeId>)
     }
 }
 
+/// Like [`collect_single_or_union`] but uses literal-only union reduction
+/// (no subtype reduction). Use this when subtype reduction would incorrectly
+/// discard contextual type information, e.g. when unioning callback types
+/// from union callee members where contravariant parameter subtyping
+/// would absorb the more specific variant.
+pub(crate) fn collect_single_or_union_no_reduce(
+    db: &dyn TypeDatabase,
+    types: Vec<TypeId>,
+) -> Option<TypeId> {
+    match types.len() {
+        0 => None,
+        1 => Some(types[0]),
+        _ => Some(db.union_literal_reduce(types)),
+    }
+}
+
 /// Extract the element type from a rest element's stored type for contextual typing.
 ///
 /// Rest elements in tuples store the full array/tuple type (e.g., `string[]` for
@@ -1231,6 +1247,8 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         // For unions, extract parameter types from each member and combine.
+        // Use no-reduce union to preserve all callback type variants — see
+        // collect_single_or_union_no_reduce doc comment for rationale.
         let members = self.db.type_list(TypeListId(list_id));
         let types: Vec<TypeId> = members
             .iter()
@@ -1240,7 +1258,7 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                 extractor.extract(member)
             })
             .collect();
-        collect_single_or_union(self.db, types)
+        collect_single_or_union_no_reduce(self.db, types)
     }
 
     fn default_output() -> Self::Output {

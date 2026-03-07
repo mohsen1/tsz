@@ -7,6 +7,7 @@ use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestParameterExtractor, RestPositionCheckExtractor, ReturnTypeExtractor,
     ThisTypeExtractor, ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
+    collect_single_or_union_no_reduce,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -290,7 +291,14 @@ impl<'a> ContextualTypeContext<'a> {
             return Some(TypeId::ANY);
         }
 
-        // Handle Union explicitly - collect parameter types from all members
+        // Handle Union explicitly - collect parameter types from all members.
+        // Use literal-only union reduction (no subtype reduction) to preserve
+        // all callback type variants. Full subtype reduction can incorrectly
+        // absorb callback types due to parameter contravariance. For example,
+        // with `Array<string>.map | Array<never>.map`, the callback
+        // `(value: string) => U` is a subtype of `(value: never) => U`
+        // (contravariant params), so subtype reduction would discard the
+        // string variant, losing contextual type information for parameters.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let param_types: Vec<TypeId> = members
@@ -301,7 +309,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return collect_single_or_union(self.interner, param_types);
+            return collect_single_or_union_no_reduce(self.interner, param_types);
         }
 
         // Handle Application explicitly.

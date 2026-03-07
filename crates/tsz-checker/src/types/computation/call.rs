@@ -480,7 +480,24 @@ impl<'a> CheckerState<'a> {
              param_type: TypeId,
              index: usize,
              arg_count: usize| {
-                let evaluated = this.evaluate_type_with_env(param_type);
+                // For union types, evaluate each member individually and reconstruct
+                // with literal-only reduction. Direct evaluation of a union triggers
+                // subtype reduction (via evaluate_union → simplify_union_members),
+                // which can absorb callback types due to parameter contravariance.
+                // For example, `(value: string) => U` <: `(value: never) => U`, so
+                // evaluation would reduce the union to just the never-parameterized
+                // callback, losing contextual type information.
+                let evaluated = if let Some(members) =
+                    tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
+                {
+                    let evaluated_members: Vec<_> = members
+                        .iter()
+                        .map(|&m| this.evaluate_type_with_env(m))
+                        .collect();
+                    this.ctx.types.union_literal_reduce(evaluated_members)
+                } else {
+                    this.evaluate_type_with_env(param_type)
+                };
                 if helper.is_rest_parameter_position(index, arg_count) {
                     tsz_solver::rest_argument_element_type(this.ctx.types, evaluated)
                 } else {
