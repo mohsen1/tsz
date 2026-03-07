@@ -1,9 +1,8 @@
 //! Parser state - class member parsing.
 
 use super::state::{
-    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME,
-    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_STATIC_BLOCK,
-    ParserState,
+    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_STATIC_BLOCK, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -631,9 +630,12 @@ impl ParserState {
                 })
             });
 
-            if (self.context_flags & CONTEXT_FLAG_AMBIENT) == 0 && !has_abstract {
-                self.error_token_expected("{");
-            }
+            // tsc's parser accepts accessors without bodies even in non-abstract,
+            // non-ambient contexts — the grammar checker handles this later with
+            // TS2378/TS1049 ("A 'get' accessor must have a body"). We do NOT emit
+            // TS1005 here to match tsc's parser behavior and avoid false positives
+            // that would incorrectly suppress TS5107 deprecation diagnostics.
+            let _ = has_abstract;
             self.parse_semicolon();
             NodeIndex::NONE
         };
@@ -1360,6 +1362,10 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::EndOfFileToken)
                 && (self.is_token(SyntaxKind::StringLiteral)
                     || self.is_token(SyntaxKind::NumericLiteral))
+                // Don't treat string/numeric literals as initializers if they look
+                // like the next class member property name (followed by `:` or `?`).
+                // e.g., `"d": string; "e": number;` — `"e"` is a property name.
+                && !self.look_ahead_is_next_class_member_property_name()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
@@ -1388,6 +1394,27 @@ impl ParserState {
                 },
             )
         }
+    }
+
+    /// Look ahead to check if the current string/numeric literal token is actually
+    /// the property name of the next class member (followed by `:` or `?`).
+    /// This prevents false TS1442 when two string-literal-named properties appear
+    /// in sequence, e.g., `"d": string; "e": number;`.
+    fn look_ahead_is_next_class_member_property_name(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip the string/numeric literal
+
+        let is_property_name = matches!(
+            self.token(),
+            SyntaxKind::ColonToken       // "d": type
+            | SyntaxKind::QuestionToken // "d"?: type
+        );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_property_name
     }
 
     /// Look ahead to see if we have an accessor (get/set followed by property name and ()
