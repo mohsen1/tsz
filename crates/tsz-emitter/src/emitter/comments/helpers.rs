@@ -549,6 +549,42 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Collect trailing same-line comment texts after a code position.
+    /// Scans `all_comments` from the beginning (not `comment_emit_idx`) to find
+    /// comments on the same line as `actual_end`. Does NOT advance the cursor.
+    /// Used during pre-scan phases where `comment_emit_idx` may not have
+    /// advanced to the relevant position yet.
+    pub(in crate::emitter) fn collect_trailing_comments_in_range(
+        &self,
+        actual_end: u32,
+    ) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let bytes = text.as_bytes();
+        // Find line end from actual_end
+        let mut line_end_pos = actual_end as usize;
+        while line_end_pos < bytes.len()
+            && bytes[line_end_pos] != b'\n'
+            && bytes[line_end_pos] != b'\r'
+        {
+            line_end_pos += 1;
+        }
+        let line_end = line_end_pos as u32;
+
+        let mut trailing = Vec::new();
+        for c in &self.all_comments {
+            if c.pos >= actual_end && c.end <= line_end {
+                let comment_text = crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                trailing.push(comment_text.to_string());
+            }
+            if c.pos > line_end {
+                break;
+            }
+        }
+        trailing
+    }
+
     /// Collect leading comment texts for a node at the given position.
     /// Returns (text, `source_pos`) tuples for comments whose end is before `pos`
     /// and that haven't been emitted yet.
