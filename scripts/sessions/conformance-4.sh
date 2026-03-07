@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# conformance-4: targets the #4 worst-pass-rate area
+# conformance-4: contextual typing + generic inference generalization
 source "$(git rev-parse --show-toplevel)/scripts/sessions/_conformance-core.sh"
-emit_prompt 4
+emit_prompt contextual-typing

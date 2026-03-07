@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# conformance-2: targets the #2 worst-pass-rate area
+# conformance-2: property resolution + index access proof semantics
 source "$(git rev-parse --show-toplevel)/scripts/sessions/_conformance-core.sh"
-emit_prompt 2
+emit_prompt property-resolution
