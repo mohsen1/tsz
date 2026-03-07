@@ -1371,47 +1371,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Phase 0.5: Check multi-overload union members for compatible signatures.
-        // In tsc, when a union type has members with multiple overloads, the union is
-        // only callable if there exists at least one set of compatible signatures
-        // (one from each member). If multiple members have overloads and no compatible
-        // set exists, tsc emits TS2349 "Each member of the union type has signatures,
-        // but none of those signatures are compatible with each other."
+        // When multiple union members have multiple overloads, first try to find
+        // compatible signatures across members. If found, validate `this` types.
+        // If not found, fall through to per-member resolution (Phase 2) which
+        // resolves each member's overloads independently — this matches tsc's
+        // behavior for cases like `(A[] | B[]).filter(cb)` where each array type
+        // has overloaded `filter` but per-member resolution succeeds.
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
 
-        if has_multi_overload_members >= 2 {
-            // Multiple members have overloads — check compatibility
-            match self.find_union_compatible_signatures(&sig_lists) {
-                None => {
-                    // No compatible signatures found → union is not callable
-                    return CallResult::NotCallable {
-                        type_id: union_type,
-                    };
-                }
-                Some(unified_sigs) => {
-                    // Compatible signatures found — check `this` type constraint
-                    // The unified signatures have intersected `this` types from
-                    // the matched overloads across all members.
-                    let unified_this = unified_sigs
-                        .iter()
-                        .filter_map(|s| s.this_type)
-                        .reduce(|a, b| self.interner.intersection2(a, b));
+        if has_multi_overload_members >= 2
+            && let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists) {
+                // Compatible signatures found — check `this` type constraint.
+                // The unified signatures have intersected `this` types from
+                // the matched overloads across all members.
+                let unified_this = unified_sigs
+                    .iter()
+                    .filter_map(|s| s.this_type)
+                    .reduce(|a, b| self.interner.intersection2(a, b));
 
-                    if let Some(combined_this) = unified_this {
-                        let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-                        if !self.checker.is_assignable_to(actual_this, combined_this) {
-                            return CallResult::ThisTypeMismatch {
-                                expected_this: combined_this,
-                                actual_this,
-                            };
-                        }
+                if let Some(combined_this) = unified_this {
+                    let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                    if !self.checker.is_assignable_to(actual_this, combined_this) {
+                        return CallResult::ThisTypeMismatch {
+                            expected_this: combined_this,
+                            actual_this,
+                        };
                     }
                 }
             }
-        }
-        // When only one member has multiple overloads, tsc falls through to
-        // per-member resolution which handles it correctly. No special check needed.
+            // No compatible signatures found — fall through to per-member
+            // resolution which resolves each member's overloads independently.
 
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)
