@@ -738,7 +738,6 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts
 FAIL TypeScript/tests/cases/compiler/mapUpsert.ts
 FAIL TypeScript/tests/cases/compiler/maxConstraints.ts
 FAIL TypeScript/tests/cases/compiler/memberScope.ts
-FAIL TypeScript/tests/cases/compiler/memberVariableDeclarations1.ts
 FAIL TypeScript/tests/cases/compiler/mergedClassNamespaceRecordCast.ts
 FAIL TypeScript/tests/cases/compiler/mergedClassWithNamespacePrototype.ts
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations3.ts
@@ -1508,7 +1507,6 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/missingAndExcessProper
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/nonIterableRestElement3.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers01.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers03.ts
-FAIL TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParameters2.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParameters3.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParameters4.ts
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/restElementWithAssignmentPattern2.ts
@@ -2239,7 +2237,6 @@ FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes5.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes7.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatterns.ts
-FAIL TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauses.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts
@@ -5743,6 +5740,7 @@ PASS TypeScript/tests/cases/compiler/memberAccessMustUseModuleInstances.ts
 PASS TypeScript/tests/cases/compiler/memberAccessOnConstructorType.ts
 PASS TypeScript/tests/cases/compiler/MemberAccessorDeclaration15.ts
 PASS TypeScript/tests/cases/compiler/memberOverride.ts
+PASS TypeScript/tests/cases/compiler/memberVariableDeclarations1.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarationExports.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarations1.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarations2.ts
@@ -8853,6 +8851,7 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKe
 PASS TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers05.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers06.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParameters1.ts
+PASS TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParameters2.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParametersInOverloads1.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/optionalBindingParametersInOverloads2.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/restElementWithAssignmentPattern1.ts
@@ -11865,6 +11864,7 @@ PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes5.ts
+PASS TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRecursiveNoCrash1.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRelationships.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints.ts
