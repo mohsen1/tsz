@@ -833,6 +833,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Consume the paren flag for TSC-style IIFE parenthesization
+        let self_paren = self.ctx.flags.paren_leftmost_function_or_object;
+        if self_paren {
+            self.ctx.flags.paren_leftmost_function_or_object = false;
+            self.write("(");
+        }
+
         self.write("function");
 
         if func.asterisk_token {
@@ -875,6 +882,9 @@ impl<'a> Printer<'a> {
             self.emit(func.body);
         }
         self.pop_temp_scope();
+        if self_paren {
+            self.write(")");
+        }
     }
 
     pub(in crate::emitter) fn emit_function_declaration_es5_params(&mut self, node: &Node) {
