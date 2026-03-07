@@ -74,8 +74,19 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let (_, left_cause) = self.split_nullish_type(left_type);
-        let (_, right_cause) = self.split_nullish_type(right_type);
+        // tsc does not treat bare `void` as nullish in binary operator contexts.
+        // `void` means "don't use this value" and gets operator-specific errors
+        // (TS2362/TS2363/TS2365), not nullish diagnostics (TS18048/TS18050).
+        let (_, left_cause) = if left_type == TypeId::VOID {
+            (Some(left_type), None)
+        } else {
+            self.split_nullish_type(left_type)
+        };
+        let (_, right_cause) = if right_type == TypeId::VOID {
+            (Some(right_type), None)
+        } else {
+            self.split_nullish_type(right_type)
+        };
         let left_is_nullish = left_cause.is_some();
         let right_is_nullish = right_cause.is_some();
         let mut emitted_nullish_error = false;
