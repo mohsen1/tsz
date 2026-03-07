@@ -59,7 +59,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return result;
         }
 
-        let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
+        let mut infer_ctx = InferenceContext::with_resolver(
+            self.interner.as_type_database(),
+            self.interner.as_type_resolver(),
+        );
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
@@ -1275,7 +1278,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Save state to prevent pollution if evaluator is reused
         let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
 
-        let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
+        let mut infer_ctx = InferenceContext::with_resolver(
+            self.interner.as_type_database(),
+            self.interner.as_type_resolver(),
+        );
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();

@@ -2356,9 +2356,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target_param: TypeId,
         priority: crate::types::InferencePriority,
     ) {
-        let mut placeholder_visited = FxHashSet::default();
-        if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
-            self.constrain_types(ctx, var_map, source_param, target_param, priority);
+        // Function parameters are contravariant: if the target parameter is a
+        // type variable placeholder, add source as a contra-candidate instead
+        // of a regular (covariant) candidate. This matches tsc's behavior where
+        // contravariant inferences go to `contraCandidates` and are resolved
+        // via intersection (not union).
+        if let Some(&var) = var_map.get(&target_param) {
+            ctx.add_contra_candidate(var, source_param, priority);
+        } else {
+            let mut placeholder_visited = FxHashSet::default();
+            if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
+                self.constrain_types(ctx, var_map, source_param, target_param, priority);
+            }
         }
         self.constrain_types(ctx, var_map, target_param, source_param, priority);
     }

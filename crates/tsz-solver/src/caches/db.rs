@@ -413,6 +413,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 
+    /// Expose the `TypeResolver` view for inference contexts that need
+    /// to expand type alias Applications (variance-aware inference).
+    fn as_type_resolver(&self) -> &dyn TypeResolver;
+
     /// Expose the checked construction surface for type constructors.
     #[inline]
     fn factory(&self) -> TypeFactory<'_> {
@@ -719,6 +723,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
 impl QueryDatabase for TypeInterner {
     fn as_type_database(&self) -> &dyn TypeDatabase {
+        self
+    }
+
+    fn as_type_resolver(&self) -> &dyn TypeResolver {
         self
     }
 
