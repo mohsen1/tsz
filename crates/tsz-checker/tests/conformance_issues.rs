@@ -1539,6 +1539,63 @@ m?.[0]! && m[0];
 }
 
 #[test]
+fn test_optional_chain_truthiness_narrows_all_prefixes_on_true_branch() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type T = { x?: { y?: { z: number } } };
+declare const o: T;
+if (o.x?.y?.z) {
+    o.x.y.z;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 in true branch after o.x?.y?.z truthiness check. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_truthiness_does_not_over_narrow_false_branch() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type T = { x?: { y?: { z: number } } };
+declare const o: T;
+if (o.x?.y?.z) {
+} else {
+    o.x.y.z;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected TS18048 in false branch after o.x?.y?.z truthiness check. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
 fn test_direct_identifier_truthiness_guard_narrows_in_and_rhs() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
