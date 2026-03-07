@@ -1490,7 +1490,7 @@ function f(o: Thing | null, value: number) {
 
 #[test]
 fn test_non_null_assertion_condition_narrows_underlying_reference() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 const m = ''.match('');
 m! && m[0];
@@ -1515,7 +1515,7 @@ m! && m[0];
 
 #[test]
 fn test_non_null_assertion_on_optional_chain_condition_narrows_underlying_reference() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 const m = ''.match('');
 m?.[0]! && m[0];
@@ -1535,6 +1535,31 @@ m?.[0]! && m[0];
     assert!(
         !semantic_errors.iter().any(|(code, _)| *code == 18047),
         "Expected no TS18047 for m?.[0]! && m[0]. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_direct_identifier_truthiness_guard_narrows_in_and_rhs() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const x: string[] | null = null as any;
+x && x[0];
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18047),
+        "Expected no TS18047 for x && x[0]. Actual: {semantic_errors:#?}"
     );
 }
 
