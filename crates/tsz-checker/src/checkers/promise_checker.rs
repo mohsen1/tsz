@@ -42,6 +42,13 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
+            query::PromiseTypeKind::TypeQuery(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                }
+                false
+            }
             query::PromiseTypeKind::Application { base, .. } => {
                 // Check if the base type of the application is a Promise-like type
                 self.type_ref_is_promise_like(base)
@@ -81,6 +88,13 @@ impl<'a> CheckerState<'a> {
                         }
                         false
                     }
+                    query::PromiseTypeKind::TypeQuery(sym_ref) => {
+                        let sym_id = SymbolId(sym_ref.0);
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            return self.is_promise_like_name(symbol.escaped_name.as_str());
+                        }
+                        false
+                    }
                     // Handle nested applications (e.g., Promise<SomeType<T>>)
                     query::PromiseTypeKind::Application {
                         base: inner_base, ..
@@ -94,6 +108,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                }
+                false
+            }
+            query::PromiseTypeKind::TypeQuery(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
                 false
@@ -165,8 +186,10 @@ impl<'a> CheckerState<'a> {
             // Handle TypeQuery(SymbolRef) base — the return type annotation stores
             // Promise<T> as Application(TypeQuery(Promise_SymbolRef), [T]) when the
             // base reference is a `typeof` value symbol rather than a Lazy(DefId).
-            if let Some(tsz_solver::TypeData::TypeQuery(sym_ref)) = self.ctx.types.lookup(base) {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            if let query::PromiseTypeKind::TypeQuery(sym_ref) =
+                query::classify_promise_type(self.ctx.types, base)
+            {
+                let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     && self.is_promise_like_name(symbol.escaped_name.as_str())
                 {
@@ -222,6 +245,7 @@ impl<'a> CheckerState<'a> {
                 // Use DefId -> SymbolId bridge
                 self.ctx.def_to_symbol_id(def_id)?
             }
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
             _ => return None,
         };
 
