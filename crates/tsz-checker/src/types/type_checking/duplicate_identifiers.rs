@@ -33,31 +33,59 @@ impl<'a> CheckerState<'a> {
             .copied()
             .unwrap_or_else(|| self.ctx.binder.is_external_module());
 
-        let mut symbol_ids = FxHashSet::default();
-        if !self.ctx.binder.scopes.is_empty() {
-            for scope in &self.ctx.binder.scopes {
-                if scope.kind == tsz_binder::ContainerKind::Class {
-                    continue;
+        // When libs are loaded, scope tables contain ~2000+ merged lib symbols alongside
+        // user symbols. Processing all of them in the loops below is a 40-50ms bottleneck
+        // per file due to HashMap lookups for each symbol's declarations.
+        // Optimization: pre-build a set of user-code symbols from node_symbols, then
+        // intersect with non-class scope symbols to preserve the Class-scope exclusion.
+        let symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
+            let user_syms: FxHashSet<tsz_binder::SymbolId> =
+                self.ctx.binder.node_symbols.values().copied().collect();
+            let mut result = FxHashSet::default();
+            if !self.ctx.binder.scopes.is_empty() {
+                for scope in &self.ctx.binder.scopes {
+                    if scope.kind == tsz_binder::ContainerKind::Class {
+                        continue;
+                    }
+                    for (_, &id) in scope.table.iter() {
+                        if user_syms.contains(&id) {
+                            result.insert(id);
+                        }
+                    }
                 }
-                for (_, &id) in scope.table.iter() {
-                    symbol_ids.insert(id);
+            } else {
+                for (_, &id) in self.ctx.binder.file_locals.iter() {
+                    if user_syms.contains(&id) {
+                        result.insert(id);
+                    }
                 }
             }
+            result
         } else {
-            for (_, &id) in self.ctx.binder.file_locals.iter() {
-                symbol_ids.insert(id);
+            // No libs: use scope tables or file_locals (all are user symbols)
+            let mut result = FxHashSet::default();
+            if !self.ctx.binder.scopes.is_empty() {
+                for scope in &self.ctx.binder.scopes {
+                    if scope.kind == tsz_binder::ContainerKind::Class {
+                        continue;
+                    }
+                    for (_, &id) in scope.table.iter() {
+                        result.insert(id);
+                    }
+                }
+            } else {
+                for (_, &id) in self.ctx.binder.file_locals.iter() {
+                    result.insert(id);
+                }
             }
-        }
+            result
+        };
 
         let mut cross_file_conflicts = Vec::new();
         for &sym_id in &symbol_ids {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-
-            if has_libs && self.ctx.symbol_is_from_lib(sym_id) {
-                continue;
-            }
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -135,10 +163,6 @@ impl<'a> CheckerState<'a> {
         }
 
         for sym_id in symbol_ids {
-            if has_libs && self.ctx.symbol_is_from_lib(sym_id) {
-                continue;
-            }
-
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };

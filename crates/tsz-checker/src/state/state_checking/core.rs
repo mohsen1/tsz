@@ -9,7 +9,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use web_time::Instant;
 
 /// Check if a name is a strict mode reserved word (ES5 §7.6.1.2).
 /// These identifiers cannot be used as variable/function/class names in strict mode.
@@ -235,9 +234,7 @@ impl<'a> CheckerState<'a> {
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
-            let env_start = Instant::now();
             let populated_env = self.build_type_environment();
-            tracing::trace!(target: "wasm::perf", phase = "build_type_environment", ms = env_start.elapsed().as_secs_f64() * 1000.0);
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
             // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
             // back to it when the local def_kinds map is incomplete.
@@ -259,7 +256,6 @@ impl<'a> CheckerState<'a> {
             // closures may be type-checked without contextual types, which would cause
             // premature TS7006 errors. The checking phase ensures contextual types are available.
             self.ctx.is_checking_statements = true;
-            let stmt_start = Instant::now();
 
             // In .d.ts files, emit TS1036 for non-declaration top-level statements.
             // The entire file is an ambient context, so statements like break, continue,
@@ -284,10 +280,6 @@ impl<'a> CheckerState<'a> {
             self.ctx.has_reported_unreachable = prev_reported;
 
             self.check_reserved_await_identifier_in_module(root_idx);
-
-            tracing::trace!(target: "wasm::perf", phase = "check_statements", ms = stmt_start.elapsed().as_secs_f64() * 1000.0);
-
-            let post_start = Instant::now();
             // Check for function overload implementations (2389, 2391)
             self.check_function_implementations(&sf.statements.nodes);
 
@@ -335,7 +327,6 @@ impl<'a> CheckerState<'a> {
             }
             // JS grammar checks: emit TS8xxx errors for TypeScript-only syntax in JS files
             if self.is_js_file() {
-                let js_start = Instant::now();
                 self.check_js_grammar_statements(&sf.statements.nodes);
 
                 // TS8022: Check for orphaned @extends/@augments tags not attached to a class
@@ -346,11 +337,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2304: Check for @typedef base types that can't be resolved
                 self.check_jsdoc_typedef_base_types();
-
-                tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
-
-            tracing::trace!(target: "wasm::perf", phase = "post_checks", ms = post_start.elapsed().as_secs_f64() * 1000.0);
         }
     }
 
