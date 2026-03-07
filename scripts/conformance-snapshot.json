@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-07T14:18:07Z",
-  "git_sha": "80c3fa7c4728d333c4013f1caea7b7f5d14864d2",
+  "timestamp": "2026-03-07T14:24:53Z",
+  "git_sha": "2c8a103ae2e35ba52be8dfb523e4fe64fbd732ee",
   "summary": {
     "total_tests": 12581,
-    "passed": 10124,
-    "failed": 2457,
+    "passed": 10126,
+    "failed": 2455,
     "pass_rate": 80.5
   },
   "areas_by_pass_rate": [
@@ -339,10 +339,10 @@
     },
     {
       "area": "compiler",
-      "total": 6519,
-      "passed": 5232,
-      "failed": 1287,
-      "pass_rate": 80.26
+      "total": 6518,
+      "passed": 5235,
+      "failed": 1283,
+      "pass_rate": 80.32
     },
     {
       "area": "types/typeParameters",
@@ -507,10 +507,10 @@
     },
     {
       "area": "jsdoc/declarations",
-      "total": 92,
-      "passed": 82,
+      "total": 91,
+      "passed": 81,
       "failed": 10,
-      "pass_rate": 89.13
+      "pass_rate": 89.01
     },
     {
       "area": "decorators/class",
@@ -982,12 +982,12 @@
       "count": 14
     },
     {
-      "code": "TS1134",
+      "code": "TS2769",
       "count": 14
     },
     {
-      "code": "TS2769",
-      "count": 13
+      "code": "TS1134",
+      "count": 14
     },
     {
       "code": "TS5107",
@@ -1164,6 +1164,10 @@
       "count": 3
     },
     {
+      "code": "TS2769",
+      "count": 3
+    },
+    {
       "code": "TS7017",
       "count": 3
     },
@@ -1238,10 +1242,6 @@
     {
       "code": "TS2323",
       "count": 2
-    },
-    {
-      "code": "TS2845",
-      "count": 2
     }
   ],
   "one_extra_zero_missing": [
@@ -1251,7 +1251,7 @@
     },
     {
       "code": "TS2345",
-      "count": 40
+      "count": 39
     },
     {
       "code": "TS2339",
@@ -1282,15 +1282,15 @@
       "count": 5
     },
     {
+      "code": "TS2344",
+      "count": 5
+    },
+    {
       "code": "TS1434",
       "count": 4
     },
     {
       "code": "TS7053",
-      "count": 4
-    },
-    {
-      "code": "TS2344",
       "count": 4
     },
     {
@@ -1338,11 +1338,11 @@
       "count": 2
     },
     {
-      "code": "TS2786",
+      "code": "TS2353",
       "count": 2
     },
     {
-      "code": "TS2353",
+      "code": "TS2786",
       "count": 2
     },
     {
@@ -1370,11 +1370,11 @@
       "count": 1
     },
     {
-      "code": "TS2662",
+      "code": "TS2536",
       "count": 1
     },
     {
-      "code": "TS2536",
+      "code": "TS2662",
       "count": 1
     },
     {
@@ -1449,11 +1449,11 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 59
+      "count": 58
     },
     {
       "code": "TS2345",
-      "count": 42
+      "count": 41
     },
     {
       "code": "TS2339",
@@ -1508,11 +1508,11 @@
       "count": 3
     },
     {
-      "code": "TS2554",
+      "code": "TS2708",
       "count": 3
     },
     {
-      "code": "TS2708",
+      "code": "TS2554",
       "count": 3
     },
     {
@@ -1560,11 +1560,11 @@
       "count": 2
     },
     {
-      "code": "TS2874",
+      "code": "TS2722",
       "count": 2
     },
     {
-      "code": "TS2366",
+      "code": "TS2786",
       "count": 2
     }
   ],
@@ -1630,12 +1630,12 @@
       "count": 14
     },
     {
-      "code": "TS1134",
+      "code": "TS2769",
       "count": 14
     },
     {
-      "code": "TS2769",
-      "count": 13
+      "code": "TS1134",
+      "count": 14
     },
     {
       "code": "TS5107",
@@ -1733,7 +1733,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 135
+      "count": 134
     },
     {
       "code": "TS2339",
@@ -1741,7 +1741,7 @@
     },
     {
       "code": "TS2345",
-      "count": 93
+      "count": 92
     },
     {
       "code": "TS7006",
@@ -1829,7 +1829,7 @@
     },
     {
       "code": "TS2344",
-      "count": 10
+      "count": 11
     },
     {
       "code": "TS2363",
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 220,
+    "false_positive": 218,
     "all_missing": 408,
-    "wrong_code": 1827,
-    "close_to_passing": 1551
+    "wrong_code": 1825,
+    "close_to_passing": 1549
   }
 }
