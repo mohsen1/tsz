@@ -189,6 +189,8 @@ pub enum PromiseTypeKind {
     },
     /// Lazy reference (`DefId`) - needs resolution to check if it's Promise
     Lazy(crate::def::DefId),
+    /// Type query (`typeof Promise`) used as the base of a promise application
+    TypeQuery(crate::types::SymbolRef),
     /// Object type (might be Promise interface from lib)
     Object(crate::types::ObjectShapeId),
     /// Union type - check each member
@@ -216,6 +218,7 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
             }
         }
         TypeData::Lazy(def_id) => PromiseTypeKind::Lazy(def_id),
+        TypeData::TypeQuery(sym_ref) => PromiseTypeKind::TypeQuery(sym_ref),
         TypeData::Object(shape_id) => PromiseTypeKind::Object(shape_id),
         TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
