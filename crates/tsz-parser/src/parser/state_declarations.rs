@@ -1721,16 +1721,22 @@ impl ParserState {
                 // `import type { ... }` or `import type * as ...` — type is modifier
                 is_type_only = true;
             } else if self.is_identifier_or_keyword() {
-                // Could be `import type X from` (modifier + import name)
-                // or `import type from '...'` (type is import name).
-                // Look one more token ahead to disambiguate.
-                self.next_token();
-                if self.is_token(SyntaxKind::FromKeyword)
-                    || self.is_token(SyntaxKind::CommaToken)
-                    || self.is_token(SyntaxKind::EqualsToken)
-                {
-                    // `import type X from/,/=` — type is modifier
+                // tsc rule: if the identifier after `type` is NOT `from`, then
+                // `type` is always a modifier. The ambiguity only exists for
+                // `import type from ...` — is `from` the import name or a keyword?
+                if !self.is_token(SyntaxKind::FromKeyword) {
+                    // `import type X ...` where X != from — type is modifier
                     is_type_only = true;
+                } else {
+                    // `import type from ...` — need one more lookahead
+                    self.next_token();
+                    if self.is_token(SyntaxKind::FromKeyword)
+                        || self.is_token(SyntaxKind::CommaToken)
+                        || self.is_token(SyntaxKind::EqualsToken)
+                    {
+                        // `import type from from/,/=` — type is modifier, `from` is name
+                        is_type_only = true;
+                    }
                 }
                 // Restore either way (we'll re-parse the import name below)
                 self.scanner.restore_state(snapshot);
@@ -1758,7 +1764,9 @@ impl ParserState {
         //   import defer from from "..." → defer is modifier (checker emits TS18058)
         //   import defer from "..." → defer is the default import NAME
         //   import defer type * as ns → defer is the default import NAME (modifier conflict)
-        if self.is_token(SyntaxKind::DeferKeyword) {
+        // When is_type_only is true, defer cannot be a modifier (matches tsc's
+        // `isTypeOnly ? undefined : parseModifierIfPresent(DeferKeyword)`).
+        if !is_type_only && self.is_token(SyntaxKind::DeferKeyword) {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             let saved_arena_len = self.arena.nodes.len();
@@ -1810,15 +1818,20 @@ impl ParserState {
         };
 
         // Parse comma if we have both default and named/namespace
-        if name.is_some() && self.parse_optional(SyntaxKind::CommaToken) {
-            // Continue to parse named bindings
-        }
+        let had_comma = name.is_some() && self.parse_optional(SyntaxKind::CommaToken);
 
         // Parse named bindings: * as ns or { x, y }
-        let named_bindings = if self.is_token(SyntaxKind::AsteriskToken) {
-            self.parse_namespace_import()
-        } else if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_named_imports()
+        // Only parse when there is no default name or a comma was consumed.
+        // Without a comma after a default name, `*` or `{` are not valid
+        // continuations of the import clause.
+        let named_bindings = if !name.is_some() || had_comma {
+            if self.is_token(SyntaxKind::AsteriskToken) {
+                self.parse_namespace_import()
+            } else if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_named_imports()
+            } else {
+                NodeIndex::NONE
+            }
         } else {
             NodeIndex::NONE
         };

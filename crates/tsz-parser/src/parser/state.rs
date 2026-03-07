@@ -749,6 +749,7 @@ impl ParserState {
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
+            SyntaxKind::FromKeyword => "from",
             _ => "token",
         }
     }
