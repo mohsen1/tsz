@@ -6598,3 +6598,94 @@ Nullish-aware CFA facts must be present when binary operands are typed; otherwis
 - Expected flips if fixed correctly:
   - primary basket above,
   - nearby optional-chain assertion lanes in `controlFlowOptionalChain.ts`.
+
+## Session 2026-03-07p — narrowing-flow assertion/optional-chain lane re-check (investigation only, no commit)
+
+### Campaign classification (written before coding)
+- **CAMPAIGN**: Narrowing / control-flow parity
+- **REPRESENTATIVE TEST BASKET**:
+  - `controlFlowOptionalChain.ts`
+  - `contextuallyTypedOptionalProperty.ts`
+  - `destructureTupleWithVariableElement.ts`
+  - `useRegexpGroups.ts`
+- **SHARED INVARIANT**: Nullish/optional-chain guard transport must preserve base-reference flow facts (especially through assertion-call CFA) so accesses narrow to non-nullish when appropriate and never collapse to `never` spuriously.
+
+### Root cause layer
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+### Specific gap
+- The remaining `controlFlowOptionalChain.ts` false positive at `test.ts:486:11` (`TS2339` on `never`) is on an assertion path:
+  - `assert(typeof o?.foo === "number");`
+  - followed by `o.foo;`
+- This indicates divergence in assertion-call CFA transport for optional-chain conditions, not just plain binary narrowing.
+
+### Fix belongs in
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+  - `handle_call_iterative` condition-based assertion narrowing (`assert(condition)` path)
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+  - assertion-target condition narrowing and optional-chain prefix transport
+
+### Estimated scope
+- ~120-220 LOC across assertion-call flow boundary and condition narrowing interop.
+
+### Blast radius
+- Optional-chain assertion family in `controlFlowOptionalChain.ts` and nearby nullish CFA mismatches that currently surface as `TS2339`/`TS18047`/`TS18048` fingerprint skew.
+
+### What was tried in this run
+- Offline triage + campaign analysis:
+  - `./scripts/conformance.sh analyze --campaigns`
+  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
+  - `python3 scripts/query-conformance.py --code TS18048`
+- Targeted verbose conformance basket:
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
+- Attempted patch (reverted): route optional binary extracted guards through `narrow_by_binary_expr` in `condition_narrowing.rs`.
+- Added focused checker regressions for optional-chain assertion/equality variants during investigation; all passed in unit scope but did not reflect conformance harness behavior. Investigation tests were reverted.
+
+### Result
+- No targeted conformance movement on the representative basket.
+- `controlFlowOptionalChain.ts` still reports extra `TS2339` at `test.ts:486:11` and broad nullish fingerprint skew.
+- All investigation code/test edits were reverted; no commit created.
+
+### Why blocked
+- Unit-level reproductions did not trigger the harness-level failure shape, implying the remaining defect depends on broader flow context in the conformance file (assertion call + surrounding control-flow graph state), not the isolated binary guard path.
+
+## Session 2026-03-07q — follow-on campaign claim: big3 (triage only, no commit)
+
+Narrowing-flow remained blocked in this run, so follow-on campaign claimed per queue: **big3**.
+
+### Representative basket sampled
+- `coAndContraVariantInferences6.ts`
+- `genericRestParameters1.ts`
+- `genericContextualTypes1.ts`
+
+### Shared invariant candidate
+In several call/inference contexts, tsz emits top-level argument mismatch `TS2345` where tsc reports nested/member-level assignability (`TS2322`), indicating post-relation diagnostic routing/elaboration drift in call paths.
+
+### What was verified
+- `./scripts/conformance.sh analyze --campaign big3`
+- `python3 scripts/query-conformance.py --campaign big3`
+- `python3 scripts/query-conformance.py --code TS2345`
+- Targeted verbose conformance:
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
+
+### Observed diffs
+- `coAndContraVariantInferences6.ts`: missing nested `TS2322` (`"C"` vs `"A" | "B"`) + extra top-level `TS2345`.
+- `genericRestParameters1.ts`: missing `TS2322` at assignment site + many extra `TS2345` at call/rest boundaries.
+- `genericContextualTypes1.ts`: extra `TS2322` and `TS2345` (no missing codes), suggesting over-eager top-level mismatch reporting.
+
+### Likely owning boundary
+- `crates/tsz-checker/src/error_reporter/call_errors.rs`
+- `crates/tsz-checker/src/checkers/call_checker.rs`
+- `crates/tsz-checker/src/query_boundaries/assignability.rs`
+
+No code changes were made for big3 in this run.
