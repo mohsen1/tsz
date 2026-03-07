@@ -946,7 +946,10 @@ impl<'a> FlowAnalyzer<'a> {
                                     .filter(|sym| sym.value_declaration.is_some())
                                     .and_then(|sym| {
                                         self.node_types.and_then(|nt| {
-                                            nt.get(&sym.value_declaration.0).copied()
+                                            self.annotation_type_from_var_decl_node(
+                                                sym.value_declaration,
+                                            )
+                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
                                         })
                                     });
                                 let narrowing_base = declared_type.unwrap_or(initial_type);
@@ -955,7 +958,26 @@ impl<'a> FlowAnalyzer<'a> {
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
                             // The value HAS changed, so we can't continue to antecedent
-                            current_type
+                            if self.is_await_assignment_for_reference(flow.node, reference) {
+                                // `x = await expr` assigns a realized value. When RHS typing
+                                // isn't available yet, keep this sound by at least excluding
+                                // `undefined` from the assignment base.
+                                let declared_type = symbol_id
+                                    .and_then(|sid| self.binder.get_symbol(sid))
+                                    .filter(|sym| sym.value_declaration.is_some())
+                                    .and_then(|sym| {
+                                        self.node_types.and_then(|nt| {
+                                            self.annotation_type_from_var_decl_node(
+                                                sym.value_declaration,
+                                            )
+                                            .or_else(|| nt.get(&sym.value_declaration.0).copied())
+                                        })
+                                    })
+                                    .unwrap_or(initial_type);
+                                tsz_solver::remove_undefined(self.interner, declared_type)
+                            } else {
+                                current_type
+                            }
                         }
                     } else {
                         // For any/error types: Don't apply narrowing - continue to antecedent

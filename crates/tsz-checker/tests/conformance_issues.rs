@@ -1216,6 +1216,43 @@ function f01(x: string | undefined) {
     );
 }
 
+/// Assignment-based narrowing should use declared annotation types, not initializer flow types.
+///
+/// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`
+/// Previously, flow assignment compatibility could read `x` as `undefined` and skip narrowing.
+#[test]
+fn test_assignment_narrowing_prefers_declared_annotation_type() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+// @strict: true
+type Browser = { close(): void };
+declare function makeBrowser(): Browser;
+declare function consumeBrowser(b: Browser): void;
+
+function test() {
+    let browser: Browser | undefined = undefined;
+    try {
+        browser = makeBrowser();
+        consumeBrowser(browser);
+        browser.close();
+    } finally {
+    }
+}
+        "#,
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors
+            .iter()
+            .any(|(code, _)| *code == 2345 || *code == 18048),
+        "Should not emit TS2345/TS18048 after assignment narrowing, got: {semantic_errors:#?}"
+    );
+}
+
 /// Issue: Private identifiers in object literals
 ///
 /// Expected: TS18016 (private identifiers not allowed outside class bodies)

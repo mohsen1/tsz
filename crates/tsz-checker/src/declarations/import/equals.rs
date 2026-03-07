@@ -1203,10 +1203,7 @@ impl<'a> CheckerState<'a> {
         let mut walk_id = current_scope.parent;
         let lib_binders = self.get_lib_binders();
 
-        loop {
-            let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) else {
-                break;
-            };
+        while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
             if let Some(sym_id) = scope.table.get(name) {
                 let sym_flags = self
                     .ctx

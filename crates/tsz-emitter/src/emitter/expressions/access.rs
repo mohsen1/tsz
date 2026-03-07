@@ -136,10 +136,7 @@ impl<'a> Printer<'a> {
         // Unwrap parentheses, type assertions, and `as` expressions to find the
         // innermost expression. After type erasure, `(<any>1)` becomes just `1`.
         let mut idx = expr_idx;
-        loop {
-            let Some(node) = self.arena.get(idx) else {
-                break;
-            };
+        while let Some(node) = self.arena.get(idx) {
             match node.kind {
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                     if let Some(paren) = self.arena.get_parenthesized(node) {
