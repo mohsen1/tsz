@@ -2315,7 +2315,6 @@ FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeAccessibility.ts
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInClasses.ts
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctionsNegative.ts
-FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeSyntacticContext.ts
 FAIL TypeScript/tests/cases/conformance/types/thisType/typeRelationships.ts
 FAIL TypeScript/tests/cases/conformance/types/thisType/unionThisTypeInFunctions.ts
 FAIL TypeScript/tests/cases/conformance/types/tuple/arityAndOrderCompatibility01.ts
@@ -12105,6 +12104,7 @@ PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInTaggedTemplateC
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInTuples.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInTypePredicate.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeOptionalCall.ts
+PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeSyntacticContext.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/castingTuple.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/emptyTuples/emptyTuplesTypeAssertion01.ts
 PASS TypeScript/tests/cases/conformance/types/tuple/emptyTuples/emptyTuplesTypeAssertion02.ts
