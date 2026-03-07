@@ -892,27 +892,28 @@ impl ParserState {
         // The last modifier is `static` and current token is `{` — this is a static block
         // with invalid preceding modifiers.
         if self.is_token(SyntaxKind::OpenBraceToken)
-            && let Some(ref mods) = modifiers {
-                let last_is_static = mods
-                    .nodes
-                    .last()
-                    .and_then(|&idx| self.arena.get(idx))
-                    .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16);
-                if last_is_static {
-                    // Truncate modifier-ordering diagnostics — tsc only emits TS1184.
-                    self.parse_diagnostics.truncate(diag_len_before_modifiers);
-                    // Emit TS1184 at the first modifier's position (matches tsc).
-                    if let Some(first_node) = self.arena.get(mods.nodes[0]) {
-                        self.parse_error_at(
-                            first_node.pos,
-                            first_node.end - first_node.pos,
-                            "Modifiers cannot appear here.",
-                            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                        );
-                    }
-                    return self.parse_static_block();
+            && let Some(ref mods) = modifiers
+        {
+            let last_is_static = mods
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16);
+            if last_is_static {
+                // Truncate modifier-ordering diagnostics — tsc only emits TS1184.
+                self.parse_diagnostics.truncate(diag_len_before_modifiers);
+                // Emit TS1184 at the first modifier's position (matches tsc).
+                if let Some(first_node) = self.arena.get(mods.nodes[0]) {
+                    self.parse_error_at(
+                        first_node.pos,
+                        first_node.end - first_node.pos,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
                 }
+                return self.parse_static_block();
             }
+        }
 
         // Handle constructor
         // But not if var/let is in modifiers - that's an invalid pattern
