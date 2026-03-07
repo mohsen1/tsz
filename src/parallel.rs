@@ -1096,39 +1096,118 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 sym.parent = new_parent;
             }
 
-            // Remap exports: replace local IDs with global IDs
-            if let Some(exports) = &lib_sym.exports
-                && let Some(sym) = global_symbols.get_mut(global_id)
-            {
-                if sym.exports.is_none() {
-                    sym.exports = Some(Box::new(SymbolTable::new()));
-                }
-                if let Some(existing) = sym.exports.as_mut() {
+            // Remap exports: replace local IDs with global IDs.
+            // When an export name was already remapped by a previous lib binder,
+            // merge the new symbol's flags/declarations into the existing one
+            // (e.g., INTERFACE from one lib + VALUE from another, like
+            // DateTimeFormat in Intl across es5.d.ts and es2017.intl.d.ts).
+            if let Some(exports) = &lib_sym.exports {
+                let mut new_exports: Vec<(String, SymbolId)> = Vec::new();
+                let mut merge_targets: Vec<(SymbolId, SymbolId)> = Vec::new();
+
+                if let Some(sym) = global_symbols.get(global_id) {
+                    let existing_exports = sym.exports.as_ref();
                     for (name, &export_id) in exports.iter() {
                         if let Some(&new_export_id) =
                             lib_symbol_remap.get(&(lib_binder_ptr, export_id))
                         {
-                            // Always overwrite — Phase 1 alloc_from copied local IDs
-                            // that need to be replaced with global IDs
-                            existing.set(name.clone(), new_export_id);
+                            let prev = existing_exports.and_then(|e| e.get(name));
+                            if let Some(prev_export_id) = prev {
+                                if prev_export_id != new_export_id {
+                                    merge_targets.push((prev_export_id, new_export_id));
+                                }
+                            } else {
+                                new_exports.push((name.clone(), new_export_id));
+                            }
+                        }
+                    }
+                }
+
+                for (dst_id, src_id) in merge_targets {
+                    let src_data = global_symbols
+                        .get(src_id)
+                        .map(|s| (s.flags, s.declarations.clone(), s.value_declaration));
+                    if let Some((src_flags, src_decls, src_value_decl)) = src_data
+                        && let Some(dst) = global_symbols.get_mut(dst_id)
+                    {
+                        dst.flags |= src_flags;
+                        for d in src_decls {
+                            if !dst.declarations.contains(&d) {
+                                dst.declarations.push(d);
+                            }
+                        }
+                        if dst.value_declaration.is_none() && src_value_decl.is_some() {
+                            dst.value_declaration = src_value_decl;
+                        }
+                    }
+                }
+
+                if !new_exports.is_empty()
+                    && let Some(sym) = global_symbols.get_mut(global_id)
+                {
+                    if sym.exports.is_none() {
+                        sym.exports = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.exports.as_mut() {
+                        for (name, id) in new_exports {
+                            existing.set(name, id);
                         }
                     }
                 }
             }
 
-            // Remap members: replace local IDs with global IDs
-            if let Some(members) = &lib_sym.members
-                && let Some(sym) = global_symbols.get_mut(global_id)
-            {
-                if sym.members.is_none() {
-                    sym.members = Some(Box::new(SymbolTable::new()));
-                }
-                if let Some(existing) = sym.members.as_mut() {
+            // Remap members: replace local IDs with global IDs.
+            // Same merge-instead-of-overwrite logic as exports.
+            if let Some(members) = &lib_sym.members {
+                let mut new_members: Vec<(String, SymbolId)> = Vec::new();
+                let mut merge_targets: Vec<(SymbolId, SymbolId)> = Vec::new();
+
+                if let Some(sym) = global_symbols.get(global_id) {
+                    let existing_members = sym.members.as_ref();
                     for (name, &member_id) in members.iter() {
                         if let Some(&new_member_id) =
                             lib_symbol_remap.get(&(lib_binder_ptr, member_id))
                         {
-                            existing.set(name.clone(), new_member_id);
+                            let prev = existing_members.and_then(|m| m.get(name));
+                            if let Some(prev_member_id) = prev {
+                                if prev_member_id != new_member_id {
+                                    merge_targets.push((prev_member_id, new_member_id));
+                                }
+                            } else {
+                                new_members.push((name.clone(), new_member_id));
+                            }
+                        }
+                    }
+                }
+
+                for (dst_id, src_id) in merge_targets {
+                    let src_data = global_symbols
+                        .get(src_id)
+                        .map(|s| (s.flags, s.declarations.clone(), s.value_declaration));
+                    if let Some((src_flags, src_decls, src_value_decl)) = src_data
+                        && let Some(dst) = global_symbols.get_mut(dst_id)
+                    {
+                        dst.flags |= src_flags;
+                        for d in src_decls {
+                            if !dst.declarations.contains(&d) {
+                                dst.declarations.push(d);
+                            }
+                        }
+                        if dst.value_declaration.is_none() && src_value_decl.is_some() {
+                            dst.value_declaration = src_value_decl;
+                        }
+                    }
+                }
+
+                if !new_members.is_empty()
+                    && let Some(sym) = global_symbols.get_mut(global_id)
+                {
+                    if sym.members.is_none() {
+                        sym.members = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.members.as_mut() {
+                        for (name, id) in new_members {
+                            existing.set(name, id);
                         }
                     }
                 }
