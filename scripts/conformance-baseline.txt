@@ -710,6 +710,7 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
@@ -838,7 +839,6 @@ FAIL TypeScript/tests/cases/compiler/narrowingNoInfer1.ts
 FAIL TypeScript/tests/cases/compiler/narrowingOfQualifiedNames.ts
 FAIL TypeScript/tests/cases/compiler/narrowingPastLastAssignment.ts
 FAIL TypeScript/tests/cases/compiler/narrowingRestGenericCall.ts
-FAIL TypeScript/tests/cases/compiler/narrowingTypeofUndefined1.ts
 FAIL TypeScript/tests/cases/compiler/narrowingTypeofUndefined2.ts
 FAIL TypeScript/tests/cases/compiler/narrowingUnionToNeverAssigment.ts
 FAIL TypeScript/tests/cases/compiler/narrowingWithNonNullExpression.ts
@@ -1924,7 +1924,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/jsxParsingError1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxParsingErrorImmediateSpreadInAttributeValue.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxReactTestSuite.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/jsxUnclosedParserRecovery.ts
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeInvalidNames.tsx
@@ -1954,7 +1953,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxLibraryManagedAttributes.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactComponentWithDefaultTypeParameter3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit5.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmitSpreadAttribute.ts
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution12.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution14.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution2.tsx
@@ -6025,6 +6023,7 @@ PASS TypeScript/tests/cases/compiler/narrowingTypeofDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofFunction.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofObject.ts
 PASS TypeScript/tests/cases/compiler/narrowingTypeofParenthesized1.ts
+PASS TypeScript/tests/cases/compiler/narrowingTypeofUndefined1.ts
 PASS TypeScript/tests/cases/compiler/narrowingUnionToUnion.ts
 PASS TypeScript/tests/cases/compiler/narrowingUnionWithBang.ts
 PASS TypeScript/tests/cases/compiler/narrowTypeByInstanceof.ts
@@ -8265,7 +8264,6 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNoIntermediateErrors.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowNullishCoalesce.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain2.ts
-PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowParameter.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowStringIndex.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowSuperPropertyAccess.ts
@@ -10289,7 +10287,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
@@ -10474,7 +10471,6 @@ PASS TypeScript/tests/cases/conformance/jsx/jsxParsingError2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxParsingError3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxParsingError4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx
-PASS TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImport.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx
 PASS TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNames.tsx
@@ -10551,7 +10547,6 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmit3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmit4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmit6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmit7.tsx
-PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmit8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmitEntities.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmitNesting.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmitWhitespace.tsx

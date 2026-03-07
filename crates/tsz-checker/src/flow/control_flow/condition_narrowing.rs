@@ -783,6 +783,31 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
+        // typeof-based discriminant narrowing for unions:
+        // `typeof a.error === 'undefined'` narrows `a` by filtering union members
+        // where the `error` property is (or isn't) undefined.
+        if is_strict
+            && let Some((property_path, typeof_literal)) =
+                self.typeof_discriminant_path(bin.left, bin.right, target)
+            {
+                let discriminant_type = match typeof_literal {
+                    "undefined" => TypeId::UNDEFINED,
+                    _ => {
+                        // For non-undefined typeof checks (e.g., typeof x.y === "string"),
+                        // we can't use discriminant narrowing directly.
+                        TypeId::NEVER
+                    }
+                };
+                if discriminant_type != TypeId::NEVER {
+                    return narrowing.narrow_by_discriminant_for_type(
+                        type_id,
+                        &property_path,
+                        discriminant_type,
+                        effective_truth,
+                    );
+                }
+            }
+
         if let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) {
             if is_strict {
                 if effective_truth {
