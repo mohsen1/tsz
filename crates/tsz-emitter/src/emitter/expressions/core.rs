@@ -347,7 +347,8 @@ impl<'a> Printer<'a> {
             let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
             self.ctx.flags.optional_chain_needs_parens = false;
             self.ctx.flags.nullish_coalescing_needs_parens = false;
-            self.emit_comma_separated(&args.nodes);
+            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            self.emit_comma_separated(&valid_args);
             self.ctx.flags.optional_chain_needs_parens = prev_optional;
             self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
             // Map closing `)` — scan backward from node end
