@@ -497,16 +497,17 @@ impl<'a> CheckerState<'a> {
                             type_idx
                         };
                         if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
-                            && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id) {
-                                let base_props = self.static_properties_from_type(base_type);
-                                let own_names: std::collections::HashSet<_> =
-                                    partial_ctor_props.iter().map(|p| p.name).collect();
-                                for (name, prop) in base_props {
-                                    if !own_names.contains(&name) {
-                                        partial_ctor_props.push(prop);
-                                    }
+                            && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
+                        {
+                            let base_props = self.static_properties_from_type(base_type);
+                            let own_names: std::collections::HashSet<_> =
+                                partial_ctor_props.iter().map(|p| p.name).collect();
+                            for (name, prop) in base_props {
+                                if !own_names.contains(&name) {
+                                    partial_ctor_props.push(prop);
                                 }
                             }
+                        }
                         break 'inherit;
                     }
                 }
