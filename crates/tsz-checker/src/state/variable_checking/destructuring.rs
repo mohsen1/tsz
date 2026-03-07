@@ -604,6 +604,71 @@ impl<'a> CheckerState<'a> {
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
+                // TS2538: Type cannot be used as an index type.
+                // In destructuring, only string-like and number-like types are valid
+                // computed index types. Unlike element access (obj[x]) where `any` is
+                // allowed, destructuring rejects `any`, `symbol`, and `unique symbol`.
+                if !key_is_string && !key_is_number && key_type != TypeId::NEVER {
+                    let resolved_key = self.resolve_lazy_type(key_type);
+                    // Check for any/error types (always invalid in destructuring)
+                    let is_any_or_error = matches!(key_type, TypeId::ANY | TypeId::ERROR)
+                        || matches!(resolved_key, TypeId::ANY | TypeId::ERROR);
+                    // Check for symbol/unique symbol — invalid unless the parent type
+                    // has a matching symbol property (late-bound property access).
+                    // For type parameters, skip the symbol check since the constraint
+                    // may have matching symbol properties we can't resolve statically.
+                    let is_symbol = tsz_solver::type_queries::is_symbol_or_unique_symbol_type(
+                        self.ctx.types,
+                        resolved_key,
+                    );
+                    let symbol_should_report =
+                        if !is_symbol {
+                            false
+                        } else if query::is_type_parameter_like(self.ctx.types, parent_type) {
+                            // Type parameter: constraint may have matching symbol properties
+                            false
+                        } else {
+                            // Concrete type: check for actual named property (not index sigs)
+                            tsz_solver::visitor::unique_symbol_ref(self.ctx.types, resolved_key)
+                                .map_or(true, |sym_ref| {
+                                    !tsz_solver::type_queries::type_has_property_by_str(
+                                        self.ctx.types,
+                                        parent_type,
+                                        &format!("__unique_{}", sym_ref.0),
+                                    )
+                                })
+                        };
+                    // Check for structurally invalid types (void, null, boolean, etc.)
+                    let has_structural_invalid =
+                        tsz_solver::type_queries::get_invalid_index_type_member(
+                            self.ctx.types,
+                            resolved_key,
+                        );
+                    let should_report =
+                        is_any_or_error || symbol_should_report || has_structural_invalid.is_some();
+                    if should_report {
+                        let display_type =
+                            if key_type == TypeId::ERROR || resolved_key == TypeId::ERROR {
+                                TypeId::ANY
+                            } else if let Some(invalid) = has_structural_invalid {
+                                invalid
+                            } else {
+                                resolved_key
+                            };
+                        let key_type_str = self.format_type(display_type);
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[&key_type_str],
+                        );
+                        let error_node = computed_expr.unwrap_or(element_data.property_name);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
+                    }
+                }
+
                 if key_is_string || key_is_number {
                     let has_matching_index = |ty: TypeId| {
                         query::object_shape(self.ctx.types, ty).is_some_and(|shape| {
