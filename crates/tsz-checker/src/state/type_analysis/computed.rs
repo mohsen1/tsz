@@ -1766,7 +1766,7 @@ impl<'a> CheckerState<'a> {
         if for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
             let for_data = self.ctx.arena.get_for_in_of(for_node).cloned()?;
             let expr_type = self.get_type_of_node(for_data.expression);
-            Some(self.for_of_element_type(expr_type))
+            Some(self.for_of_element_type(expr_type, for_data.await_modifier))
         } else if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
             let for_data = self.ctx.arena.get_for_in_of(for_node).cloned()?;
             let expr_type = self.get_type_of_node(for_data.expression);

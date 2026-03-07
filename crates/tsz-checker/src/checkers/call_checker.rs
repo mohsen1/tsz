@@ -474,7 +474,7 @@ impl<'a> CheckerState<'a> {
                     // Resolve the iterated element type via the iterator protocol:
                     // type[Symbol.iterator]().next().value
                     if self.is_iterable_type(spread_type) {
-                        let element_type = self.for_of_element_type(spread_type);
+                        let element_type = self.for_of_element_type(spread_type, false);
 
                         // TS2556 check: A non-tuple iterable spread is only valid at
                         // a rest parameter position (same logic as array spread above).

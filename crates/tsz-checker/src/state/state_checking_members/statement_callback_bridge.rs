@@ -1019,8 +1019,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         );
     }
 
-    fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId {
-        CheckerState::for_of_element_type(self, expr_type)
+    fn for_of_element_type(&mut self, expr_type: TypeId, is_async: bool) -> TypeId {
+        CheckerState::for_of_element_type(self, expr_type, is_async)
     }
 
     fn check_for_of_iterability(

@@ -116,7 +116,8 @@ pub trait StatementCheckCallbacks {
     );
 
     /// Get element type for for-of loop.
-    fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId;
+    /// When `is_async` is true (for-await-of), unwraps Promise<T> → T from the element type.
+    fn for_of_element_type(&mut self, expr_type: TypeId, is_async: bool) -> TypeId;
 
     /// Check for-of iterability.
     fn check_for_of_iterability(
@@ -545,7 +546,7 @@ impl StatementChecker {
                         if is_for_of {
                             // Check if the expression is iterable and emit TS2488/TS2504 if not
                             state.check_for_of_iterability(expr_type, expression, await_modifier);
-                            state.for_of_element_type(expr_type)
+                            state.for_of_element_type(expr_type, await_modifier)
                         } else {
                             // TS2407: for-in expression must be any, object type, or type parameter
                             state.check_for_in_expression_type(expr_type, expression);
