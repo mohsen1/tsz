@@ -68,6 +68,14 @@ fn rest_element_contextual_type(db: &dyn TypeDatabase, rest_type: TypeId) -> Typ
     rest_type
 }
 
+fn add_undefined_if_missing(db: &dyn TypeDatabase, ty: TypeId) -> TypeId {
+    if crate::narrowing::type_contains_undefined(db, ty) {
+        ty
+    } else {
+        db.union(vec![ty, TypeId::UNDEFINED])
+    }
+}
+
 // =============================================================================
 // Visitor Pattern Implementations
 // =============================================================================
@@ -458,7 +466,11 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
                 // Extract the element type for contextual typing of individual positions.
                 Some(rest_element_contextual_type(self.db, elem.type_id))
             } else {
-                Some(elem.type_id)
+                let mut ty = elem.type_id;
+                if elem.optional {
+                    ty = add_undefined_if_missing(self.db, ty);
+                }
+                Some(ty)
             }
         } else if let Some(last) = elements.last() {
             if last.rest {
@@ -575,7 +587,11 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
             if prop.name == self.name_atom {
-                return Some(prop.type_id);
+                let mut ty = prop.type_id;
+                if prop.optional {
+                    ty = add_undefined_if_missing(self.db, ty);
+                }
+                return Some(ty);
             }
         }
         // Fall back to index signatures for Object types too

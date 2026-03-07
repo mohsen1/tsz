@@ -8,6 +8,14 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
+        if tsz_solver::type_contains_undefined(self.ctx.types, ty) {
+            ty
+        } else {
+            self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED])
+        }
+    }
+
     pub(crate) fn report_empty_array_destructuring_bounds(
         &mut self,
         pattern_idx: NodeIndex,
@@ -492,11 +500,20 @@ impl<'a> CheckerState<'a> {
                         };
                         elem_types.push(elem_type);
                     } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
+                        let mut elem = elem;
+                        if self.ctx.no_unchecked_indexed_access() {
+                            elem = self.add_undefined_if_missing_for_destructuring(elem);
+                        }
                         elem_types.push(elem);
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member)
-                        && let Some(e) = elems.get(element_index)
-                    {
-                        elem_types.push(e.type_id);
+                    } else if query::tuple_elements(self.ctx.types, member).is_some() {
+                        let elem = self.get_element_access_type(
+                            member,
+                            TypeId::NUMBER,
+                            Some(element_index),
+                        );
+                        if elem != TypeId::ERROR {
+                            elem_types.push(elem);
+                        }
                     }
                 }
                 if elem_types.is_empty() && !element_data.dot_dot_dot_token {
@@ -552,10 +569,16 @@ impl<'a> CheckerState<'a> {
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                elem
+                if self.ctx.no_unchecked_indexed_access() {
+                    self.add_undefined_if_missing_for_destructuring(elem)
+                } else {
+                    elem
+                }
             } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                if let Some(e) = elems.get(element_index) {
-                    e.type_id
+                let elem =
+                    self.get_element_access_type(array_like, TypeId::NUMBER, Some(element_index));
+                if elem != TypeId::ERROR {
+                    elem
                 } else {
                     let has_rest_tail = elems.last().is_some_and(|element| element.rest);
                     // When a binding element has a default value (e.g., `[a, b = a] = [1]`),
