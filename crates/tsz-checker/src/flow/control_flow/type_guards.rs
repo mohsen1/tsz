@@ -455,12 +455,27 @@ impl<'a> FlowAnalyzer<'a> {
         let target_node =
             self.predicate_target_expression(call, &signature.predicate, &signature.params)?;
 
-        // 5. Construct the appropriate guard
-        let guard = if let Some(type_id) = signature.predicate.type_id {
+        // 5. Resolve generic predicates before constructing the guard.
+        // For `hasOwnProperty<P>(target, property: P): target is { [K in P]: unknown }`,
+        // the predicate type needs to be instantiated with inferred type args (P = "length").
+        let resolved_predicate = if let Some(node_types) = self.node_types {
+            self.resolve_generic_predicate(
+                &signature.predicate,
+                &signature.params,
+                call,
+                callee_type,
+                node_types,
+            )
+        } else {
+            signature.predicate
+        };
+
+        // 6. Construct the appropriate guard
+        let guard = if let Some(type_id) = resolved_predicate.type_id {
             // "x is T" or "asserts x is T"
             TypeGuard::Predicate {
                 type_id: Some(type_id),
-                asserts: signature.predicate.asserts,
+                asserts: resolved_predicate.asserts,
             }
         } else {
             // "asserts x" (no type annotation) - narrows to truthy
