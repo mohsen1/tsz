@@ -1169,7 +1169,6 @@ FAIL TypeScript/tests/cases/compiler/typeGuardConstructorDerivedClass.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardConstructorNarrowPrimitivesInUnion.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardConstructorPrimitiveTypes.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardNarrowByMutableUntypedField.ts
-FAIL TypeScript/tests/cases/compiler/typeGuardNarrowByUntypedField.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty9.ts
 FAIL TypeScript/tests/cases/compiler/typeInferenceFBoundedTypeParams.ts
@@ -7281,6 +7280,7 @@ PASS TypeScript/tests/cases/compiler/typedArraysCrossAssignability01.ts
 PASS TypeScript/tests/cases/compiler/typedArraysSubarray.ts
 PASS TypeScript/tests/cases/compiler/typedGenericPrototypeMember.ts
 PASS TypeScript/tests/cases/compiler/typeGuardConstructorNarrowAny.ts
+PASS TypeScript/tests/cases/compiler/typeGuardNarrowByUntypedField.ts
 PASS TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty10.ts
 PASS TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty11.ts
 PASS TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty12.ts
