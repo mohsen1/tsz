@@ -1065,6 +1065,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 optional,
                 readonly,
                 is_method: false,
+                is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: 0,

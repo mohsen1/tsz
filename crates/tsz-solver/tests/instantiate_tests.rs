@@ -1519,6 +1519,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
             optional: false,
             readonly: false,
             is_method: true,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,

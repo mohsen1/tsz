@@ -126,6 +126,7 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly: false,
                     is_method: true,
+                    is_class_prototype: false,
                     visibility: tsz_solver::Visibility::Public,
                     parent_id: Some(parent_sym),
                     declaration_order: 0,

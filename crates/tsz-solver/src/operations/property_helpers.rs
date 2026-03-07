@@ -613,6 +613,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         readonly: prop.readonly,
                         optional: prop.optional,
                         is_method: prop.is_method,
+                        is_class_prototype: prop.is_class_prototype,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
                         declaration_order: 0,

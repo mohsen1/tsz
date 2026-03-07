@@ -1129,6 +1129,7 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: crate::types::Visibility::Public,
             parent_id: None,
             declaration_order: 0,

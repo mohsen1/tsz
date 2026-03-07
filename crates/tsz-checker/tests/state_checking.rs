@@ -28,6 +28,7 @@ fn exposes_state_checking_boundary_queries() {
         optional: true,
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,

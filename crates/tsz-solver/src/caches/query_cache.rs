@@ -313,8 +313,12 @@ impl<'a> QueryCache<'a> {
         // Spread removes readonly modifiers from properties (TypeScript spec).
         // `{ ...readonlyObj }` produces a mutable copy.
         // Also reset write_type to match type_id so the property is fully writable.
+        // Class prototype members (methods/accessors) are excluded from spread results
+        // because they live on the prototype, not as own enumerable properties.
+        // This matches tsc's isSpreadPrototypeProperty() behavior.
         props
             .into_iter()
+            .filter(|p| !p.is_class_prototype)
             .map(|mut p| {
                 p.readonly = false;
                 p.write_type = p.type_id;

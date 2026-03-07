@@ -168,6 +168,7 @@ fn test_get_property_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        is_class_prototype: false,
         visibility: Visibility::Public,
         parent_id: None,
         declaration_order: 0,

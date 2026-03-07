@@ -732,6 +732,10 @@ pub struct PropertyInfo {
     pub optional: bool,
     pub readonly: bool,
     pub is_method: bool,
+    /// Whether this property is a class prototype member (method or accessor).
+    /// Prototype properties are excluded from spread types (`{ ...classInstance }`).
+    /// Excluded from PartialEq/Hash since it's declaration-site metadata, not structural.
+    pub is_class_prototype: bool,
     /// Visibility modifier for nominal subtyping
     pub visibility: Visibility,
     /// Symbol that declared this property (for nominal identity checks)
@@ -779,6 +783,7 @@ impl PropertyInfo {
             optional: false,
             readonly: false,
             is_method: false,
+            is_class_prototype: false,
             visibility: Visibility::Public,
             parent_id: None,
             declaration_order: 0,

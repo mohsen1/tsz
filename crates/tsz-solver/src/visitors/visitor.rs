@@ -1182,6 +1182,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         optional: prop.optional,
                         readonly: true, // Mark as readonly
                         is_method: prop.is_method,
+                        is_class_prototype: prop.is_class_prototype,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
@@ -1206,6 +1207,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         optional: prop.optional,
                         readonly: true, // Mark as readonly
                         is_method: prop.is_method,
+                        is_class_prototype: prop.is_class_prototype,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
