@@ -548,17 +548,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.instantiate_function_shape(&source_instantiated, &substitution);
         }
 
-        // Non-generic source → generic target: erase target type params to constraints.
-        // This matches tsc's `getErasedSignature` behavior in `signatureRelatedTo`.
-        // Example: `typeof MySubClass` (non-generic) is assignable to `typeof MyClass<T>`
-        // (generic) when T's constraint is satisfied — tsc erases T to its constraint
-        // (e.g., `MyInterface`) and then compares structurally.
+        // Non-generic source → generic target: check if the source references the same
+        // TypeParam TypeIds as the target's bound type parameters. This happens when
+        // contextual type seeding resolves inference variables to the contextual type's
+        // bound TypeParams (e.g., `wrap(list)` produces `(a: A) => A[]` where A is the
+        // same TypeParam as in the contextual type `<A>(x: A) => A[]`).
+        // In this case, treat the source as effectively generic with the same type params.
+        // Otherwise, fall back to erasing target type params to constraints.
         if source_instantiated.type_params.is_empty() && !target_instantiated.type_params.is_empty()
         {
-            let target_canonical =
-                erase_type_params_to_constraints(&target_instantiated.type_params);
-            target_instantiated =
-                self.instantiate_function_shape(&target_instantiated, &target_canonical);
+            let target_tp_ids: Vec<TypeId> = target_instantiated
+                .type_params
+                .iter()
+                .map(|tp| self.interner.type_param(tp.clone()))
+                .collect();
+            let source_refs_target_params = source_instantiated.params.iter().any(|p| {
+                target_tp_ids.contains(&p.type_id)
+                    || target_tp_ids.iter().any(|&tp_id| {
+                        crate::visitor::collect_all_types(self.interner, p.type_id).contains(&tp_id)
+                    })
+            }) || target_tp_ids.iter().any(|&tp_id| {
+                crate::visitor::collect_all_types(self.interner, source_instantiated.return_type)
+                    .contains(&tp_id)
+            });
+
+            if source_refs_target_params {
+                // Source references target's bound TypeParams — promote source to generic
+                // and use the same-arity alpha-renaming path above
+                source_instantiated.type_params = target_instantiated.type_params.clone();
+                // Both now have the same type params with the same TypeIds, so
+                // alpha-renaming is an identity operation and structural comparison
+                // will match correctly.
+                target_instantiated.type_params.clear();
+                source_instantiated.type_params.clear();
+            } else {
+                let target_canonical =
+                    erase_type_params_to_constraints(&target_instantiated.type_params);
+                target_instantiated =
+                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
+            }
         }
 
         // Return type is covariant
