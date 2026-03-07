@@ -759,10 +759,11 @@ impl ParserState {
                 members.push(member);
 
                 // After a successfully parsed member without a trailing semicolon,
-                // if the next token cannot start a new class member, emit TS1005
-                // "';' expected" and skip. This matches tsc's behavior when expression
-                // continuations across line breaks (e.g., `= 0[e2]`) leave trailing
-                // tokens like `:` or `{` that can't start a class member.
+                // if the next token cannot start a new class member, emit TS1068
+                // and skip. This matches tsc's parseList/abortParsingListOrMoveToNextToken
+                // behavior for ClassMembers context. If a prior TS1005 was already emitted
+                // at this exact position (from parseSemicolon within the member), the
+                // parse_error_at dedup will suppress this TS1068, preserving the TS1005.
                 if !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                     && !self.is_token(SyntaxKind::SemicolonToken)
@@ -770,7 +771,10 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::AsteriskToken) // generator method
                     && !self.is_property_name()
                 {
-                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.parse_error_at_current_token(
+                        "Unexpected token. A constructor, method, accessor, or property was expected.",
+                        diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                    );
                     self.next_token();
                 }
             }
@@ -1042,6 +1046,25 @@ impl ParserState {
                 // Consume the invalid keyword and continue parsing
                 // The next identifier will be treated as the property/method name
                 self.next_token();
+            }
+        }
+
+        // Recovery: Handle 'try' keyword misplaced in class body.
+        // `try { ... }` is not a valid class member. When followed by `{` on the same line,
+        // emit TS1068 to match tsc's behavior.
+        if modifiers.is_none() && self.is_token(SyntaxKind::TryKeyword) {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let next_is_open_brace = self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.scanner.has_preceding_line_break();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            if next_is_open_brace {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
             }
         }
 
@@ -1378,6 +1401,19 @@ impl ParserState {
             };
 
             self.context_flags = init_saved_flags;
+
+            // Match tsc's parseSemicolonAfterPropertyName: when a property has
+            // no type annotation and no initializer and no semicolon follows,
+            // use keyword-aware semicolon error (TS1434/TS1435) instead of
+            // the generic "';' expected". This produces "Unexpected keyword or
+            // identifier" for bare identifiers like `NoMove` in class bodies.
+            if type_annotation == NodeIndex::NONE
+                && initializer == NodeIndex::NONE
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.can_parse_semicolon()
+            {
+                self.parse_error_for_missing_semicolon_after(name);
+            }
 
             let end_pos = self.token_end();
             self.arena.add_property_decl(

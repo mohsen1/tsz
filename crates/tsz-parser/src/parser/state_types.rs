@@ -756,10 +756,12 @@ impl ParserState {
         self.parse_expected(SyntaxKind::TypeOfKeyword);
 
         // Parse the expression name (can be qualified: x.y.z or typeof import("..."))
+        // tsc calls parseEntityName(/*allowReservedWords*/ true) here, so reserved words
+        // like `null`, `function` etc. are consumed as identifiers without TS1359.
         let mut expr_name = if self.is_token(SyntaxKind::ImportKeyword) {
             self.parse_import_expression()
         } else {
-            self.parse_entity_name()
+            self.parse_entity_name_allow_reserved()
         };
 
         // Parse member access after import(): typeof import("./a").A.foo

@@ -494,16 +494,26 @@ impl ParserState {
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
+        } else if self.is_statement_start()
+            && !self.is_expression_start()
+            && !self.is_token(SyntaxKind::SemicolonToken)
+        {
+            // Statement keyword (var, return, etc.) after `=>` — missing `{`.
+            // Emit TS1005 and recover by parsing statements as a block body.
+            self.error_token_expected("{");
+            let block_start = self.token_pos();
+            let stmts = self.parse_statements();
+            let block_end = self.token_end();
+            self.arena.add_block(
+                syntax_kind_ext::BLOCK,
+                block_start,
+                block_end,
+                crate::parser::node::BlockData {
+                    statements: stmts,
+                    multi_line: true,
+                },
+            )
         } else {
-            // Check if next token starts a statement but not an expression
-            // This catches cases like `() => var x` where `{` was expected
-            // But NOT semicolons — `() => ;` should emit TS1109 "Expression expected"
-            if self.is_statement_start()
-                && !self.is_expression_start()
-                && !self.is_token(SyntaxKind::SemicolonToken)
-            {
-                self.error_token_expected("{");
-            }
             let expr = self.parse_assignment_expression();
             // If no expression was parsed (e.g. `() => ;`), emit TS1109
             if expr.is_none() {
@@ -863,7 +873,14 @@ impl ParserState {
         };
 
         if right.is_none() {
-            self.error_expression_expected();
+            // Emit TS1109 directly, bypassing distance-based suppression.
+            // tsc only suppresses at the exact same position, so a missing RHS
+            // after a binary operator always emits TS1109 even if a prior error
+            // (e.g., TS1003 from JSX) is nearby.
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
             let recovered = self.try_recover_binary_rhs();
             if recovered.is_none() {
                 self.resync_to_next_expression_boundary();
@@ -1097,8 +1114,17 @@ impl ParserState {
                 if self.in_parameter_default_context()
                     && self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 {
-                    self.error_expression_expected();
+                    self.error_token_expected(",");
                     self.next_token(); // consume `=>`
+                    // Emit TS1109 directly (bypassing should_report_error suppression
+                    // since TS1005 was just emitted nearby — tsc emits both codes)
+                    {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                    }
                     // Skip the arrow body token (e.g., second `await`) for recovery
                     if !self.is_token(SyntaxKind::CloseParenToken)
                         && !self.is_token(SyntaxKind::EndOfFileToken)
