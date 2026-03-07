@@ -53,6 +53,7 @@ FAIL TypeScript/tests/cases/compiler/bluebirdStaticThis.ts
 FAIL TypeScript/tests/cases/compiler/booleanLiteralsContextuallyTypedFromUnion.tsx
 FAIL TypeScript/tests/cases/compiler/builtinIterator.ts
 FAIL TypeScript/tests/cases/compiler/callbacksDontShareTypes.ts
+FAIL TypeScript/tests/cases/compiler/callsOnComplexSignatures.tsx
 FAIL TypeScript/tests/cases/compiler/cannotIndexGenericWritingError.ts
 FAIL TypeScript/tests/cases/compiler/castTest.ts
 FAIL TypeScript/tests/cases/compiler/checkerInitializationCrash.ts
@@ -329,6 +330,7 @@ FAIL TypeScript/tests/cases/compiler/errorCause.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType01.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType02.ts
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts
+FAIL TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 FAIL TypeScript/tests/cases/compiler/errorInUnnamedClassExpression.ts
 FAIL TypeScript/tests/cases/compiler/errorMessageOnObjectLiteralType.ts
 FAIL TypeScript/tests/cases/compiler/errorMessagesIntersectionTypes02.ts
@@ -508,6 +510,7 @@ FAIL TypeScript/tests/cases/compiler/hugeDeclarationOutputGetsTruncatedWithError
 FAIL TypeScript/tests/cases/compiler/identicalTypesNoDifferByCheckOrder.ts
 FAIL TypeScript/tests/cases/compiler/identifierStartAfterNumericLiteral.ts
 FAIL TypeScript/tests/cases/compiler/identityForSignaturesWithTypeParametersAndAny.ts
+FAIL TypeScript/tests/cases/compiler/ignoredJsxAttributes.tsx
 FAIL TypeScript/tests/cases/compiler/illegalSuperCallsInConstructor.ts
 FAIL TypeScript/tests/cases/compiler/implementArrayInterface.ts
 FAIL TypeScript/tests/cases/compiler/implementGenericWithMismatchedTypes.ts
@@ -695,11 +698,17 @@ FAIL TypeScript/tests/cases/compiler/jsFunctionWithPrototypeNoErrorTruncationNoC
 FAIL TypeScript/tests/cases/compiler/jsNoImplicitAnyNoCascadingReferenceErrors.ts
 FAIL TypeScript/tests/cases/compiler/jsPropertyAssignedAfterMethodDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/jsxAttributeWithoutExpressionReact.tsx
+FAIL TypeScript/tests/cases/compiler/jsxCallElaborationCheckNoCrash1.tsx
 FAIL TypeScript/tests/cases/compiler/jsxChildrenGenericContextualTypes.tsx
+FAIL TypeScript/tests/cases/compiler/jsxChildrenIndividualErrorElaborations.tsx
 FAIL TypeScript/tests/cases/compiler/jsxClassAttributeResolution.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
+FAIL TypeScript/tests/cases/compiler/jsxElementType.tsx
+FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteral.tsx
+FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteralWithGeneric.tsx
 FAIL TypeScript/tests/cases/compiler/jsxEmptyExpressionNotCountedAsChild2.tsx
+FAIL TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentAndFactoryUsedOnFragmentUse.tsx
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx
 FAIL TypeScript/tests/cases/compiler/jsxImportSourceNonPragmaComment.tsx
@@ -986,7 +995,6 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
-FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/primaryExpressionMods.ts
 FAIL TypeScript/tests/cases/compiler/primitiveConstraints2.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
@@ -1020,6 +1028,7 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks3.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksIgnored.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts
+FAIL TypeScript/tests/cases/compiler/reactDefaultPropsInferenceSuccess.tsx
 FAIL TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx
 FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
@@ -1088,6 +1097,7 @@ FAIL TypeScript/tests/cases/compiler/restUnion.ts
 FAIL TypeScript/tests/cases/compiler/restUnion3.ts
 FAIL TypeScript/tests/cases/compiler/returnInConstructor1.ts
 FAIL TypeScript/tests/cases/compiler/returnTypeInferenceContextualTypeIgnoreAnyUnknown1.ts
+FAIL TypeScript/tests/cases/compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx
 FAIL TypeScript/tests/cases/compiler/returnTypeTypeArguments.ts
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedIntersectionInference2.ts
@@ -1420,6 +1430,8 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
+FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
@@ -5614,6 +5626,7 @@ PASS TypeScript/tests/cases/compiler/jsxChildrenSingleChildConfusableWithMultipl
 PASS TypeScript/tests/cases/compiler/jsxChildrenWrongType.tsx
 PASS TypeScript/tests/cases/compiler/jsxChildWrongType.tsx
 PASS TypeScript/tests/cases/compiler/jsxContainsOnlyTriviaWhiteSpacesNotCountedAsChild.tsx
+PASS TypeScript/tests/cases/compiler/jsxDeclarationsWithEsModuleInteropNoCrash.tsx
 PASS TypeScript/tests/cases/compiler/jsxElementClassTooManyParams.tsx
 PASS TypeScript/tests/cases/compiler/jsxElementsAsIdentifierNames.tsx
 PASS TypeScript/tests/cases/compiler/jsxEmitAttributeWithPreserve.tsx
@@ -5641,6 +5654,7 @@ PASS TypeScript/tests/cases/compiler/jsxImportInAttribute.tsx
 PASS TypeScript/tests/cases/compiler/jsxInExtendsClause.tsx
 PASS TypeScript/tests/cases/compiler/jsxInferenceProducesLiteralAsExpected.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicElementsExtendsRecord.tsx
+PASS TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
 PASS TypeScript/tests/cases/compiler/jsxLocalNamespaceIndexSignatureNoCrash.tsx
 PASS TypeScript/tests/cases/compiler/jsxMultilineAttributeStringValues.tsx
 PASS TypeScript/tests/cases/compiler/jsxMultilineAttributeValuesReact.tsx
@@ -6461,6 +6475,7 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
+PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primitiveConstraints1.ts
@@ -6603,6 +6618,7 @@ PASS TypeScript/tests/cases/compiler/reactNamespaceJSXEmit.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceMissingDeclaration.tsx
 PASS TypeScript/tests/cases/compiler/reactSFCAndFunctionResolvable.tsx
 PASS TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM.tsx
+PASS TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM2.tsx
 PASS TypeScript/tests/cases/compiler/readonlyAssignmentInSubclassOfClassExpression.ts
 PASS TypeScript/tests/cases/compiler/readonlyInDeclarationFile.ts
 PASS TypeScript/tests/cases/compiler/readonlyInNonPropertyParameters.ts
@@ -8079,8 +8095,6 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
-PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
-PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts

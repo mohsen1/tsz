@@ -13,6 +13,7 @@ mod core;
 mod declarations;
 mod declarations_utils;
 mod duplicate_identifiers;
+mod duplicate_identifiers_constructor;
 mod global;
 mod property_init;
 mod unused;
