@@ -54,50 +54,6 @@ jobs:
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
-  benchmark:
-    needs: check
-    # Only run benchmarks on schedule/manual triggers — they take ~20min and get
-    # cancelled by push-triggered runs. Push deploys use cached benchmark data.
-    if: needs.check.outputs.should_deploy == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install hyperfine
-        run: |
-          wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
-          sudo dpkg -i hyperfine_1.18.0_amd64.deb
-
-      - name: Run benchmarks
-        run: ./scripts/bench-vs-tsgo.sh --json
-
-      - name: Upload benchmark data
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-data
-          path: artifacts/bench-vs-tsgo-*.json
-          retention-days: 7
-
-      # Persist benchmark data in GH Actions cache so future runs can use it
-      # even if this benchmark job gets cancelled by cancel-in-progress
-      - name: Cache benchmark data
-        uses: actions/cache/save@v4
-        with:
-          path: artifacts/bench-vs-tsgo-*.json
-          key: benchmark-data-${{ github.sha }}
-
   wasm:
     needs: check
     if: needs.check.outputs.should_deploy == 'true'
@@ -151,21 +107,13 @@ jobs:
           path: .ci-metrics
         continue-on-error: true
 
-      # Try current run's benchmark artifact first, fall back to cached data
-      - name: Download benchmark artifact
-        id: bench-artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: benchmark-data
-          path: website/data
-        continue-on-error: true
-
-      - name: Restore cached benchmark data
-        if: steps.bench-artifact.outcome != 'success'
+      # Benchmark data is produced by the separate Benchmark workflow and
+      # persisted in GH Actions cache. Restore the latest available data.
+      - name: Restore benchmark data from cache
         uses: actions/cache/restore@v4
         with:
           path: website/data
-          key: benchmark-data-${{ github.sha }}
+          key: benchmark-data-never-exact-match
           restore-keys: benchmark-data-
 
       - name: Download WASM
