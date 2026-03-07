@@ -1109,20 +1109,14 @@ impl ParserState {
                 self.consume_keyword(); // TS1260 check for await keyword with escapes
 
                 // In parameter-default context, `await =>` should report missing operand.
-                // Consume `=>` and the following token to prevent cascading errors
-                // (e.g., TS1359 for `await` used as arrow body in async context).
-                // tsc emits only TS1109 here, not TS1005.
+                // tsc emits TS1109 "Expression expected" at `=>` (the await expression's
+                // missing operand), not TS1005. Consume `=>` and the following token to
+                // prevent cascading errors (e.g., TS1359 for `await` as arrow body).
                 if self.in_parameter_default_context()
                     && self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 {
+                    self.error_expression_expected();
                     self.next_token(); // consume `=>`
-                    {
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "Expression expected.",
-                            diagnostic_codes::EXPRESSION_EXPECTED,
-                        );
-                    }
                     // Skip the arrow body token (e.g., second `await`) for recovery
                     if !self.is_token(SyntaxKind::CloseParenToken)
                         && !self.is_token(SyntaxKind::EndOfFileToken)
