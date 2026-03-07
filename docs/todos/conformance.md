@@ -7404,3 +7404,321 @@ BLAST RADIUS: IIFE control-flow/nullish diagnostics (`TS18048`) and related cont
     - unchanged (still missing `TS18048`).
   - `./.target/dist-fast/tsz-conformance --filter circularOptionalityRemoval.ts --verbose --print-fingerprints`
     - unchanged (still missing `TS18048` + other deltas).
+
+## Session 2026-03-07ae — narrowing-flow tuple/optional TS18048 lane re-check (investigation only, no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `destructureTupleWithVariableElement.ts`
+- `contextuallyTypedOptionalProperty.ts`
+- `controlFlowOptionalChain.ts`
+
+SHARED INVARIANT: positions that may be absent (tuple rest/optional, optional contextual parameters) must carry `undefined` into downstream binary/property checks so `TS18048` is emitted at use sites.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [x] Solver — tuple/index optionality semantics consumed by checker
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+- Tested checker-side tuple-destructuring optionality transport in `get_binding_element_type` (`crates/tsz-checker/src/state/variable_checking/destructuring.rs`) by forcing `undefined` for tuple rest/optional positions under `noUncheckedIndexedAccess`.
+- Added/ran focused checker test coverage for noUnchecked tuple rest destructuring.
+- Despite local test passing, targeted conformance showed **no movement** on the representative basket.
+
+### What tsc does differently (confirmed)
+- `destructureTupleWithVariableElement.ts` expects `TS18048` for `s1`, `s2`, `s5`; tsz still emits none.
+- `contextuallyTypedOptionalProperty.ts` expects `TS18048` in callback parameter comparisons (`y > 0`); tsz still misses both.
+- `controlFlowOptionalChain.ts` remains fingerprint-mismatched on many `TS18048` locations (both missing and extra).
+
+### Why no patch landed
+- The attempted checker tweak did not affect conformance behavior and was reverted.
+- Evidence suggests the remaining gap is not just local destructuring element typing; it is likely in one (or both) of:
+  1. option transport / directive plumbing into the exact conformance check path for tuple/index optionality behavior,
+  2. deeper solver-side tuple index + contextual parameter optionality propagation used in real conformance files.
+
+### Exact owning paths for next real fix
+1. `crates/conformance/src/tsz_wrapper.rs`
+   - verify `@noUncheckedIndexedAccess` / strict options are always mapped into tsz invocation for this lane.
+2. `crates/tsz-solver/src/evaluation/evaluate_rules/index_access.rs`
+   - `TupleKeyVisitor::tuple_index_literal` and variadic-tail handling for tuples like `[A, ...B[], C]`.
+3. `crates/tsz-solver/src/contextual/extractors.rs`
+   - tuple/optional contextual element extraction feeding callback parameter types in `contextuallyTypedOptionalProperty.ts`.
+
+ESTIMATED SCOPE FOR REAL FIX: ~120-220 LOC across conformance option plumbing + solver tuple/contextual extraction paths, plus 2-3 focused tests.
+
+STATUS: no conformance-affecting code change committed in this session.
+
+## Session 2026-03-07ah — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed: **big3**.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+  - `python3 scripts/query-conformance.py --campaign big3`
+  - `python3 scripts/query-conformance.py --extra-code TS2345`
+
+### Representative basket sampled
+- `contextualTypeTupleEnd.ts`
+- `unionTypeCallSignatures.ts`
+
+### Shared invariant candidate
+Big3 call-family parity is still drifting in call resolution reporting order: tsz often emits top-level call diagnostics with mismatched rendering/locations (and occasional `TS2554` substitution) where tsc reports deeper argument-level `TS2345` or tuple-instantiated target types.
+
+### What was checked
+- `contextualTypeTupleEnd.ts`:
+  - still mismatch at same call site (`TS2345` fingerprint target type rendered as alias `Funcs` vs expanded tuple target in tsc).
+- `unionTypeCallSignatures.ts`:
+  - still multiple `TS2345` fingerprint mismatches and one extra `TS2554` at line 69.
+
+### Why no patch landed
+- No narrow, safe boundary tweak was identified in this slice without risking broad call-resolution regressions.
+- Kept workspace code unchanged (notes only).
+
+## Session 2026-03-07af — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow remained blocked (no targeted basket movement), so follow-on campaign claimed: **big3**.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+  - `python3 scripts/query-conformance.py --campaign big3`
+  - `python3 scripts/query-conformance.py --extra-code TS2345`
+
+### Representative basket sampled
+- `arrayToLocaleStringES2020.ts`
+- `coAndContraVariantInferences6.ts`
+
+### Shared invariant candidate
+Top-level call-compatibility failures are being emitted as call-site `TS2345` where tsc either accepts the call or reports a deeper nested incompatibility (`TS2322`) after relation/inference completes.
+
+### What was checked
+- `arrayToLocaleStringES2020.ts`: expected PASS, tsz still emits extra `TS2345`.
+- `coAndContraVariantInferences6.ts`: tsc expects `TS2322` at nested value site; tsz emits top-level `TS2345` on the call expression.
+
+### Why no patch landed
+- No safe single boundary change identified in this short follow-on slice without risking broad call-resolution regressions.
+- Workspace kept clean except session notes.
+
+## Session 2026-03-07ag — narrowing-flow switch exhaustiveness/typeof lane (investigation, reverted; no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `narrowingByTypeofInSwitch.ts`
+- `exhaustiveSwitchStatements1.ts`
+- `narrowByClauseExpressionInSwitchTrue7.ts`
+- `narrowByClauseExpressionInSwitchTrue3.ts`
+
+SHARED INVARIANT: switch merge/reachability must drop impossible implicit-default control-flow edges when discriminant domains are finite (including `switch(typeof x)` domains), otherwise branch merges re-widen types and drift diagnostics (`TS2345`/`TS2322`/`TS2366`/`TS2454`).
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+- `FlowAnalyzer` had implicit-default exhaustiveness filtering only in definite-assignment traversal (`var_utils.rs`), not in the main type-flow branch merge path (`core.rs`).
+- `switch_type_for_exhaustiveness` in `var_utils.rs` also lacked `typeof` finite-domain derivation, unlike `reachability_checker`.
+
+### Attempted fix (reverted)
+- Added `typeof`-domain derivation helpers in `crates/tsz-checker/src/flow/control_flow/var_utils.rs` for exhaustive-switch checks.
+- Added branch-merge filtering in `crates/tsz-checker/src/flow/control_flow/core.rs` to skip implicit-default antecedents identified as exhaustive.
+- Added focused checker regression test:
+  - `test_typeof_switch_exhaustive_basic_union_narrows_tail_to_never` in `crates/tsz-checker/tests/control_flow_tests.rs`.
+
+### Validation
+- Focused checker tests passed:
+  - `cargo nextest run -p tsz-checker test_typeof_switch_exhaustive_basic_union_narrows_tail_to_never test_typeof_switch_exhaustive_unknown_reports_unreachable_not_ts2366 test_typeof_switch_exhaustive_any_reports_unreachable_not_ts2366`
+- Targeted conformance showed **no basket movement**:
+  - `./.target/dist-fast/tsz-conformance --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints` (still failing with extra `TS2322`/`TS2345`)
+  - `./.target/dist-fast/tsz-conformance --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints` (unchanged extra `TS2366`/`TS2454`, missing `TS2367`)
+  - `./.target/dist-fast/tsz-conformance --filter narrowByClauseExpressionInSwitchTrue7.ts --verbose --print-fingerprints` (unchanged extra `TS2322`)
+
+### What tsc does differently (confirmed)
+- In `narrowingByTypeofInSwitch.ts`, tsc treats multiple `switch(typeof x)` regions as effectively exhaustive for flow-sensitive narrowing (no `assertNever`/tuple-return extras), while tsz still re-widens to broad unions at switch exits.
+- In `exhaustiveSwitchStatements1.ts`, tsc suppresses fallback return/DA errors in exhaustive enum/literal switches and emits post-switch impossible-comparison diagnostics (`TS2367`) where tsz does not.
+
+### Why no patch landed
+- The attempted change improved local unit behavior but did not alter targeted conformance outcomes in the representative basket.
+- To avoid a half-working change, all code edits and test additions from this lane were reverted.
+
+### Exact owning paths for next real fix
+1. `crates/tsz-checker/src/flow/control_flow/core.rs`
+   - switch-clause/branch-label merge path should consume a single, shared “impossible switch edge” predicate for both type flow and DA flow.
+2. `crates/tsz-checker/src/flow/reachability_checker.rs` + `crates/tsz-checker/src/flow/control_flow/var_utils.rs`
+   - unify switch-domain acquisition (`typeof`/enum/literal unions) to prevent divergence between reachability and narrowing.
+3. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+   - `switch(true)` default/case precondition transport still appears to diverge (seen in `narrowByClauseExpressionInSwitchTrue*`).
+
+ESTIMATED SCOPE FOR REAL FIX: ~140-260 LOC across flow merge + shared switch-domain helper + 2-4 focused control-flow tests.
+
+STATUS: no conformance-affecting code change committed in this session.
+
+## Session 2026-03-07ai — narrowing-flow noUnchecked/tuple optionality lane re-check (investigation, reverted; no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `destructureTupleWithVariableElement.ts`
+- `noUncheckedIndexedAccessDestructuring.ts`
+- `contextuallyTypedOptionalProperty.ts`
+
+SHARED INVARIANT: Optionality/`undefined` transport for destructuring and contextual callback positions must survive alias/index-access evaluation so downstream property/binary checks emit `TS18048` instead of silently widening to non-nullish or `any`.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — query-boundary option transport (`noUncheckedIndexedAccess`)
+- [x] Checker — destructuring boundary routing / fallback typing
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+- `resolve_element_access` in solver query-db path did not propagate `noUncheckedIndexedAccess` to `ElementAccessEvaluator`.
+- Destructuring tuple element path still produced no basket movement; attempted checker fallback from `resolve_element_access_type` error path to direct evaluated `IndexAccess` also did not move targeted conformance.
+
+FIX ATTEMPTED IN:
+- `crates/tsz-solver/src/caches/db.rs`
+- `crates/tsz-solver/tests/db_tests.rs`
+- `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+
+VALIDATION RUN:
+- `cargo nextest run -p tsz-solver query_cache_caches_element_access_type query_cache_element_access_respects_no_unchecked_indexed_access` (unit behavior improved)
+- Targeted conformance unchanged:
+  - `./.target/dist-fast/tsz-conformance --filter destructureTupleWithVariableElement.ts --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --filter noUncheckedIndexedAccessDestructuring.ts --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --filter contextuallyTypedOptionalProperty.ts --verbose --print-fingerprints`
+
+WHY NO PATCH LANDED:
+- Despite unit-level improvement, representative campaign basket had zero movement.
+- Reverted code edits to avoid committing a half-working change.
+
+EXACT OWNING PATHS FOR NEXT REAL FIX:
+1. `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+   - determine why tuple/array destructuring still misses `TS18048` under `noUncheckedIndexedAccess` even when option reaches tsconfig.
+2. `crates/tsz-solver/src/objects/element_access.rs` + `crates/tsz-solver/src/evaluation/evaluate_rules/index_access.rs`
+   - verify lazy alias + tuple-rest index resolution path used by checker destructuring preserves concrete element optionality.
+3. `crates/tsz-solver/src/contextual/extractors.rs`
+   - optional callback parameter/contextual element extraction for `contextuallyTypedOptionalProperty.ts`.
+
+ESTIMATED SCOPE FOR REAL FIX: ~140-240 LOC across checker destructuring boundary + solver tuple/index/contextual extraction with 2-4 focused tests.
+
+STATUS: narrowing-flow remained blocked in this run (no representative basket movement).
+
+## Session 2026-03-07aj — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow above remained blocked, so follow-on campaign claimed per queue: **big3**.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+  - `python3 scripts/query-conformance.py --campaign big3`
+  - `python3 scripts/query-conformance.py --extra-code TS2345`
+
+### Representative basket sampled
+- `arrayConcatMap.ts`
+- `builtinIterator.ts`
+- `coAndContraVariantInferences6.ts`
+- `arrayToLocaleStringES2020.ts`
+
+### Shared invariant candidate
+Big3 call compatibility drift remains concentrated in top-level `TS2345`/`TS2322` routing where tsz reports call-site incompatibility earlier than tsc’s nested relation/inference diagnostics.
+
+### Why no patch landed
+- No safe single-boundary change was identified in this short follow-on slice without high risk to broad call-resolution behavior.
+- Workspace kept clean except notes.
+
+## Session 2026-03-07ak — narrowing-flow destructuring optionality/index-signature lane (investigation, reverted; no commit)
+
+### Campaign classification (pre-code)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `noUncheckedIndexedAccessDestructuring.ts`
+- `destructureTupleWithVariableElement.ts`
+- `contextuallyTypedOptionalProperty.ts`
+- `circularOptionalityRemoval.ts`
+
+SHARED INVARIANT: Destructuring/rest/contextual extraction must preserve `| undefined` carriers (index signatures, optional tuple/param metadata) so downstream flow checks emit `TS18048`/`TS2322` instead of drifting to `TS2339` or missing diagnostics.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — contextual/index extraction semantics
+- [x] Checker — destructuring rest-type boundary routing
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+1. Checker object-rest path (`omit_properties_from_type`) appeared to drop index signatures, causing extra `TS2339` on `q.z` and suppressing expected nullish diagnostics in `noUncheckedIndexedAccessDestructuring.ts`.
+2. Solver contextual extraction (`extract_param_type_at_inner`) ignored `optional` flags on non-rest params/tuple positions, potentially erasing `undefined` in callback parameter contextual typing.
+
+FIX ATTEMPTED IN (reverted):
+- `crates/tsz-checker/src/state/variable_checking/destructuring.rs`
+  - preserved index signatures in object-rest reconstruction,
+  - added intersection-member omit path.
+- `crates/tsz-solver/src/contextual/extractors.rs`
+  - added `optional -> include undefined` behavior for non-rest param extraction and tuple element extraction in rest tuples.
+- Focused tests added temporarily in checker/solver and then reverted with code.
+
+TARGETED VALIDATION RUNS:
+- `cargo nextest run -p tsz-checker test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access`
+- `cargo nextest run -p tsz-solver test_contextual_optional_parameter_includes_undefined`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter noUncheckedIndexedAccessDestructuring.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty.ts --verbose --print-fingerprints`
+
+RESULT:
+- Unit-level behavior improved for the isolated probes, but representative conformance basket showed **no movement**.
+- `noUncheckedIndexedAccessDestructuring.ts` remained unchanged (same missing `TS18048`/`TS2322`, same extra `TS2339`/`TS2322`).
+- `destructureTupleWithVariableElement.ts` and `contextuallyTypedOptionalProperty.ts` remained unchanged.
+
+WHY BLOCKED:
+- The remaining defect is not at the local rest-shape reconstruction or simple optional-flag extraction layer; conformance behavior indicates a deeper divergence in the exact destructuring/call-context path used by harness runs.
+
+EXACT OWNING BOUNDARY TO CHANGE NEXT:
+1. `crates/tsz-checker/src/state/state_checking/property.rs` and destructuring assignment path
+   - ensure object-rest/resulting binding types use the same solver property/index resolution as normal property access under `noUncheckedIndexedAccess`.
+2. `crates/tsz-solver/src/type_queries/data.rs::get_object_shape` / intersection object-shape acquisition
+   - verify intersection shapes consumed by checker rest-destructuring preserve index signatures in the boundary API used by checker.
+3. `crates/tsz-checker/src/types/computation/call.rs` + contextual helper call-argument path
+   - `contextuallyTypedOptionalProperty.ts` likely depends on generic-call contextual transport beyond simple optional param extraction.
+
+ESTIMATED REAL-FIX SCOPE: ~140-260 LOC across shared destructuring/property boundary + intersection shape acquisition + contextual call-argument transport, plus 2-4 focused tests.
+
+STATUS: no conformance-affecting code change committed in this session.
+
+## Session 2026-03-07al — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed per queue: **big3**.
+
+### Representative basket sampled
+- `arrayToLocaleStringES2020.ts`
+- `coAndContraVariantInferences6.ts`
+- `contextuallyTypedSymbolNamedProperties.ts`
+
+### Shared invariant candidate
+Big3 call-family drift is still centered on top-level call-site compatibility (`TS2345`) being emitted where tsc either accepts the call or reports deeper nested/member-level incompatibility (`TS2322`), indicating mismatch in call-resolution/diagnostic routing after inference.
+
+### What was verified
+- `./scripts/conformance.sh analyze --campaign big3`
+- `python3 scripts/query-conformance.py --campaign big3`
+- `python3 scripts/query-conformance.py --extra-code TS2345`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter arrayToLocaleStringES2020.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedSymbolNamedProperties.ts --verbose --print-fingerprints`
+
+### Key diffs observed
+- `arrayToLocaleStringES2020.ts`: extra `TS2345` remains (error-code mismatch, no fingerprint output).
+- `coAndContraVariantInferences6.ts`: extra call-site `TS2345` at `test.ts:35:23` while expected nested `TS2322` at `test.ts:35:42` is missing.
+- `contextuallyTypedSymbolNamedProperties.ts`: still extra `TS2339` + `TS2345` pair.
+
+### Likely owning boundary
+- `crates/tsz-checker/src/types/computation/call.rs` diagnostic routing order around call-site compatibility failures.
+- `crates/tsz-checker/src/query_boundaries/assignability.rs` + assignability error rendering path for preferring nested mismatch elaboration over top-level call-site `TS2345` in these families.
+
+### Why no patch landed
+- No safe single boundary adjustment was identified in this slice without broad call-resolution risk.
+- Workspace kept clean except conformance session notes.

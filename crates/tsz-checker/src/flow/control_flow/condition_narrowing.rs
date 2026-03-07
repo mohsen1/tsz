@@ -572,10 +572,13 @@ impl<'a> FlowAnalyzer<'a> {
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
                 if let Some(access) = self.arena.get_access_expr(cond_node) {
-                    // Handle optional chaining: y?.a
+                    // Handle optional chaining truthiness: `if (a?.b?.c)`.
+                    // A truthy optional-chain result means every chain prefix that can short-circuit
+                    // must be non-nullish on this branch.
                     if self.access_expr_is_optional_chain(cond_node, access)
                         && is_true_branch
-                        && self.is_matching_reference(access.expression, target)
+                        && (self.is_matching_reference(access.expression, target)
+                            || self.is_optional_chain_prefix(condition_idx, target))
                     {
                         let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                         let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
