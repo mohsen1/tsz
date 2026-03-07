@@ -353,7 +353,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Check if the switch expression is the literal `true` keyword.
     /// `switch(true)` is a pattern where each case clause acts as an independent
     /// type guard condition, not a comparison against the switch expression.
-    fn is_switch_true(&self, switch_expr: NodeIndex) -> bool {
+    pub(crate) fn is_switch_true(&self, switch_expr: NodeIndex) -> bool {
         self.arena
             .get(switch_expr)
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
@@ -1046,7 +1046,8 @@ impl<'a> FlowAnalyzer<'a> {
                                         flow_flags::CONDITION
                                             | flow_flags::CALL
                                             | flow_flags::BRANCH_LABEL
-                                            | flow_flags::ASSIGNMENT,
+                                            | flow_flags::ASSIGNMENT
+                                            | flow_flags::SWITCH_CLAUSE,
                                     )
                                 });
                             if ant_needs_defer {

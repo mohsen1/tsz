@@ -1082,6 +1082,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                // Skip rest elements — `...rest` is not a named property in the contextual type.
+                if elem_data.dot_dot_dot_token {
+                    continue;
+                }
+
                 // Get the property name
                 let prop_name = if elem_data.property_name.is_some() {
                     self.ctx

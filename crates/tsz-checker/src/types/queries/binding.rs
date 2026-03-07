@@ -26,6 +26,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(element_node) = self.ctx.arena.get(element_idx)
                     && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
                 {
+                    // Skip rest elements — `...rest` in `{a, ...rest}` is not a named property;
+                    // it represents remaining properties and should not appear in the contextual type.
+                    if element_data.dot_dot_dot_token {
+                        continue;
+                    }
+
                     // Compute property name
                     let name_str = if element_data.property_name.is_some() {
                         let prop_name_idx = element_data.property_name;

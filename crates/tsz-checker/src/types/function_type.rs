@@ -496,7 +496,7 @@ impl<'a> CheckerState<'a> {
                         type_id
                     } else if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
                         if self.is_assignable_to(type_id, pattern_type) {
-                            pattern_type
+                            type_id // Keep richer contextual type; pattern_type loses rest properties
                         } else {
                             self.ctx.types.factory().union(vec![type_id, pattern_type])
                         }

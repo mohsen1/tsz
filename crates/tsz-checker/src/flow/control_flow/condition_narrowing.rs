@@ -44,6 +44,33 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
+        // For switch(true), each case expression is an independent condition.
+        // The default clause should be narrowed by applying the negation (false branch)
+        // of every case expression, equivalent to an if-else chain's final else.
+        if self.is_switch_true(switch_expr) {
+            let mut narrowed = type_id;
+            for &clause_idx in &case_block.statements.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                    continue;
+                };
+                if clause.expression.is_none() {
+                    continue; // Skip the default clause itself
+                }
+                // Apply the false branch of this case condition
+                narrowed = self.narrow_type_by_condition(
+                    narrowed,
+                    clause.expression,
+                    target,
+                    false, // false branch = condition is not true
+                    FlowNodeId::NONE,
+                );
+            }
+            return narrowed;
+        }
+
         // Fast path: if this switch does not reference the target (directly or via discriminant
         // property access like switch(x.kind) when narrowing x), it cannot affect target's type.
         let target_is_switch_expr = self.is_matching_reference(switch_expr, target);
