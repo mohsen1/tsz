@@ -1051,6 +1051,36 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // If the solver returned PropertyNotFound for a TypeParameter whose
+        // constraint is an Application (e.g. `P extends Partial<Foo>`), the
+        // solver's NoopResolver couldn't expand the Application body.  Evaluate
+        // the constraint through the checker's TypeEnvironment and retry.
+        // TODO: Move this resolution into the solver's PropertyAccessEvaluator
+        // once it gains full TypeEnvironment/TypeResolver awareness.
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+            self.ctx.types,
+            resolved_object_type,
+        ) {
+            let evaluated = self.evaluate_type_with_env(constraint);
+            if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
+                let retry_result = self.ctx.types.resolve_property_access_with_options(
+                    evaluated,
+                    prop_name,
+                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                );
+                if matches!(
+                    retry_result,
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                ) {
+                    result = retry_result;
+                    resolved_object_type = evaluated;
+                }
+            }
+        }
+
         if query::is_mapped_type(self.ctx.types, mapped_candidate_type)
             && let Some(mapped_property) =
                 self.resolve_mapped_property_with_env(mapped_candidate_type, prop_name)
@@ -1192,11 +1222,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let key_literal = self.ctx.types.literal_string_atom(prop_atom);
-        let mut subst = tsz_solver::TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, key_literal);
 
-        let property_type = tsz_solver::instantiate_type(self.ctx.types, mapped.template, &subst);
-        let property_type = self.evaluate_type_with_env(property_type);
+        // Instantiate the template for this property key, handling potential
+        // name collisions between mapped key param and outer type parameters.
+        // (See `instantiate_mapped_template_for_property` docs for details.)
+        let instantiated = tsz_solver::type_queries::instantiate_mapped_template_for_property(
+            self.ctx.types,
+            mapped.template,
+            mapped.type_param.name,
+            key_literal,
+        );
+        let property_type = self.evaluate_type_with_env(instantiated);
         let property_type = match mapped.optional_modifier {
             Some(tsz_solver::MappedModifier::Add) => self
                 .ctx
@@ -1265,6 +1301,56 @@ mod tests {
             ts2353[0].message_text.contains("'[k]'") || ts2353[0].message_text.contains("\"[k]\""),
             "TS2353 should mention [k], got: {}",
             ts2353[0].message_text
+        );
+    }
+
+    /// Mapped type template with name collision: `MyReadonly`<P> where P is a
+    /// user type parameter with the same name as the mapped key param.
+    /// Name-based substitution must be bypassed to avoid incorrectly
+    /// replacing the outer P with the key literal.
+    #[test]
+    fn mapped_type_name_collision_readonly_of_type_param() {
+        let diags = check_source_diagnostics(
+            "interface Foo { foo(): void }
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+class A<P extends MyPartial<Foo>> {
+    constructor(public props: MyReadonly<P>) {}
+    doSomething() {
+        this.props.foo && this.props.foo()
+    }
+}",
+        );
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        assert!(
+            relevant.is_empty(),
+            "expected zero errors for MyReadonly<P> property access with && guard, got: {:?}",
+            relevant
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Property access on a type parameter with a mapped-type constraint
+    /// should resolve through the constraint.
+    #[test]
+    fn type_param_property_access_with_mapped_constraint() {
+        let diags = check_source_diagnostics(
+            "interface Foo { foo(): void }
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+function f<P extends MyPartial<Foo>>(p: P) {
+    p.foo;
+}",
+        );
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        assert!(
+            relevant.is_empty(),
+            "expected zero errors for type param property access via constraint, got: {:?}",
+            relevant
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
         );
     }
 }

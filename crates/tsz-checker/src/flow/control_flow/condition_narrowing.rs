@@ -488,8 +488,18 @@ impl<'a> FlowAnalyzer<'a> {
                         &property_path,
                         is_true_branch,
                     );
-                    // Even if narrowed is NEVER, it means no branch matches, so returning NEVER is correct
-                    return narrowed;
+                    // For union types, NEVER means all members were filtered out
+                    // (no member has a truthy/falsy property), which is valid.
+                    // For non-union types (class, mapped, generic), NEVER often
+                    // means the solver couldn't resolve the property (e.g.
+                    // Readonly<P> where P is a type parameter).  tsc does not
+                    // narrow non-union base types by property truthiness, so
+                    // fall through instead of collapsing to NEVER.
+                    if narrowed != TypeId::NEVER
+                        || tsz_solver::is_union_type(self.interner, type_id)
+                    {
+                        return narrowed;
+                    }
                 }
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
