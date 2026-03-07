@@ -1307,6 +1307,71 @@ function f(o: Thing | undefined) {
     );
 }
 
+#[test]
+fn test_assert_nonnull_optional_chain_narrows_base_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Thing = { foo: string | number };
+declare function assertNonNull<T>(x: T): asserts x is NonNullable<T>;
+function f(o: Thing | undefined) {
+    assertNonNull(o?.foo);
+    o.foo;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertNonNull(o?.foo). Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 after assertNonNull(o?.foo). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_assert_optional_chain_then_assert_nonnull_keeps_base_narrowed() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Thing = { foo: string | number };
+declare function assert(x: unknown): asserts x;
+declare function assertNonNull<T>(x: T): asserts x is NonNullable<T>;
+function f(o: Thing | undefined) {
+    assert(typeof o?.foo === "number");
+    o.foo;
+    assertNonNull(o?.foo);
+    o.foo;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 after assertion optional-chain sequence. Actual: {semantic_errors:#?}"
+    );
+}
+
 /// Assignment-based narrowing should use declared annotation types, not initializer flow types.
 ///
 /// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`

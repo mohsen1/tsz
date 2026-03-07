@@ -9,6 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::type_queries::is_unit_type;
 use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
@@ -1487,10 +1488,23 @@ impl<'a> FlowAnalyzer<'a> {
             return self.apply_type_predicate_narrowing(pre_type, &resolved_predicate, true);
         }
 
+        // Optional-chain intermediate transport for assertion predicates:
+        // `assertNonNull(o?.foo)` and similar predicates prove that the chain
+        // reached its tail value, so prefix references (`o`, `o.foo` intermediates)
+        // must be non-nullish after the assertion.
+        if self.contains_optional_chain(predicate_target)
+            && self.is_optional_chain_prefix(predicate_target, reference)
+        {
+            let narrowing = NarrowingContext::new(self.interner);
+            let narrowed = narrowing.narrow_excluding_type(pre_type, TypeId::NULL);
+            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+        }
+
         // Discriminant narrowing: if the predicate target is a property access on the
         // reference (e.g., assertEqual(animal.type, 'cat') narrows animal from Cat|Dog to Cat),
         // extract the property path and narrow the parent object by discriminant.
         if let Some(predicate_type) = resolved_predicate.type_id
+            && is_unit_type(self.interner, predicate_type)
             && let Some((property_path, _is_optional, base)) =
                 self.discriminant_property_info(predicate_target, reference)
             && self.is_matching_reference(base, reference)
