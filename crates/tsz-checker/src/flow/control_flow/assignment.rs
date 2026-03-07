@@ -5,9 +5,10 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype, fallback_compound_assignment_result, get_array_element_type,
-    get_lazy_def_id, is_compound_assignment_operator, map_compound_assignment_to_binary,
-    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
+    are_types_mutually_subtype, are_types_mutually_subtype_with_env,
+    fallback_compound_assignment_result, get_array_element_type, get_lazy_def_id,
+    is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,
+    unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -976,7 +977,18 @@ impl<'a> FlowAnalyzer<'a> {
 
         let mut kept = Vec::new();
         for &m in &members {
-            if are_types_mutually_subtype(self.interner, assigned_type, m) {
+            let is_mutual = if let Some(env) = &self.type_environment {
+                are_types_mutually_subtype_with_env(
+                    self.interner,
+                    &env.borrow(),
+                    assigned_type,
+                    m,
+                    true,
+                )
+            } else {
+                are_types_mutually_subtype(self.interner, assigned_type, m)
+            };
+            if is_mutual {
                 kept.push(m);
             }
         }
