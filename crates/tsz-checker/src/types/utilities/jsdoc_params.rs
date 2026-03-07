@@ -647,54 +647,11 @@ impl<'a> CheckerState<'a> {
             || trimmed_expr == "Array<Object>"
             || trimmed_expr == "Array<object>";
 
-        if is_object_base || is_array_object_base {
-            let nested = Self::extract_jsdoc_nested_param_properties(jsdoc, param_name);
-            if !nested.is_empty() {
-                let mut properties = Vec::new();
-                for (prop_name, prop_type_expr, is_prop_optional) in &nested {
-                    // Handle {Type=} suffix in nested property types
-                    let (eff_type, opt_from_type) = if prop_type_expr.ends_with('=') {
-                        (&prop_type_expr[..prop_type_expr.len() - 1], true)
-                    } else {
-                        (prop_type_expr.as_str(), false)
-                    };
-                    let prop_type = self.jsdoc_type_from_expression(eff_type);
-                    if let Some(mut prop_type_id) = prop_type {
-                        let is_optional = *is_prop_optional || opt_from_type;
-                        if is_optional
-                            && self.ctx.strict_null_checks()
-                            && prop_type_id != tsz_solver::TypeId::ANY
-                            && prop_type_id != tsz_solver::TypeId::UNDEFINED
-                        {
-                            prop_type_id = self
-                                .ctx
-                                .types
-                                .factory()
-                                .union(vec![prop_type_id, tsz_solver::TypeId::UNDEFINED]);
-                        }
-                        let name_atom = self.ctx.types.intern_string(prop_name);
-                        properties.push(tsz_solver::PropertyInfo {
-                            name: name_atom,
-                            type_id: prop_type_id,
-                            write_type: prop_type_id,
-                            optional: is_optional,
-                            readonly: false,
-                            is_method: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: None,
-                            declaration_order: properties.len() as u32,
-                        });
-                    }
-                }
-                if !properties.is_empty() {
-                    let obj_type = self.ctx.types.factory().object(properties);
-                    if is_array_object_base {
-                        base_type = self.ctx.types.factory().array(obj_type);
-                    } else {
-                        base_type = obj_type;
-                    }
-                }
-            }
+        if (is_object_base || is_array_object_base)
+            && let Some(built) =
+                self.build_nested_param_object_type(jsdoc, param_name, is_array_object_base)
+        {
+            base_type = built;
         }
 
         // Check if parameter is optional via bracket syntax [name] or [name=default]
@@ -771,6 +728,94 @@ impl<'a> CheckerState<'a> {
     /// - `@param {string=} opts.y` → ("y", "string", true)  (= suffix)
     /// - `@param {string} [opts.z]` → ("z", "string", true)  (bracket syntax)
     /// - `@param {string} [opts.w="hi"]` → ("w", "string", true) (bracket + default)
+    ///
+    /// Build an object type from nested `@param` properties, handling arbitrary nesting depth.
+    ///
+    /// For `@param {object} opts` with nested `@param {string} opts.x` and
+    /// `@param {object} opts.nested` with `@param {number} opts.nested.y`,
+    /// this builds `{ x: string; nested: { y: number } }`.
+    ///
+    /// When `is_array` is true, wraps the result in an array type.
+    fn build_nested_param_object_type(
+        &mut self,
+        jsdoc: &str,
+        parent_name: &str,
+        is_array: bool,
+    ) -> Option<tsz_solver::TypeId> {
+        let nested = Self::extract_jsdoc_nested_param_properties(jsdoc, parent_name);
+        if nested.is_empty() {
+            return None;
+        }
+        let mut properties = Vec::new();
+        for (prop_name, prop_type_expr, is_prop_optional) in &nested {
+            let (eff_type, opt_from_type) = if prop_type_expr.ends_with('=') {
+                (&prop_type_expr[..prop_type_expr.len() - 1], true)
+            } else {
+                (prop_type_expr.as_str(), false)
+            };
+
+            // Check if this property itself is an object/Object with sub-properties
+            let eff_trimmed = eff_type.trim();
+            let is_sub_object = eff_trimmed == "Object" || eff_trimmed == "object";
+            let is_sub_array_object = eff_trimmed == "Object[]"
+                || eff_trimmed == "object[]"
+                || eff_trimmed == "Array.<Object>"
+                || eff_trimmed == "Array.<object>"
+                || eff_trimmed == "Array<Object>"
+                || eff_trimmed == "Array<object>";
+
+            let prop_type_id = if is_sub_object || is_sub_array_object {
+                // Build the full dotted parent name for recursive lookup
+                let sub_parent = if is_array {
+                    format!("{parent_name}[].{prop_name}")
+                } else {
+                    format!("{parent_name}.{prop_name}")
+                };
+                // Recursively build the nested object type
+                self.build_nested_param_object_type(jsdoc, &sub_parent, is_sub_array_object)
+                    .or_else(|| self.jsdoc_type_from_expression(eff_type))
+            } else {
+                self.jsdoc_type_from_expression(eff_type)
+            };
+
+            if let Some(mut prop_type_id) = prop_type_id {
+                let is_optional = *is_prop_optional || opt_from_type;
+                if is_optional
+                    && self.ctx.strict_null_checks()
+                    && prop_type_id != tsz_solver::TypeId::ANY
+                    && prop_type_id != tsz_solver::TypeId::UNDEFINED
+                {
+                    prop_type_id = self
+                        .ctx
+                        .types
+                        .factory()
+                        .union(vec![prop_type_id, tsz_solver::TypeId::UNDEFINED]);
+                }
+                let name_atom = self.ctx.types.intern_string(prop_name);
+                properties.push(tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type_id,
+                    write_type: prop_type_id,
+                    optional: is_optional,
+                    readonly: false,
+                    is_method: false,
+                    visibility: tsz_solver::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: properties.len() as u32,
+                });
+            }
+        }
+        if properties.is_empty() {
+            return None;
+        }
+        let obj_type = self.ctx.types.factory().object(properties);
+        if is_array {
+            Some(self.ctx.types.factory().array(obj_type))
+        } else {
+            Some(obj_type)
+        }
+    }
+
     /// - `@param {string} opts[].x` → ("x", "string", false) (array element property)
     ///
     /// Only extracts immediate child properties (one level of nesting).
