@@ -1,5 +1,6 @@
 FAIL TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts
 FAIL TypeScript/tests/cases/compiler/abstractPropertyInConstructor.ts
+FAIL TypeScript/tests/cases/compiler/acceptSymbolAsWeakType.ts
 FAIL TypeScript/tests/cases/compiler/accessorInferredReturnTypeErrorInReturnStatement.ts
 FAIL TypeScript/tests/cases/compiler/accessors_spec_section-4.5_error-cases.ts
 FAIL TypeScript/tests/cases/compiler/aliasAssignments.ts
@@ -943,6 +944,7 @@ FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash2.ts
 FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash3.ts
 FAIL TypeScript/tests/cases/compiler/paramsOnlyHaveLiteralTypesWhenAppropriatelyContextualized.ts
+FAIL TypeScript/tests/cases/compiler/parenthesizedJSDocCastAtReturnStatement.ts
 FAIL TypeScript/tests/cases/compiler/parseAssertEntriesError.ts
 FAIL TypeScript/tests/cases/compiler/parseBigInt.ts
 FAIL TypeScript/tests/cases/compiler/parseCommaSeparatedNewlineNew.ts
@@ -1149,7 +1151,6 @@ FAIL TypeScript/tests/cases/compiler/thisAssignmentInNamespaceDeclaration1.ts
 FAIL TypeScript/tests/cases/compiler/thisIndexOnExistingReadonlyFieldIsNotNever.ts
 FAIL TypeScript/tests/cases/compiler/thisInFunctionCallJs.ts
 FAIL TypeScript/tests/cases/compiler/thisInModule.ts
-FAIL TypeScript/tests/cases/compiler/thisInOuterClassBody.ts
 FAIL TypeScript/tests/cases/compiler/thisInTupleTypeParameterConstraints.ts
 FAIL TypeScript/tests/cases/compiler/thisKeyword.ts
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
@@ -1198,7 +1199,6 @@ FAIL TypeScript/tests/cases/compiler/typeInferenceTypePredicate.ts
 FAIL TypeScript/tests/cases/compiler/typeInterfaceDeclarationsInBlockStatements1.ts
 FAIL TypeScript/tests/cases/compiler/typeNamedUndefined2.ts
 FAIL TypeScript/tests/cases/compiler/typeofAmbientExternalModules.ts
-FAIL TypeScript/tests/cases/compiler/typeofClass.ts
 FAIL TypeScript/tests/cases/compiler/typeOfEnumAndVarRedeclarations.ts
 FAIL TypeScript/tests/cases/compiler/typeofExternalModules.ts
 FAIL TypeScript/tests/cases/compiler/typeofInterface.ts
@@ -2453,7 +2453,6 @@ PASS TypeScript/tests/cases/compiler/abstractInterfaceIdentifierName.ts
 PASS TypeScript/tests/cases/compiler/abstractPropertyBasics.ts
 PASS TypeScript/tests/cases/compiler/abstractPropertyNegative.ts
 PASS TypeScript/tests/cases/compiler/acceptableAlias1.ts
-PASS TypeScript/tests/cases/compiler/acceptSymbolAsWeakType.ts
 PASS TypeScript/tests/cases/compiler/accessInstanceMemberFromStaticMethod01.ts
 PASS TypeScript/tests/cases/compiler/accessorAccidentalCallDiagnostic.ts
 PASS TypeScript/tests/cases/compiler/accessorBodyInTypeContext.ts
@@ -6382,7 +6381,6 @@ PASS TypeScript/tests/cases/compiler/parenthesisDoesNotBlockAliasSymbolCreation.
 PASS TypeScript/tests/cases/compiler/parenthesizedArrowExpressionASI.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedAsyncArrowFunction.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedExpressionInternalComments.ts
-PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastAtReturnStatement.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastDoesNotNarrow.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedSatisfiesExpressionWithComments.ts
 PASS TypeScript/tests/cases/compiler/parse1.ts
@@ -7192,6 +7190,7 @@ PASS TypeScript/tests/cases/compiler/thisInInnerFunctions.ts
 PASS TypeScript/tests/cases/compiler/thisInLambda.ts
 PASS TypeScript/tests/cases/compiler/thisInModuleFunction1.ts
 PASS TypeScript/tests/cases/compiler/thisInObjectJs.ts
+PASS TypeScript/tests/cases/compiler/thisInOuterClassBody.ts
 PASS TypeScript/tests/cases/compiler/thisInPropertyBoundDeclarations.ts
 PASS TypeScript/tests/cases/compiler/thisInStaticMethod1.ts
 PASS TypeScript/tests/cases/compiler/thisInStatics.ts
@@ -7311,6 +7310,7 @@ PASS TypeScript/tests/cases/compiler/typeMatch1.ts
 PASS TypeScript/tests/cases/compiler/typeMatch2.ts
 PASS TypeScript/tests/cases/compiler/typeName1.ts
 PASS TypeScript/tests/cases/compiler/typeNamedUndefined1.ts
+PASS TypeScript/tests/cases/compiler/typeofClass.ts
 PASS TypeScript/tests/cases/compiler/typeofEnum.ts
 PASS TypeScript/tests/cases/compiler/typeofImportInstantiationExpression.ts
 PASS TypeScript/tests/cases/compiler/typeofInObjectLiteralType.ts
