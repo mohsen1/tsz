@@ -697,6 +697,7 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
@@ -1241,8 +1242,6 @@ FAIL TypeScript/tests/cases/compiler/unparenthesizedFunctionTypeInUnionOrInterse
 FAIL TypeScript/tests/cases/compiler/unqualifiedCallToClassStatic1.ts
 FAIL TypeScript/tests/cases/compiler/unreachableDeclarations.ts
 FAIL TypeScript/tests/cases/compiler/unreachableJavascriptChecked.ts
-FAIL TypeScript/tests/cases/compiler/unreachableSwitchTypeofAny.ts
-FAIL TypeScript/tests/cases/compiler/unreachableSwitchTypeofUnknown.ts
 FAIL TypeScript/tests/cases/compiler/unresolvableSelfReferencingAwaitedUnion.ts
 FAIL TypeScript/tests/cases/compiler/unspecializedConstraints.ts
 FAIL TypeScript/tests/cases/compiler/unterminatedStringLiteralWithBackslash1.ts
@@ -2236,7 +2235,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/commonTypeIntersectio
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -7478,6 +7476,8 @@ PASS TypeScript/tests/cases/compiler/unknownTypeErrors.ts
 PASS TypeScript/tests/cases/compiler/unmatchedParameterPositions.ts
 PASS TypeScript/tests/cases/compiler/unreachableFlowAfterFinally.ts
 PASS TypeScript/tests/cases/compiler/unreachableJavascriptUnchecked.ts
+PASS TypeScript/tests/cases/compiler/unreachableSwitchTypeofAny.ts
+PASS TypeScript/tests/cases/compiler/unreachableSwitchTypeofUnknown.ts
 PASS TypeScript/tests/cases/compiler/unresolvedTypeAssertionSymbol.ts
 PASS TypeScript/tests/cases/compiler/unterminatedRegexAtEndOfSource1.ts
 PASS TypeScript/tests/cases/compiler/untypedArgumentInLambdaExpression.ts
@@ -11820,6 +11820,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
