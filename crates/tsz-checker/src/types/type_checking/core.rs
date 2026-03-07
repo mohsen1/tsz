@@ -210,12 +210,25 @@ impl<'a> CheckerState<'a> {
             // TS1164: Computed property names are not allowed in enums.
             // Emitted here (checker grammar check) rather than in the parser to avoid
             // position-based dedup conflicts with TS1357 (missing comma between members).
+            // tsc only emits TS1164 for non-literal computed expressions (e.g. [e]),
+            // not for literal ones like ["foo"] or [42].
             if name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                self.error_at_node(
-                    member.name,
-                    "Computed property names are not allowed in enums.",
-                    diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS,
-                );
+                let is_literal_computed = self
+                    .ctx
+                    .arena
+                    .get_computed_property(name_node)
+                    .and_then(|cp| self.ctx.arena.get(cp.expression))
+                    .is_some_and(|expr| {
+                        expr.kind == SyntaxKind::NumericLiteral as u16
+                            || expr.kind == SyntaxKind::StringLiteral as u16
+                    });
+                if !is_literal_computed {
+                    self.error_at_node(
+                        member.name,
+                        "Computed property names are not allowed in enums.",
+                        diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS,
+                    );
+                }
             }
 
             let name_text = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
