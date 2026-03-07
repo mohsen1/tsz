@@ -251,6 +251,153 @@ switch (x) {
 }
 
 #[test]
+fn test_switch_true_duplicate_case_narrows_to_never() {
+    let source = r#"
+let shape: { kind: "circle", radius: number } | { kind: "square", sideLength: number };
+switch (true) {
+  case shape.kind === "circle":
+    shape;
+    break;
+  case shape.kind === "circle":
+    shape;
+    break;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let radius_name = types.intern_string("radius");
+    let side_name = types.intern_string("sideLength");
+    let lit_circle = types.literal_string("circle");
+    let lit_square = types.literal_string("square");
+
+    let circle = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_circle,
+            write_type: lit_circle,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: radius_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+        },
+    ]);
+    let square = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_square,
+            write_type: lit_square,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: side_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+        },
+    ]);
+    let union = types.union(vec![circle, square]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let first_case_expr = get_switch_clause_expression(arena, switch_idx, 0);
+    let second_case_expr = get_switch_clause_expression(arena, switch_idx, 1);
+
+    let flow_first = binder
+        .get_node_flow(first_case_expr)
+        .expect("flow for case 1");
+    let narrowed_first = analyzer.get_flow_type(first_case_expr, union, flow_first);
+    assert_eq!(narrowed_first, circle);
+
+    let flow_second = binder
+        .get_node_flow(second_case_expr)
+        .expect("flow for case 2");
+    let narrowed_second = analyzer.get_flow_type(second_case_expr, union, flow_second);
+    assert_eq!(narrowed_second, TypeId::NEVER);
+}
+
+#[test]
+fn test_switch_true_case_uses_previous_false_constraints() {
+    let source = r#"
+let x: 1 | 2 | "a";
+switch (true) {
+  case x === 1:
+    x;
+    break;
+  case typeof x === "number":
+    x;
+    break;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let lit_one = types.literal_number(1.0);
+    let lit_two = types.literal_number(2.0);
+    let lit_a = types.literal_string("a");
+    let union = types.union(vec![lit_one, lit_two, lit_a]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let first_case_expr = get_switch_clause_expression(arena, switch_idx, 0);
+    let second_case_expr = get_switch_clause_expression(arena, switch_idx, 1);
+
+    let flow_first = binder
+        .get_node_flow(first_case_expr)
+        .expect("flow for case 1");
+    let narrowed_first = analyzer.get_flow_type(first_case_expr, union, flow_first);
+    assert_eq!(narrowed_first, lit_one);
+
+    let flow_second = binder
+        .get_node_flow(second_case_expr)
+        .expect("flow for case 2");
+    let narrowed_second = analyzer.get_flow_type(second_case_expr, union, flow_second);
+    assert_eq!(narrowed_second, lit_two);
+}
+
+#[test]
 fn test_instanceof_narrows_to_object_union_members() {
     let source = r"
 let x: string | { a: number };

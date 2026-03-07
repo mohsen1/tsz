@@ -12,6 +12,80 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    pub(crate) fn narrow_by_switch_true_case_clause(
+        &self,
+        type_id: TypeId,
+        case_block: NodeIndex,
+        clause_idx: NodeIndex,
+        case_expr: NodeIndex,
+        target: NodeIndex,
+    ) -> TypeId {
+        let Some(case_block_node) = self.arena.get(case_block) else {
+            return self.narrow_type_by_condition(
+                type_id,
+                case_expr,
+                target,
+                true,
+                FlowNodeId::NONE,
+            );
+        };
+        let Some(case_block_data) = self.arena.get_block(case_block_node) else {
+            return self.narrow_type_by_condition(
+                type_id,
+                case_expr,
+                target,
+                true,
+                FlowNodeId::NONE,
+            );
+        };
+
+        // For switch(true), direct dispatch into case N requires:
+        // - every preceding case condition is false
+        // - current case condition is true
+        // Fallthrough paths are unioned separately by the switch-clause handler.
+        let mut narrowed = type_id;
+        let mut saw_current = false;
+
+        for &idx in &case_block_data.statements.nodes {
+            let Some(clause_node) = self.arena.get(idx) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                continue;
+            };
+
+            if idx == clause_idx {
+                saw_current = true;
+                if clause.expression.is_some() {
+                    narrowed = self.narrow_type_by_condition(
+                        narrowed,
+                        case_expr,
+                        target,
+                        true,
+                        FlowNodeId::NONE,
+                    );
+                }
+                break;
+            }
+
+            if clause.expression.is_some() {
+                narrowed = self.narrow_type_by_condition(
+                    narrowed,
+                    clause.expression,
+                    target,
+                    false,
+                    FlowNodeId::NONE,
+                );
+            }
+        }
+
+        if saw_current {
+            narrowed
+        } else {
+            self.narrow_type_by_condition(type_id, case_expr, target, true, FlowNodeId::NONE)
+        }
+    }
+
     pub(crate) fn narrow_by_switch_clause(
         &self,
         type_id: TypeId,
