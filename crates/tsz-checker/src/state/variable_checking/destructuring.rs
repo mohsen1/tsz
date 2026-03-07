@@ -619,23 +619,22 @@ impl<'a> CheckerState<'a> {
                     // may have matching symbol properties we can't resolve statically.
                     let is_symbol =
                         query::is_symbol_or_unique_symbol_type(self.ctx.types, resolved_key);
-                    let symbol_should_report =
-                        if !is_symbol {
-                            false
-                        } else if query::is_type_parameter_like(self.ctx.types, parent_type) {
-                            // Type parameter: constraint may have matching symbol properties
-                            false
-                        } else {
-                            // Concrete type: check for actual named property (not index sigs)
-                            tsz_solver::visitor::unique_symbol_ref(self.ctx.types, resolved_key)
-                                .is_none_or(|sym_ref| {
-                                    !query::type_has_property(
-                                        self.ctx.types,
-                                        parent_type,
-                                        &format!("__unique_{}", sym_ref.0),
-                                    )
-                                })
-                        };
+                    let symbol_should_report = if !is_symbol {
+                        false
+                    } else if query::is_type_parameter_like(self.ctx.types, parent_type) {
+                        // Type parameter: constraint may have matching symbol properties
+                        false
+                    } else {
+                        // Concrete type: check for actual named property (not index sigs)
+                        tsz_solver::visitor::unique_symbol_ref(self.ctx.types, resolved_key)
+                            .is_none_or(|sym_ref| {
+                                !query::type_has_property(
+                                    self.ctx.types,
+                                    parent_type,
+                                    &format!("__unique_{}", sym_ref.0),
+                                )
+                            })
+                    };
                     // Check for structurally invalid types (void, null, boolean, etc.)
                     let has_structural_invalid =
                         query::invalid_index_type_member(self.ctx.types, resolved_key);
