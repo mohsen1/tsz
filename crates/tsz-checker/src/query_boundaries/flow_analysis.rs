@@ -110,6 +110,15 @@ pub(crate) fn is_assignable_with_env(
     .is_related()
 }
 
+/// Extract the `DefId` from a `Lazy(DefId)` type, if it is one.
+/// Used by flow-control assignment to resolve lazy types via the `TypeEnvironment`.
+pub(crate) fn get_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
+}
+
 /// If `type_id` is a promise-like application type, return the inner type argument.
 /// Used by flow-control assignment to unwrap `await` RHS types.
 pub(crate) fn unwrap_promise_type_argument(

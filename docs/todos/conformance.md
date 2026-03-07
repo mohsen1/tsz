@@ -124,6 +124,31 @@ property access, mapped constraints, readonly writes, and numeric/string precede
   (still missing TS2339/TS2353), `classDeclarationShouldBeOutOfScopeInComputedNames.ts`
   (extra TS2729, separate property-used-before-init issue).
 
+**Session notes (2026-03-07 late evening — TS2536 indexed access proof investigation):**
+- Targeted 6 tests missing TS2536 ("Type 'X' cannot be used to index type 'Y'"):
+  constraintWithIndexedAccess, infiniteConstraints, intersectionsOfLargeUnions,
+  genericUnboundedTypeParamAssignability, restUnion, contextualTypeForInitalizedVariablesFiltersUndefined.
+- Investigated three changes (all reverted — net-zero conformance impact):
+  1. **Tightened keyof suppression in constraint loop** (core.rs ~1884): Changed from
+     unconditional keyof suppression to only suppressing when keyof wraps a type parameter or
+     matches the object being indexed. Architecturally correct but no impact.
+  2. **Extended check_type_node recursion** (core.rs ~1518): Added TYPE_REFERENCE (recurse
+     into type args), TUPLE_TYPE, and PARENTHESIZED/REST/OPTIONAL type recursion. Fixes nested
+     indexed access in type alias bodies but no conformance impact.
+  3. **Extended check_type_node to function signatures** (function_type.rs ~407, ~619): Added
+     `self.check_type_node()` for parameter types and return type annotations. Correct —
+     `check_type_node` was only called from `check_type_alias_declaration()`, missing function
+     params and return types entirely. No conformance impact because `check_indexed_access_type`
+     has deep suppression logic that prevents TS2536 emission for generic indexed access.
+- Root cause identified: `check_indexed_access_type` has ~10 escape hatches that suppress TS2536
+  for deferred types. The function's final guard (lines ~2002-2008) catches `is_deferred_type()`
+  which includes keyof, conditional, application, and error types. For `T[keyof T]["foo"]`, the
+  evaluated object type hits one of these escape hatches. TSC distinguishes "provably wrong" from
+  "deferred" more precisely than our checker does.
+- **Blocked**: Fixing TS2536 requires deeper changes to how `check_indexed_access_type` distinguishes
+  provably-invalid indexed access from deferred-but-possibly-valid ones. The current approach of
+  surface-level coverage extension doesn't help because the suppression logic is too broad.
+
 #### Campaign 3: Big 3 compatibility hardening (TS2322/TS2339/TS2345)
 
 **Risk: Medium-high. ROI: Very high structural upside.**

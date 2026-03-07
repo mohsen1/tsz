@@ -6,8 +6,8 @@
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, fallback_compound_assignment_result, get_array_element_type,
-    is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,
-    unwrap_promise_type_argument, widen_literal_to_primitive,
+    get_lazy_def_id, is_compound_assignment_operator, map_compound_assignment_to_binary,
+    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -966,6 +966,14 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
+        // Resolve Lazy(DefId) types to their concrete representations via the
+        // TypeEnvironment before structural subtype comparison. node_types may
+        // store unevaluated type alias references when a variable was inferred
+        // (no annotation), while union members are already resolved. Without this,
+        // the bare SubtypeChecker used by are_types_mutually_subtype cannot match
+        // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
+        let assigned_type = self.resolve_lazy_via_env(assigned_type);
+
         let mut kept = Vec::new();
         for &m in &members {
             if are_types_mutually_subtype(self.interner, assigned_type, m) {
@@ -979,6 +987,21 @@ impl<'a> FlowAnalyzer<'a> {
             kept[0]
         } else {
             self.interner.union(kept)
+        }
+    }
+
+    /// Resolve a `Lazy(DefId)` type to its concrete representation using the
+    /// `TypeEnvironment`. Returns the original type if not lazy or if the
+    /// environment is unavailable / doesn't contain the DefId.
+    fn resolve_lazy_via_env(&self, type_id: TypeId) -> TypeId {
+        if let Some(def_id) = get_lazy_def_id(self.interner, type_id) {
+            if let Some(ref env) = self.type_environment {
+                env.borrow().get_def(def_id).unwrap_or(type_id)
+            } else {
+                type_id
+            }
+        } else {
+            type_id
         }
     }
 }
