@@ -1992,3 +1992,183 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
         }
     }
 }
+
+/// Homomorphic mapped type `{ [K in keyof T]: T[K] }` instantiated with T = any
+/// and T has NO constraint should NOT produce bare `any`. It should fall through
+/// to standard mapped type instantiation producing an object with index signatures.
+#[test]
+fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // Create type parameter T (unconstrained — like `type Objectish<T> = ...`)
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    // Build: { [K in keyof T]: T[K] }
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let template = interner.index_access(t_type, k_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = any
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::ANY);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Must NOT be bare `any` — should be an object-like type
+    assert_ne!(
+        result,
+        TypeId::ANY,
+        "Homomorphic mapped type with T=any (unconstrained) must not produce bare `any`. \
+         It should produce an object with index signatures."
+    );
+}
+
+/// Homomorphic mapped type `{ [K in keyof T]: T[K] }` instantiated with T = any
+/// where T has an array constraint (e.g., `T extends unknown[]`) should produce
+/// an array type, matching tsc's instantiateMappedArrayType behavior.
+#[test]
+fn test_instantiate_homomorphic_mapped_with_any_array_constrained() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // Create type parameter T with constraint `unknown[]`
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    // Build: { [K in keyof T]: T[K] }
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let template = interner.index_access(t_type, k_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = any
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::ANY);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should produce an array type (not bare `any`, not object)
+    match interner.lookup(result) {
+        Some(TypeData::Array(_)) => {
+            // Correct: array-constrained T with any produces array
+        }
+        other => {
+            panic!(
+                "Expected Array type for homomorphic mapped type with T=any (array-constrained), \
+                 got {other:?}"
+            );
+        }
+    }
+}
+
+/// Same as array-constrained test, but with a union constraint like
+/// `readonly unknown[] | []` (Promise.all's T parameter). Should still produce array.
+#[test]
+fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // Create constraint: readonly unknown[] | []
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let readonly_unknown_array = interner.readonly_type(unknown_array);
+    let empty_tuple = interner.tuple(vec![]);
+    let union_constraint = interner.union(vec![readonly_unknown_array, empty_tuple]);
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: Some(union_constraint),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    // Build: { [K in keyof T]: T[K] }
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let template = interner.index_access(t_type, k_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = any
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::ANY);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should produce an array type (union-of-arrays constraint is still array-like)
+    match interner.lookup(result) {
+        Some(TypeData::Array(_)) => {
+            // Correct: union-of-arrays constraint with any produces array
+        }
+        other => {
+            panic!(
+                "Expected Array type for homomorphic mapped type with T=any \
+                 (union-of-arrays-constrained), got {other:?}"
+            );
+        }
+    }
+}
