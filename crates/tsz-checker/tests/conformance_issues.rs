@@ -1216,6 +1216,97 @@ function f01(x: string | undefined) {
     );
 }
 
+#[test]
+fn test_optional_chain_undefined_equality_does_not_narrow_to_never() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (o?.foo === undefined) {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 (no over-narrow to never). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_typeof_undefined_does_not_narrow_to_never() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (typeof o?.foo === "undefined") {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 (no over-narrow to never). Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_not_undefined_narrows_to_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+function f(o: Thing | undefined) {
+    if (o?.foo !== undefined) {
+        o.foo;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 18048),
+        "Expected no TS18048 in non-undefined optional-chain branch. Actual: {semantic_errors:#?}"
+    );
+    assert!(
+        !semantic_errors.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 in non-undefined optional-chain branch. Actual: {semantic_errors:#?}"
+    );
+}
+
 /// Assignment-based narrowing should use declared annotation types, not initializer flow types.
 ///
 /// Regression pattern: `let x: T | undefined = undefined; x = makeT(); use(x);`
