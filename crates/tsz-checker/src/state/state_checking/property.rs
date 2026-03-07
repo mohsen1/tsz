@@ -1060,10 +1060,12 @@ impl<'a> CheckerState<'a> {
         if matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        ) && let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
-            self.ctx.types,
-            resolved_object_type,
-        ) {
+        ) && let Some(constraint) =
+            crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                resolved_object_type,
+            )
+        {
             let evaluated = self.evaluate_type_with_env(constraint);
             if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
                 let retry_result = self.ctx.types.resolve_property_access_with_options(
@@ -1226,12 +1228,13 @@ impl<'a> CheckerState<'a> {
         // Instantiate the template for this property key, handling potential
         // name collisions between mapped key param and outer type parameters.
         // (See `instantiate_mapped_template_for_property` docs for details.)
-        let instantiated = tsz_solver::type_queries::instantiate_mapped_template_for_property(
-            self.ctx.types,
-            mapped.template,
-            mapped.type_param.name,
-            key_literal,
-        );
+        let instantiated =
+            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
+                self.ctx.types,
+                mapped.template,
+                mapped.type_param.name,
+                key_literal,
+            );
         let property_type = self.evaluate_type_with_env(instantiated);
         let property_type = match mapped.optional_modifier {
             Some(tsz_solver::MappedModifier::Add) => self

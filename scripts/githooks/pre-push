@@ -1,14 +1,73 @@
 #!/usr/bin/env bash
 #
-# pre-push hook: schedule artifact cleanup to run after push completes.
+# pre-push hook for tsz
 #
-# Git has no native post-push hook, so we use pre-push to schedule a
-# background cleanup that starts after a short delay (allowing push to
-# finish). The hook itself exits immediately so push is not blocked.
+# 1. Runs ALL workspace tests before pushing to main/master to catch
+#    cross-crate regressions that the per-crate pre-commit hook misses.
+# 2. Schedules artifact cleanup after push completes.
 #
+# Env vars:
+#   TSZ_SKIP_HOOKS=1         Skip the entire hook
+#   TSZ_SKIP_PUSH_TESTS=1    Skip pre-push tests (only cleanup)
+
+set -e
+
+# Skip hook entirely if requested
+if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../" && pwd)"
 CLEAN_SCRIPT="$SCRIPT_DIR/../clean.sh"
+
+# ─── Test gate: only for pushes to main/master ────────────────────────────────
+
+PUSHING_TO_MAIN=false
+while read local_ref local_sha remote_ref remote_sha; do
+    if echo "$remote_ref" | grep -qE "refs/heads/(main|master)$"; then
+        PUSHING_TO_MAIN=true
+        break
+    fi
+done
+
+if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; then
+    cd "$ROOT_DIR"
+    echo "Pre-push: running all workspace tests before pushing to main..."
+
+    # Note: tsz-core (root) excluded — its integration tests require special
+    # environment setup (lib directory) that CI provides but local dev may not.
+    ALL_CRATES="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-lowering tsz-emitter tsz-lsp"
+    NEXTEST_FILTER=""
+    for crate in $ALL_CRATES; do
+        if [ -z "$NEXTEST_FILTER" ]; then
+            NEXTEST_FILTER="package($crate)"
+        else
+            NEXTEST_FILTER="$NEXTEST_FILTER | package($crate)"
+        fi
+    done
+
+    if cargo nextest --version >/dev/null 2>&1; then
+        TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass -E "$NEXTEST_FILTER" 2>&1) || {
+            echo ""
+            echo "$TEST_OUTPUT" | tail -30
+            echo ""
+            echo "ERROR: Tests failed. Fix failures before pushing to main."
+            echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
+            exit 1
+        }
+        echo "$TEST_OUTPUT" | tail -5
+    else
+        TEST_OUTPUT=$(cargo test --workspace 2>&1) || {
+            echo ""
+            echo "$TEST_OUTPUT" | tail -30
+            echo ""
+            echo "ERROR: Tests failed. Fix failures before pushing to main."
+            exit 1
+        }
+    fi
+    echo "Pre-push: all tests passed."
+fi
+
+# ─── Post-push cleanup (background) ──────────────────────────────────────────
 
 if [[ -x "$CLEAN_SCRIPT" ]]; then
   # Run cleanup after a 2-second delay so push finishes first.
@@ -17,5 +76,4 @@ if [[ -x "$CLEAN_SCRIPT" ]]; then
   disown 2>/dev/null || true
 fi
 
-# Always allow push to proceed
 exit 0
