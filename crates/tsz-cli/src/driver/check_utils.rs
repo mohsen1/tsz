@@ -1103,6 +1103,10 @@ pub(super) fn create_cross_file_lookup_binder(
             .insert(file.file_name.clone(), reexports.clone());
     }
     binder.is_external_module = file.is_external_module;
+    // Copy expando property assignments so cross-file property access checks
+    // can suppress false TS2339 for patterns like `C1.staticProp` where
+    // `C1.staticProp = 0` was assigned in another file.
+    binder.expando_properties = file.expando_properties.clone();
     binder
 }
 
