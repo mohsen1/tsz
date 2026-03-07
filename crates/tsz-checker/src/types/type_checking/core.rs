@@ -212,7 +212,10 @@ impl<'a> CheckerState<'a> {
             // position-based dedup conflicts with TS1357 (missing comma between members).
             // tsc only emits TS1164 for non-literal computed names (e.g. [e]).
             // Literal computed names like [2], ["foo"] get TS2452 instead (if numeric).
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            // Suppress when parse errors exist — tsc doesn't emit TS1164 alongside
+            // parse-level errors like TS1357 on the same enum members.
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME && !self.has_parse_errors()
+            {
                 let is_literal_computed = self
                     .ctx
                     .arena
