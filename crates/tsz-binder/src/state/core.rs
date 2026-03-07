@@ -61,6 +61,7 @@ impl BinderState {
             node_symbols: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
+            cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -119,6 +120,7 @@ impl BinderState {
         self.node_symbols.clear();
         self.symbol_arenas.clear();
         self.declaration_arenas.clear();
+        self.cross_file_node_symbols.clear();
         self.node_flow.clear();
         self.top_level_flow.clear();
         self.switch_clause_to_switch.clear();
@@ -244,6 +246,7 @@ impl BinderState {
             node_symbols,
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
+            cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -323,6 +326,7 @@ impl BinderState {
             wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
+            cross_file_node_symbols,
             shorthand_ambient_modules,
             modules_with_export_equals,
             flow_nodes,
@@ -355,6 +359,7 @@ impl BinderState {
             node_symbols,
             symbol_arenas,
             declaration_arenas,
+            cross_file_node_symbols,
             node_flow,
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch,

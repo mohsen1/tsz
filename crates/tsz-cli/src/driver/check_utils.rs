@@ -1019,6 +1019,7 @@ pub(super) fn create_binder_from_bound_file(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: program.symbol_arenas.clone(),
             declaration_arenas: program.declaration_arenas.clone(),
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
             flow_nodes: file.flow_nodes.clone(),
