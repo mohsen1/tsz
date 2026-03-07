@@ -409,7 +409,14 @@ impl<'a> CheckerState<'a> {
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                 && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
             {
-                actual_this_type = Some(self.get_type_of_node(access.expression));
+                let receiver_type = self.get_type_of_node(access.expression);
+                actual_this_type = Some(if nullish_cause.is_some() {
+                    let evaluated = self.evaluate_type_with_env(receiver_type);
+                    let (non_nullish, _) = self.split_nullish_type(evaluated);
+                    non_nullish.unwrap_or(evaluated)
+                } else {
+                    receiver_type
+                });
             }
         }
 
