@@ -54,13 +54,16 @@ impl<'a> Printer<'a> {
         }
 
         let prev_module = self.ctx.options.module;
+        let prev_original = self.ctx.original_module_kind;
         self.ctx.options.module = ModuleKind::None;
+        self.ctx.original_module_kind = Some(prev_module);
 
         let before_len = self.writer.len();
         emit_inner(self);
         let inner_emitted = self.writer.len() > before_len;
 
         self.ctx.options.module = prev_module;
+        self.ctx.original_module_kind = prev_original;
 
         // If the inner emit produced nothing (e.g., variable declaration with
         // no initializer where only the type annotation was stripped), skip

@@ -241,7 +241,7 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         let func_name = if is_jsxs { "jsxs" } else { "jsx" };
 
         if is_cjs {
@@ -307,7 +307,7 @@ impl<'a> Printer<'a> {
             .collect();
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         let func_name = if is_jsxs { "jsxs" } else { "jsx" };
 
         if is_cjs {
@@ -924,7 +924,7 @@ impl<'a> Printer<'a> {
     /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
     /// Only imports the functions that are actually used in the file.
     pub(super) fn jsx_auto_import_text(&self) -> Option<String> {
-        let is_cjs = self.ctx.is_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs();
         // Per-file @jsxImportSource pragma overrides the global option
         let pragma_source = self.extract_jsx_import_source_pragma();
         match self.ctx.options.jsx {

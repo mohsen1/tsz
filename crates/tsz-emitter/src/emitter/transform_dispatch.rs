@@ -512,10 +512,13 @@ impl<'a> Printer<'a> {
                         node.kind == syntax_kind_ext::FUNCTION_DECLARATION && !is_default;
                     if is_hoisted_func {
                         let prev_module = self.ctx.options.module;
+                        let prev_original = self.ctx.original_module_kind;
                         self.ctx.options.module = ModuleKind::None;
+                        self.ctx.original_module_kind = Some(prev_module);
                         let export_name = names.first().copied();
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
                         self.ctx.options.module = prev_module;
+                        self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(inline_decls) = self.try_collect_inline_cjs_exports(node)
@@ -555,10 +558,13 @@ impl<'a> Printer<'a> {
                                 Some(ident.escaped_text.clone());
                         }
                         let prev_module = self.ctx.options.module;
+                        let prev_original = self.ctx.original_module_kind;
                         self.ctx.options.module = ModuleKind::None;
+                        self.ctx.original_module_kind = Some(prev_module);
                         let export_name = names.first().copied();
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
                         self.ctx.options.module = prev_module;
+                        self.ctx.original_module_kind = prev_original;
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
@@ -1181,7 +1187,9 @@ impl<'a> Printer<'a> {
                         self.pending_commonjs_class_export_name = Some(ident.escaped_text.clone());
                     }
                     let prev_module = self.ctx.options.module;
+                    let prev_original = self.ctx.original_module_kind;
                     self.ctx.options.module = ModuleKind::None;
+                    self.ctx.original_module_kind = Some(prev_module);
                     let export_name = names.first().copied();
                     if index == 0 {
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
@@ -1189,6 +1197,7 @@ impl<'a> Printer<'a> {
                         self.emit_chained_directive(node, idx, directives, index - 1);
                     }
                     self.ctx.options.module = prev_module;
+                    self.ctx.original_module_kind = prev_original;
                     if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
