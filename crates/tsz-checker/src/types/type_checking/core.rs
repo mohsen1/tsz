@@ -9,23 +9,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// Type Checking Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Utility Methods
-    // =========================================================================
+    // --- AST Traversal Helpers ---
 
-    // =========================================================================
-    // AST Traversal Helper Methods (Consolidate Duplication)
-    // =========================================================================
-
-    /// Get modifiers from a declaration node, consolidating duplicated match statements.
-    ///
-    /// This helper eliminates the repeated pattern of matching declaration kinds
-    /// and extracting their modifiers. Used in `has_export_modifier` and similar functions.
+    /// Get modifiers from a declaration node.
     pub(crate) fn get_declaration_modifiers(
         &self,
         node: &tsz_parser::parser::node::Node,
@@ -133,9 +120,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.arena.has_modifier(modifiers, kind)
     }
 
-    // =========================================================================
-    // Member and Declaration Validation
-    // =========================================================================
+    // --- Member and Declaration Validation ---
 
     /// Check a class member name for computed property validation and
     /// constructor-name restrictions (TS1341, TS1368).
@@ -266,9 +251,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Private Identifier Validation
-    // =========================================================================
+    // --- Private Identifier Validation ---
 
     /// Check that a private identifier expression is valid.
     ///
@@ -349,9 +332,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Type Name Validation
-    // =========================================================================
+    // --- Type Name Validation ---
 
     /// Check a parameter's type annotation for missing type names.
     ///
@@ -472,9 +453,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Parameter Properties Validation
-    // =========================================================================
+    // --- Parameter Properties Validation ---
 
     /// Check a type node for parameter properties.
     ///
@@ -625,9 +604,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Destructuring Validation
-    // =========================================================================
+    // --- Destructuring Validation ---
 
     /// Check a binding pattern for destructuring validity.
     ///
@@ -812,9 +789,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Import Validation
-    // =========================================================================
+    // --- Import Validation ---
 }
 
 // =============================================================================
@@ -822,9 +797,7 @@ impl<'a> CheckerState<'a> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Return Statement Validation
-    // =========================================================================
+    // --- Return Statement Validation ---
 
     /// Check a return statement for validity.
     ///
@@ -1007,9 +980,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Await Expression Validation
-    // =========================================================================
+    // --- Await Expression Validation ---
 
     /// Check if current compiler options support top-level await.
     ///
@@ -1150,9 +1121,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Variable Statement Validation
-    // =========================================================================
+    // --- Variable Statement Validation ---
 
     /// Check a for-await statement for async context and module/target support.
     ///
@@ -1258,9 +1227,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Using Declaration Validation (TS2804, TS2803)
-    // =========================================================================
+    // --- Using Declaration Validation (TS2804, TS2803) ---
 
     /// Check if a using/await using declaration's initializer type has the required dispose method.
     ///
@@ -1867,15 +1834,36 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(index_type_for_check, keyof_object) {
             return;
         }
-        // Fall back to constraint-based check for type parameters.
-        // Evaluate the constraint through the type environment so type aliases
-        // (e.g. `Boolean = 0 | 1`) resolve to their underlying union types.
-        let index_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
-            self.ctx.types,
-            index_type_for_check,
-        )
-        .unwrap_or(index_type_for_check);
-        let index_type_for_check = self.evaluate_type_with_env(index_type_for_check);
+        // Follow the constraint chain transitively (P → K → keyof T) so that
+        // e.g. T[P] where P extends K extends keyof T doesn't false-positive.
+        // At each level, check assignability to keyof or recognize deferred types.
+        let mut index_type_for_check = index_type_for_check;
+        for _ in 0..5 {
+            let next = tsz_solver::type_queries::get_type_parameter_constraint(
+                self.ctx.types,
+                index_type_for_check,
+            );
+            let Some(next_constraint) = next else { break };
+            let next_evaluated = self.evaluate_type_with_env(next_constraint);
+            if self.is_assignable_to(next_evaluated, keyof_object) {
+                return;
+            }
+            // If the constraint resolved to a deferred type, suppress TS2536.
+            if tsz_solver::type_queries::is_keyof_type(self.ctx.types, next_evaluated)
+                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, next_constraint)
+                || tsz_solver::is_conditional_type(self.ctx.types, next_evaluated)
+                || tsz_solver::is_generic_application(self.ctx.types, next_evaluated)
+                || tsz_solver::is_generic_application(self.ctx.types, next_constraint)
+            {
+                return;
+            }
+            // Continue following if still a type parameter.
+            if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, next_evaluated) {
+                index_type_for_check = next_evaluated;
+                break;
+            }
+            index_type_for_check = next_evaluated;
+        }
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
             if let Some((wants_string, wants_number)) =
                 self.get_index_key_kind(index_type_for_check)
@@ -1883,12 +1871,8 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            // TypeScript represents `keyof { 0: T; 1: U }` as numeric literal
-            // types `0 | 1`, but our `evaluate_keyof` emits string-atom literals
-            // for property names. This causes `is_assignable_to(0 | 1, "0" | "1")`
-            // to fail even though `0` and `1` are valid keys. Explicitly check if
-            // the (constraint of the) index type is a union of numeric literals all
-            // of which correspond to named properties of the object.
+            // Numeric-literal index keys may stringify differently from our keyof
+            // representation; explicitly check if all literals are valid keys.
             if tsz_solver::type_queries::numeric_literal_index_valid_for_object(
                 self.ctx.types,
                 index_type_for_check,
