@@ -170,6 +170,34 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
+    /// Check if a type is array-or-tuple-like, handling:
+    /// - Direct Array types
+    /// - Tuple types
+    /// - `ReadonlyType` wrapping Array or Tuple
+    /// - Union types where ALL members are array-or-tuple-like
+    ///   (e.g., `readonly unknown[] | []` from Promise.all's T constraint)
+    fn is_array_or_tuple_like(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        let evaluated = crate::evaluation::evaluate::evaluate_type(interner, type_id);
+        match interner.lookup(evaluated) {
+            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::ReadonlyType(inner)) => {
+                let inner_eval = crate::evaluation::evaluate::evaluate_type(interner, inner);
+                matches!(
+                    interner.lookup(inner_eval),
+                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                )
+            }
+            Some(TypeData::Union(members)) => {
+                let members = interner.type_list(members);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|m| Self::is_array_or_tuple_like(interner, *m))
+            }
+            _ => Self::extract_array_element(interner, evaluated).is_some(),
+        }
+    }
+
     /// Instantiate a slice of properties by substituting type IDs.
     fn instantiate_properties(&mut self, properties: &[PropertyInfo]) -> Vec<PropertyInfo> {
         properties
@@ -630,10 +658,56 @@ impl<'a> TypeInstantiator<'a> {
                     let resolved =
                         crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
 
-                    // tsc: homomorphic mapped type over `any` evaluates to `any`
+                    // tsc: When a homomorphic mapped type's source type parameter
+                    // is instantiated with `any`, the result depends on the type
+                    // parameter's constraint:
+                    //   - Array/tuple constraint → produce array result
+                    //   - Non-array constraint → fall through to standard mapped
+                    //     type instantiation (produces `{ [x: string]: ... }`)
+                    // We must NOT unconditionally return TypeId::ANY because that
+                    // makes `Objectish<any>` assignable to `any[]`, which is wrong.
                     if resolved == TypeId::ANY {
-                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
-                        return TypeId::ANY;
+                        let constraint_is_array_like = tp_info.constraint.is_some_and(|c| {
+                            let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                            Self::is_array_or_tuple_like(self.interner, ec)
+                        });
+
+                        if constraint_is_array_like {
+                            // Array/tuple-constrained T with any: produce array.
+                            // Substitute K → number in the template.
+                            let new_template = self.instantiate(mapped.template);
+                            self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                            let mut subst = TypeSubstitution::new();
+                            subst.insert(mapped.type_param.name, TypeId::NUMBER);
+                            let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiate_type(self.interner, new_template, &subst),
+                            );
+
+                            let final_element = if matches!(
+                                mapped.optional_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                            } else {
+                                mapped_element
+                            };
+
+                            let array_type = self.interner.array(final_element);
+                            return if matches!(
+                                mapped.readonly_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.readonly_type(array_type)
+                            } else {
+                                array_type
+                            };
+                        }
+                        // Non-array constraint: fall through to standard mapped
+                        // type instantiation below. This produces an object with
+                        // index signature (e.g., `{ [x: string]: any }`), matching
+                        // tsc's behavior for `Objectish<any>`.
                     }
 
                     // Check for Tuple first (tsc: instantiateMappedTupleType)

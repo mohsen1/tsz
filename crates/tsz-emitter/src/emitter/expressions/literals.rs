@@ -614,17 +614,27 @@ impl<'a> Printer<'a> {
                             false
                         }
                     });
+                    let same_line = self.are_on_same_line_in_source(prop, next_prop);
                     if has_same_line_comment {
+                        // Same-line trailing comment after comma: space before comment
                         self.write(" ");
+                    } else if !same_line {
+                        // Properties are on different lines and any comment is on
+                        // a subsequent line — write a newline first so the comment
+                        // appears on its own line (matching tsc).
+                        self.write_line();
                     }
                     let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
                     if wrote_newline {
-                        // Line comment wrote the newline already — don't add another
-                    } else if self.are_on_same_line_in_source(prop, next_prop) {
+                        // Comment emission already wrote the trailing newline
+                    } else if same_line {
                         // Keep on same line
                         self.write(" ");
+                    } else if !has_same_line_comment {
+                        // We already wrote a newline above; don't double up
                     } else {
-                        // Different lines in source
+                        // Same-line comment that didn't end with a newline,
+                        // but properties are on different lines
                         self.write_line();
                     }
                 } else {
@@ -733,7 +743,12 @@ impl<'a> Printer<'a> {
                 && self
                     .commonjs_exported_var_names
                     .contains(ident.escaped_text.as_str());
-            if has_import_subst || has_export_var {
+            let has_ns_qualification = self.in_namespace_iife
+                && !self.suppress_ns_qualification
+                && self
+                    .namespace_exported_names
+                    .contains(ident.escaped_text.as_str());
+            if has_import_subst || has_export_var || has_ns_qualification {
                 self.write_identifier(&ident.escaped_text);
                 self.write(": ");
                 self.emit(shorthand.name);

@@ -792,11 +792,14 @@ impl<'a> Printer<'a> {
         let mut computed_property_side_effects: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering
-        // (name, initializer_idx, init_end, trailing_comments) — comments filled during class body iteration
+        // (name, initializer_idx, init_end, trailing_comments)
+        // Trailing comments are collected eagerly here so they're available even
+        // when the constructor appears before the property in source order.
         let mut field_inits: Vec<(String, NodeIndex, u32, Vec<String>)> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
         if needs_class_field_lowering {
-            for &member_idx in &class.members.nodes {
+            let members = &class.members.nodes;
+            for (member_i, &member_idx) in members.iter().enumerate() {
                 if let Some(member_node) = self.arena.get(member_idx)
                     && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
@@ -818,6 +821,20 @@ impl<'a> Printer<'a> {
                     if name.is_empty() {
                         continue;
                     }
+
+                    // Pre-collect trailing comments for this property declaration.
+                    let trailing_comments = if !self.ctx.options.remove_comments {
+                        let skip_end = members
+                            .get(member_i + 1)
+                            .and_then(|&next_idx| self.arena.get(next_idx))
+                            .map_or(member_node.end, |next| next.pos);
+                        let actual_end =
+                            self.find_token_end_before_trivia(member_node.pos, skip_end);
+                        self.collect_trailing_comments_in_range(actual_end)
+                    } else {
+                        Vec::new()
+                    };
+
                     if self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
@@ -830,13 +847,11 @@ impl<'a> Printer<'a> {
                             Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
-                        // init_end for synthesized constructors; trailing comments
-                        // filled during class body iteration for existing constructors
                         let init_end = self
                             .arena
                             .get(prop.initializer)
                             .map_or(member_node.end, |n| n.end);
-                        field_inits.push((name, prop.initializer, init_end, Vec::new()));
+                        field_inits.push((name, prop.initializer, init_end, trailing_comments));
                     }
                 }
             }
@@ -915,7 +930,7 @@ impl<'a> Printer<'a> {
                 }
             }
             // Non-private field inits after WeakMap.set calls
-            for (name, init_idx, init_end, _trailing) in &field_inits {
+            for (name, init_idx, init_end, trailing) in &field_inits {
                 if self.ctx.options.use_define_for_class_fields {
                     self.write("Object.defineProperty(this, ");
                     self.emit_string_literal_text(name);
@@ -939,9 +954,14 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit_expression(*init_idx);
                     self.write(";");
-                    // Synthesized constructor: member loop hasn't run yet,
-                    // so comments are still available via position-based lookup
-                    self.emit_trailing_comments(*init_end);
+                    if !trailing.is_empty() {
+                        for comment in trailing {
+                            self.write_space();
+                            self.write_comment(comment);
+                        }
+                    } else {
+                        self.emit_trailing_comments(*init_end);
+                    }
                 }
                 self.write_line();
             }
