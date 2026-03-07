@@ -10,7 +10,6 @@ FAIL TypeScript/tests/cases/compiler/ambientExternalModuleWithRelativeModuleName
 FAIL TypeScript/tests/cases/compiler/ambientPropertyDeclarationInJs.ts
 FAIL TypeScript/tests/cases/compiler/ambientWithStatements.ts
 FAIL TypeScript/tests/cases/compiler/ambiguousGenericAssertion1.ts
-FAIL TypeScript/tests/cases/compiler/amdModuleName2.ts
 FAIL TypeScript/tests/cases/compiler/arrayAssignmentTest1.ts
 FAIL TypeScript/tests/cases/compiler/arrayAssignmentTest5.ts
 FAIL TypeScript/tests/cases/compiler/arrayAssignmentTest6.ts
@@ -2535,6 +2534,7 @@ PASS TypeScript/tests/cases/compiler/amdLikeInputDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/amdModuleBundleNoDuplicateDeclarationEmitComments.ts
 PASS TypeScript/tests/cases/compiler/amdModuleConstEnumUsage.ts
 PASS TypeScript/tests/cases/compiler/amdModuleName1.ts
+PASS TypeScript/tests/cases/compiler/amdModuleName2.ts
 PASS TypeScript/tests/cases/compiler/anonClassDeclarationEmitIsAnon.ts
 PASS TypeScript/tests/cases/compiler/anonterface.ts
 PASS TypeScript/tests/cases/compiler/anonymousClassDeclarationDoesntPrintWithReadonly.ts
