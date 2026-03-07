@@ -25,12 +25,24 @@ pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
 }
 
+pub(crate) fn is_symbol_or_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_symbol_or_unique_symbol_type(db, type_id)
+}
+
 pub(crate) fn find_property_in_object_by_str(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     property: &str,
 ) -> Option<tsz_solver::PropertyInfo> {
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, property)
+}
+
+pub(crate) fn type_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
+}
+
+pub(crate) fn invalid_index_type_member(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_invalid_index_type_member(db, type_id)
 }
 
 pub(crate) fn has_type_query_for_symbol<F>(

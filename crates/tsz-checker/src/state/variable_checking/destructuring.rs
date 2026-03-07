@@ -617,10 +617,8 @@ impl<'a> CheckerState<'a> {
                     // has a matching symbol property (late-bound property access).
                     // For type parameters, skip the symbol check since the constraint
                     // may have matching symbol properties we can't resolve statically.
-                    let is_symbol = tsz_solver::type_queries::is_symbol_or_unique_symbol_type(
-                        self.ctx.types,
-                        resolved_key,
-                    );
+                    let is_symbol =
+                        query::is_symbol_or_unique_symbol_type(self.ctx.types, resolved_key);
                     let symbol_should_report =
                         if !is_symbol {
                             false
@@ -630,8 +628,8 @@ impl<'a> CheckerState<'a> {
                         } else {
                             // Concrete type: check for actual named property (not index sigs)
                             tsz_solver::visitor::unique_symbol_ref(self.ctx.types, resolved_key)
-                                .map_or(true, |sym_ref| {
-                                    !tsz_solver::type_queries::type_has_property_by_str(
+                                .is_none_or(|sym_ref| {
+                                    !query::type_has_property(
                                         self.ctx.types,
                                         parent_type,
                                         &format!("__unique_{}", sym_ref.0),
@@ -640,10 +638,7 @@ impl<'a> CheckerState<'a> {
                         };
                     // Check for structurally invalid types (void, null, boolean, etc.)
                     let has_structural_invalid =
-                        tsz_solver::type_queries::get_invalid_index_type_member(
-                            self.ctx.types,
-                            resolved_key,
-                        );
+                        query::invalid_index_type_member(self.ctx.types, resolved_key);
                     let should_report =
                         is_any_or_error || symbol_should_report || has_structural_invalid.is_some();
                     if should_report {
