@@ -3269,7 +3269,7 @@ fn compile_missing_file_in_files_array_returns_error() {
     assert!(result.is_err(), "Should return error for missing file");
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("file not found") || err.contains("not found") || err.contains("missing"),
+        err.contains("not found") || err.contains("TS6053") || err.contains("missing"),
         "Error should mention file not found: {err}"
     );
     // No output should be produced

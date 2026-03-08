@@ -140,7 +140,10 @@ fn discover_files_missing_explicit_file_errors() {
 
     let err = discover_ts_files(&options).expect_err("missing file should error");
     let message = err.to_string();
-    assert!(message.contains("file not found"), "{message}");
+    assert!(
+        message.contains("not found") || message.contains("TS6053"),
+        "{message}"
+    );
 }
 
 #[cfg(unix)]

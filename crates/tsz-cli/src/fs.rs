@@ -55,7 +55,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
 
     for file in &options.files {
         let path = resolve_file_path(&options.base_dir, file);
-        ensure_file_exists(&path)?;
+        ensure_file_exists(&path, file)?;
         // Explicitly listed files (from CLI positional args or tsconfig "files" array)
         // are always compiled, including .js/.jsx/.mjs/.cjs files, regardless of
         // the allowJs setting. This matches tsc behavior where allowJs only controls
@@ -266,9 +266,11 @@ fn resolve_file_path(base_dir: &Path, file: &Path) -> PathBuf {
     }
 }
 
-fn ensure_file_exists(path: &Path) -> Result<()> {
+fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     if !path.exists() {
-        bail!("file not found: {}", path.display());
+        // Use the original (relative) path in the error message to match tsc's TS6053 format.
+        // The marker prefix lets the CLI layer detect this and format it properly.
+        bail!("TS6053: File '{}' not found.", original.display());
     }
 
     if !path.is_file() {
