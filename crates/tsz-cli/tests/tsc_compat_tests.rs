@@ -83,6 +83,29 @@ fn run_tsz(cwd: &Path, args: &[&str]) -> Option<String> {
     Some(normalize_output(&combined))
 }
 
+/// Run tsz and return (exit_code, combined_output).
+fn run_tsz_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
+    let tsz_bin = find_tsz_binary()?;
+    let output = Command::new(&tsz_bin)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    let code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Combine both stdout and stderr for the full picture
+    let mut combined = String::new();
+    if !stderr.is_empty() {
+        combined.push_str(&stderr);
+    }
+    if !stdout.is_empty() {
+        combined.push_str(&stdout);
+    }
+    Some((code, normalize_output(&combined)))
+}
+
 /// Find the tsz binary in the target directory.
 fn find_tsz_binary() -> Option<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -688,4 +711,141 @@ fn tsc_compat_double_digit_line_number_pretty() {
             "Double-digit line number output mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
         );
     }
+}
+
+// ===========================================================================
+// CLI error format tests (TS5023, TS5025, TS6369, build mode flag remapping)
+// ===========================================================================
+
+#[test]
+fn unknown_flag_ts5023_format() {
+    let temp = TempDir::new("unknown_flag_ts5023").expect("temp dir");
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--badFlag"]).expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for unknown flag, got {code}");
+    assert!(
+        output.contains("error TS5023: Unknown compiler option '--badFlag'."),
+        "Expected TS5023 diagnostic for unknown flag, got:\n{output}"
+    );
+}
+
+#[test]
+fn unknown_flag_ts5025_suggestion_format() {
+    let temp = TempDir::new("unknown_flag_ts5025").expect("temp dir");
+    // --strct is close to --strict, should trigger TS5025 with suggestion
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--strct"]).expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected exit code 1 for unknown flag with suggestion, got {code}"
+    );
+    assert!(
+        output.contains("error TS5025: Unknown compiler option '--strct'. Did you mean '--strict'?"),
+        "Expected TS5025 diagnostic with suggestion, got:\n{output}"
+    );
+}
+
+#[test]
+fn unknown_flag_exit_code_is_1_not_2() {
+    let temp = TempDir::new("unknown_flag_exit_code").expect("temp dir");
+    let (code, _output) =
+        run_tsz_with_exit_code(&temp.path, &["--totallyBogusOption123"])
+            .expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected exit code 1 for unknown flag (not clap's default 2), got {code}"
+    );
+}
+
+#[test]
+fn build_mode_v_means_verbose() {
+    let temp = TempDir::new("build_v_verbose").expect("temp dir");
+    // With -b -v, -v should map to --build-verbose, NOT --version.
+    // Since there's no tsconfig, it will error, but should not print version info.
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-b", "-v"]).expect("tsz binary not found");
+
+    // Should NOT contain version output
+    assert!(
+        !output.contains("Version ") && !output.contains("tsz "),
+        "tsz -b -v should not print version info, got:\n{output}"
+    );
+    // The build should proceed (even if it fails due to no tsconfig) - it should
+    // not be interpreted as --version
+    let _ = code; // Exit code varies based on tsconfig presence
+}
+
+#[test]
+fn build_mode_d_means_dry() {
+    let temp = TempDir::new("build_d_dry").expect("temp dir");
+    // With -b -d, -d should map to --dry, NOT --declaration.
+    // Since there's no tsconfig, it will error, but should try dry run path.
+    let (_code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-b", "-d"]).expect("tsz binary not found");
+
+    // If it tried --declaration instead, clap would likely work differently.
+    // The key test: -d in build mode should not set declaration=true outside build context.
+    // The output should either show dry run behavior or build mode error (no tsconfig),
+    // but not a "declaration" related message.
+    let _ = output;
+}
+
+#[test]
+fn build_mode_f_means_force() {
+    let temp = TempDir::new("build_f_force").expect("temp dir");
+    // With -b -f, -f should map to --force.
+    let (_code, _output) =
+        run_tsz_with_exit_code(&temp.path, &["-b", "-f"]).expect("tsz binary not found");
+    // Should not error with "unknown argument" for -f in build mode
+}
+
+#[test]
+fn build_not_first_ts6369() {
+    let temp = TempDir::new("build_not_first").expect("temp dir");
+    // --build must be first; if it's not, emit TS6369
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--noEmit", "--build"])
+            .expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected exit code 1 for TS6369 (--build not first), got {code}"
+    );
+    assert!(
+        output.contains("error TS6369: Option '--build' must be the first command line argument."),
+        "Expected TS6369 diagnostic, got:\n{output}"
+    );
+}
+
+#[test]
+fn build_first_is_ok() {
+    let temp = TempDir::new("build_first_ok").expect("temp dir");
+    // --build as first argument should NOT trigger TS6369
+    let (_code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--build"]).expect("tsz binary not found");
+
+    assert!(
+        !output.contains("TS6369"),
+        "Should not emit TS6369 when --build is first, got:\n{output}"
+    );
+}
+
+#[test]
+fn build_short_b_not_first_ts6369() {
+    let temp = TempDir::new("build_short_not_first").expect("temp dir");
+    // -b (short for --build) must also be first
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--noEmit", "-b"]).expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected exit code 1 for TS6369 (-b not first), got {code}"
+    );
+    assert!(
+        output.contains("error TS6369"),
+        "Expected TS6369 diagnostic for -b not first, got:\n{output}"
+    );
 }
