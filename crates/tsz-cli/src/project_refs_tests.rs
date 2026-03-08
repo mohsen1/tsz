@@ -397,3 +397,81 @@ fn test_validate_circular_reference_ts6202() {
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_build_order_keeps_sibling_dependencies_deterministic() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let project_a = root.join("project-a");
+    std::fs::create_dir_all(&project_a).expect("directory creation should succeed in test");
+    create_test_project(
+        &project_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true }
+        }"#,
+    );
+
+    let project_b = root.join("project-b");
+    std::fs::create_dir_all(&project_b).expect("directory creation should succeed in test");
+    create_test_project(
+        &project_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let project_c = root.join("project-c");
+    std::fs::create_dir_all(&project_c).expect("directory creation should succeed in test");
+    create_test_project(
+        &project_c,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [
+                { "path": "./project-c" },
+                { "path": "./project-b" }
+            ]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let order = graph.build_order().unwrap();
+    let ordered_names: Vec<String> = order
+        .iter()
+        .map(|&id| {
+            graph
+                .get_project(id)
+                .unwrap()
+                .config_path
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(
+        ordered_names,
+        vec![
+            "project-a".to_string(),
+            "project-b".to_string(),
+            "project-c".to_string(),
+            temp.path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        ],
+        "build order should remain deterministic for sibling projects that share a dependency"
+    );
+}

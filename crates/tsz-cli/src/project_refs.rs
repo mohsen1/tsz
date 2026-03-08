@@ -16,6 +16,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
 use super::config::{CompilerOptions, TsConfig};
@@ -302,12 +303,11 @@ impl ProjectReferenceGraph {
             }
         }
 
-        let mut queue: Vec<ProjectId> = in_degree
+        let mut queue: BinaryHeap<ProjectId> = in_degree
             .iter()
             .filter(|&(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
-        queue.sort(); // Deterministic order
 
         let mut order = Vec::new();
         while let Some(node) = queue.pop() {
@@ -321,7 +321,6 @@ impl ProjectReferenceGraph {
                     queue.push(neighbor);
                 }
             }
-            queue.sort(); // Keep deterministic
         }
 
         // Reverse because we want dependencies first

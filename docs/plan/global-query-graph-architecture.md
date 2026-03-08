@@ -1,157 +1,265 @@
-# RFC: Zero-Config Monorepo Parallelism (The Global Query Graph)
+# Code-Grounded Plan: Large-Repo Performance
 
-**Status**: Draft  
+**Status**: Working design, grounded in current code  
 **Owner**: TSZ team  
-**Date**: February 22, 2026  
-**Audience**: Compiler and LSP maintainers  
+**Date**: March 8, 2026  
+**Audience**: Compiler, CLI, and LSP maintainers
 
-## 1. Executive Summary
+## 1. North Star
 
-Historically, scaling TypeScript in large monorepos required manual orchestration using "Project References" (`tsconfig.json` `references`). This forces developers into a rigid, acyclic, and manually maintained build DAG. It creates pipeline stalls, memory spikes, and forces architectural compromises (e.g., merging packages to avoid cross-project circular dependencies).
+The goal of this plan is simple: make `tsz` materially faster and flatter in memory on very large repositories without breaking `tsc` compatibility.
 
-This RFC proposes a radical departure from the `tsc --build` orchestration model. `tsz` will abandon "Projects" as the unit of concurrency and instead adopt a **Demand-Driven Global Symbol Graph**. 
+That means the plan must be driven by the code we actually have today:
 
-**The Killer Feature:** `tsz` will advertise that developers can **delete their project references**. `tsz` will automatically discover the dependency graph, parallelize work at the symbol level across the entire monorepo, and—unlike `tsc`—safely allow and resolve circular dependencies between packages.
+- Multi-file compilation still retains all file arenas after merge in `src/parallel.rs`.
+- The checker still runs with borrowed `NodeArena` + `BinderState` and uses cross-arena delegation rather than on-demand hydration.
+- `QueryDatabase` is a solver/type-query interface, not a workspace scheduler.
+- Project references already have a compatibility frontend in the CLI.
 
----
+Any plan that ignores those facts will produce architecture churn instead of measurable performance wins.
 
-## 2. Core Architecture: The Two-Brain Model
+## 2. What Exists Today
 
-To achieve massive parallelism while remaining strictly `tsc` compatible for legacy users, `tsz` splits orchestration into two layers:
+### 2.1 Current parallel pipeline
 
-### 2.1 The Compatibility Frontend (The Facade)
-For users who keep their `tsconfig.json` project references (e.g., for discrete `.js`/`.d.ts` emitting), the Frontend reads the DAG and validates it. It can emit `TS6202` (circular reference) if strict compatibility is requested. However, it does *not* use this DAG for execution.
+The current flow is:
 
-### 2.2 The Query Backend (The Engine)
-The core compiler ignores artificial project boundaries. It treats the entire monorepo as a single fluid sea of files. It resolves types using a demand-driven query engine (inspired by Rust's Salsa). 
+`parse_and_bind_parallel -> merge_bind_results -> check_files_parallel`
 
----
+Key facts from code:
 
-## 3. The Phased Demand-Driven Pipeline
+- `BindResult` retains an `Arc<NodeArena>` per file in `src/parallel.rs`.
+- `MergedProgram` retains `BoundFile.arena`, `symbol_arenas`, and `declaration_arenas` in `src/parallel.rs`.
+- `check_files_parallel` reconstructs a per-file binder from merged global state instead of using a demand-driven workspace engine.
 
-To handle TypeScript's unique semantics (Declaration Merging and Return Type Inference) without deadlocks or memory corruption, `tsz` uses a phased query architecture:
+This is a valid baseline, but it means memory currently scales with the number of retained arenas, not just the number of active workers.
 
-### Phase 1: Global Indexing (The "Skeleton" Pass)
-TypeScript requires global knowledge of ambient declarations before any type resolution can occur.
-1. **Concurrent Fast-Parse:** All files are parsed in parallel.
-2. **Stable Identification:** We do *not* use `NodeIndex` for global symbols. We extract a "Skeleton" of the file, mapping exports, interfaces, and function signatures to stable `DefId`s (Definition IDs) and byte spans.
-3. **Global Merge:** We merge global augmentations (e.g., `interface Window`) and module graphs sequentially. Because we only merge the *Skeleton* (dropping the ASTs immediately), this takes milliseconds and avoids Amdahl's Law bottlenecks.
+### 2.2 Current checker reality
 
-### Phase 2: Demand-Driven Resolution (The Salsa Engine)
-We transition to a concurrent query engine (`QueryDatabase`). There is no artificial split between "API" and "Body" checking; everything is a query.
-1. **Query Execution:** A worker thread asks for the type of a `DefId`. 
-2. **On-Demand AST Hydration:** If the query requires checking a function body, the Virtual File System reads the file, re-parses it, and maps the stable `DefId` back to the temporary `NodeIndex` for local evaluation. The AST is held in a short-lived thread-local Arena and dropped immediately after the query completes.
-3. **Cycle-Aware Wait Graph:** If Thread A's query depends on Thread B's query, it registers an edge in a global Wait-Graph. If a multi-thread cyclic deadlock is detected, the engine panics the participating threads, rolls back their state, and executes the Strongly Connected Component (SCC) on a single thread using Fixpoint Iteration.
+The checker is not yet shaped for AST eviction:
 
----
+- `CheckerContext` owns `&NodeArena` and `&BinderState`.
+- Cross-file work uses `all_arenas`, `all_binders`, and `cross_file_symbol_targets`.
+- Cross-file symbol/type resolution creates child checkers via cross-arena delegation.
 
-## 4. Solving the Memory Crisis: Stable IDs vs. Arenas
+That is a workable architecture for correctness, but not yet for re-parse-on-demand execution.
 
-The legacy `tsc` model keeps all ASTs in memory. Previous `tsz` iterations tightly coupled `Symbol`s to `NodeIndex`es, making it impossible to drop ASTs without creating dangling pointers.
+### 2.3 Current incremental footholds
 
-**The Fix: The DefId Indirection**
-*   **The Global Tier:** The `SymbolArena` and `TypeInterner` never store `NodeIndex`es. They only store `DefId`s, which represent a stable logical path (e.g., `FileId(42) + DeclarationPath("export class Foo")`).
-*   **The Local Tier:** Worker threads instantiate short-lived `NodeArena`s to answer queries. They map the `DefId` to a local `NodeIndex`, compute the type, intern the result into the Global Tier, and then completely destroy the `NodeArena`.
-*   **Result:** Peak memory (RSS) is mathematically bounded by `(Global_Symbol_Graph_Size) + (Worker_Thread_Count * Average_File_AST_Size)`. It will never OOM, regardless of monorepo size.
+We already have two important building blocks for large-repo performance work:
 
----
+- CLI cache invalidation uses export hashes and dependent tracking in `crates/tsz-cli/src/driver/core.rs`.
+- LSP `Project` already does export-signature based smart invalidation in `crates/tsz-lsp/src/project/core.rs`.
 
-## 5. Incremental Caching & `.tsbuildinfo`
+Those are not the final global query graph, but they are real performance primitives and should be expanded, not discarded.
 
-We replace coarse `tsc` cache invalidation with **Semantic API Fingerprinting**.
+## 3. Landed In This Session
 
-1. When a file is modified, we fast-parse it to generate its Outline.
-2. If the Outline (the API Fingerprint) matches the cached Outline, we **do not** invalidate downstream files, even if they are in different packages.
-3. We only drop to Phase 4 (Body Checking) for the specific file that changed.
-4. We synthesize fake `.tsbuildinfo` files on disk purely to satisfy external tools or legacy scripts, while keeping the true incremental graph in a centralized `tsz` cache.
+This document is not purely aspirational. Two small pieces landed to support future work:
 
----
+### 3.1 Deterministic project-reference scheduling without repeated re-sorting
 
-## 6. Concrete Action Items (Refactoring Path)
+`ProjectReferenceGraph::build_order` now uses a heap-backed ready queue instead of re-sorting a `Vec` after every node release.
 
-To transition the existing codebase to this architecture, the following critical refactoring steps are required:
+Why this matters:
 
-### 6.1 Refactor `Symbol` to Remove `NodeIndex` (The Memory Fix)
-Currently, `Symbol` in `crates/tsz-binder/src/lib.rs` tightly couples to `NodeIndex` (e.g., `pub declarations: Vec<NodeIndex>`). This prevents dropping the AST (`NodeArena`).
-*   **Action:** Change `Symbol` to store stable logical pointers—either a `DefId` mapped to a File ID + Byte Span (`[start, end]`), or a lightweight "Skeleton IR". 
-*   **Goal:** When a worker thread needs to re-hydrate an AST to evaluate a body, it parses the file and uses the Byte Span to re-discover the correct `NodeIndex` in the new, short-lived `NodeArena`.
+- project-reference builds are still part of the current compatibility path,
+- stable scheduling is required for trustworthy large-repo benchmarking,
+- this removes avoidable `queue.sort()` work from the hot path.
 
-### 6.2 Gut `MergedProgram` and Sequential Merging (The Amdahl Fix)
-Currently, `src/parallel.rs` parses files concurrently but then calls `merge_bind_results`, which sequentially merges every file's `SymbolArena` into a single `MergedProgram` and retains every `Arc<NodeArena>`.
-*   **Action:** Delete the sequential merge phase. `parse_and_bind_parallel` should extract the "Skeletons" (exported symbols and ambient declarations) and insert them concurrently into a lock-free `DashMap` (already available in `Cargo.toml`).
-*   **Goal:** Immediately drop the `NodeArena`s after extracting the Skeleton, keeping global memory flat and initialization time near-zero.
+Guardrail test added:
 
-### 6.3 Invert CLI Control Flow (The Execution Fix)
-Currently, `crates/tsz-cli/src/build.rs` (`build_solution`) orchestrates builds by topologically sorting `tsconfig.json` references and compiling projects in a sequential loop.
-*   **Action:** The CLI must stop managing the build graph. It should simply initialize the `QueryDatabase` with the workspace root and invoke a single, top-level query: `db.check_workspace()`.
-*   **Goal:** The `QueryDatabase`'s demand-driven engine takes over, spawning parallel worker threads that traverse the global import graph, hydrating ASTs on-demand, and resolving types concurrently.
+- `test_build_order_keeps_sibling_dependencies_deterministic`
 
-### 6.4 Deterministic Diagnostics Emitting (The Output Fix)
-When `db.check_workspace()` executes concurrently across the entire monorepo, worker threads will generate diagnostics in a non-deterministic order based on OS thread scheduling. 
-*   **Action:** The `QueryDatabase` must buffer all generated diagnostics internally during execution rather than streaming them directly to the console.
-*   **Goal:** Before the CLI exits, it must collect the buffered diagnostics, sort them deterministically (e.g., by file path, then by line/column number), and print them sequentially. This ensures that `tsz` output remains perfectly stable and predictable across identical CI runs, matching `tsc`'s sequential emission style.
+### 3.2 Merged-program residency counters
 
----
+`MergedProgram::residency_stats()` now exposes stable counters for how much arena-backed state the current pipeline retains after merge.
 
-## 7. Marketing & Adoption Strategy
+Why this matters:
 
-We will explicitly advertise this feature as a reason to migrate to `tsz`:
-> *"Tired of Project Reference Hell? Delete your `references` arrays. `tsz` builds a global symbol graph in milliseconds, parallelizes your entire monorepo automatically, and even lets you keep those circular dependencies."*
+- we need baseline numbers before attempting AST eviction or skeletonization,
+- this gives us a cheap, testable signal for “how much multi-file state are we still holding?”
 
----
+Guardrail tests added:
 
-## 8. Testing & Validation Strategy
+- `test_merged_program_residency_stats_track_unique_file_arenas`
+- `test_merged_program_residency_stats_deduplicate_shared_arena_handles`
 
-To ensure absolute `tsc` compatibility and performance regressions aren't introduced, the following validation framework must be established:
+## 4. Revised Plan
 
-### 8.1 Correctness & Compatibility
-*   **Conformance Test Harness Extension:** The `tests/conformance/` suite must be run with a new `--global-graph` flag that simulates dissolving multi-project `tsconfig.json` test fixtures into a single compilation context.
-*   **Cyclic Resolution Assertions:** Create synthetic test graphs in `crates/tsz-checker/src/tests/` with cross-package circular dependencies (e.g., `pkg_a` exporting a class extending an interface from `pkg_b`, which imports an enum from `pkg_a`). Assert that `tsz` correctly evaluates types without entering an infinite loop or emitting a false `TS2506` error (unless it is a structurally invalid type cycle).
-*   **Emit Fidelity Analysis:** Ensure that when `tsz --build` operates in the global graph backend, the output `.js` and `.d.ts` files perfectly align with the `outDir` structure dictated by the respective original `tsconfig.json` bounds.
+### Phase 0: Measure and protect current behavior
 
-### 8.2 Memory Benchmarking
-*   **Peak RSS Monitoring (`crates/tsz-cli/src/build.rs`):** We will track Peak RSS across identical builds.
-*   *Test Scenario:* Compile a simulated 500-project monorepo (1M+ lines of code) with `check_files_parallel`.
-*   *Validation:* The memory ceiling must remain flat (determined by `GlobalTypeInterner` capacity + `N * NodeArena`, where `N` is the thread count, rather than `Total_Files * NodeArena`).
+**Goal:** make future large-repo work evidence-driven.
 
-## 9. Gradual Implementation Strategy (The Strangler Fig)
+Actions:
 
-A "big bang" rewrite of the checker and binder would stall feature development and destabilize the project. Instead, we will transition to the Global Query Graph through a sequence of non-breaking, incremental phases. 
+1. Keep adding residency and invalidation counters around existing whole-program paths.
+2. Add tests that lock in smart invalidation behavior for body-only edits, comment-only edits, private-symbol edits, and export-surface edits.
+3. Add benchmark scenarios that report retained arena counts, symbol counts, and invalidated dependent counts alongside wall-clock time.
 
-**Critical Insight:** We *cannot* implement AST Eviction until the Checker is fully demand-driven (pull-model). A traditional push-model checker walks the entire AST at once; if we evict ASTs underneath it, it will thrash the disk continuously. 
+Why this phase comes first:
 
-### Phase A: Symbol Location Decoupling (Non-Breaking)
-**Goal:** Break the strict `Symbol` -> `NodeIndex` memory dependency.
-1. Add `file_id` and `span` (start/end bytes) to the `Symbol` struct alongside `declarations`.
-2. Update the `Binder` to populate these fields.
-3. Introduce a `NodeLocator` utility. *Note: Since re-parsing means `NodeIndex`es shift, `NodeLocator` must use a fast binary-search over AST node spans to map `(FileId, Span) -> NodeIndex` in `O(log N)` time.*
-4. Safely remove `declarations: Vec<NodeIndex>` from `Symbol`.
+- Without stable counters, we cannot tell whether a refactor improved anything.
+- Without guardrail tests, “performance work” will regress correctness or invalidate too much cached state.
 
-### Phase B: Demand-Driven Cycle Resolution (The Pull Model)
-**Goal:** Shift the Checker from walking ASTs to querying types, allowing cycle tolerance.
-1. Shift the `Checker` to a strict pull-model. When evaluating an imported symbol, use `QueryDatabase::evaluate_type(DefId)`.
-2. Implement the active-query stack in the `QueryDatabase`.
-3. Add the Fixpoint Iteration fallback: when a thread detects a re-entrant query in its active stack, it traps the cycle, isolates the SCC, and resolves it sequentially.
-*Result: The checker is now lazy. It only reads AST nodes when a specific type is requested.*
+### Phase 1: Stabilize identity before changing execution
 
-### Phase C: Map-Reduce Global Indexing (Deterministic Concurrency)
-**Goal:** Eliminate the Amdahl's Law bottleneck in `MergedProgram` without breaking TypeScript's declaration merging rules.
-1. Replace `merge_bind_results` with a concurrent Map-Reduce strategy.
-2. **Map:** Worker threads concurrently build file-local "Skeletons" (ambient declarations and exports).
-3. **Reduce:** A fast sequential pass merges these Skeletons globally. *Note: We cannot use a naive concurrent `DashMap` here because TS declaration merging (like function overloads) is strictly dependent on file inclusion order. The sequential reduce guarantees determinism.*
-*Result: Massive wall-clock reduction for large monorepos. Memory remains high.*
+**Goal:** introduce a true file-stable semantic identity layer before any AST eviction work.
 
-### Phase D: The AST Eviction Pool & Pinned Libs (Memory Optimization)
-**Goal:** Implement the Two-Tier Memory Model.
-1. Wrap the `Vec<Arc<NodeArena>>` in an LRU Cache managed by the `QueryDatabase`.
-2. **Crucial:** Pin `lib.d.ts` (e.g., `Array`, `Promise`) arenas so they are *never* evicted. Evicting standard libraries would tank performance.
-3. Set an RSS high-water mark. When crossed, evict the oldest user-code `NodeArena`s.
-4. Implement the VFS `Hydrate` logic: if the `NodeLocator` requests a file that was evicted, re-read and re-parse it on-demand.
-*Result: Peak RSS drops massively. The compiler avoids OOM crashes on massive monorepos.*
+Current obstacle:
 
-### Phase E: CLI Control Flow Inversion (The Final Cutover)
-**Goal:** Delete the old `tsc --build` emulation loop.
-1. Introduce a hidden `--global-graph` flag to the CLI for parallel testing in CI.
-2. Bypass `tsconfig.json` reference sorting. Pass all files directly to the `QueryDatabase`.
-3. Implement the Deterministic Diagnostics Buffer (sort by file/line before printing).
-4. Deprecate sequential project builds once telemetry proves stability on large repositories.
+- `Symbol` still stores `Vec<NodeIndex>` and `value_declaration: NodeIndex`.
+- `DefId` creation still happens lazily in the checker from `SymbolId`.
+
+Actions:
+
+1. Extend binder-owned symbol identity with stable declaration locations.
+2. Move toward binder/index-owned `DefId` creation for top-level semantic definitions.
+3. Keep `NodeIndex` as a local execution detail, not a cross-file semantic identity.
+
+Success criteria:
+
+- checker does not need to invent identity for imported/top-level declarations,
+- symbol identity survives re-parse,
+- the type environment can resolve `Lazy(DefId)` without checker-local repair logic.
+
+### Phase 2: Build a file skeleton layer, not a full workspace query engine
+
+**Goal:** reduce retained state early without rewriting the checker all at once.
+
+Current obstacle:
+
+- `merge_bind_results` performs more than one job: symbol remapping, declaration merging, export/re-export propagation, augmentation stitching, and declaration-to-arena indexing.
+
+Actions:
+
+1. Define a binder-produced skeleton IR containing only the data needed for:
+	- top-level exports,
+	- ambient/global/module augmentations,
+	- declaration merge candidates,
+	- stable definition identity and source span.
+2. Split current `merge_bind_results` into:
+	- map: per-file skeleton extraction,
+	- reduce: deterministic global merge of skeletons,
+	- legacy path: full arena-backed merged program for features that still require it.
+3. Keep the reduce phase deterministic and ordered. Do not replace it with a naive concurrent `DashMap` merge.
+
+Success criteria:
+
+- we can construct a global index without retaining every user AST,
+- declaration merging behavior stays deterministic,
+- global augmentations and re-exports remain correct.
+
+### Phase 3: Expand incremental API-fingerprint invalidation across CLI and workspace state
+
+**Goal:** reduce unnecessary downstream work in large repos before touching checker execution.
+
+Current footholds:
+
+- CLI export hashes in `CompilationCache`
+- LSP export signatures in `Project`
+
+Actions:
+
+1. Align the CLI and LSP notion of public API fingerprint so they do not drift semantically.
+2. Add dependent invalidation summaries to watch/build diagnostics for perf analysis.
+3. Broaden tests around re-exports, namespace exports, type-only export changes, and ambient augmentations.
+
+Success criteria:
+
+- body-only edits stay local,
+- export-surface changes invalidate the minimal required dependent set,
+- cache churn becomes explainable and observable.
+
+### Phase 4: Pull semantic work behind query boundaries before AST eviction
+
+**Goal:** make the checker less arena-centric a subsystem at a time.
+
+This is not “replace the checker with Salsa.” It is a staged conversion of the hottest cross-file paths into demand-driven queries.
+
+Actions:
+
+1. Identify the highest-cost cross-file queries:
+	- imported symbol type resolution,
+	- class/interface heritage resolution,
+	- namespace/module export lookup,
+	- lazy generic body evaluation.
+2. Move those paths behind boundary helpers that consume stable definition identity and skeleton/global index data first.
+3. Keep full-file checking arena-backed until the hot cross-file edges no longer assume all arenas are resident.
+
+Success criteria:
+
+- the checker can answer selected cross-file questions without cloning large binder/arena state,
+- cross-arena delegation becomes the fallback path rather than the primary mechanism,
+- correctness remains locked by existing tests plus new targeted regression tests.
+
+### Phase 5: Introduce bounded arena residency
+
+**Goal:** reduce peak RSS only after identity and cross-file access are stable.
+
+Actions:
+
+1. Separate pinned libraries from evictable user-code arenas.
+2. Introduce a bounded arena pool for user files.
+3. Re-hydrate user AST/binder state on demand using stable definition locations.
+4. Keep per-worker execution local; do not globalize mutable checker state.
+
+Success criteria:
+
+- peak RSS grows with active work rather than total repository size,
+- library types remain hot,
+- re-hydration does not cause pathological churn on common edit/check loops.
+
+### Phase 6: Only then consider a real workspace scheduler
+
+**Goal:** replace project-level orchestration once the semantic substrate can support it.
+
+At this point the question is no longer “can we imagine a global query graph?” but “do we have stable IDs, a skeleton index, bounded arena residency, and deterministic diagnostics?”
+
+If yes, then a workspace-level engine can own:
+
+- file discovery,
+- dependency scheduling,
+- concurrent query execution,
+- deterministic diagnostic collection,
+- compatibility-mode project-reference validation.
+
+Until then, the current CLI/LSP orchestration should remain the outer control plane.
+
+## 5. Explicit Non-Goals For Now
+
+The following are not near-term steps:
+
+- replacing the current solver `QueryDatabase` with a workspace scheduler,
+- deleting project-reference support,
+- promising package-cycle support before stable identity and cycle handling exist,
+- doing emit via a global graph before check-only mode proves out.
+
+## 6. Validation Strategy
+
+Every phase should prove three things:
+
+1. **Correctness**
+	- Conformance unchanged or improved.
+	- No new cross-file regressions in checker, binder, or LSP tests.
+
+2. **Performance**
+	- Wall-clock time improves on large synthetic and real-world repositories.
+	- Dependency invalidation stays proportional to public API change.
+	- Arena residency counters move in the intended direction.
+
+3. **Determinism**
+	- Build order is stable.
+	- Diagnostics are emitted in a stable order.
+	- Merged/global indexing produces stable symbol identity and merge results.
+
+## 7. Immediate Next Work
+
+The next meaningful implementation steps are:
+
+1. Add more residency counters and benchmarks around `MergedProgram` and file checking.
+2. Unify API-fingerprint semantics between CLI incremental compilation and LSP project updates.
+3. Design a binder-owned skeleton IR with stable definition identity and deterministic reduce semantics.
+4. Start moving the hottest cross-file checker paths off direct arena/binder residency assumptions.
+
+This is the shortest path that is both compatible with the current codebase and pointed at the real large-repo bottlenecks.

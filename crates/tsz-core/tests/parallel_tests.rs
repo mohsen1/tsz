@@ -285,6 +285,46 @@ fn test_merge_preserves_file_locals() {
 }
 
 #[test]
+fn test_merged_program_residency_stats_track_unique_file_arenas() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert_eq!(stats.file_count, 2);
+    assert_eq!(stats.bound_file_arena_count, 2);
+    assert_eq!(stats.unique_arena_count, 2);
+    assert!(stats.symbol_arena_count >= 2);
+    assert!(stats.declaration_arena_bucket_count >= 2);
+    assert!(stats.declaration_arena_mapping_count >= 2);
+}
+
+#[test]
+fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
+    let files = vec![(
+        "a.ts".to_string(),
+        "export const a = 1; export function b() { return a; }".to_string(),
+    )];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert_eq!(stats.file_count, 1);
+    assert_eq!(stats.bound_file_arena_count, 1);
+    assert_eq!(
+        stats.unique_arena_count, 1,
+        "symbol/declaration arena maps should point back to the same retained file arena"
+    );
+    assert!(stats.symbol_arena_count >= 2);
+    assert!(stats.declaration_arena_mapping_count >= 2);
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
