@@ -1053,8 +1053,6 @@ FAIL TypeScript/tests/cases/compiler/superAccess2.ts
 FAIL TypeScript/tests/cases/compiler/superErrors.ts
 FAIL TypeScript/tests/cases/compiler/superInLambdas.ts
 FAIL TypeScript/tests/cases/compiler/superPropertyAccessInSuperCall01.ts
-FAIL TypeScript/tests/cases/compiler/superWithTypeArgument.ts
-FAIL TypeScript/tests/cases/compiler/superWithTypeArgument2.ts
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument3.ts
 FAIL TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults.ts
 FAIL TypeScript/tests/cases/compiler/tailRecursiveConditionalTypes.ts
@@ -2121,7 +2119,6 @@ FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts
-FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts
@@ -7026,6 +7023,8 @@ PASS TypeScript/tests/cases/compiler/superPropertyAccessInComputedPropertiesOfNe
 PASS TypeScript/tests/cases/compiler/superPropertyElementNoUnusedLexicalThisCapture.ts
 PASS TypeScript/tests/cases/compiler/superWithGenerics.ts
 PASS TypeScript/tests/cases/compiler/superWithGenericSpecialization.ts
+PASS TypeScript/tests/cases/compiler/superWithTypeArgument.ts
+PASS TypeScript/tests/cases/compiler/superWithTypeArgument2.ts
 PASS TypeScript/tests/cases/compiler/switchAssignmentCompat.ts
 PASS TypeScript/tests/cases/compiler/switchCaseCircularRefeference.ts
 PASS TypeScript/tests/cases/compiler/switchCaseInternalComments.ts
@@ -11835,6 +11834,7 @@ PASS TypeScript/tests/cases/conformance/types/literal/numericLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/numericStringLiteralTypes.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes2.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks02.ts
