@@ -58,6 +58,21 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.source_is_js_file
+            && export.module_specifier.is_none()
+            && export.export_clause.is_some()
+            && let Some(clause_node) = self.arena.get(export.export_clause)
+            && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+            && let Some(named) = self.arena.get_named_imports(clause_node)
+            && named.name.is_none()
+            && named.elements.nodes.is_empty()
+        {
+            // In JS, a bare `export {};` is only a module marker. Preserve module
+            // semantics via the final scope-fix pass instead of eagerly emitting it,
+            // so synthesized declaration exports can replace it.
+            return;
+        }
+
         // Check if export_clause is a declaration (interface, class, function, type, enum)
         if export.export_clause.is_some()
             && let Some(clause_node) = self.arena.get(export.export_clause)

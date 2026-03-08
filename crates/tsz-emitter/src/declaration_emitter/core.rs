@@ -593,6 +593,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
+        self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
 
         // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
         // Uses emission-time tracking instead of source-file analysis.
@@ -745,6 +746,17 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_declaration_kind {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
+        }
+
+        let is_variable_like_export = kind == syntax_kind_ext::VARIABLE_STATEMENT
+            || (kind == syntax_kind_ext::EXPORT_DECLARATION
+                && self
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .is_some_and(|clause| clause.kind == syntax_kind_ext::VARIABLE_STATEMENT));
+        if !is_variable_like_export {
+            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
         }
 
         // Save position before JSDoc comments so we can undo them if the
