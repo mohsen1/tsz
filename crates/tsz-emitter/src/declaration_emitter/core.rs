@@ -592,6 +592,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        self.emit_pending_top_level_jsdoc_type_aliases(source_file);
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
 
@@ -600,17 +601,7 @@ impl<'a> DeclarationEmitter<'a> {
         //
         // tsc logic: if isExternalModule(node) &&
         //   (!resultHasExternalModuleIndicator || (needsScopeFixMarker && !resultHasScopeMarker))
-        let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
-            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
-                let k = stmt_node.kind;
-                k == syntax_kind_ext::IMPORT_DECLARATION
-                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                    || self.stmt_has_export_modifier(stmt_node)
-            })
-        });
+        let is_module = self.source_file_has_module_syntax(source_file);
 
         if is_module
             && (!self.emitted_module_indicator
@@ -947,10 +938,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(func.name);
 
         // Type parameters
-        if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty()
+        let jsdoc_template_params = if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
         {
-            self.emit_type_parameters(type_params);
+            self.jsdoc_template_params_for_node(func_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
         }
 
         // Parameters
@@ -964,6 +968,9 @@ impl<'a> DeclarationEmitter<'a> {
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
             let func_type_id = cache
@@ -2274,6 +2281,19 @@ impl<'a> DeclarationEmitter<'a> {
                 if regular_decls.len() == 1 {
                     let (is_exported, decl_idx, _decl_node, decl) = regular_decls[0];
                     if self.emit_js_object_literal_namespace_if_possible(
+                        decl.name,
+                        decl.initializer,
+                        is_exported,
+                    ) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
+                    if self.emit_js_function_variable_declaration_if_possible(
+                        decl_idx,
                         decl.name,
                         decl.initializer,
                         is_exported,

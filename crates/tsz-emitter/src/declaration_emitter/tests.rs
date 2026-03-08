@@ -428,6 +428,81 @@ export function doTheThing(x) {
 }
 
 #[test]
+fn test_js_script_typedef_before_variable_is_emitted_as_local_type() {
+    let source = r#"
+/** @typedef {{x: string}} LocalType */
+const value = 1;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("type LocalType = {\n    x: string;\n};"),
+        "Expected script typedef before variable statement to be emitted as a local type alias: {output}"
+    );
+    assert!(
+        !output.contains("export type LocalType"),
+        "Did not expect script typedef to be emitted as an exported type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_function_variable_is_emitted() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected JSDoc-annotated JS function variable to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_signature_types() {
+    let source = r#"
+/**
+ * @param {number} x
+ * @returns {string}
+ */
+function format(x) {
+  return String(x);
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function format(x: number): string;"),
+        "Expected JSDoc function declaration types to flow into .d.ts emit: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;

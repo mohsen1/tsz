@@ -301,10 +301,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("export default function ");
         self.emit_node(func.name);
 
-        if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty()
+        let jsdoc_template_params = if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
         {
-            self.emit_type_parameters(type_params);
+            self.jsdoc_template_params_for_node(func_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
         }
 
         self.write("(");
@@ -316,6 +329,9 @@ impl<'a> DeclarationEmitter<'a> {
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it from the type cache
             let func_type_id = cache
@@ -647,10 +663,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("function ");
         self.emit_node(func.name);
 
-        if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty()
+        let jsdoc_template_params = if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
         {
-            self.emit_type_parameters(type_params);
+            self.jsdoc_template_params_for_node(func_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
         }
 
         self.write("(");
@@ -662,6 +691,9 @@ impl<'a> DeclarationEmitter<'a> {
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it from the type cache
             let func_type_id = cache
@@ -878,6 +910,18 @@ impl<'a> DeclarationEmitter<'a> {
                         } else {
                             regular_decls.push((decl_idx, decl));
                         }
+                    }
+                }
+
+                if regular_decls.len() == 1 {
+                    let (decl_idx, decl) = regular_decls[0];
+                    if self.emit_js_function_variable_declaration_if_possible(
+                        decl_idx,
+                        decl.name,
+                        decl.initializer,
+                        true,
+                    ) {
+                        continue;
                     }
                 }
 
@@ -1381,6 +1425,12 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                let jsdoc_param = if self.source_is_js_file {
+                    self.jsdoc_param_decl_for_parameter(param_idx, i)
+                } else {
+                    None
+                };
+
                 // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
                 self.emit_inline_parameter_comment(param_node.pos);
 
@@ -1388,7 +1438,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_member_modifiers(&param.modifiers);
 
                 // Rest parameter
-                if param.dot_dot_dot_token {
+                if param.dot_dot_dot_token || jsdoc_param.as_ref().is_some_and(|decl| decl.rest) {
                     self.write("...");
                 }
 
@@ -1402,6 +1452,9 @@ impl<'a> DeclarationEmitter<'a> {
                     param.initializer.is_some() && !param.question_token && i < last_required_idx;
 
                 if param.question_token
+                    || jsdoc_param
+                        .as_ref()
+                        .is_some_and(|decl| decl.optional && !decl.rest)
                     || (param.initializer.is_some() && !has_initializer_before_required)
                 {
                     self.write("?");
@@ -1411,6 +1464,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
+                } else if let Some(jsdoc_param) = jsdoc_param {
+                    self.write(": ");
+                    self.write(&jsdoc_param.type_text);
                 } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
                 {
                     // Inferred type from type cache
