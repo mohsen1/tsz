@@ -1465,13 +1465,40 @@ impl<'a> Printer<'a> {
                 .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
         });
 
-        // Check if class has extends clause
+        // Check if class has extends clause and whether it extends null
+        let mut extends_null = false;
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
             clauses.nodes.iter().any(|&idx| {
                 self.arena
                     .get(idx)
                     .and_then(|n| self.arena.get_heritage(n))
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        if h.token != SyntaxKind::ExtendsKeyword as u16 {
+                            return false;
+                        }
+                        // Check if extends expression is `null` or `(null)`
+                        if let Some(&type_idx) = h.types.nodes.first()
+                            && let Some(type_node) = self.arena.get(type_idx)
+                                && let Some(ewta) = self.arena.get_expr_type_args(type_node) {
+                                    let mut expr_idx = ewta.expression;
+                                    // Unwrap parenthesized expressions
+                                    while let Some(expr_node) = self.arena.get(expr_idx) {
+                                        if expr_node.kind
+                                            == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                                            && let Some(paren) =
+                                                self.arena.get_parenthesized(expr_node)
+                                            {
+                                                expr_idx = paren.expression;
+                                                continue;
+                                            }
+                                        if expr_node.kind == SyntaxKind::NullKeyword as u16 {
+                                            extends_null = true;
+                                        }
+                                        break;
+                                    }
+                                }
+                        true
+                    })
             })
         });
 
@@ -1493,7 +1520,7 @@ impl<'a> Printer<'a> {
             // the synthesized constructor use `this` instead of `void 0` as
             // the __awaiter first argument.
             self.function_scope_depth += 1;
-            if has_extends {
+            if has_extends && !extends_null {
                 self.write("constructor() {");
                 self.write_line();
                 self.increase_indent();

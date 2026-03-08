@@ -1757,15 +1757,16 @@ impl<'a> DeclarationEmitter<'a> {
                     && matches!(
                         kind,
                         JsCommonjsExpandoDeclKind::Function | JsCommonjsExpandoDeclKind::Value
-                    ) && let Some(member_text) = self.get_identifier_text(member_name)
-                    {
-                        Self::push_js_namespace_export_alias(
-                            &mut aliases,
-                            &root_name,
-                            member_text.clone(),
-                            member_text,
-                        );
-                    }
+                    )
+                    && let Some(member_text) = self.get_identifier_text(member_name)
+                {
+                    Self::push_js_namespace_export_alias(
+                        &mut aliases,
+                        &root_name,
+                        member_text.clone(),
+                        member_text,
+                    );
+                }
                 continue;
             };
 
