@@ -5204,6 +5204,47 @@ class Derived extends Base {
     );
 }
 
+/// TS18013 diagnostic should use the actual class name, not "the class".
+/// When accessing `obj.#prop` outside its declaring class via a type annotation,
+/// the error message must say "outside class 'ClassName'" with the real name.
+#[test]
+fn test_ts18013_uses_actual_class_name_not_the_class() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class A2 {
+    #prop: number = 1;
+}
+function test(a: A2) {
+    a.#prop;
+}
+        "#,
+    );
+
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        1,
+        "Should emit exactly one TS18013.\nActual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts18013_messages[0].contains("'A2'"),
+        "TS18013 should use the actual class name 'A2', not 'the class'.\n\
+         Actual message: {}",
+        ts18013_messages[0]
+    );
+    assert!(
+        !ts18013_messages[0].contains("the class"),
+        "TS18013 should not contain 'the class' as fallback.\n\
+         Actual message: {}",
+        ts18013_messages[0]
+    );
+}
+
 /// TS2416 base type name should include type arguments from the extends clause,
 /// not the generic parameter names. E.g., `Base<{ bar: string; }>` instead of `Base<T>`.
 #[test]

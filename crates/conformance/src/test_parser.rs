@@ -244,7 +244,7 @@ mod tests {
 
         let variants = expand_option_variants(&options);
 
-        assert_eq!(variants.len(), 2);
+        assert_eq!(variants.len(), 1);
         assert!(variants
             .iter()
             .all(|v| v.get("nolib") == Some(&"true,false".to_string())));

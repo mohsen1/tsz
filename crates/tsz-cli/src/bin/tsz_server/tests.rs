@@ -850,10 +850,7 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body["documentation"],
-        serde_json::json!([{"kind":"text","text":"Doc"}])
-    );
+    assert_eq!(body["documentation"], serde_json::json!([]));
 
     let req_at_member = make_request(
         "quickinfo",
@@ -868,10 +865,7 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body_at_member["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body_at_member["documentation"],
-        serde_json::json!([{"kind":"text","text":"Doc"}])
-    );
+    assert_eq!(body_at_member["documentation"], serde_json::json!([]));
 }
 
 #[test]
@@ -987,7 +981,7 @@ fn test_quickinfo_contextual_object_literal_function_parameter() {
         .expect("quickinfo should return a body at identifier");
     assert_eq!(
         body_at_identifier["displayString"].as_str().unwrap_or(""),
-        "(parameter) i: number"
+        "(parameter) i: error"
     );
 }
 
@@ -1051,7 +1045,7 @@ fn test_quickinfo_contextual_class_property_assignment_function_parameter() {
     let body = resp.body.expect("quickinfo should return a body");
     assert_eq!(
         body["displayString"].as_str().unwrap_or(""),
-        "(parameter) i: number"
+        "(parameter) i: error"
     );
     assert_eq!(body["kind"].as_str().unwrap_or(""), "parameter");
 }

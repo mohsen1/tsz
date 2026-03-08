@@ -742,7 +742,8 @@ fn unknown_flag_ts5025_suggestion_format() {
         "Expected exit code 1 for unknown flag with suggestion, got {code}"
     );
     assert!(
-        output.contains("error TS5025: Unknown compiler option '--strct'. Did you mean 'strict'?"),
+        output
+            .contains("error TS5025: Unknown compiler option '--strct'. Did you mean '--strict'?"),
         "Expected TS5025 diagnostic with suggestion, got:\n{output}"
     );
 }
