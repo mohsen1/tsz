@@ -762,6 +762,18 @@ impl<'a> CheckerState<'a> {
             Some((_, true))
         )
     }
+
+    /// Returns true if `sym_id` is a merged symbol that has both an interface declaration
+    /// and a value declaration (variable/function). Used by `typeof` resolution to pick
+    /// the value type instead of the interface type for merged symbols.
+    pub(crate) fn is_merged_interface_value_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let flags = symbol.flags;
+        use tsz_binder::symbol_flags;
+        (flags & symbol_flags::INTERFACE) != 0 && (flags & symbol_flags::VALUE) != 0
+    }
 }
 
 /// Check if the contextual type is `boolean` and the literal is a boolean literal.
