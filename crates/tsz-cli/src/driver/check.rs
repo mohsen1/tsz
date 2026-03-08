@@ -371,13 +371,14 @@ pub(super) fn collect_diagnostics(
     // In these modes, .js/.ts files may be ESM based on package.json "type" field.
     // The checker needs this to correctly emit TS1479 (CJS importing ESM).
     let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
+        let phase_start = Instant::now();
         let resolution_kind = options.effective_module_resolution();
         let is_node_resolution = matches!(
             resolution_kind,
             crate::config::ModuleResolutionKind::Node16
                 | crate::config::ModuleResolutionKind::NodeNext
         );
-        if is_node_resolution {
+        let file_map = if is_node_resolution {
             program
                 .files
                 .iter()
@@ -392,7 +393,9 @@ pub(super) fn collect_diagnostics(
                 .collect()
         } else {
             FxHashMap::default()
-        }
+        };
+        report_progress("build_file_is_esm_map", phase_start);
+        file_map
     });
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
