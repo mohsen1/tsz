@@ -294,6 +294,10 @@ pub struct CheckerContext<'a> {
     /// double-narrowing (e.g., `any` → `string` → `string & Object`).
     pub flow_narrowed_nodes: FxHashSet<u32>,
 
+    /// `TypeIds` whose lazy/type-query refs have been walked and resolved.
+    /// This avoids repeated deep traversals in `ensure_refs_resolved`.
+    pub refs_resolved: FxHashSet<TypeId>,
+
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,

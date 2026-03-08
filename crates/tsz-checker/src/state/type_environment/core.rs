@@ -201,15 +201,18 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        // Memoize monomorphic application evaluation. This is a hot path for
-        // repeated accesses on aliases like DeepPartial<{...}>.
-        let can_cache = !self.contains_type_parameters_cached(type_id);
+        // Memoize application evaluation. This is a hot path for repeated accesses
+        // on aliases like DeepPartial<{...}> and generic types like Result<T>.
+        // TypeIds are interned, so the same Application TypeId always produces
+        // the same evaluation result within a file check context.
+        let is_monomorphic = !self.contains_type_parameters_cached(type_id);
 
         // Canonicalize application keys by evaluating type arguments first. This
         // allows structurally equivalent applications from different declaration
         // sites (e.g., repeated inline object-literal args) to share a cache hit.
+        // Only applies to monomorphic types where argument evaluation is meaningful.
         let mut canonical_key: Option<TypeId> = None;
-        if can_cache
+        if is_monomorphic
             && let Some((base, args)) = query::application_info(self.ctx.types, type_id)
             && !args.is_empty()
         {
@@ -274,7 +277,7 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.instantiation_depth.get() - 1);
         GLOBAL_INSTANTIATION_DEPTH.set(GLOBAL_INSTANTIATION_DEPTH.get().saturating_sub(1));
         self.ctx.application_eval_set.remove(&type_id);
-        if can_cache {
+        {
             let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
             cache.insert(type_id, result);
             if let Some(key) = canonical_key {

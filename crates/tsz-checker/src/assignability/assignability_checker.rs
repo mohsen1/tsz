@@ -293,6 +293,9 @@ impl<'a> CheckerState<'a> {
     /// can check assignability against the intersection, we need to ensure A and B
     /// are resolved and in `type_env` so the subtype checker can resolve them.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+        if self.ctx.refs_resolved.contains(&type_id) {
+            return;
+        }
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
         let mut worklist = vec![type_id];
@@ -319,6 +322,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        self.ctx.refs_resolved.insert(type_id);
     }
 
     /// Evaluate a type for assignability checking.

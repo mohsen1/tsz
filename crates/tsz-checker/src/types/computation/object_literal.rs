@@ -169,16 +169,30 @@ impl<'a> CheckerState<'a> {
             return Some(self.sanitize_contextual_property_type(property_type));
         }
 
-        let contextual_type = self.evaluate_contextual_type(contextual_type);
-        let after_evaluate_contextual_type = contextual_type;
-
-        let contextual_type = self.evaluate_type_with_env(contextual_type);
-        let after_evaluate_type_with_env = contextual_type;
-        let contextual_type = self.resolve_type_for_property_access(contextual_type);
-        let after_resolve_type_for_property_access = contextual_type;
-        let contextual_type = self.resolve_lazy_type(contextual_type);
-        let after_resolve_lazy_type = contextual_type;
-        let contextual_type = self.evaluate_application_type(contextual_type);
+        // Cache the expensive contextual type resolution chain.
+        // The same contextual type is resolved for each property of an object literal,
+        // so caching saves O(properties-1) full resolution chains per literal.
+        let contextual_type = if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .contextual_resolve_cache
+            .borrow()
+            .get(&original_contextual_type)
+        {
+            cached
+        } else {
+            let ct = self.evaluate_contextual_type(contextual_type);
+            let ct = self.evaluate_type_with_env(ct);
+            let ct = self.resolve_type_for_property_access(ct);
+            let ct = self.resolve_lazy_type(ct);
+            let ct = self.evaluate_application_type(ct);
+            self.ctx
+                .narrowing_cache
+                .contextual_resolve_cache
+                .borrow_mut()
+                .insert(original_contextual_type, ct);
+            ct
+        };
 
         if contextual_type == TypeId::UNKNOWN {
             return Some(TypeId::UNKNOWN);
@@ -241,14 +255,6 @@ impl<'a> CheckerState<'a> {
         tracing::trace!(
             original_contextual_type = original_contextual_type.0,
             original_contextual_type_str = %self.format_type(original_contextual_type),
-            after_evaluate_contextual_type = after_evaluate_contextual_type.0,
-            after_evaluate_contextual_type_str = %self.format_type(after_evaluate_contextual_type),
-            after_evaluate_type_with_env = after_evaluate_type_with_env.0,
-            after_evaluate_type_with_env_str = %self.format_type(after_evaluate_type_with_env),
-            after_resolve_type_for_property_access = after_resolve_type_for_property_access.0,
-            after_resolve_type_for_property_access_str = %self.format_type(after_resolve_type_for_property_access),
-            after_resolve_lazy_type = after_resolve_lazy_type.0,
-            after_resolve_lazy_type_str = %self.format_type(after_resolve_lazy_type),
             contextual_type = contextual_type.0,
             contextual_type_str = %self.format_type(contextual_type),
             property_name,
