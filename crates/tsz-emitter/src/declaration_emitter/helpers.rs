@@ -5090,33 +5090,32 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ambient_path);
         }
 
-        // 2. Check import_symbol_map for imported symbols
-        // This handles symbols that were imported from other modules
+        // 2. Get the source arena for this symbol when available so imported
+        // node_modules symbols can be canonicalized back through package exports.
+        if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
+            let arena_addr = Arc::as_ptr(source_arena) as usize;
+            if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
+                // Symbols sourced from node_modules should retain the package
+                // export subpath that tsc would print in declaration emit rather
+                // than the raw source import text or a relative filesystem path.
+                if let Some(package_specifier) =
+                    self.package_specifier_for_node_modules_path(current_path, source_path)
+                {
+                    return Some(package_specifier);
+                }
+
+                let rel_path = self.calculate_relative_path(current_path, source_path);
+                return Some(self.strip_ts_extensions(&rel_path));
+            }
+        }
+
+        // 3. Fall back to the raw import text for imported symbols when we
+        // don't have a source file mapping for the originating declaration.
         if let Some(module_specifier) = self.import_symbol_map.get(&sym_id) {
             return Some(module_specifier.clone());
         }
 
-        // 3. Get the source arena for this symbol
-        let source_arena = binder.symbol_arenas.get(&sym_id)?;
-
-        // 4. Look up the file path from arena address
-        let arena_addr = Arc::as_ptr(source_arena) as usize;
-        let source_path = self.arena_to_path.get(&arena_addr)?;
-
-        // Symbols sourced from node_modules should usually retain their package
-        // specifier in declaration emit rather than leaking a relative filesystem
-        // path like `./node_modules/pkg/foo`.
-        if let Some(package_specifier) =
-            self.package_specifier_for_node_modules_path(current_path, source_path)
-        {
-            return Some(package_specifier);
-        }
-
-        // 5. Calculate relative path
-        let rel_path = self.calculate_relative_path(current_path, source_path);
-
-        // 6. Strip TypeScript extensions
-        Some(self.strip_ts_extensions(&rel_path))
+        None
     }
 
     pub(crate) fn resolve_symbol_module_path_cached(&mut self, sym_id: SymbolId) -> Option<String> {
@@ -5302,7 +5301,8 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let root_key = components[..node_modules_idx + 1 + package_len]
+        let package_root_components = &components[..node_modules_idx + 1 + package_len];
+        let root_key = package_root_components
             .iter()
             .filter_map(|component| match component {
                 Component::Prefix(prefix) => prefix.as_os_str().to_str().map(str::to_string),
@@ -5313,18 +5313,172 @@ impl<'a> DeclarationEmitter<'a> {
             .collect::<Vec<_>>()
             .join("/");
 
-        let mut specifier_parts = trailing_parts;
-        if let Some(last) = specifier_parts.last_mut() {
-            *last = self.strip_ts_extensions(last);
+        let package_root = Path::new(path)
+            .components()
+            .take(node_modules_idx + 1 + package_len)
+            .collect::<std::path::PathBuf>();
+        let package_name = trailing_parts[..package_len].join("/");
+        let package_relative_parts = trailing_parts[package_len..].to_vec();
+        let relative_path = package_relative_parts.join("/");
+        let runtime_relative_path = self.declaration_runtime_relative_path(&relative_path)?;
+
+        let subpath = self
+            .reverse_export_specifier_for_runtime_path(&package_root, &runtime_relative_path)
+            .or_else(|| {
+                let mut specifier_parts = package_relative_parts;
+                if let Some(last) = specifier_parts.last_mut() {
+                    *last = self.strip_ts_extensions(last);
+                }
+                if specifier_parts.last().is_some_and(|part| part == "index") {
+                    specifier_parts.pop();
+                }
+                Some(specifier_parts.join("/"))
+            })?;
+
+        let specifier = if subpath.is_empty() {
+            package_name
+        } else {
+            format!("{package_name}/{subpath}")
+        };
+
+        Some((root_key, specifier))
+    }
+
+    fn declaration_runtime_relative_path(&self, relative_path: &str) -> Option<String> {
+        let relative_path = relative_path.replace('\\', "/");
+
+        for (decl_ext, runtime_ext) in [
+            (".d.ts", ".js"),
+            (".d.tsx", ".jsx"),
+            (".d.mts", ".mjs"),
+            (".d.cts", ".cjs"),
+            (".ts", ".js"),
+            (".tsx", ".jsx"),
+            (".mts", ".mjs"),
+            (".cts", ".cjs"),
+        ] {
+            if let Some(prefix) = relative_path.strip_suffix(decl_ext) {
+                return Some(format!("{prefix}{runtime_ext}"));
+            }
         }
-        if specifier_parts.last().is_some_and(|part| part == "index") {
-            specifier_parts.pop();
+
+        Some(relative_path)
+    }
+
+    fn reverse_export_specifier_for_runtime_path(
+        &self,
+        package_root: &std::path::Path,
+        runtime_relative_path: &str,
+    ) -> Option<String> {
+        let package_json_path = package_root.join("package.json");
+        let package_json = std::fs::read_to_string(package_json_path).ok()?;
+        let package_json: serde_json::Value = serde_json::from_str(&package_json).ok()?;
+        let exports = package_json.get("exports")?;
+        let runtime_relative_path = format!("./{}", runtime_relative_path.trim_start_matches("./"));
+        self.reverse_match_exports_subpath(exports, &runtime_relative_path)
+    }
+
+    fn reverse_match_exports_subpath(
+        &self,
+        exports: &serde_json::Value,
+        runtime_path: &str,
+    ) -> Option<String> {
+        match exports {
+            serde_json::Value::String(target) => {
+                self.match_export_target(".", target, runtime_path)
+            }
+            serde_json::Value::Array(entries) => entries
+                .iter()
+                .find_map(|entry| self.reverse_match_exports_subpath(entry, runtime_path)),
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "." || key.starts_with("./") {
+                        if let Some(specifier) =
+                            self.reverse_match_export_entry(key, value, runtime_path)
+                        {
+                            return Some(specifier);
+                        }
+                        continue;
+                    }
+
+                    if let Some(specifier) = self.reverse_match_exports_subpath(value, runtime_path)
+                    {
+                        return Some(specifier);
+                    }
+                }
+                None
+            }
+            _ => None,
         }
-        if specifier_parts.is_empty() {
+    }
+
+    fn reverse_match_export_entry(
+        &self,
+        subpath_key: &str,
+        value: &serde_json::Value,
+        runtime_path: &str,
+    ) -> Option<String> {
+        match value {
+            serde_json::Value::String(target) => {
+                self.match_export_target(subpath_key, target, runtime_path)
+            }
+            serde_json::Value::Array(entries) => entries.iter().find_map(|entry| {
+                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
+            }),
+            serde_json::Value::Object(map) => map.values().find_map(|entry| {
+                self.reverse_match_export_entry(subpath_key, entry, runtime_path)
+            }),
+            _ => None,
+        }
+    }
+
+    fn match_export_target(
+        &self,
+        subpath_key: &str,
+        target: &str,
+        runtime_path: &str,
+    ) -> Option<String> {
+        let target = target.trim();
+        let runtime_path = runtime_path.trim();
+
+        if target.contains('*') {
+            let wildcard = self.match_exports_wildcard(target, runtime_path)?;
+            return Some(self.apply_exports_wildcard(subpath_key, &wildcard));
+        }
+
+        if target.ends_with('/') && subpath_key.ends_with('/') {
+            let remainder = runtime_path.strip_prefix(target)?;
+            return Some(format!(
+                "{}{}",
+                subpath_key.trim_start_matches("./"),
+                remainder
+            ));
+        }
+
+        if target != runtime_path {
             return None;
         }
 
-        Some((root_key, specifier_parts.join("/")))
+        if subpath_key == "." {
+            return Some(String::new());
+        }
+
+        Some(subpath_key.trim_start_matches("./").to_string())
+    }
+
+    fn match_exports_wildcard(&self, pattern: &str, value: &str) -> Option<String> {
+        let star_idx = pattern.find('*')?;
+        let prefix = &pattern[..star_idx];
+        let suffix = &pattern[star_idx + 1..];
+        let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
+        Some(middle.to_string())
+    }
+
+    fn apply_exports_wildcard(&self, pattern: &str, wildcard: &str) -> String {
+        pattern
+            .replace('*', wildcard)
+            .trim_start_matches("./")
+            .to_string()
     }
 
     /// Strip TypeScript file extensions from a path.
@@ -5555,6 +5709,8 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(enum_member_text) = const_asserted_enum_member {
                 self.write(": ");
                 self.write(&enum_member_text);
+            } else if has_initializer && self.is_import_meta_url_expression(initializer) {
+                self.write(": string");
             } else if is_const_null_or_undefined
                 || (has_initializer && self.invalid_const_enum_object_access(initializer))
                 || (has_initializer

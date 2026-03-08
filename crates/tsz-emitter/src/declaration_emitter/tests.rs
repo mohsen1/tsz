@@ -761,6 +761,24 @@ export { x };
 }
 
 #[test]
+fn test_ts_import_meta_url_infers_string() {
+    let source = r#"
+const x = import.meta.url;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const x: string;"),
+        "Expected import.meta.url to emit as string in TS declarations: {output}"
+    );
+}
+
+#[test]
 fn test_js_top_level_await_literal_preserves_literal_type() {
     let source = r#"
 const x = await 1;
