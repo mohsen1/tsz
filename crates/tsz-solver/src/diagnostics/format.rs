@@ -214,19 +214,19 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Tuple(_)
                 | TypeData::Callable(_)
                 | TypeData::Function(_)
-        )
-            && let Some(def_store) = self.def_store {
-                if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
-                    && let Some(def) = def_store.get(def_id)
-                {
-                    return self.format_def_name(&def).into();
-                }
-                if let Some(def_id) = def_store.find_def_for_type(type_id)
-                    && let Some(def) = def_store.get(def_id)
-                {
-                    return self.format_def_name(&def).into();
-                }
+        ) && let Some(def_store) = self.def_store
+        {
+            if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
+                && let Some(def) = def_store.get(def_id)
+            {
+                return self.format_def_name(&def).into();
             }
+            if let Some(def_id) = def_store.find_def_for_type(type_id)
+                && let Some(def) = def_store.get(def_id)
+            {
+                return self.format_def_name(&def).into();
+            }
+        }
 
         self.current_depth += 1;
         let result = self.format_key(&key);
