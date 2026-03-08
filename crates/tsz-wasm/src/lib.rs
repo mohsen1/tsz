@@ -12,6 +12,10 @@
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
+
+    let version = env!("CARGO_PKG_VERSION");
+    let hash = env!("TSZ_GIT_HASH");
+    web_sys::console::log_1(&format!("tsz-wasm v{version} ({hash})").into());
 }
 
 // Re-export everything from the core library so wasm-bindgen picks up

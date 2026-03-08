@@ -189,7 +189,10 @@ impl TsProgram {
                 self.type_checker = None;
                 Ok(())
             }
-            Err(e) => Err(JsValue::from_str(&format!("Failed to parse options: {e}"))),
+            Err(e) => {
+                let err = js_sys::Error::new(&format!("Failed to parse options: {e}"));
+                Err(err.into())
+            }
         }
     }
 
@@ -267,22 +270,24 @@ impl TsProgram {
         self.merged = Some(merged);
     }
 
-    /// Get syntactic diagnostics as JSON
-    #[wasm_bindgen(js_name = getSyntacticDiagnosticsJson)]
-    pub fn get_syntactic_diagnostics_json(&mut self, file_name: Option<String>) -> String {
+    /// Collect syntactic diagnostics as structured values
+    fn collect_syntactic_diagnostics(
+        &mut self,
+        file_name: Option<&str>,
+    ) -> Vec<serde_json::Value> {
         self.ensure_compiled();
 
         let merged = match &self.merged {
             Some(m) => m,
-            None => return "[]".to_string(),
+            None => return Vec::new(),
         };
 
         let mut diagnostics: Vec<serde_json::Value> = Vec::new();
 
         for bound_file in &merged.files {
             // Filter by file if specified
-            if let Some(ref name) = file_name
-                && &bound_file.file_name != name
+            if let Some(name) = file_name
+                && bound_file.file_name != name
             {
                 continue;
             }
@@ -299,17 +304,19 @@ impl TsProgram {
             }
         }
 
-        serde_json::to_string(&diagnostics).unwrap_or_else(|_| "[]".to_string())
+        diagnostics
     }
 
-    /// Get semantic diagnostics as JSON
-    #[wasm_bindgen(js_name = getSemanticDiagnosticsJson)]
-    pub fn get_semantic_diagnostics_json(&mut self, file_name: Option<String>) -> String {
+    /// Collect semantic diagnostics as structured values
+    fn collect_semantic_diagnostics(
+        &mut self,
+        file_name: Option<&str>,
+    ) -> Vec<serde_json::Value> {
         self.ensure_compiled();
 
         let merged = match &self.merged {
             Some(m) => m,
-            None => return "[]".to_string(),
+            None => return Vec::new(),
         };
 
         let checker_options = self.options.to_checker_options();
@@ -319,8 +326,8 @@ impl TsProgram {
 
         for file_result in &check_result.file_results {
             // Filter by file if specified
-            if let Some(ref name) = file_name
-                && &file_result.file_name != name
+            if let Some(name) = file_name
+                && file_result.file_name != name
             {
                 continue;
             }
@@ -342,27 +349,51 @@ impl TsProgram {
             }
         }
 
+        diagnostics
+    }
+
+    /// Get syntactic diagnostics as JSON
+    #[wasm_bindgen(js_name = getSyntacticDiagnosticsJson)]
+    pub fn get_syntactic_diagnostics_json(&mut self, file_name: Option<String>) -> String {
+        let diagnostics = self.collect_syntactic_diagnostics(file_name.as_deref());
+        serde_json::to_string(&diagnostics).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Get semantic diagnostics as JSON
+    #[wasm_bindgen(js_name = getSemanticDiagnosticsJson)]
+    pub fn get_semantic_diagnostics_json(&mut self, file_name: Option<String>) -> String {
+        let diagnostics = self.collect_semantic_diagnostics(file_name.as_deref());
         serde_json::to_string(&diagnostics).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Get all diagnostics (syntactic + semantic) as JSON
     #[wasm_bindgen(js_name = getPreEmitDiagnosticsJson)]
     pub fn get_pre_emit_diagnostics_json(&mut self) -> String {
-        self.ensure_compiled();
-
-        let mut all_diagnostics: Vec<serde_json::Value> = Vec::new();
-
-        // Syntactic diagnostics
-        let syntactic: Vec<serde_json::Value> =
-            serde_json::from_str(&self.get_syntactic_diagnostics_json(None)).unwrap_or_default();
-        all_diagnostics.extend(syntactic);
-
-        // Semantic diagnostics
-        let semantic: Vec<serde_json::Value> =
-            serde_json::from_str(&self.get_semantic_diagnostics_json(None)).unwrap_or_default();
-        all_diagnostics.extend(semantic);
-
+        let mut all_diagnostics = self.collect_syntactic_diagnostics(None);
+        all_diagnostics.extend(self.collect_semantic_diagnostics(None));
         serde_json::to_string(&all_diagnostics).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Get syntactic diagnostics as JsValue (avoids JSON string intermediate)
+    #[wasm_bindgen(js_name = getSyntacticDiagnostics)]
+    pub fn get_syntactic_diagnostics(&mut self, file_name: Option<String>) -> JsValue {
+        let diagnostics = self.collect_syntactic_diagnostics(file_name.as_deref());
+        serde_wasm_bindgen::to_value(&diagnostics).unwrap_or(JsValue::NULL)
+    }
+
+    /// Get semantic diagnostics as JsValue (avoids JSON string intermediate)
+    #[wasm_bindgen(js_name = getSemanticDiagnostics)]
+    pub fn get_semantic_diagnostics(&mut self, file_name: Option<String>) -> JsValue {
+        let diagnostics = self.collect_semantic_diagnostics(file_name.as_deref());
+        serde_wasm_bindgen::to_value(&diagnostics).unwrap_or(JsValue::NULL)
+    }
+
+    /// Get all diagnostics (syntactic + semantic) as JsValue (avoids JSON string intermediate)
+    #[wasm_bindgen(js_name = getPreEmitDiagnostics)]
+    pub fn get_pre_emit_diagnostics(&mut self) -> JsValue {
+        let mut all = self.collect_syntactic_diagnostics(None);
+        all.extend(self.collect_semantic_diagnostics(None));
+        serde_wasm_bindgen::to_value(&all).unwrap_or(JsValue::NULL)
     }
 
     /// Get all diagnostic codes as array
@@ -575,11 +606,16 @@ pub fn create_ts_program(
     files_json: &str,
 ) -> Result<TsProgram, JsValue> {
     // Parse inputs
-    let root_names: Vec<String> = serde_json::from_str(root_names_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid root names: {e}")))?;
+    let root_names: Vec<String> = serde_json::from_str(root_names_json).map_err(|e| {
+        let err = js_sys::Error::new(&format!("Invalid root names: {e}"));
+        JsValue::from(err)
+    })?;
 
-    let files: rustc_hash::FxHashMap<String, String> = serde_json::from_str(files_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid files: {e}")))?;
+    let files: rustc_hash::FxHashMap<String, String> =
+        serde_json::from_str(files_json).map_err(|e| {
+            let err = js_sys::Error::new(&format!("Invalid files: {e}"));
+            JsValue::from(err)
+        })?;
 
     // Create program
     let mut program = TsProgram::new();
