@@ -342,6 +342,41 @@ those facts through one AST-agnostic guard API. Every correct CFG edge fixes man
 - Estimated real fix scope: ~140-240 LOC across the two paths above, plus 2 focused checker tests.
 - Status: no conformance-affecting patch landed; experimental changes reverted.
 
+**Session notes (2026-03-08 early — switch narrowing transport follow-up, no conformance flip):**
+- Representative basket used:
+  - `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+  - `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+  - `TypeScript/tests/cases/conformance/controlFlow/exhaustiveSwitchStatements1.ts`
+  - `TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts`
+- Shared invariant investigated: switch clause entry types must preserve both direct-dispatch and
+  fallthrough paths, and discriminant relevance checks must be relative to the narrowed target
+  (not only the root of the switch expression).
+- Attempted checker-side fixes:
+  1. `flow/control_flow/core.rs::handle_switch_clause_iterative` now unions clause narrowing with
+     fallthrough antecedent type.
+  2. `flow/control_flow/core.rs::switch_can_affect_reference` now uses
+     `relative_discriminant_path` instead of root-only `discriminant_property_info`.
+  3. `flow/reachability_checker.rs` added `??`-aware switch type computation for exhaustiveness.
+- Added focused checker tests in `control_flow_type_guard_tests.rs` for nested and mixed
+  discriminant access-chain narrowing; tests pass locally.
+- What tsc still does differently:
+  - `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`: still emits no diagnostics while tsz
+    still reports extra `TS2322/TS2339/TS7053` (notably around nested chain accesses and tuple
+    index discriminants).
+  - `narrowingByTypeofInSwitch.ts`: still has extra `TS2322/TS2345`.
+  - `exhaustiveSwitchStatements1.ts`: still has extra `TS2366` at `expression(): Animal`.
+- Strong next owning paths:
+  1. `flow/control_flow/references.rs` canonicalization path for mixed dot/element access
+     reference identity through switch discriminant chains.
+  2. Solver discriminant/indexed property proof for tuple/numeric literal members in switch-based
+     narrowing (`narrowing/discriminants.rs` + property evaluator path).
+  3. Return-path exhaustiveness for optional-chain/nullish-coalescing discriminants in
+     reachability (likely needs shared type-evaluation parity instead of checker-local shaping).
+- Estimated real fix scope: ~180-320 LOC across checker reference matching + solver discriminant
+  member proof, plus 2-4 focused tests and targeted conformance reruns.
+- Status: no conformance-affecting patch landed from this branch; keep as investigation + test
+  scaffolding for the next attempt.
+
 ### Known Architecture Drift
 
 These are specific findings that should be addressed as part of campaign work:
@@ -8139,3 +8174,45 @@ VALIDATION:
 BLAST RADIUS / NEXT OWNING GAP:
 - This lands part of the switch-exhaustiveness lane (enum-wrapper domain mismatch).
 - Remaining mismatch in `exhaustiveSwitchStatements1.ts` suggests another switch-fallthrough edge remains in `reachability_checker`/`switch_falls_through` path (line-204 function shape) plus separate post-switch narrowing gap for `TS2367`.
+
+## Session 2026-03-08a — narrowing-flow optional-coalescing switch exhaustiveness (+1 conformance)
+
+CAMPAIGN: Narrowing / control-flow parity
+
+REPRESENTATIVE TEST BASKET:
+- `exhaustiveSwitchStatements1.ts`
+- `narrowingByTypeofInSwitch.ts`
+- `controlFlowAliasedDiscriminants.ts`
+
+SHARED INVARIANT:
+Switch exhaustiveness should treat `switch (optional?.x ?? fallbackEnumMember)` as a finite discriminant domain and avoid implicit fallthrough when cases cover that domain.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [x] Solver — relation/narrowing subset check through shared query boundary
+- [x] Checker — reachability/flow boundary normalization
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP:
+- `switch_has_exhaustive_coverage*` used inconsistent discriminant extraction between mutable/cached paths and relied only on `narrow_excluding_types == never`.
+- In CLI/conformance contexts, discriminant normalized to `Animal | 0` while cases were `0 | 1`; exclusion left `Animal` so switch was incorrectly treated as non-exhaustive, producing false `TS2366`.
+
+FIX BELONGS IN:
+- `crates/tsz-checker/src/flow/reachability_checker.rs`
+  - unified switch expression type helpers (`typeof` + `??` + cached/non-cached)
+  - enum-domain normalization for union members
+  - assignability fallback (`switch_type` subset of `union(case_types)`) when exclusion alone does not collapse to `never`
+- `crates/tsz-checker/tests/control_flow_tests.rs`
+  - `test_ts2366_not_emitted_for_exhaustive_optional_chain_coalescing_switch`
+
+VALIDATION:
+- `cargo nextest run -p tsz-checker test_ts2366_not_emitted_for_exhaustive_optional_chain_coalescing_switch test_ts2366_not_emitted_for_exhaustive_enum_switch_without_default test_ts2454_not_emitted_for_exhaustive_enum_switch_assignment` ✅
+- `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints --max 20` ✅ PASS
+- `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter exhaustiveSwitch --verbose --max 50` ✅ 4/4 PASS
+- Guard basket unchanged (expected, separate invariants):
+  - `narrowingByTypeofInSwitch.ts` still extra `TS2322`/`TS2345`
+  - `controlFlowAliasedDiscriminants.ts` still missing `TS1360`
+
+RESULT:
+- Flipped `exhaustiveSwitchStatements1.ts` to PASS by removing the final extra `TS2366`.

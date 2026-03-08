@@ -789,3 +789,174 @@ function f(obj: { x: string | number }) {
         "Expected TS2322 when aliased property is reassigned, got: {diagnostics:?}"
     );
 }
+
+/// Nested discriminant switches should narrow the nested base reference.
+#[test]
+fn test_switch_nested_discriminant_narrows_nested_shape_reference() {
+    let source = r#"
+type Shape =
+  | { kind: "square"; squareSize: number }
+  | { kind: "circle"; radius: number };
+type Container = { inner: { shape: Shape } };
+
+function area(c: Container): number {
+  switch (c.inner.shape.kind) {
+    case "square":
+      return c.inner.shape.squareSize;
+    case "circle":
+      return c.inner.shape.radius;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Unexpected diagnostics for nested switch discriminant narrowing: {diagnostics:?}"
+    );
+}
+
+/// Mixed element/dot chains should still be treated as the same discriminant base.
+#[test]
+fn test_switch_mixed_access_chain_narrows_nested_shape_reference() {
+    let source = r#"
+type Shape =
+  | { kind: "square"; squareSize: number }
+  | { kind: "circle"; radius: number };
+type Box = { "0": { sub: { under: { shape: Shape } } } };
+
+function area(b: Box): number {
+  switch (b[0]["sub"].under["shape"]["kind"]) {
+    case "square":
+      return b[0].sub.under.shape.squareSize;
+    case "circle":
+      return b[0]["sub"]["under"]["shape"].radius;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Unexpected diagnostics for mixed access-chain discriminant narrowing: {diagnostics:?}"
+    );
+}
+
+/// String-literal property names in mixed chains should narrow as well.
+#[test]
+fn test_switch_mixed_access_chain_narrows_string_literal_members() {
+    let source = r#"
+type Shape =
+  | { "dash-ok": "square"; "square-size": number }
+  | { "dash-ok": "circle"; radius: number };
+type Box = { "0": { sub: { under: { shape: Shape } } } };
+
+function area(b: Box): number {
+  switch (b[0]["sub"].under["shape"]["dash-ok"]) {
+    case "square":
+      return b[0].sub.under.shape["square-size"];
+    case "circle":
+      return b[0]["sub"]["under"]["shape"].radius;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Unexpected diagnostics for mixed access-chain string-literal narrowing: {diagnostics:?}"
+    );
+}

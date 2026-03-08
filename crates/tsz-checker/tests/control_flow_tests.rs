@@ -2969,6 +2969,48 @@ function g(e: E): string {
     );
 }
 
+/// Exhaustive enum switch over `optional?.prop ?? fallback` should satisfy return-path checking.
+#[test]
+fn test_ts2366_not_emitted_for_exhaustive_optional_chain_coalescing_switch() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+enum Animal { DOG, CAT }
+declare const zoo: { animal: Animal } | undefined;
+function expression(): Animal {
+    switch (zoo?.animal ?? Animal.DOG) {
+        case Animal.DOG:
+            return Animal.DOG;
+        case Animal.CAT:
+            return Animal.CAT;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let has_ts2366 = checker.ctx.diagnostics.iter().any(|d| d.code == 2366);
+    assert!(
+        !has_ts2366,
+        "Exhaustive optional-chain/coalescing enum switch should not fall through; got diagnostics: {:?}",
+        checker.ctx.diagnostics,
+    );
+}
+
 #[test]
 fn test_typeof_switch_exhaustive_unknown_reports_unreachable_not_ts2366() {
     use crate::CheckerState;
