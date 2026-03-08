@@ -1952,6 +1952,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     // enums rather than erased+inlined.
     if args.verbatim_module_syntax {
         options.printer.preserve_const_enums = true;
+        options.checker.verbatim_module_syntax = true;
     }
     if let Some(jsx) = args.jsx {
         let jsx_emit = match jsx {
