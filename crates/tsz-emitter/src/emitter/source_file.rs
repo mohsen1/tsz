@@ -1,4 +1,5 @@
 use super::Printer;
+use super::core::JsxEmit;
 use crate::enums::evaluator::EnumEvaluator;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
@@ -48,6 +49,17 @@ impl<'a> Printer<'a> {
         // Detect export assignment (export =) to suppress other exports
         if self.has_export_assignment(&source.statements) {
             self.ctx.module_state.has_export_assignment = true;
+        }
+
+        // Store file name for jsx=react-jsxdev source location emission
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            // Extract just the basename from the full file path
+            let base_name = source
+                .file_name
+                .rsplit('/')
+                .next()
+                .unwrap_or(&source.file_name);
+            self.jsx_dev_file_name = Some(base_name.to_string());
         }
 
         // Collect all identifiers in the file for temp name collision detection.

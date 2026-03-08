@@ -218,8 +218,9 @@ impl<'a> Printer<'a> {
         let tag_name = opening.tag_name;
         let attributes = opening.attributes;
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+        let element_pos = opening_node.pos;
 
-        self.emit_jsx_automatic_call(tag_name, attributes, &children);
+        self.emit_jsx_automatic_call(tag_name, attributes, &children, element_pos);
     }
 
     fn emit_jsx_self_closing_automatic(&mut self, node: &Node) {
@@ -229,8 +230,9 @@ impl<'a> Printer<'a> {
 
         let tag_name = jsx.tag_name;
         let attributes = jsx.attributes;
+        let element_pos = node.pos;
 
-        self.emit_jsx_automatic_call(tag_name, attributes, &[]);
+        self.emit_jsx_automatic_call(tag_name, attributes, &[], element_pos);
     }
 
     fn emit_jsx_fragment_automatic(&mut self, node: &Node) {
@@ -242,13 +244,20 @@ impl<'a> Printer<'a> {
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
         let is_cjs = self.ctx.is_effectively_commonjs();
-        let func_name = if is_jsxs { "jsxs" } else { "jsx" };
+        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let func_name = if is_dev {
+            "jsxDEV"
+        } else if is_jsxs {
+            "jsxs"
+        } else {
+            "jsx"
+        };
 
         if is_cjs {
             let var_name = self.jsx_cjs_runtime_var();
             self.write(&format!("(0, {var_name}.{func_name})("));
         } else {
-            self.write(if is_jsxs { "_jsxs(" } else { "_jsx(" });
+            self.write(&format!("_{func_name}("));
         }
 
         // Fragment tag
@@ -279,6 +288,18 @@ impl<'a> Printer<'a> {
         }
         self.write("}");
 
+        if is_dev {
+            // jsxDEV extra args: key, isStaticChildren, source, self
+            self.write(", void 0, ");
+            self.write(if is_jsxs { "true" } else { "false" });
+            // Source location for fragment - use the node's own position
+            let (line, col) = self.source_line_col_pos(node.pos);
+            self.write(&format!(
+                ", {{ fileName: _jsxFileName, lineNumber: {line}, columnNumber: {col} }}"
+            ));
+            self.write(", this");
+        }
+
         self.write(")");
     }
 
@@ -288,7 +309,14 @@ impl<'a> Printer<'a> {
         tag_name: NodeIndex,
         attributes: NodeIndex,
         children: &[NodeIndex],
+        element_pos: u32,
     ) {
+        // Key-after-spread: fall back to createElement from the base module
+        if self.jsx_attrs_has_key_after_spread(attributes) {
+            self.emit_jsx_create_element_fallback(tag_name, attributes, children);
+            return;
+        }
+
         let attrs_info = self.collect_jsx_attributes_info(attributes);
         let filtered_children = self.collect_jsx_children(children);
         let is_jsxs = filtered_children.len() > 1;
@@ -308,15 +336,22 @@ impl<'a> Printer<'a> {
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
         let is_cjs = self.ctx.is_effectively_commonjs();
-        let func_name = if is_jsxs { "jsxs" } else { "jsx" };
+        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let func_name = if is_dev {
+            "jsxDEV"
+        } else if is_jsxs {
+            "jsxs"
+        } else {
+            "jsx"
+        };
 
         if is_cjs {
             // CJS: (0, jsx_runtime_1.jsx)(tag, props)
             let var_name = self.jsx_cjs_runtime_var();
             self.write(&format!("(0, {var_name}.{func_name})("));
         } else {
-            // ESM: _jsx(tag, props)
-            self.write(if is_jsxs { "_jsxs(" } else { "_jsx(" });
+            // ESM: _jsxDEV( / _jsx( / _jsxs(
+            self.write(&format!("_{func_name}("));
         }
 
         // Tag name
@@ -371,10 +406,70 @@ impl<'a> Printer<'a> {
             self.write(" }");
         }
 
-        // Key as third argument (for automatic transform)
-        if let Some(JsxAttrInfo::Named { value, .. }) = &key_attr {
+        if is_dev {
+            // jsxDEV extra args: key, isStaticChildren, source, self
             self.write(", ");
-            self.emit_jsx_attr_value(value);
+            if let Some(JsxAttrInfo::Named { value, .. }) = &key_attr {
+                self.emit_jsx_attr_value(value);
+            } else {
+                self.write("void 0");
+            }
+            self.write(", ");
+            self.write(if is_jsxs { "true" } else { "false" });
+            // Source location: { fileName: _jsxFileName, lineNumber: N, columnNumber: N }
+            let (line, col) = self.source_line_col_pos(element_pos);
+            self.write(&format!(
+                ", {{ fileName: _jsxFileName, lineNumber: {line}, columnNumber: {col} }}"
+            ));
+            self.write(", this");
+        } else {
+            // Key as third argument (for automatic transform)
+            if let Some(JsxAttrInfo::Named { value, .. }) = &key_attr {
+                self.write(", ");
+                self.emit_jsx_attr_value(value);
+            }
+        }
+
+        self.write(")");
+    }
+
+    /// Emit `createElement(tag, Object.assign({}, ...props, { key }), ...children)`
+    /// Used when key appears after a spread attribute (key-after-spread fallback).
+    fn emit_jsx_create_element_fallback(
+        &mut self,
+        tag_name: NodeIndex,
+        attributes: NodeIndex,
+        children: &[NodeIndex],
+    ) {
+        let attrs_info = self.collect_jsx_attributes_info(attributes);
+        let filtered_children = self.collect_jsx_children(children);
+        let is_cjs = self.ctx.is_effectively_commonjs();
+
+        if is_cjs {
+            let base_var = self.jsx_cjs_base_var();
+            self.write(&format!("(0, {base_var}.createElement)("));
+        } else {
+            self.write("_createElement(");
+        }
+
+        // Tag name
+        self.emit_jsx_tag_name_as_argument(tag_name);
+
+        // Props (including key, NOT children) — classic createElement style
+        self.write(", ");
+        if attrs_info.attrs.is_empty() && !attrs_info.has_spread {
+            self.write("null");
+        } else if attrs_info.has_spread {
+            // Use classic spread emission which includes key in the Object.assign
+            self.emit_jsx_spread_attrs_classic(&attrs_info.attrs);
+        } else {
+            self.emit_jsx_attrs_as_object(&attrs_info.attrs);
+        }
+
+        // Children as separate args (classic style)
+        for child in &filtered_children {
+            self.write(", ");
+            self.emit_jsx_child_as_expression(*child);
         }
 
         self.write(")");
@@ -1063,6 +1158,30 @@ impl<'a> Printer<'a> {
     }
 
     // =========================================================================
+    // JSX Dev Mode Source Location Helpers
+    // =========================================================================
+
+    /// Compute 1-based (line, column) from a raw source position.
+    fn source_line_col_pos(&self, pos: u32) -> (u32, u32) {
+        let Some(text) = self.source_text else {
+            return (1, 1);
+        };
+        let bytes = text.as_bytes();
+        let pos = (pos as usize).min(bytes.len());
+        let mut line = 1u32;
+        let mut col = 1u32;
+        for &b in &bytes[..pos] {
+            if b == b'\n' {
+                line += 1;
+                col = 1;
+            } else if b != b'\r' {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    // =========================================================================
     // JSX Auto Import Injection
     // =========================================================================
 
@@ -1074,6 +1193,19 @@ impl<'a> Printer<'a> {
             _ => "jsx-runtime",
         };
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(suffix);
+        format!("{sanitized}_1")
+    }
+
+    /// Get the CJS variable name for the base JSX module import.
+    /// Used for createElement fallback when key appears after spread.
+    /// e.g., "react" → "`react_1`", "preact" → "`preact_1`"
+    fn jsx_cjs_base_var(&self) -> String {
+        let pragma_source = self.extract_jsx_import_source_pragma();
+        let source = pragma_source
+            .as_deref()
+            .or(self.ctx.options.jsx_import_source.as_deref())
+            .unwrap_or("react");
+        let sanitized = crate::transforms::emit_utils::sanitize_module_name(source);
         format!("{sanitized}_1")
     }
 
@@ -1098,14 +1230,27 @@ impl<'a> Printer<'a> {
                     .or(self.ctx.options.jsx_import_source.as_deref())
                     .unwrap_or("react");
                 let usage = self.scan_jsx_usage();
-                if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
+                if !usage.needs_jsx
+                    && !usage.needs_jsxs
+                    && !usage.needs_fragment
+                    && !usage.needs_create_element
+                {
                     return None;
                 }
                 if is_cjs {
-                    let var_name = self.jsx_cjs_runtime_var();
-                    Some(format!(
-                        "const {var_name} = require(\"{source}/jsx-runtime\");\n"
-                    ))
+                    let mut text = String::new();
+                    // Base module import for createElement fallback (key-after-spread)
+                    if usage.needs_create_element {
+                        let base_var = self.jsx_cjs_base_var();
+                        text.push_str(&format!("const {base_var} = require(\"{source}\");\n"));
+                    }
+                    if usage.needs_jsx || usage.needs_jsxs || usage.needs_fragment {
+                        let var_name = self.jsx_cjs_runtime_var();
+                        text.push_str(&format!(
+                            "const {var_name} = require(\"{source}/jsx-runtime\");\n"
+                        ));
+                    }
+                    Some(text)
                 } else {
                     let mut imports = Vec::new();
                     if usage.needs_jsx {
@@ -1117,10 +1262,19 @@ impl<'a> Printer<'a> {
                     if usage.needs_fragment {
                         imports.push("Fragment as _Fragment");
                     }
-                    Some(format!(
-                        "import {{ {} }} from \"{source}/jsx-runtime\";\n",
-                        imports.join(", ")
-                    ))
+                    let mut text = String::new();
+                    if usage.needs_create_element {
+                        text.push_str(&format!(
+                            "import {{ createElement as _createElement }} from \"{source}\";\n"
+                        ));
+                    }
+                    if !imports.is_empty() {
+                        text.push_str(&format!(
+                            "import {{ {} }} from \"{source}/jsx-runtime\";\n",
+                            imports.join(", ")
+                        ));
+                    }
+                    Some(text)
                 }
             }
             JsxEmit::ReactJsxDev => {
@@ -1129,14 +1283,33 @@ impl<'a> Printer<'a> {
                     .or(self.ctx.options.jsx_import_source.as_deref())
                     .unwrap_or("react");
                 let usage = self.scan_jsx_usage();
-                if !usage.needs_jsx && !usage.needs_jsxs && !usage.needs_fragment {
+                if !usage.needs_jsx
+                    && !usage.needs_jsxs
+                    && !usage.needs_fragment
+                    && !usage.needs_create_element
+                {
                     return None;
                 }
+                let file_name_line = self
+                    .jsx_dev_file_name
+                    .as_deref()
+                    .map(|f| format!("const _jsxFileName = \"{f}\";\n"))
+                    .unwrap_or_default();
                 if is_cjs {
-                    let var_name = self.jsx_cjs_runtime_var();
-                    Some(format!(
-                        "const {var_name} = require(\"{source}/jsx-dev-runtime\");\n"
-                    ))
+                    let mut text = String::new();
+                    // Base module import for createElement fallback (key-after-spread)
+                    if usage.needs_create_element {
+                        let base_var = self.jsx_cjs_base_var();
+                        text.push_str(&format!("const {base_var} = require(\"{source}\");\n"));
+                    }
+                    if usage.needs_jsx || usage.needs_jsxs || usage.needs_fragment {
+                        let var_name = self.jsx_cjs_runtime_var();
+                        text.push_str(&format!(
+                            "const {var_name} = require(\"{source}/jsx-dev-runtime\");\n"
+                        ));
+                    }
+                    text.push_str(&file_name_line);
+                    Some(text)
                 } else {
                     let mut imports = Vec::new();
                     if usage.needs_jsx || usage.needs_jsxs {
@@ -1145,10 +1318,20 @@ impl<'a> Printer<'a> {
                     if usage.needs_fragment {
                         imports.push("Fragment as _Fragment");
                     }
-                    Some(format!(
-                        "import {{ {} }} from \"{source}/jsx-dev-runtime\";\n",
-                        imports.join(", ")
-                    ))
+                    let mut text = String::new();
+                    if usage.needs_create_element {
+                        text.push_str(&format!(
+                            "import {{ createElement as _createElement }} from \"{source}\";\n"
+                        ));
+                    }
+                    if !imports.is_empty() {
+                        text.push_str(&format!(
+                            "import {{ {} }} from \"{source}/jsx-dev-runtime\";\n",
+                            imports.join(", ")
+                        ));
+                    }
+                    text.push_str(&file_name_line);
+                    Some(text)
                 }
             }
             _ => None,
@@ -1161,6 +1344,7 @@ impl<'a> Printer<'a> {
             needs_jsx: false,
             needs_jsxs: false,
             needs_fragment: false,
+            needs_create_element: false,
         };
         for i in 0..self.arena.len() {
             let nidx = tsz_parser::parser::NodeIndex(i as u32);
@@ -1169,16 +1353,34 @@ impl<'a> Printer<'a> {
             };
             match node.kind {
                 k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
-                    usage.needs_jsx = true;
-                }
-                k if k == syntax_kind_ext::JSX_ELEMENT => {
-                    // Check if this element has multiple children (→ _jsxs) or not (→ _jsx)
-                    if let Some(jsx) = self.arena.get_jsx_element(node) {
-                        let children = self.collect_jsx_children(&jsx.children.nodes);
-                        if children.len() > 1 {
-                            usage.needs_jsxs = true;
+                    // Check for key-after-spread → createElement fallback
+                    if let Some(jsx) = self.arena.get_jsx_opening(node) {
+                        if self.jsx_attrs_has_key_after_spread(jsx.attributes) {
+                            usage.needs_create_element = true;
                         } else {
                             usage.needs_jsx = true;
+                        }
+                    } else {
+                        usage.needs_jsx = true;
+                    }
+                }
+                k if k == syntax_kind_ext::JSX_ELEMENT => {
+                    if let Some(jsx) = self.arena.get_jsx_element(node) {
+                        // Check for key-after-spread → createElement fallback
+                        let has_kas = self
+                            .arena
+                            .get(jsx.opening_element)
+                            .and_then(|o| self.arena.get_jsx_opening(o))
+                            .is_some_and(|o| self.jsx_attrs_has_key_after_spread(o.attributes));
+                        if has_kas {
+                            usage.needs_create_element = true;
+                        } else {
+                            let children = self.collect_jsx_children(&jsx.children.nodes);
+                            if children.len() > 1 {
+                                usage.needs_jsxs = true;
+                            } else {
+                                usage.needs_jsx = true;
+                            }
                         }
                     }
                 }
@@ -1198,6 +1400,33 @@ impl<'a> Printer<'a> {
             }
         }
         usage
+    }
+
+    /// Check if a JSX attributes node has a key attribute after a spread attribute.
+    /// When this pattern occurs, tsc falls back to createElement from the base module.
+    fn jsx_attrs_has_key_after_spread(&self, attributes: NodeIndex) -> bool {
+        let Some(attrs_node) = self.arena.get(attributes) else {
+            return false;
+        };
+        let Some(attrs) = self.arena.get_jsx_attributes(attrs_node) else {
+            return false;
+        };
+        let mut seen_spread = false;
+        for &prop in &attrs.properties.nodes {
+            let Some(prop_node) = self.arena.get(prop) else {
+                continue;
+            };
+            if prop_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                seen_spread = true;
+            } else if prop_node.kind == syntax_kind_ext::JSX_ATTRIBUTE && seen_spread
+                && let Some(attr) = self.arena.get_jsx_attribute(prop_node) {
+                    let name = self.get_jsx_attr_name(attr.name);
+                    if name == "key" {
+                        return true;
+                    }
+                }
+        }
+        false
     }
 }
 
@@ -1266,6 +1495,7 @@ struct JsxUsage {
     needs_jsx: bool,
     needs_jsxs: bool,
     needs_fragment: bool,
+    needs_create_element: bool,
 }
 
 #[derive(Clone)]
