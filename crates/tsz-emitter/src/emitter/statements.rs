@@ -476,15 +476,31 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        // Lower `using`/`await using` declarations for non-ES5 targets below ES2025.
+        // The ES5 path handles this in es5/bindings.rs; for ES2015+ we do it here.
+        let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
+        if using_is_lowered && !self.ctx.target_es5 {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    let flags = decl_list_node.flags as u32;
+                    if (flags & node_flags::USING) != 0 {
+                        self.emit_using_declaration_lowered(decl_list, flags);
+                    } else {
+                        self.emit(decl_list_idx);
+                        self.write_semicolon();
+                    }
+                }
+            }
+            return;
+        }
+
         // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
         // Emit the declaration list (which handles the let/const/var keyword)
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
-        // Skip the semicolon only when `using` declarations are being lowered
-        // (targets below ES2025). At ES2025+, `using` passes through as-is and
-        // needs a normal trailing semicolon like var/let/const.
-        let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
         if !using_is_lowered {
             self.map_trailing_semicolon(node);
             self.write_semicolon();
@@ -517,6 +533,103 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
+    /// Transforms:
+    ///   `using d = expr;`
+    /// Into:
+    ///   `var d;`
+    ///   `const env_1 = { stack: [], error: void 0, hasError: false };`
+    ///   `try { d = __addDisposableResource(env_1, expr, false); }`
+    ///   `catch (e_1) { env_1.error = e_1; env_1.hasError = true; }`
+    ///   `finally { __disposeResources(env_1); }`
+    fn emit_using_declaration_lowered(
+        &mut self,
+        decl_list: &tsz_parser::parser::node::VariableData,
+        flags: u32,
+    ) {
+        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let (env_name, error_name) = self.next_disposable_env_names();
+
+        self.write("const ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // For non-ES5 targets, emit all declarations on one line as comma-separated:
+        // const d1 = __addDisposableResource(env, expr1, false), d2 = __addDisposableResource(env, expr2, false);
+        let initialized_decls: Vec<_> = decl_list
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.arena
+                    .get(decl_idx)
+                    .and_then(|n| self.arena.get_variable_declaration(n))
+                    .is_some_and(|d| d.initializer.is_some())
+            })
+            .collect();
+
+        if !initialized_decls.is_empty() {
+            self.write("const ");
+            for (i, &decl_idx) in initialized_decls.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.emit(decl.name);
+                    self.write(" = __addDisposableResource(");
+                    self.write(&env_name);
+                    self.write(", ");
+                    self.emit(decl.initializer);
+                    self.write(", ");
+                    self.write(if using_async { "true" } else { "false" });
+                    self.write(")");
+                }
+            }
+            self.write(";");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if using_async {
+            self.write("await ");
+        }
+        self.write("__disposeResources(");
+        self.write(&env_name);
+        self.write(");");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 
     /// Compute the source position at the end of the last emitted content for
