@@ -89,6 +89,8 @@ pub struct EnumEvaluator<'a> {
     member_values: FxHashMap<String, EnumValue>,
     /// The current enum name (for self-references like `E.A`)
     current_enum_name: Option<String>,
+    /// The source file currently being evaluated, for resolving top-level const bindings.
+    current_source_file: Option<NodeIndex>,
 }
 
 impl<'a> EnumEvaluator<'a> {
@@ -98,6 +100,7 @@ impl<'a> EnumEvaluator<'a> {
             arena,
             member_values: FxHashMap::default(),
             current_enum_name: None,
+            current_source_file: None,
         }
     }
 
@@ -115,6 +118,7 @@ impl<'a> EnumEvaluator<'a> {
     pub fn clear(&mut self) {
         self.member_values.clear();
         self.current_enum_name = None;
+        self.current_source_file = None;
     }
 
     /// Get a previously registered member value
@@ -141,6 +145,7 @@ impl<'a> EnumEvaluator<'a> {
         {
             self.set_current_enum(&ident.escaped_text);
         }
+        self.current_source_file = self.containing_source_file(enum_idx);
 
         // Track the last numeric value for auto-increment.
         // tsc uses f64 arithmetic internally, so float values auto-increment correctly:
@@ -255,6 +260,9 @@ impl<'a> EnumEvaluator<'a> {
                     if let Some(value) = self.member_values.get(&ident.escaped_text) {
                         return value.clone();
                     }
+                    if let Some(value) = self.resolve_top_level_const(&ident.escaped_text) {
+                        return value;
+                    }
                 }
                 EnumValue::Computed
             }
@@ -306,6 +314,51 @@ impl<'a> EnumEvaluator<'a> {
 
             _ => EnumValue::Computed,
         }
+    }
+
+    fn containing_source_file(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        for _ in 0..100 {
+            let ext = self.arena.get_extended(idx)?;
+            if ext.parent.is_none() {
+                let node = self.arena.get(idx)?;
+                return (node.kind == syntax_kind_ext::SOURCE_FILE).then_some(idx);
+            }
+            idx = ext.parent;
+        }
+        None
+    }
+
+    fn resolve_top_level_const(&self, name: &str) -> Option<EnumValue> {
+        let source_file_idx = self.current_source_file?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            let var_stmt = self.arena.get_variable(stmt_node)?;
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let decl_list_node = self.arena.get(decl_list_idx)?;
+                let decl_list = self.arena.get_variable(decl_list_node)?;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if !self.arena.is_const_variable_declaration(decl_idx) {
+                        continue;
+                    }
+                    let decl_node = self.arena.get(decl_idx)?;
+                    let decl = self.arena.get_variable_declaration(decl_node)?;
+                    let decl_name = self.arena.get(decl.name)?;
+                    let ident = self.arena.get_identifier(decl_name)?;
+                    if ident.escaped_text == name && decl.initializer.is_some() {
+                        return Some(self.evaluate_expression(decl.initializer));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Parse a numeric literal string to i64

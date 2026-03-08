@@ -7,7 +7,11 @@ fn evaluate_enum(source: &str) -> FxHashMap<String, EnumValue> {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-        && let Some(&enum_idx) = source_file.statements.nodes.first()
+        && let Some(&enum_idx) = source_file.statements.nodes.iter().find(|&&stmt_idx| {
+            parser.arena.get(stmt_idx).is_some_and(|node| {
+                node.kind == tsz_parser::parser::syntax_kind_ext::ENUM_DECLARATION
+            })
+        })
     {
         let mut evaluator = EnumEvaluator::new(&parser.arena);
         return evaluator.evaluate_enum(enum_idx);
@@ -131,4 +135,17 @@ fn test_const_enum_values() {
     assert_eq!(values.get("A"), Some(&EnumValue::Number(1)));
     assert_eq!(values.get("B"), Some(&EnumValue::Number(2)));
     assert_eq!(values.get("C"), Some(&EnumValue::Number(3)));
+}
+
+#[test]
+fn test_const_enum_can_reference_top_level_const_binding() {
+    let values = evaluate_enum(
+        r#"
+const CONST = 9000 % 2;
+const enum E {
+    A = CONST,
+}
+"#,
+    );
+    assert_eq!(values.get("A"), Some(&EnumValue::Number(0)));
 }
