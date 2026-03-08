@@ -289,7 +289,7 @@ impl<'a> Printer<'a> {
     fn emit_object_literal_without_spread_es5(
         &mut self,
         elements: &[NodeIndex],
-        _source_range: Option<(u32, u32)>,
+        source_range: Option<(u32, u32)>,
     ) {
         let first_computed_idx = elements
             .iter()
@@ -304,12 +304,22 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        // tsc always formats the lowered comma expression as multi-line:
-        //   (_a = {},
-        //       _a[key] = value,
-        //       _a);
+        // tsc preserves the original source formatting: if the object literal was
+        // written on a single line, the comma expression is single-line; if multi-line
+        // in source, the output is multi-line. We check by looking at whether the
+        // source range spans multiple lines.
+        let use_multiline = source_range
+            .and_then(|(start, end)| {
+                let source = self.source_text?;
+                let slice = source.get(start as usize..end as usize)?;
+                Some(slice.contains('\n'))
+            })
+            .unwrap_or(true);
+
         self.write("(");
-        self.increase_indent();
+        if use_multiline {
+            self.increase_indent();
+        }
         self.write(&temp_var);
         self.write(" = ");
 
@@ -323,15 +333,25 @@ impl<'a> Printer<'a> {
         // Emit remaining properties as assignments
         for prop_idx in elements.iter().skip(first_computed_idx) {
             self.write(",");
-            self.write_line();
+            if use_multiline {
+                self.write_line();
+            } else {
+                self.write(" ");
+            }
             self.emit_property_assignment_es5(*prop_idx, &temp_var);
         }
 
         // Return the temp variable
         self.write(",");
-        self.write_line();
+        if use_multiline {
+            self.write_line();
+        } else {
+            self.write(" ");
+        }
         self.write(&temp_var);
-        self.decrease_indent();
+        if use_multiline {
+            self.decrease_indent();
+        }
         self.write(")");
     }
 

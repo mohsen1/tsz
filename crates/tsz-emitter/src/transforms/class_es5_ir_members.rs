@@ -591,7 +591,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         ),
                         PropertyNameIR::Computed(expr_idx) => IRNode::elem(
                             IRNode::id(self.class_name.clone()),
-                            self.convert_expression(*expr_idx),
+                            self.convert_expression_static(*expr_idx),
                         ),
                     };
 
@@ -685,7 +685,9 @@ impl<'a> ES5ClassTransformer<'a> {
         deferred_static_blocks
     }
 
-    /// Get method name as IR representation
+    /// Get method name as IR representation.
+    /// Computed property names use static-like super access (`_super.X` not `_super.prototype.X`)
+    /// because they are evaluated at class definition time in the IIFE body, not inside methods.
     pub(super) fn get_method_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
         let Some(name_node) = self.arena.get(name_idx) else {
             return IRMethodName::Identifier(String::new().into());
@@ -694,7 +696,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(name_node) {
                 return IRMethodName::Computed(Box::new(
-                    self.convert_expression(computed.expression),
+                    self.convert_expression_static(computed.expression),
                 ));
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
