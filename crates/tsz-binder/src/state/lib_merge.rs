@@ -259,9 +259,10 @@ impl BinderState {
                             sym.exports = Some(Box::new(remapped_exports));
                         } else if let Some(existing) = sym.exports.as_mut() {
                             for (name, id) in remapped_exports.iter() {
-                                if !existing.has(name) {
-                                    existing.set(name.clone(), *id);
-                                }
+                                // Always overwrite: Phase 1's alloc_from copies exports
+                                // with un-remapped SymbolIds. We must replace them with
+                                // the remapped IDs from lib_symbol_remap.
+                                existing.set(name.clone(), *id);
                             }
                         }
                     }
@@ -284,9 +285,8 @@ impl BinderState {
                             sym.members = Some(Box::new(remapped_members));
                         } else if let Some(existing) = sym.members.as_mut() {
                             for (name, id) in remapped_members.iter() {
-                                if !existing.has(name) {
-                                    existing.set(name.clone(), *id);
-                                }
+                                // Always overwrite: same reasoning as exports above.
+                                existing.set(name.clone(), *id);
                             }
                         }
                     }
