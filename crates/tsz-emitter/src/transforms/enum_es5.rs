@@ -265,8 +265,8 @@ impl<'a> EnumES5Transformer<'a> {
                 continue;
             };
 
-            let member_name =
-                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
+            let name_idx = member_data.name;
+            let member_name = crate::transforms::emit_utils::enum_member_name(self.arena, name_idx);
             let has_initializer = member_data.initializer.is_some();
 
             // Check if this is a computed property name: enum E { [expr] = value }
@@ -336,7 +336,7 @@ impl<'a> EnumES5Transformer<'a> {
                     let assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
                             object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-                            index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                            index: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                         }),
                         operator: "=".to_string().into(),
                         right: Box::new(value_ir),
@@ -375,7 +375,7 @@ impl<'a> EnumES5Transformer<'a> {
                     let inner_assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
                             object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-                            index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                            index: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                         }),
                         operator: "=".to_string().into(),
                         right: Box::new(inner_value),
@@ -386,7 +386,7 @@ impl<'a> EnumES5Transformer<'a> {
                             index: Box::new(inner_assign),
                         }),
                         operator: "=".to_string().into(),
-                        right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                        right: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                     };
                     IRNode::ExpressionStatement(Box::new(outer_assign))
                 }
@@ -411,7 +411,7 @@ impl<'a> EnumES5Transformer<'a> {
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
                         object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-                        index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                        index: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                     }),
                     operator: "=".to_string().into(),
                     right: Box::new(value_node),
@@ -422,7 +422,7 @@ impl<'a> EnumES5Transformer<'a> {
                         index: Box::new(inner_assign),
                     }),
                     operator: "=".to_string().into(),
-                    right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                    right: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                 };
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             } else {
@@ -441,7 +441,7 @@ impl<'a> EnumES5Transformer<'a> {
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
                         object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-                        index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                        index: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                     }),
                     operator: "=".to_string().into(),
                     right: Box::new(value_node),
@@ -452,7 +452,7 @@ impl<'a> EnumES5Transformer<'a> {
                         index: Box::new(inner_assign),
                     }),
                     operator: "=".to_string().into(),
-                    right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
+                    right: Box::new(self.member_name_ir_node(name_idx, &member_name)),
                 };
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
@@ -711,6 +711,51 @@ impl<'a> EnumES5Transformer<'a> {
     /// Format an i64 value as an `IRNode` numeric literal, matching tsc's output format.
     fn format_numeric_literal(val: i64) -> IRNode {
         IRNode::NumericLiteral(val.to_string().into())
+    }
+
+    /// Check if an enum member name node is a numeric literal, and if so,
+    /// return the appropriate `IRNode::NumericLiteral` with the parsed value.
+    /// Otherwise return `IRNode::StringLiteral` with the `member_name` text.
+    ///
+    /// tsc normalizes numeric literal member names:
+    ///   `1.0` → `1`, `0xF00D` → `61453`, `11e-1` → `1.1`
+    fn member_name_ir_node(&self, name_idx: NodeIndex, member_name: &str) -> IRNode {
+        let Some(node) = self.arena.get(name_idx) else {
+            return IRNode::StringLiteral(member_name.to_string().into());
+        };
+        if node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(node)
+                && let Some(val) = Self::parse_numeric_literal_text(&lit.text) {
+                    // If the value is an exact integer, emit as integer
+                    if val == val.floor() && val.is_finite() && val.abs() < (i64::MAX as f64) {
+                        return IRNode::NumericLiteral((val as i64).to_string().into());
+                    }
+                    // Otherwise emit as float
+                    return IRNode::NumericLiteral(format!("{val}").into());
+                }
+        if node.kind == SyntaxKind::BigIntLiteral as u16 {
+            // BigInt literal names like `0n` are emitted as-is (no quotes)
+            return IRNode::NumericLiteral(member_name.to_string().into());
+        }
+        IRNode::StringLiteral(member_name.to_string().into())
+    }
+
+    /// Parse a numeric literal source text to its f64 value.
+    /// Handles decimal, hex (0x), binary (0b), octal (0o), and scientific notation.
+    fn parse_numeric_literal_text(text: &str) -> Option<f64> {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        if text.starts_with("0x") || text.starts_with("0X") {
+            u64::from_str_radix(&text[2..], 16).ok().map(|v| v as f64)
+        } else if text.starts_with("0b") || text.starts_with("0B") {
+            u64::from_str_radix(&text[2..], 2).ok().map(|v| v as f64)
+        } else if text.starts_with("0o") || text.starts_with("0O") {
+            u64::from_str_radix(&text[2..], 8).ok().map(|v| v as f64)
+        } else {
+            text.parse::<f64>().ok()
+        }
     }
 
     /// Format a float value as an IR node.
