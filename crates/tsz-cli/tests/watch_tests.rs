@@ -58,7 +58,7 @@ fn watch_filter_ignores_outputs_and_excludes() {
     let mut explicit_set = FxHashSet::default();
     explicit_set.insert(explicit.clone());
 
-    let filter = WatchFilter::new(Some(explicit_set), vec![out_dir], None);
+    let filter = WatchFilter::new(Some(explicit_set), vec![out_dir], None, None);
 
     assert!(filter.should_record(&explicit));
     assert!(!filter.should_record(&other));
@@ -72,7 +72,7 @@ fn watch_filter_respects_emitted_files() {
     let base_dir = std::env::temp_dir().join("tsz_watch_filter_emitted");
     let emitted = base_dir.join("types/index.d.ts");
 
-    let mut filter = WatchFilter::new(None, Vec::new(), None);
+    let mut filter = WatchFilter::new(None, Vec::new(), None, None);
     filter.set_last_emitted(vec![emitted.clone()]);
 
     assert!(!filter.should_record(&emitted));
@@ -84,7 +84,7 @@ fn watch_filter_records_project_config() {
     let config = base_dir.join("configs/tsconfig.build.json");
     let other_config = base_dir.join("tsconfig.json");
 
-    let filter = WatchFilter::new(None, Vec::new(), Some(config.clone()));
+    let filter = WatchFilter::new(None, Vec::new(), Some(config.clone()), None);
 
     assert!(filter.should_record(&config));
     assert!(!filter.should_record(&other_config));

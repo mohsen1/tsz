@@ -742,7 +742,8 @@ fn unknown_flag_ts5025_suggestion_format() {
         "Expected exit code 1 for unknown flag with suggestion, got {code}"
     );
     assert!(
-        output.contains("error TS5025: Unknown compiler option '--strct'. Did you mean '--strict'?"),
+        output
+            .contains("error TS5025: Unknown compiler option '--strct'. Did you mean '--strict'?"),
         "Expected TS5025 diagnostic with suggestion, got:\n{output}"
     );
 }
@@ -750,9 +751,8 @@ fn unknown_flag_ts5025_suggestion_format() {
 #[test]
 fn unknown_flag_exit_code_is_1_not_2() {
     let temp = TempDir::new("unknown_flag_exit_code").expect("temp dir");
-    let (code, _output) =
-        run_tsz_with_exit_code(&temp.path, &["--totallyBogusOption123"])
-            .expect("tsz binary not found");
+    let (code, _output) = run_tsz_with_exit_code(&temp.path, &["--totallyBogusOption123"])
+        .expect("tsz binary not found");
 
     assert_eq!(
         code, 1,
@@ -807,8 +807,7 @@ fn build_not_first_ts6369() {
     let temp = TempDir::new("build_not_first").expect("temp dir");
     // --build must be first; if it's not, emit TS6369
     let (code, output) =
-        run_tsz_with_exit_code(&temp.path, &["--noEmit", "--build"])
-            .expect("tsz binary not found");
+        run_tsz_with_exit_code(&temp.path, &["--noEmit", "--build"]).expect("tsz binary not found");
 
     assert_eq!(
         code, 1,

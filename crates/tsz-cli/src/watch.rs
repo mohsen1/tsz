@@ -8,12 +8,102 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use tsz::checker::diagnostics::DiagnosticCategory;
+
 use crate::args::{CliArgs, PollingWatchKind, WatchFileKind};
 use crate::config::{ResolvedCompilerOptions, resolve_compiler_options};
 use crate::driver::resolution::canonicalize_or_owned;
 use crate::driver::{self, CompilationCache};
 use crate::fs::{DEFAULT_EXCLUDES, is_ts_file};
 use crate::reporter::Reporter;
+
+/// Format a timestamp in tsc's `h:mm:ss tt` format (12-hour clock with AM/PM).
+///
+/// Uses local time via C `localtime_r` on Unix.
+#[allow(unsafe_code)]
+pub(crate) fn format_watch_timestamp() -> String {
+    use std::time::SystemTime;
+
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs() as i64;
+
+    // Use C localtime_r to get local time components
+    #[cfg(unix)]
+    {
+        #[repr(C)]
+        struct Tm {
+            tm_sec: i32,
+            tm_min: i32,
+            tm_hour: i32,
+            _tm_mday: i32,
+            _tm_mon: i32,
+            _tm_year: i32,
+            _tm_wday: i32,
+            _tm_yday: i32,
+            _tm_isdst: i32,
+            _tm_gmtoff: i64,
+            _tm_zone: *const i8,
+        }
+
+        unsafe extern "C" {
+            fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
+        }
+
+        let mut tm: Tm = unsafe { std::mem::zeroed() };
+        unsafe {
+            localtime_r(&secs, &mut tm);
+        }
+        let hour24 = tm.tm_hour as u32;
+        let min = tm.tm_min as u32;
+        let sec = tm.tm_sec as u32;
+        format_12h(hour24, min, sec)
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Fallback: use UTC (acceptable on non-Unix platforms for now)
+        let total_secs = secs as u64;
+        let hour24 = ((total_secs % 86400) / 3600) as u32;
+        let min = ((total_secs % 3600) / 60) as u32;
+        let sec = (total_secs % 60) as u32;
+        format_12h(hour24, min, sec)
+    }
+}
+
+/// Format hour/minute/second as `h:mm:ss AM/PM`.
+pub(crate) fn format_12h(hour24: u32, min: u32, sec: u32) -> String {
+    let (period, hour12) = if hour24 == 0 {
+        ("AM", 12)
+    } else if hour24 < 12 {
+        ("AM", hour24)
+    } else if hour24 == 12 {
+        ("PM", 12)
+    } else {
+        ("PM", hour24 - 12)
+    };
+    format!("{hour12}:{min:02}:{sec:02} {period}")
+}
+
+/// Print the TS6031 watch start message to stdout.
+fn print_watch_start() {
+    let ts = format_watch_timestamp();
+    println!("[{ts}] Starting compilation in watch mode...");
+}
+
+/// Print the TS6032 file change detected message to stdout.
+fn print_watch_change() {
+    let ts = format_watch_timestamp();
+    println!("[{ts}] File change detected. Starting incremental compilation...");
+}
+
+/// Print the TS6194 watch completion message to stdout.
+fn print_watch_complete(error_count: usize) {
+    let ts = format_watch_timestamp();
+    let error_word = if error_count == 1 { "error" } else { "errors" };
+    println!("[{ts}] Found {error_count} {error_word}. Watching for file changes.");
+}
 
 const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(200);
 const DEBOUNCE_TICK: Duration = Duration::from_millis(50);
@@ -45,6 +135,7 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     let mut reporter = Reporter::new(color);
     let mut state = WatchState::new(args, &cwd);
 
+    print_watch_start();
     state.compile_and_report(args, &cwd, &mut reporter, None)?;
 
     let (tx, rx) = mpsc::channel();
@@ -67,6 +158,7 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
         }
 
         if let Some(changed) = state.debouncer.flush_ready(Instant::now()) {
+            print_watch_change();
             state.compile_and_report(args, &cwd, &mut reporter, Some(changed))?;
         }
     }
@@ -138,7 +230,34 @@ impl WatchState {
 
         let explicit_files = resolve_explicit_files(&base_dir, &args.files);
         let watch_roots = collect_watch_roots(&base_dir, explicit_files.as_ref());
-        let ignore_dirs = compute_ignore_dirs(&base_dir, &resolved);
+        let mut ignore_dirs = compute_ignore_dirs(&base_dir, &resolved);
+
+        // Wire --excludeDirectories into the ignore list
+        if let Some(ref exclude_dirs) = args.exclude_directories {
+            for dir in exclude_dirs {
+                let path = if dir.is_absolute() {
+                    dir.clone()
+                } else {
+                    base_dir.join(dir)
+                };
+                ignore_dirs.push(canonicalize_or_owned(&path));
+            }
+        }
+
+        // Collect --excludeFiles into an exclusion set
+        let exclude_files = args.exclude_files.as_ref().map(|files| {
+            let mut set = FxHashSet::default();
+            for file in files {
+                let path = if file.is_absolute() {
+                    file.clone()
+                } else {
+                    base_dir.join(file)
+                };
+                set.insert(canonicalize_or_owned(&path));
+            }
+            set
+        });
+
         let project_config = if args.project.is_some() {
             tsconfig_path
         } else {
@@ -148,7 +267,7 @@ impl WatchState {
         Self {
             base_dir,
             watch_roots,
-            filter: WatchFilter::new(explicit_files, ignore_dirs, project_config),
+            filter: WatchFilter::new(explicit_files, ignore_dirs, project_config, exclude_files),
             debouncer: Debouncer::new(DEFAULT_DEBOUNCE),
             type_cache: CompilationCache::default(),
         }
@@ -196,8 +315,14 @@ impl WatchState {
             print!("\x1B[2J\x1B[H");
         }
 
-        match result {
+        let error_count = match result {
             Ok(result) => {
+                let count = result
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.category == DiagnosticCategory::Error)
+                    .count();
+
                 if !result.diagnostics.is_empty() {
                     let output = reporter.render(&result.diagnostics);
                     if !output.is_empty() {
@@ -205,9 +330,15 @@ impl WatchState {
                     }
                 }
                 self.update_emitted(result.emitted_files);
+                count
             }
-            Err(err) => println!("{err}"),
-        }
+            Err(err) => {
+                println!("{err}");
+                1
+            }
+        };
+
+        print_watch_complete(error_count);
 
         if let Ok(project) = load_project_state(args, cwd) {
             self.filter.ignore_dirs = compute_ignore_dirs(&project.base_dir, &project.resolved);
@@ -251,7 +382,11 @@ struct ProjectState {
 }
 
 fn load_project_state(args: &CliArgs, cwd: &Path) -> Result<ProjectState> {
-    let tsconfig_path = driver::resolve_tsconfig_path(cwd, args.project.as_deref())?;
+    let tsconfig_path = if args.ignore_config {
+        None
+    } else {
+        driver::resolve_tsconfig_path(cwd, args.project.as_deref())?
+    };
     let config = driver::load_config(tsconfig_path.as_deref())?;
 
     let mut resolved = resolve_compiler_options(
@@ -360,6 +495,7 @@ pub(crate) struct WatchFilter {
     ignore_dirs: Vec<PathBuf>,
     last_emitted: FxHashSet<PathBuf>,
     project_config: Option<PathBuf>,
+    exclude_files: Option<FxHashSet<PathBuf>>,
 }
 
 impl WatchFilter {
@@ -367,12 +503,14 @@ impl WatchFilter {
         explicit_files: Option<FxHashSet<PathBuf>>,
         ignore_dirs: Vec<PathBuf>,
         project_config: Option<PathBuf>,
+        exclude_files: Option<FxHashSet<PathBuf>>,
     ) -> Self {
         Self {
             explicit_files,
             ignore_dirs,
             last_emitted: FxHashSet::default(),
             project_config,
+            exclude_files,
         }
     }
 
@@ -405,6 +543,13 @@ impl WatchFilter {
 
         if is_default_excluded(path) {
             return false;
+        }
+
+        // Check --excludeFiles
+        if let Some(ref exclude_files) = self.exclude_files {
+            if exclude_files.contains(path) {
+                return false;
+            }
         }
 
         if !is_ts_file(path) {

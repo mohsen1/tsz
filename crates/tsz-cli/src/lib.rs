@@ -9,6 +9,7 @@ pub mod build;
 pub use tsz::config;
 pub mod driver;
 pub mod fs;
+pub mod help;
 pub mod incremental;
 pub mod locale;
 pub mod project_refs;

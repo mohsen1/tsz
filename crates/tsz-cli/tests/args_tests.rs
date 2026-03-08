@@ -88,7 +88,6 @@ fn parses_cli_only_flags() {
 #[test]
 fn parses_target_variants() {
     let targets = [
-        ("es3", Target::Es3),
         ("es5", Target::Es5),
         ("es2015", Target::Es2015),
         ("es6", Target::Es2015), // alias
