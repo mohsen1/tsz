@@ -789,6 +789,21 @@ impl ParserState {
         let end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_error_at(start, end - start, message, code);
     }
+
+    /// Emit a companion diagnostic at the current token, bypassing position-based
+    /// deduplication.  Use when TSC emits multiple distinct error codes at the same
+    /// position (e.g. TS1042 + TS1184 for object-literal modifiers).
+    pub(crate) fn parse_companion_error_at_current_token(&mut self, message: &str, code: u32) {
+        let start = self.u32_from_usize(self.scanner.get_token_start());
+        let end = self.u32_from_usize(self.scanner.get_token_end());
+        let length = end - start;
+        self.parse_diagnostics.push(ParseDiagnostic {
+            start,
+            length,
+            message: message.to_string(),
+            code,
+        });
+    }
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
         let token_text = self.scanner.get_token_text_ref().to_string();
         if token_text.is_empty()

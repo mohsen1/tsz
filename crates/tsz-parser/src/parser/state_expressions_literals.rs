@@ -1338,6 +1338,33 @@ impl ParserState {
                 &format!("{modifier_name} modifier cannot be used here."),
                 diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
             );
+            // TSC also emits TS1184 — but only when the modifier precedes a
+            // shorthand method (`public foo() {}`).  Property assignments
+            // (`public foo: v`) and accessor declarations (`public get foo()`)
+            // only get TS1042.
+            {
+                let snap = self.scanner.save_state();
+                let saved_tok = self.current_token;
+                self.next_token(); // peek past modifier
+                let is_method = if self.is_identifier_or_keyword() {
+                    // Check if identifier is followed by `(` or `<` (method call)
+                    self.next_token();
+                    matches!(
+                        self.token(),
+                        SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken
+                    )
+                } else {
+                    false
+                };
+                self.scanner.restore_state(snap);
+                self.current_token = saved_tok;
+                if is_method {
+                    self.parse_companion_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE, // TS1184
+                    );
+                }
+            }
             self.next_token(); // consume the modifier
             // Continue parsing the actual property/method
         }
