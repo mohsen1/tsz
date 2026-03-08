@@ -3746,10 +3746,12 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     if has_newline {
                         self.write_line();
+                        self.write_indent();
                     }
                     self.write(ct);
                     if has_newline {
                         self.write_line();
+                        self.write_indent();
                     } else {
                         self.write(" ");
                     }
