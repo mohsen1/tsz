@@ -565,7 +565,7 @@ impl<'a> CheckerState<'a> {
                             .type_env
                             .try_borrow()
                             .ok()
-                            .and_then(|env| env.get_def_params(app_def_id).cloned())
+                            .and_then(|env| env.get_def_params(app_def_id).map(|s| s.to_vec()))
                             .or_else(|| self.ctx.get_def_type_params(app_def_id));
 
                         if let (Some(body), Some(params)) = (body, params) {

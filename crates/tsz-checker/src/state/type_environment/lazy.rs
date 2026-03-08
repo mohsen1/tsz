@@ -504,7 +504,7 @@ impl<'a> CheckerState<'a> {
         let mut def_already_registered = def_id.is_none();
         if let Ok(env) = self.ctx.type_env.try_borrow() {
             symbol_already_registered = env.contains(symbol_ref);
-            cached_env_params = env.get_params(symbol_ref).cloned();
+            cached_env_params = env.get_params(symbol_ref).map(|s| s.to_vec());
             if let Some(def_id) = def_id {
                 def_already_registered = env.contains_def(def_id);
             }
