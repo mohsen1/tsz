@@ -1479,24 +1479,23 @@ impl<'a> Printer<'a> {
                         // Check if extends expression is `null` or `(null)`
                         if let Some(&type_idx) = h.types.nodes.first()
                             && let Some(type_node) = self.arena.get(type_idx)
-                                && let Some(ewta) = self.arena.get_expr_type_args(type_node) {
-                                    let mut expr_idx = ewta.expression;
-                                    // Unwrap parenthesized expressions
-                                    while let Some(expr_node) = self.arena.get(expr_idx) {
-                                        if expr_node.kind
-                                            == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                                            && let Some(paren) =
-                                                self.arena.get_parenthesized(expr_node)
-                                            {
-                                                expr_idx = paren.expression;
-                                                continue;
-                                            }
-                                        if expr_node.kind == SyntaxKind::NullKeyword as u16 {
-                                            extends_null = true;
-                                        }
-                                        break;
-                                    }
+                            && let Some(ewta) = self.arena.get_expr_type_args(type_node)
+                        {
+                            let mut expr_idx = ewta.expression;
+                            // Unwrap parenthesized expressions
+                            while let Some(expr_node) = self.arena.get(expr_idx) {
+                                if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                                    && let Some(paren) = self.arena.get_parenthesized(expr_node)
+                                {
+                                    expr_idx = paren.expression;
+                                    continue;
                                 }
+                                if expr_node.kind == SyntaxKind::NullKeyword as u16 {
+                                    extends_null = true;
+                                }
+                                break;
+                            }
+                        }
                         true
                     })
             })
