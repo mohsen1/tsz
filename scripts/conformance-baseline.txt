@@ -839,7 +839,6 @@ FAIL TypeScript/tests/cases/compiler/objectGroupBy.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralExcessProperties.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralFunctionArgContextualTyping.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralIndexerErrors.ts
-FAIL TypeScript/tests/cases/compiler/objectLiteralMemberWithModifiers1.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralMemberWithoutBlock1.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralMemberWithQuestionMark1.ts
 FAIL TypeScript/tests/cases/compiler/objectLiteralsAgainstUnionsOfArrays01.ts
@@ -1067,9 +1066,7 @@ FAIL TypeScript/tests/cases/compiler/this_inside-enum-should-not-be-allowed.ts
 FAIL TypeScript/tests/cases/compiler/thisAssignmentInNamespaceDeclaration1.ts
 FAIL TypeScript/tests/cases/compiler/thisIndexOnExistingReadonlyFieldIsNotNever.ts
 FAIL TypeScript/tests/cases/compiler/thisInFunctionCallJs.ts
-FAIL TypeScript/tests/cases/compiler/thisInModule.ts
 FAIL TypeScript/tests/cases/compiler/thisInTupleTypeParameterConstraints.ts
-FAIL TypeScript/tests/cases/compiler/thisKeyword.ts
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive2.ts
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
@@ -1386,7 +1383,6 @@ FAIL TypeScript/tests/cases/conformance/es6/binaryAndOctalIntegerLiteral/octalIn
 FAIL TypeScript/tests/cases/conformance/es6/classDeclaration/parseClassDeclarationInStrictModeByDefaultInES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/classExpressions/typeArgumentInferenceWithClassExpression2.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames12_ES6.ts
-FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames19_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType10_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType6_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType7_ES6.ts
@@ -2119,6 +2115,7 @@ FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts
+FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts
@@ -6183,6 +6180,7 @@ PASS TypeScript/tests/cases/compiler/objectLiteralFreshnessWithSpread.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralFunctionArgContextualTyping2.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralIndexerNoImplicitAny.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralIndexers.ts
+PASS TypeScript/tests/cases/compiler/objectLiteralMemberWithModifiers1.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralMemberWithModifiers2.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralParameterResolution.ts
 PASS TypeScript/tests/cases/compiler/objectLiteralPropertyImplicitlyAny.ts
@@ -7143,6 +7141,7 @@ PASS TypeScript/tests/cases/compiler/thisInFunctionCall.ts
 PASS TypeScript/tests/cases/compiler/thisInGenericStaticMembers.ts
 PASS TypeScript/tests/cases/compiler/thisInInnerFunctions.ts
 PASS TypeScript/tests/cases/compiler/thisInLambda.ts
+PASS TypeScript/tests/cases/compiler/thisInModule.ts
 PASS TypeScript/tests/cases/compiler/thisInModuleFunction1.ts
 PASS TypeScript/tests/cases/compiler/thisInObjectJs.ts
 PASS TypeScript/tests/cases/compiler/thisInOuterClassBody.ts
@@ -7154,6 +7153,7 @@ PASS TypeScript/tests/cases/compiler/thisInSuperCall1.ts
 PASS TypeScript/tests/cases/compiler/thisInSuperCall2.ts
 PASS TypeScript/tests/cases/compiler/thisInSuperCall3.ts
 PASS TypeScript/tests/cases/compiler/thisInTypeQuery.ts
+PASS TypeScript/tests/cases/compiler/thisKeyword.ts
 PASS TypeScript/tests/cases/compiler/thisPredicateInObjectLiteral.ts
 PASS TypeScript/tests/cases/compiler/thisReferencedInFunctionInsideArrowFunction1.ts
 PASS TypeScript/tests/cases/compiler/thisShadowingErrorSpans.ts
@@ -8583,6 +8583,7 @@ PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyN
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames18_ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames18_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames19_ES5.ts
+PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames19_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames2_ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames2_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames20_ES5.ts
@@ -11834,7 +11835,6 @@ PASS TypeScript/tests/cases/conformance/types/literal/numericLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/numericStringLiteralTypes.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes2.ts
-PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks02.ts
