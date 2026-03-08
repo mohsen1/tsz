@@ -188,7 +188,7 @@ impl<'a> LoweringPass<'a> {
         class_node: NodeIndex,
         heritage: Option<NodeIndex>,
     ) {
-        if heritage.is_some() {
+        if heritage.is_some() && self.ctx.target_es5 {
             self.transforms.helpers_mut().extends = true;
         }
 
