@@ -168,19 +168,15 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let can_cache = !self.contains_type_parameters_cached(type_id);
-
         self.ensure_relation_input_ready(type_id);
 
         let mut visited = FxHashSet::default();
         let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
-        if can_cache {
-            self.ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow_mut()
-                .insert(type_id, result);
-        }
+        self.ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow_mut()
+            .insert(type_id, result);
         result
     }
 
@@ -365,6 +361,10 @@ impl<'a> CheckerState<'a> {
     /// The function handles recursive type aliases by checking if the body
     /// is itself a lazy type and resolving it recursively.
     pub fn resolve_lazy_type(&mut self, type_id: TypeId) -> TypeId {
+        // Fast path: non-lazy types don't need resolution or cycle detection.
+        if lazy_def_id(self.ctx.types, type_id).is_none() {
+            return type_id;
+        }
         use rustc_hash::FxHashSet;
 
         let mut visited = FxHashSet::default();

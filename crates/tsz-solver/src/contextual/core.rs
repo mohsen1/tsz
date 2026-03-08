@@ -767,56 +767,50 @@ impl<'a> ContextualTypeContext<'a> {
     pub fn get_property_type(&self, name: &str) -> Option<TypeId> {
         let expected = self.expected?;
 
-        // Handle Union explicitly - collect property types from all members
-        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
-            let members = self.interner.type_list(members);
-            let prop_types: Vec<TypeId> = members
-                .iter()
-                .filter_map(|&m| {
+        // Single lookup to dispatch on the type shape. Avoids multiple DashMap
+        // lookups for the common case (Object types fall through to the extractor).
+        match self.interner.lookup(expected) {
+            Some(TypeData::Union(members)) => {
+                let members = self.interner.type_list(members);
+                let prop_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_property_type(name)
+                    })
+                    .collect();
+
+                return if prop_types.is_empty() {
+                    None
+                } else if prop_types.len() == 1 {
+                    Some(prop_types[0])
+                } else {
+                    // CRITICAL: Use union_preserve_members to keep literal types intact
+                    // For discriminated unions like `{ success: false } | { success: true }`,
+                    // the property type should be `false | true`, NOT widened to `boolean`.
+                    Some(self.interner.union_preserve_members(prop_types))
+                };
+            }
+            Some(TypeData::Intersection(members)) => {
+                // Handle Intersection explicitly - collect property types from all members.
+                // This must go through get_property_type() per member (not the PropertyExtractor
+                // visitor) so that each member gets the full handling pipeline, including
+                // mapped-type-template extraction for patterns like T & {[P in keyof T]: V}.
+                let members = self.interner.type_list(members);
+                let mut result: Option<TypeId> = None;
+                for &m in members.iter() {
                     let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                    ctx.get_property_type(name)
-                })
-                .collect();
-
-            return if prop_types.is_empty() {
-                None
-            } else if prop_types.len() == 1 {
-                Some(prop_types[0])
-            } else {
-                // CRITICAL: Use union_preserve_members to keep literal types intact
-                // For discriminated unions like `{ success: false } | { success: true }`,
-                // the property type should be `false | true`, NOT widened to `boolean`.
-                // This preserves literal types for contextual typing.
-                Some(self.interner.union_preserve_members(prop_types))
-            };
-        }
-
-        // Handle Intersection explicitly - collect property types from all members.
-        // This must go through get_property_type() per member (not the PropertyExtractor
-        // visitor) so that each member gets the full handling pipeline, including
-        // mapped-type-template extraction for patterns like T & {[P in keyof T]: V}.
-        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
-            let members = self.interner.type_list(members);
-            let mut result: Option<TypeId> = None;
-            for &m in members.iter() {
-                let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                if let Some(ty) = ctx.get_property_type(name)
-                    && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-                {
-                    result = Some(ty);
+                    if let Some(ty) = ctx.get_property_type(name)
+                        && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
+                    {
+                        result = Some(ty);
+                    }
+                }
+                if result.is_some() {
+                    return result;
                 }
             }
-            if result.is_some() {
-                return result;
-            }
-        }
-
-        // Handle Mapped, Conditional, Application, and IndexAccess types.
-        // These complex types need to be resolved to concrete object types before
-        // property extraction can work.
-        match self.interner.lookup(expected) {
             Some(TypeData::Mapped(mapped_id)) => {
-                // First try evaluating the mapped type directly
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
@@ -825,9 +819,6 @@ impl<'a> ContextualTypeContext<'a> {
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
                 // IF the template doesn't reference the mapped type's bound parameter.
-                // For example, { [P in keyof T]: TakeString } has template=TakeString which
-                // is independent of P, so it's safe to use directly. But { [P in K]: T[P] }
-                // has template=T[P] which depends on P, so we can't use it.
                 let mapped = self.interner.mapped_type(mapped_id);
                 if mapped.template != TypeId::ANY
                     && mapped.template != TypeId::ERROR
@@ -841,9 +832,7 @@ impl<'a> ContextualTypeContext<'a> {
                     return Some(mapped.template);
                 }
                 // Fall back to the constraint of the mapped type's source.
-                // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
                 if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
-                    // The operand may be a Lazy type wrapping a type parameter — resolve it
                     let resolved_operand =
                         crate::evaluation::evaluate::evaluate_type(self.interner, operand);
                     if let Some(constraint) = crate::type_queries::get_type_parameter_constraint(
@@ -853,7 +842,6 @@ impl<'a> ContextualTypeContext<'a> {
                         let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
                         return ctx.get_property_type(name);
                     }
-                    // Also try the original operand (may already be a TypeParameter)
                     if let Some(constraint) =
                         crate::type_queries::get_type_parameter_constraint(self.interner, operand)
                     {
@@ -868,17 +856,12 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
                 }
-                // Fallback for unevaluated Application types (e.g. when evaluation is
-                // deferred due unresolved refs or temporary borrow constraints).
-                // Prefer the application base shape first so generic object members
-                // like `AsyncLoaderProps<T>['children']` remain discoverable.
+                // Fallback for unevaluated Application types
                 let app = self.interner.type_application(app_id);
                 let base_ctx = ContextualTypeContext::with_expected(self.interner, app.base);
                 if let Some(prop) = base_ctx.get_property_type(name) {
                     return Some(prop);
                 }
-                // Last resort: try the first type argument for homomorphic mapped
-                // wrappers where the source shape is in arg0 (e.g. Readonly<T>).
                 if let Some(&arg0) = app.args.first() {
                     let ctx = ContextualTypeContext::with_expected(self.interner, arg0);
                     if let Some(prop) = ctx.get_property_type(name) {
@@ -893,17 +876,14 @@ impl<'a> ContextualTypeContext<'a> {
                     return ctx.get_property_type(name);
                 }
             }
+            Some(TypeData::TypeParameter(ref info) | TypeData::Infer(ref info)) => {
+                // Handle TypeParameter/Infer - use constraint for property extraction
+                if let Some(constraint) = info.constraint {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+                    return ctx.get_property_type(name);
+                }
+            }
             _ => {}
-        }
-
-        // Handle TypeParameter - use its constraint for property extraction
-        // Example: Actions extends ActionsObject<State>
-        // When getting property from Actions, use ActionsObject<State> instead
-        if let Some(constraint) =
-            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
-        {
-            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-            return ctx.get_property_type(name);
         }
 
         // Use visitor for Object types
