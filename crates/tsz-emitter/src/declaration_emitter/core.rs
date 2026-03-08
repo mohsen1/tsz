@@ -2916,6 +2916,11 @@ impl<'a> DeclarationEmitter<'a> {
         initializer: NodeIndex,
         is_exported: bool,
     ) {
+        if is_exported && self.emit_js_synthetic_class_expression_declaration(name_idx, initializer)
+        {
+            return;
+        }
+
         let type_text = if is_exported {
             self.js_synthetic_export_value_type_text(initializer)
         } else {
@@ -2945,6 +2950,94 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.emitted_module_indicator = true;
         }
+    }
+
+    fn emit_js_synthetic_class_expression_declaration(
+        &mut self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(init_node) else {
+            return false;
+        };
+
+        let Some(export_name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        let Some(class_name) = self.get_identifier_text(class.name) else {
+            return false;
+        };
+        if class_name != export_name {
+            return false;
+        }
+
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+
+        self.write_indent();
+        self.write("export ");
+        if self.should_emit_declare_keyword(true) {
+            self.write("declare ");
+        }
+        if is_abstract {
+            self.write("abstract ");
+        }
+        self.write("class ");
+        self.emit_node(name_idx);
+
+        if let Some(ref type_params) = class.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
+        if let Some(ref heritage) = class.heritage_clauses {
+            self.emit_heritage_clauses(heritage);
+        }
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        self.class_has_constructor_overloads = false;
+        self.method_names_with_overloads = FxHashSet::default();
+
+        self.emit_parameter_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members) {
+            self.write_indent();
+            self.write("#private;");
+            self.write_line();
+        }
+
+        for &member_idx in &class.members.nodes {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(member_node.pos);
+            }
+            let before_member_len = self.writer.len();
+            self.emit_class_member(member_idx);
+            if self.writer.len() == before_member_len {
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(member_node.pos, member_node.end);
+                }
+            }
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        self.emitted_module_indicator = true;
+        true
     }
 
     fn emit_js_static_method_augmentation_namespace(

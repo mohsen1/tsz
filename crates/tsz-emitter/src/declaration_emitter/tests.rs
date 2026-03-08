@@ -1056,6 +1056,30 @@ exports.K = NS.K;
 }
 
 #[test]
+fn test_js_commonjs_named_class_expression_emits_exported_class() {
+    let output = emit_js_dts(
+        r#"
+exports.K = class K {
+    values() {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export class K {"),
+        "Expected named CommonJS class expression to emit as an exported class: {output}"
+    );
+    assert!(
+        output.contains("values(): void;"),
+        "Expected named CommonJS class expression members to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("export var K: {"),
+        "Did not expect named CommonJS class expression to lower as a constructor object: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
     let source = r#"
 class Handler {
