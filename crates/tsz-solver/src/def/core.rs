@@ -543,6 +543,37 @@ impl DefinitionStore {
             .map(|entry| *entry.key())
     }
 
+    /// Check if a type name is ambiguous (appears in multiple files).
+    ///
+    /// Used by the `TypeFormatter` to decide whether to import-qualify a type.
+    /// tsc only shows `import("specifier").TypeName` when there are multiple types
+    /// with the same name in different files. If the name is unique, tsc shows
+    /// just `TypeName` even for cross-file types.
+    pub fn has_ambiguous_name(
+        &self,
+        name: &str,
+        file_id: u32,
+        interner: &dyn crate::TypeDatabase,
+    ) -> bool {
+        self.definitions.iter().any(|entry| {
+            let def = entry.value();
+            let def_name = interner.resolve_atom_ref(def.name);
+            def_name.as_ref() == name && def.file_id.is_some_and(|fid| fid != file_id)
+        })
+    }
+
+    /// Find a `DefId` by its associated `SymbolId` (raw u32).
+    ///
+    /// Used by the `TypeFormatter` to look up whether a symbol corresponds to a
+    /// generic definition, enabling display of type parameters in error messages
+    /// (e.g., `S18<unknown, unknown, unknown>` instead of just `S18`).
+    pub fn find_def_by_symbol(&self, symbol_id: u32) -> Option<DefId> {
+        self.definitions
+            .iter()
+            .find(|entry| entry.value().symbol_id == Some(symbol_id))
+            .map(|entry| *entry.key())
+    }
+
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
     ///
     /// This preserves type alias names in diagnostic messages: when the formatter

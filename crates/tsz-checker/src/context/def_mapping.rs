@@ -346,8 +346,14 @@ impl<'a> CheckerContext<'a> {
     pub fn create_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
         use tsz_solver::TypeFormatter;
 
-        TypeFormatter::with_symbols(self.types, &self.binder.symbols)
-            .with_def_store(&self.definition_store)
+        let mut formatter = TypeFormatter::with_symbols(self.types, &self.binder.symbols)
+            .with_def_store(&self.definition_store);
+        if !self.module_specifiers.is_empty() {
+            formatter = formatter
+                .with_module_specifiers(&self.module_specifiers)
+                .with_current_file_id(self.current_file_idx as u32);
+        }
+        formatter
     }
 
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.

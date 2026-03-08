@@ -296,6 +296,7 @@ impl<'a> CheckerState<'a> {
             checker.ctx.all_arenas = self.ctx.all_arenas.clone();
             checker.ctx.all_binders = self.ctx.all_binders.clone();
             checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+            checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
             checker.ctx.current_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will

@@ -187,6 +187,20 @@ impl<'a> CheckerState<'a> {
             object_type_with_flow
         };
 
+        // Compute a display type for error messages that preserves literal types.
+        // When `get_type_of_node` widens literals (e.g., "" -> string, 42 -> number),
+        // tsc still shows the literal type in error messages like TS2339.
+        // Try to recover the literal type from the expression node for display purposes.
+        let display_object_type = if matches!(
+            original_object_type,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
+        ) {
+            self.literal_type_from_initializer(access.expression)
+                .unwrap_or(original_object_type)
+        } else {
+            original_object_type
+        };
+
         // Evaluate Application types to resolve generic type aliases/interfaces.
         // But preserve original for error messages to maintain nominal identity (e.g., D<string>).
         //
@@ -553,9 +567,10 @@ impl<'a> CheckerState<'a> {
                     && !accessibility_error_emitted
                 {
                     // Report at the property name node, not the full expression (matches tsc behavior)
+                    // Use display_object_type to preserve literal types in error messages
                     self.error_property_not_exist_at(
                         property_name,
-                        original_object_type,
+                        display_object_type,
                         access.name_or_argument,
                     );
                 }
@@ -719,7 +734,7 @@ impl<'a> CheckerState<'a> {
 
                         let base_name = self.get_class_name_from_decl(base_idx);
                         let static_member_name = format!("{base_name}.{property_name}");
-                        let object_type_str = self.format_type(original_object_type);
+                        let object_type_str = self.format_type(display_object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                             &[property_name, &object_type_str, &static_member_name],
@@ -749,7 +764,7 @@ impl<'a> CheckerState<'a> {
 
                         let class_name = self.get_class_name_from_decl(class_idx);
                         let static_member_name = format!("{class_name}.{property_name}");
-                        let object_type_str = self.format_type(original_object_type);
+                        let object_type_str = self.format_type(display_object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                             &[property_name, &object_type_str, &static_member_name],
@@ -770,11 +785,12 @@ impl<'a> CheckerState<'a> {
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.
-                        // Use original_object_type to preserve nominal identity (e.g., D<string>)
+                        // Use display_object_type to preserve literal types in error messages
+                        // while maintaining nominal identity (e.g., D<string>)
                         // Report at the property name node, not the full expression (matches tsc behavior)
                         self.error_property_not_exist_at(
                             property_name,
-                            original_object_type,
+                            display_object_type,
                             access.name_or_argument,
                         );
                     }
