@@ -1038,78 +1038,18 @@ pub(super) fn create_binder_from_bound_file(
     binder
 }
 
-/// Build a lightweight binder for cross-file symbol/export lookups.
+/// Build a binder for cross-file symbol and type resolution.
 ///
-/// This avoids cloning per-file node/scope/flow structures when populating
-/// `CheckerContext::all_binders`, which only needs symbol/file-local/module-export data.
+/// Cross-file delegation can use entries from `CheckerContext::all_binders` for
+/// full semantic type computation, not just export-table lookups. Reuse the same
+/// binder construction path as a normal file check so delegated child checkers
+/// have access to the owning file's symbols, declaration arenas, and augmentations.
 pub(super) fn create_cross_file_lookup_binder(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let mut file_locals = SymbolTable::new();
-
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    // Keep cross-file binders intentionally tiny: they are only used to map
-    // import targets to that file's locals/exports.
-    let mut binder = BinderState::new();
-    binder.file_locals = file_locals;
-    binder.node_symbols = file.node_symbols.clone();
-    binder.scopes = file.scopes.clone();
-    binder.node_scope_ids = file.node_scope_ids.clone();
-    binder.declared_modules = program.declared_modules.clone();
-    binder.shorthand_ambient_modules = program.shorthand_ambient_modules.clone();
-    if let Some(exports) = program.module_exports.get(&file.file_name) {
-        binder
-            .module_exports
-            .insert(file.file_name.clone(), exports.clone());
-    }
-    for module_name in program
-        .declared_modules
-        .iter()
-        .chain(program.shorthand_ambient_modules.iter())
-    {
-        if let Some(exports) = program.module_exports.get(module_name) {
-            binder
-                .module_exports
-                .insert(module_name.clone(), exports.clone());
-        }
-    }
-    // Copy re-export data for cross-file import validation.
-    // Without this, `resolve_import_in_file` can't follow wildcard/named
-    // re-export chains across binder boundaries.
-    if let Some(wildcards) = program.wildcard_reexports.get(&file.file_name) {
-        binder
-            .wildcard_reexports
-            .insert(file.file_name.clone(), wildcards.clone());
-    }
-    if let Some(type_only_flags) = program.wildcard_reexports_type_only.get(&file.file_name) {
-        binder
-            .wildcard_reexports_type_only
-            .insert(file.file_name.clone(), type_only_flags.clone());
-    }
-    if let Some(reexports) = program.reexports.get(&file.file_name) {
-        binder
-            .reexports
-            .insert(file.file_name.clone(), reexports.clone());
-    }
-    binder.is_external_module = file.is_external_module;
-    // Copy expando property assignments so cross-file property access checks
-    // can suppress false TS2339 for patterns like `C1.staticProp` where
-    // `C1.staticProp = 0` was assigned in another file.
-    binder.expando_properties = file.expando_properties.clone();
-    binder
+    create_binder_from_bound_file(file, program, file_idx)
 }
 
 // --- TS directive suppression (not yet wired up) ---

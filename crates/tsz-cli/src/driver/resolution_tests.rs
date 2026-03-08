@@ -4,7 +4,7 @@ use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]
-fn test_exports_js_target_does_not_substitute_dts() {
+fn test_exports_js_target_substitutes_dts() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_js_target");
     let _ = fs::remove_dir_all(&dir);
@@ -45,9 +45,103 @@ fn test_exports_js_target_does_not_substitute_dts() {
         &known_files,
     );
 
-    assert!(
-        resolved.is_none(),
-        "exports target with .js should not substitute to .d.ts"
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entrypoint.d.ts"),
+        )),
+        "exports target with .js should resolve to an adjacent declaration file"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_runtime_targets_substitute_matching_declaration_sidecars() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_sidecars");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{
+            "name":"pkg",
+            "type":"module",
+            "exports":{
+                ".":"./index.js",
+                "./mjs":"./entry.mjs",
+                "./cjs":"./entry.cjs"
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/pkg/index.d.ts"), "export {};").unwrap();
+    fs::write(dir.join("node_modules/pkg/entry.d.mts"), "export {};").unwrap();
+    fs::write(dir.join("node_modules/pkg/entry.d.cts"), "export = 1;").unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import 'pkg'; import 'pkg/mjs'; import 'pkg/cjs';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/index.d.ts"),
+        ))
+    );
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg/mjs",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entry.d.mts"),
+        ))
+    );
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg/cjs",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entry.d.cts"),
+        ))
     );
 
     let _ = fs::remove_dir_all(&dir);

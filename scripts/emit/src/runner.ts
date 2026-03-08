@@ -291,21 +291,84 @@ function extractVariantFromFilename(
   return result;
 }
 
-function parseSourceDirectives(source: string): Record<string, unknown> {
+interface ParsedSourceTest {
+  options: Record<string, unknown>;
+  source: string | null;
+  sourceFileName: string | null;
+  sourceFiles: Array<{ name: string; content: string }>;
+}
+
+function parseSourceTest(content: string): ParsedSourceTest {
   const options: Record<string, unknown> = {};
-  for (const line of source.split('\n')) {
+  const sourceFiles: Array<{ name: string; content: string }> = [];
+  const stripped = content.replace(/^\uFEFF/, '');
+  const lines = stripped.split('\n');
+  let currentFileName: string | null = null;
+  let currentContent: string[] = [];
+
+  const flushCurrentFile = () => {
+    if (!currentFileName) return;
+    sourceFiles.push({
+      name: currentFileName,
+      content: currentContent.join('\n'),
+    });
+    currentFileName = null;
+    currentContent = [];
+  };
+
+  for (const line of lines) {
     const trimmed = line.trim();
-    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
+    const optionMatch = trimmed.match(/^\/\/\s*@(\w+)\s*:\s*([^\r\n]*)$/i);
     if (optionMatch) {
       const [, key, rawValue] = optionMatch;
       const value = rawValue.trim();
       const lowKey = key.toLowerCase();
+      if (lowKey === 'filename') {
+        flushCurrentFile();
+        currentFileName = value;
+        continue;
+      }
       if (value.toLowerCase() === 'true') options[lowKey] = true;
       else if (value.toLowerCase() === 'false') options[lowKey] = false;
       else options[lowKey] = value;
+      continue;
+    }
+
+    const tsDirectiveMatch = trimmed.match(/^\/\/\s*@([\w-]+)\s*$/i);
+    if (tsDirectiveMatch) {
+      const lowKey = tsDirectiveMatch[1].toLowerCase();
+      if (lowKey === 'ts-check') {
+        options.checkjs = true;
+      } else if (lowKey === 'ts-nocheck') {
+        options.checkjs = false;
+      } else if (currentFileName) {
+        currentContent.push(line);
+      }
+      continue;
+    }
+
+    if (currentFileName) {
+      currentContent.push(line);
     }
   }
-  return options;
+
+  flushCurrentFile();
+
+  const entrySourceFile = sourceFiles.find(file => {
+    return (
+      file.content.length > 0 &&
+      !file.name.endsWith('.d.ts') &&
+      !file.name.endsWith('package.json') &&
+      !file.name.endsWith('tsconfig.json')
+    );
+  });
+
+  return {
+    options,
+    source: entrySourceFile?.content ?? null,
+    sourceFileName: entrySourceFile?.name ?? null,
+    sourceFiles,
+  };
 }
 
 function loadDtsDiscoveryCache(): DtsDiscoveryCache {
@@ -375,7 +438,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
   // Read and parse baseline files in parallel
   const readLimit = pLimit(64);
-  const directivesCache = new Map<string, Record<string, unknown>>();
+  const parsedSourceCache = new Map<string, ParsedSourceTest>();
   const results = await Promise.all(jsFiles.map(baselineFile => readLimit(async () => {
     const baselinePath = path.join(BASELINES_DIR, baselineFile);
     const baselineContent = await fs.promises.readFile(baselinePath, 'utf-8');
@@ -387,18 +450,37 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const variant = extractVariantFromFilename(baselineFile);
 
     let directives: Record<string, unknown> = {};
+    let sourceFiles = baseline.sourceFiles;
+    let source = baseline.source;
+    let sourceFileName = baseline.sourceFileName;
     if (baseline.testPath) {
-      const cached = directivesCache.get(baseline.testPath);
+      const cached = parsedSourceCache.get(baseline.testPath);
       if (cached) {
-        directives = cached;
+        directives = cached.options;
+        if (cached.sourceFiles.length > 0) {
+          sourceFiles = cached.sourceFiles;
+          source = cached.source ?? source;
+          sourceFileName = cached.sourceFileName ?? sourceFileName;
+        }
       } else {
         const testFilePath = path.join(TS_DIR, baseline.testPath);
         try {
           const testFileContent = await fs.promises.readFile(testFilePath, 'utf-8');
-          directives = parseSourceDirectives(testFileContent);
-          directivesCache.set(baseline.testPath, directives);
+          const parsedSource = parseSourceTest(testFileContent);
+          directives = parsedSource.options;
+          if (parsedSource.sourceFiles.length > 0) {
+            sourceFiles = parsedSource.sourceFiles;
+            source = parsedSource.source ?? source;
+            sourceFileName = parsedSource.sourceFileName ?? sourceFileName;
+          }
+          parsedSourceCache.set(baseline.testPath, parsedSource);
         } catch {
-          directivesCache.set(baseline.testPath, directives);
+          parsedSourceCache.set(baseline.testPath, {
+            options: directives,
+            source: null,
+            sourceFileName: null,
+            sourceFiles: [],
+          });
         }
       }
     }
@@ -475,9 +557,9 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     return {
       baselineFile,
       testPath: baseline.testPath,
-      sourceFileName: baseline.sourceFileName,
-      sourceFiles: baseline.sourceFiles,
-      source: baseline.source,
+      sourceFileName,
+      sourceFiles,
+      source: source ?? baseline.source!,
       expectedJs: baseline.js,
       expectedJsFileName: baseline.jsFileName,
       expectedDts: baseline.dts,
@@ -607,6 +689,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
+        expectedJsContent: testCase.expectedJs,
+        expectedDtsContent: testCase.expectedDts,
       });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;

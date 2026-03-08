@@ -44,6 +44,10 @@ pub struct TypePrinter<'a> {
     enclosing_symbol: Option<SymbolId>,
     /// AST access for deciding whether a symbol is nameable from declaration output.
     node_arena: Option<&'a NodeArena>,
+    /// Optional resolver for turning foreign symbols into import module specifiers.
+    module_path_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
+    /// Optional resolver for reusing in-scope namespace import aliases.
+    namespace_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -57,6 +61,8 @@ impl<'a> TypePrinter<'a> {
             indent_level: None,
             enclosing_symbol: None,
             node_arena: None,
+            module_path_resolver: None,
+            namespace_alias_resolver: None,
         }
     }
 
@@ -97,6 +103,24 @@ impl<'a> TypePrinter<'a> {
     /// Set the AST arena for declaration-reachability checks.
     pub const fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
         self.node_arena = Some(node_arena);
+        self
+    }
+
+    /// Set a resolver for import-qualified foreign symbol references.
+    pub fn with_module_path_resolver(
+        mut self,
+        resolver: &'a dyn Fn(SymbolId) -> Option<String>,
+    ) -> Self {
+        self.module_path_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a resolver for reusing namespace import aliases already in scope.
+    pub fn with_namespace_alias_resolver(
+        mut self,
+        resolver: &'a dyn Fn(SymbolId) -> Option<String>,
+    ) -> Self {
+        self.namespace_alias_resolver = Some(resolver);
         self
     }
 
@@ -282,6 +306,68 @@ impl<'a> TypePrinter<'a> {
         self.interner.resolve_atom(atom)
     }
 
+    fn resolve_symbol_module_path(&self, sym_id: SymbolId) -> Option<String> {
+        self.module_path_resolver
+            .and_then(|resolver| resolver(sym_id))
+    }
+
+    fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {
+        self.namespace_alias_resolver
+            .and_then(|resolver| resolver(sym_id))
+    }
+
+    fn import_qualified_symbol_name(&self, sym_id: SymbolId) -> Option<String> {
+        let module_path = self.resolve_symbol_module_path(sym_id)?;
+        let name = self.resolve_symbol_qualified_name(sym_id)?;
+        Some(format!("import(\"{module_path}\").{name}"))
+    }
+
+    fn print_named_symbol_reference(&self, sym_id: SymbolId, needs_typeof: bool) -> Option<String> {
+        let is_local_import_alias = self
+            .symbol_arena
+            .and_then(|arena| arena.get(sym_id))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
+            });
+
+        if !is_local_import_alias && let Some(name) = self.import_qualified_symbol_name(sym_id) {
+            return Some(if needs_typeof {
+                format!("typeof {name}")
+            } else {
+                name
+            });
+        }
+
+        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && (self.is_symbol_visible(sym_id)
+                || self.is_global_symbol(sym_id)
+                || is_local_import_alias)
+        {
+            return Some(if needs_typeof {
+                format!("typeof {name}")
+            } else {
+                name
+            });
+        }
+
+        None
+    }
+
+    fn print_namespace_reference(&self, sym_id: SymbolId) -> Option<String> {
+        if let Some(alias) = self.resolve_namespace_import_alias(sym_id) {
+            return Some(format!("typeof {alias}"));
+        }
+        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && (self.is_symbol_visible(sym_id)
+                || self.is_global_symbol(sym_id)
+                || self.symbol_is_nameable(sym_id))
+        {
+            return Some(format!("typeof {name}"));
+        }
+        self.resolve_symbol_module_path(sym_id)
+            .map(|module_path| format!("typeof import(\"{module_path}\")"))
+    }
+
     /// Convert a `TypeId` to TypeScript syntax string.
     pub fn print_type(&self, type_id: TypeId) -> String {
         // Fast path: check built-in intrinsics (TypeId < 100)
@@ -368,7 +454,14 @@ impl<'a> TypePrinter<'a> {
             if let Some(arena) = self.symbol_arena
                 && let Some(symbol) = arena.get(sym_id)
                 && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-                && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+                && let Some(name) = if self.is_symbol_visible(sym_id)
+                    || self.is_global_symbol(sym_id)
+                    || self.symbol_is_nameable(sym_id)
+                {
+                    self.resolve_symbol_qualified_name(sym_id)
+                } else {
+                    self.import_qualified_symbol_name(sym_id)
+                }
             {
                 return name;
             }
@@ -377,8 +470,15 @@ impl<'a> TypePrinter<'a> {
             {
                 return self.print_type(symbol_type);
             }
-            if let Some(name) = self.resolve_symbol_qualified_name(sym_id) {
+            if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+                && (self.is_symbol_visible(sym_id)
+                    || self.is_global_symbol(sym_id)
+                    || self.symbol_is_nameable(sym_id))
+            {
                 return format!("typeof {name}");
+            }
+            if let Some(name) = self.print_named_symbol_reference(sym_id, true) {
+                return name;
             }
             return "any".to_string();
         }
@@ -412,7 +512,10 @@ impl<'a> TypePrinter<'a> {
         {
             return self.print_string_intrinsic(kind, type_arg);
         }
-        if visitor::module_namespace_symbol_ref(self.interner, type_id).is_some() {
+        if let Some(sym_ref) = visitor::module_namespace_symbol_ref(self.interner, type_id) {
+            if let Some(name) = self.print_namespace_reference(SymbolId(sym_ref.0)) {
+                return name;
+            }
             return "any".to_string();
         }
         if let Some(index) = visitor::recursive_index(self.interner, type_id) {
@@ -490,6 +593,15 @@ impl<'a> TypePrinter<'a> {
         if let Some(sym_id) = shape.symbol
             && (self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+        {
+            return name;
+        }
+
+        if let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+            && symbol.has_any_flags(symbol_flags::MODULE)
+            && let Some(name) = self.print_namespace_reference(sym_id)
         {
             return name;
         }
@@ -1426,11 +1538,12 @@ impl<'a> TypePrinter<'a> {
             None
         };
 
-        // If we have a symbol and it's visible or global, use the name
+        // If we have a symbol and it's visible/global, use the name. Otherwise
+        // fall back to an import-qualified reference when the emitter can
+        // resolve the owning module specifier.
         if let Some(sym_id) = sym_id
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(sym_id)
-            && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
         {
             // Lazy(DefId) for value-space entities (enums, modules, functions) represents
             // the VALUE side of the symbol. In .d.ts output, these must be prefixed with
@@ -1441,13 +1554,9 @@ impl<'a> TypePrinter<'a> {
             let needs_typeof = symbol.has_any_flags(
                 symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::FUNCTION,
             );
-            let name = self
-                .resolve_symbol_qualified_name(sym_id)
-                .unwrap_or_else(|| symbol.escaped_name.clone());
-            if needs_typeof {
-                return format!("typeof {name}");
+            if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
+                return name;
             }
-            return name;
         }
 
         // Symbol is not visible or we don't have symbol info.

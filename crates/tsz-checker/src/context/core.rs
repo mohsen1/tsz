@@ -216,6 +216,37 @@ impl<'a> CheckerContext<'a> {
             .map(Arc::as_ref)
     }
 
+    /// Get the binder that owns a specific arena.
+    ///
+    /// This is used when cross-file resolution discovers a declaration arena
+    /// directly (via `symbol_arenas` / `declaration_arenas`) without already
+    /// knowing the originating file index.
+    pub fn get_binder_for_arena(&self, arena: &NodeArena) -> Option<&BinderState> {
+        let arenas = self.all_arenas.as_ref()?;
+        let binders = self.all_binders.as_ref()?;
+        let arena_ptr = arena as *const NodeArena;
+
+        arenas.iter().enumerate().find_map(|(idx, candidate)| {
+            (Arc::as_ptr(candidate) == arena_ptr)
+                .then(|| binders.get(idx).map(Arc::as_ref))
+                .flatten()
+        })
+    }
+
+    /// Get the file index that owns a specific arena.
+    ///
+    /// This keeps delegated child contexts aligned with the declaring file when
+    /// cross-file resolution discovers an arena directly from declaration metadata.
+    pub fn get_file_idx_for_arena(&self, arena: &NodeArena) -> Option<usize> {
+        let arenas = self.all_arenas.as_ref()?;
+        let arena_ptr = arena as *const NodeArena;
+
+        arenas
+            .iter()
+            .enumerate()
+            .find_map(|(idx, candidate)| (Arc::as_ptr(candidate) == arena_ptr).then_some(idx))
+    }
+
     /// Resolve an import specifier to its target file index.
     /// Uses the `resolved_module_paths` map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).

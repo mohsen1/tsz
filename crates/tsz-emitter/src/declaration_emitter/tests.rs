@@ -4,7 +4,7 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{
     CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
-    TupleElement, TypeId, TypeInterner,
+    SymbolRef, TupleElement, TypeId, TypeInterner,
 };
 
 // =============================================================================
@@ -3303,6 +3303,158 @@ fn test_import_type_alias_is_preserved_with_usage_analysis() {
     assert!(
         output.contains(r#"import { type RequireInterface as Req } from "pkg";"#),
         "Expected aliased type import to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_import_type_is_preserved_with_usage_analysis() {
+    let source = r#"
+    import * as ns from "pkg";
+    export const value = ns;
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
+                return Some(var_stmt);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_variable(clause_node)
+        })
+        .expect("missing variable statement");
+    let decl_list_idx = var_stmt.declarations.nodes[0];
+    let decl_list = parser
+        .arena
+        .get(decl_list_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl_idx = decl_list.declarations.nodes[0];
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let ns_sym_id = binder
+        .file_locals
+        .get("ns")
+        .expect("expected namespace import symbol");
+
+    let interner = TypeInterner::new();
+    let namespace_type = interner.module_namespace(SymbolRef(ns_sym_id.0));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.name.0, namespace_type);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(r#"import * as ns from "pkg";"#),
+        "Expected namespace import to be preserved: {output}"
+    );
+    assert!(
+        output.contains("export declare const value: typeof ns;"),
+        "Expected exported value to use the namespace import alias type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import * as ns from "pkg";
+    export const value = ns;
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"import * as ns from "pkg";"#),
+        "Expected namespace import to survive usage analysis: {output}"
+    );
+    assert!(
+        output.contains("export declare const value: typeof ns;"),
+        "Expected exported namespace import initializer to emit typeof alias: {output}"
+    );
+}
+
+#[test]
+fn test_call_expression_recovers_return_type_from_callee_type() {
+    let source = r#"
+    export const a = helper.x();
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
+                return Some(var_stmt);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_variable(clause_node)
+        })
+        .expect("missing variable statement");
+    let decl_list_idx = var_stmt.declarations.nodes[0];
+    let decl_list = parser
+        .arena
+        .get(decl_list_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl_idx = decl_list.declarations.nodes[0];
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+    let call = parser
+        .arena
+        .get(decl.initializer)
+        .and_then(|node| parser.arena.get_call_expr(node))
+        .expect("missing call expression");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let callee_type = interner.function(FunctionShape::new(Vec::new(), TypeId::STRING));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(call.expression.0, callee_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export declare const a: string;"),
+        "Expected call expression to recover return type from callee type: {output}"
     );
 }
 

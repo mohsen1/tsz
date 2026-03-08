@@ -1040,13 +1040,22 @@ fn expand_export_path_candidates(
     let base = normalize_path(path);
     let suffixes = &options.module_suffixes;
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
-        // Exports map targets are resolved as-is. tsc does NOT perform
-        // .js → .d.ts substitution for exports/imports map entries: the
-        // package author must use an explicit `types` condition to expose
-        // declaration files. Extension substitution (.js → .ts/.d.ts) is
-        // only valid for user-written import specifiers, not for package
-        // manifest entries. See: test_exports_js_target_does_not_substitute_dts
-        let candidates = candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+        // Package `exports` targets participate in declaration-sidecar lookup
+        // during program discovery. This keeps the driver aligned with the
+        // checker `ModuleResolver`, which resolves `./entry.js` to adjacent
+        // `./entry.d.ts` / `./entry.d.mts` / `./entry.d.cts` files when those
+        // are the type-bearing program inputs.
+        let mut candidates = Vec::new();
+        if let Some(rewritten) = node16_extension_substitution(&base, extension) {
+            for candidate in rewritten {
+                candidates.extend(candidates_with_suffixes(&candidate, suffixes));
+            }
+        }
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &base_no_ext,
+            extension,
+            suffixes,
+        ));
         return candidates;
     }
 

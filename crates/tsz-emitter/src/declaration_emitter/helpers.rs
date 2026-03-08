@@ -4868,6 +4868,10 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(type_id);
             }
 
+            if let Some(type_id) = self.recover_expression_type_from_structure(node_id) {
+                return Some(type_id);
+            }
+
             let Some(node) = self.arena.get(node_id) else {
                 continue;
             };
@@ -4876,9 +4880,39 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(type_id) = self.get_node_type(related_id) {
                     return Some(type_id);
                 }
+
+                if let Some(type_id) = self.recover_expression_type_from_structure(related_id) {
+                    return Some(type_id);
+                }
             }
         }
         None
+    }
+
+    fn recover_expression_type_from_structure(
+        &self,
+        node_id: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let node = self.arena.get(node_id)?;
+        let interner = self.type_interner?;
+
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.arena.get_call_expr(node)?;
+                let callee_type = self
+                    .get_node_type_or_names(&[call.expression])
+                    .or_else(|| self.get_type_via_symbol(call.expression))?;
+                tsz_solver::type_queries::get_return_type(interner, callee_type)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::AWAIT_EXPRESSION =>
+            {
+                let inner = self.arena.get_unary_expr_ex(node)?.expression;
+                self.get_node_type_or_names(&[inner])
+                    .or_else(|| self.get_type_via_symbol(inner))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn get_node_type_related_nodes(&self, node: &Node) -> Vec<NodeIndex> {
@@ -4925,6 +4959,13 @@ impl<'a> DeclarationEmitter<'a> {
                     Vec::new()
                 }
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access_expr) = self.arena.get_access_expr(node) {
+                    vec![access_expr.expression, access_expr.name_or_argument]
+                } else {
+                    Vec::new()
+                }
+            }
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 if let Some(query) = self.arena.get_type_query(node) {
                     vec![query.expr_name]
@@ -4939,9 +4980,13 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
+            let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
+            let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
             let mut printer = TypePrinter::new(interner)
                 .with_indent_level(self.indent_level)
-                .with_node_arena(self.arena);
+                .with_node_arena(self.arena)
+                .with_module_path_resolver(&module_path_resolver)
+                .with_namespace_alias_resolver(&namespace_alias_resolver);
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
@@ -4991,6 +5036,15 @@ impl<'a> DeclarationEmitter<'a> {
         let arena_addr = Arc::as_ptr(source_arena) as usize;
         let source_path = self.arena_to_path.get(&arena_addr)?;
 
+        // Symbols sourced from node_modules should usually retain their package
+        // specifier in declaration emit rather than leaking a relative filesystem
+        // path like `./node_modules/pkg/foo`.
+        if let Some(package_specifier) =
+            self.package_specifier_for_node_modules_path(current_path, source_path)
+        {
+            return Some(package_specifier);
+        }
+
         // 5. Calculate relative path
         let rel_path = self.calculate_relative_path(current_path, source_path);
 
@@ -5007,6 +5061,49 @@ impl<'a> DeclarationEmitter<'a> {
         self.symbol_module_specifier_cache
             .insert(sym_id, resolved.clone());
         resolved
+    }
+
+    fn is_namespace_import_alias_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && symbol.import_module.is_some()
+            && symbol.import_name.is_none()
+    }
+
+    pub(crate) fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {
+        let binder = self.binder?;
+
+        if self.is_namespace_import_alias_symbol(sym_id) {
+            return binder
+                .symbols
+                .get(sym_id)
+                .map(|symbol| symbol.escaped_name.clone());
+        }
+
+        let module_path = self.resolve_symbol_module_path(sym_id)?;
+
+        let mut local_imports: Vec<SymbolId> = self.import_symbol_map.keys().copied().collect();
+        local_imports.sort();
+
+        for import_sym_id in local_imports {
+            let Some(symbol) = binder.symbols.get(import_sym_id) else {
+                continue;
+            };
+            if !self.is_namespace_import_alias_symbol(import_sym_id) {
+                continue;
+            }
+            if symbol.import_module.as_deref() == Some(module_path.as_str()) {
+                return Some(symbol.escaped_name.clone());
+            }
+        }
+
+        None
     }
 
     /// Check if a symbol is from an ambient module declaration.
@@ -5090,12 +5187,88 @@ impl<'a> DeclarationEmitter<'a> {
         result.replace('\\', "/")
     }
 
+    fn package_specifier_for_node_modules_path(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> Option<String> {
+        let (source_root, source_specifier) = self.node_modules_package_info(source_path)?;
+        let current_root = self
+            .node_modules_package_info(current_path)
+            .map(|(root, _)| root);
+
+        if current_root.as_deref() == Some(source_root.as_str()) {
+            return None;
+        }
+
+        Some(source_specifier)
+    }
+
+    fn node_modules_package_info(&self, path: &str) -> Option<(String, String)> {
+        use std::path::{Component, Path};
+
+        let components: Vec<_> = Path::new(path).components().collect();
+        let node_modules_idx = components.iter().rposition(|component| {
+            matches!(
+                component,
+                Component::Normal(part) if part.to_str() == Some("node_modules")
+            )
+        })?;
+
+        let trailing_parts: Vec<String> = components[node_modules_idx + 1..]
+            .iter()
+            .filter_map(|component| match component {
+                Component::Normal(part) => part.to_str().map(str::to_string),
+                _ => None,
+            })
+            .collect();
+        if trailing_parts.is_empty() {
+            return None;
+        }
+
+        let package_len = if trailing_parts.first()?.starts_with('@') {
+            2
+        } else {
+            1
+        };
+        if trailing_parts.len() < package_len {
+            return None;
+        }
+
+        let root_key = components[..node_modules_idx + 1 + package_len]
+            .iter()
+            .filter_map(|component| match component {
+                Component::Prefix(prefix) => prefix.as_os_str().to_str().map(str::to_string),
+                Component::RootDir => Some(String::new()),
+                Component::Normal(part) => part.to_str().map(str::to_string),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let mut specifier_parts = trailing_parts;
+        if let Some(last) = specifier_parts.last_mut() {
+            *last = self.strip_ts_extensions(last);
+        }
+        if specifier_parts.last().is_some_and(|part| part == "index") {
+            specifier_parts.pop();
+        }
+        if specifier_parts.is_empty() {
+            return None;
+        }
+
+        Some((root_key, specifier_parts.join("/")))
+    }
+
     /// Strip TypeScript file extensions from a path.
     ///
     /// Converts "../utils.ts" -> "../utils"
     pub(crate) fn strip_ts_extensions(&self, path: &str) -> String {
-        // Remove .ts, .tsx, .d.ts, .d.tsx extensions
-        for ext in [".d.ts", ".d.tsx", ".tsx", ".ts"] {
+        // Remove TypeScript and JavaScript source/declaration extensions.
+        for ext in [
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
+            ".mjs", ".cjs",
+        ] {
             if let Some(path) = path.strip_suffix(ext) {
                 return path.to_string();
             }
@@ -5417,6 +5590,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
                 }
+            } else if let Some(typeof_text) =
+                self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
+            {
+                self.write(": ");
+                self.write(&typeof_text);
             } else if let Some(type_text) = self
                 .infer_fallback_type_text(initializer)
                 .or_else(|| self.data_view_new_expression_type_text(initializer))
@@ -6359,13 +6537,14 @@ impl<'a> DeclarationEmitter<'a> {
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let symbol = binder.symbols.get(sym_id)?;
         Some(
-            symbol.has_any_flags(
+            (symbol.has_any_flags(
                 symbol_flags::FUNCTION
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM
                     | symbol_flags::VALUE_MODULE
                     | symbol_flags::METHOD,
-            ) && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER),
+            ) || self.is_namespace_import_alias_symbol(sym_id))
+                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER),
         )
     }
 
