@@ -379,9 +379,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let affects = self.is_matching_reference(switch_expr, reference)
+            // Use target-relative discriminant discovery so nested bases
+            // like `switch (obj.a.kind)` can narrow `obj.a`, not only `obj`.
             || self
-                .discriminant_property_info(switch_expr, reference)
-                .is_some_and(|(_, _, base)| self.is_matching_reference(base, reference))
+                .relative_discriminant_path(switch_expr, reference)
+                .is_some()
             // switch (typeof x) narrows x through typeof comparison
             || self.is_typeof_target(switch_expr, reference);
 
@@ -1349,6 +1351,10 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             current_type
         };
+        let fallthrough_type = flow
+            .antecedent
+            .get(1)
+            .map(|ant| *results.get(ant).unwrap_or(&current_type));
 
         // Fast path: if this switch cannot narrow the reference at all, avoid
         // per-clause narrowing setup/work (narrowing context creation, expression checks).
@@ -1371,13 +1377,18 @@ impl<'a> FlowAnalyzer<'a> {
 
         // For implicit default, apply default clause narrowing (exclude all case types)
         if is_implicit_default {
-            return self.narrow_by_default_switch_clause(
+            let narrowed = self.narrow_by_default_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
                 switch_data.case_block,
                 reference,
                 &narrowing,
             );
+            return if let Some(fallthrough) = fallthrough_type {
+                self.interner.union(vec![narrowed, fallthrough])
+            } else {
+                narrowed
+            };
         }
 
         // Normal case/default clause handling
@@ -1388,7 +1399,7 @@ impl<'a> FlowAnalyzer<'a> {
             return current_type;
         };
 
-        if clause.expression.is_none() {
+        let narrowed = if clause.expression.is_none() {
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -1414,6 +1425,12 @@ impl<'a> FlowAnalyzer<'a> {
                 reference,
                 &narrowing,
             )
+        };
+
+        if let Some(fallthrough) = fallthrough_type {
+            self.interner.union(vec![narrowed, fallthrough])
+        } else {
+            narrowed
         }
     }
 
