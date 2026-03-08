@@ -190,6 +190,9 @@ mod async_promise_comprehensive_tests;
 mod class_comprehensive_tests;
 // compound_assignment_tests: loaded from operations/compound_assignment.rs
 #[cfg(test)]
+#[path = "../tests/bct_tests.rs"]
+mod bct_tests;
+#[cfg(test)]
 #[path = "tests/classify_array_like_tests.rs"]
 mod classify_array_like_tests;
 #[cfg(test)]
@@ -201,6 +204,9 @@ mod computed_prop_name_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/constraint_tests.rs"]
+mod constraint_tests;
 #[cfg(test)]
 #[path = "../tests/function_comprehensive_tests.rs"]
 mod function_comprehensive_tests;
@@ -216,6 +222,9 @@ mod keyof_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/matching_tests.rs"]
+mod matching_tests;
 #[cfg(test)]
 #[path = "../tests/narrowing_comprehensive_tests.rs"]
 mod narrowing_comprehensive_tests;

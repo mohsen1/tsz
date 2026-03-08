@@ -1234,4 +1234,1262 @@ mod tests {
             "Expected 'readonly [P in', got: {result}"
         );
     }
+
+    // =================================================================
+    // Primitive type formatting
+    // =================================================================
+
+    #[test]
+    fn format_all_primitive_type_ids() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        assert_eq!(fmt.format(TypeId::NEVER), "never");
+        assert_eq!(fmt.format(TypeId::UNKNOWN), "unknown");
+        assert_eq!(fmt.format(TypeId::ANY), "any");
+        assert_eq!(fmt.format(TypeId::VOID), "void");
+        assert_eq!(fmt.format(TypeId::UNDEFINED), "undefined");
+        assert_eq!(fmt.format(TypeId::NULL), "null");
+        assert_eq!(fmt.format(TypeId::BOOLEAN), "boolean");
+        assert_eq!(fmt.format(TypeId::NUMBER), "number");
+        assert_eq!(fmt.format(TypeId::STRING), "string");
+        assert_eq!(fmt.format(TypeId::BIGINT), "bigint");
+        assert_eq!(fmt.format(TypeId::SYMBOL), "symbol");
+        assert_eq!(fmt.format(TypeId::OBJECT), "object");
+        assert_eq!(fmt.format(TypeId::FUNCTION), "Function");
+        assert_eq!(fmt.format(TypeId::ERROR), "error");
+    }
+
+    // =================================================================
+    // Literal formatting
+    // =================================================================
+
+    #[test]
+    fn format_string_literal_with_special_chars() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let empty = db.literal_string("");
+        assert_eq!(fmt.format(empty), "\"\"");
+
+        let spaces = db.literal_string("hello world");
+        assert_eq!(fmt.format(spaces), "\"hello world\"");
+    }
+
+    #[test]
+    fn format_number_literals() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        assert_eq!(fmt.format(db.literal_number(0.0)), "0");
+        assert_eq!(fmt.format(db.literal_number(-1.0)), "-1");
+        assert_eq!(fmt.format(db.literal_number(3.15)), "3.15");
+        assert_eq!(fmt.format(db.literal_number(1e10)), "10000000000");
+    }
+
+    #[test]
+    fn format_boolean_literals() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        assert_eq!(fmt.format(TypeId::BOOLEAN_TRUE), "true");
+        assert_eq!(fmt.format(TypeId::BOOLEAN_FALSE), "false");
+    }
+
+    #[test]
+    fn format_bigint_literal() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let big = db.literal_bigint("123");
+        assert_eq!(fmt.format(big), "123n");
+    }
+
+    // =================================================================
+    // Union formatting
+    // =================================================================
+
+    #[test]
+    fn format_union_two_members() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let result = fmt.format(union);
+        assert!(result.contains("string"));
+        assert!(result.contains("number"));
+        assert!(result.contains(" | "));
+    }
+
+    #[test]
+    fn format_union_three_members() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+        let result = fmt.format(union);
+        assert!(result.contains("string"));
+        assert!(result.contains("number"));
+        assert!(result.contains("boolean"));
+        // Should have exactly 2 "|" separators
+        assert_eq!(result.matches(" | ").count(), 2);
+    }
+
+    #[test]
+    fn format_union_with_literal_members() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let s1 = db.literal_string("a");
+        let s2 = db.literal_string("b");
+        let union = db.union(vec![s1, s2]);
+        let result = fmt.format(union);
+        assert!(result.contains("\"a\""));
+        assert!(result.contains("\"b\""));
+        assert!(result.contains(" | "));
+    }
+
+    #[test]
+    fn format_large_union_truncation() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // Create a union with more members than max_union_members (default: 5)
+        let members: Vec<TypeId> = (0..10).map(|i| db.literal_number(i as f64)).collect();
+        let union = db.union_preserve_members(members);
+        let result = fmt.format(union);
+        // Should truncate with "..."
+        assert!(
+            result.contains("..."),
+            "Large union should be truncated, got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Intersection formatting
+    // =================================================================
+
+    #[test]
+    fn format_intersection_two_type_params() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t = db.type_param(TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let u = db.type_param(TypeParamInfo {
+            name: db.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let inter = db.intersection(vec![t, u]);
+        let result = fmt.format(inter);
+        assert!(result.contains("T"));
+        assert!(result.contains("U"));
+        assert!(result.contains(" & "));
+    }
+
+    // =================================================================
+    // Object type formatting
+    // =================================================================
+
+    #[test]
+    fn format_empty_object() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let obj = db.object(vec![]);
+        assert_eq!(fmt.format(obj), "{}");
+    }
+
+    #[test]
+    fn format_object_single_property() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let obj = db.object(vec![PropertyInfo::new(
+            db.intern_string("x"),
+            TypeId::NUMBER,
+        )]);
+        assert_eq!(fmt.format(obj), "{ x: number; }");
+    }
+
+    #[test]
+    fn format_object_multiple_properties() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let obj = db.object(vec![
+            PropertyInfo::new(db.intern_string("x"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("y"), TypeId::STRING),
+        ]);
+        let result = fmt.format(obj);
+        assert!(result.contains("x: number"));
+        assert!(result.contains("y: string"));
+    }
+
+    #[test]
+    fn format_object_readonly_property() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let mut prop = PropertyInfo::new(db.intern_string("x"), TypeId::NUMBER);
+        prop.readonly = true;
+        let obj = db.object(vec![prop]);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("readonly x: number"),
+            "Expected 'readonly x: number', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_object_many_properties_truncated() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // More than 3 properties triggers truncation
+        let obj = db.object(vec![
+            PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("b"), TypeId::STRING),
+            PropertyInfo::new(db.intern_string("c"), TypeId::BOOLEAN),
+            PropertyInfo::new(db.intern_string("d"), TypeId::NULL),
+        ]);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("..."),
+            "Object with >3 properties should truncate, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_object_with_string_index_signature() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::NUMBER,
+                readonly: false,
+                param_name: None,
+            }),
+            number_index: None,
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("[index: string]: number"),
+            "Expected string index signature, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_object_with_number_index_signature() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: None,
+            number_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: None,
+            }),
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("[index: number]: string"),
+            "Expected number index signature, got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Function type formatting
+    // =================================================================
+
+    #[test]
+    fn format_function_no_params() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert_eq!(result, "() => void");
+    }
+
+    #[test]
+    fn format_function_two_params() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![
+                ParamInfo {
+                    name: Some(db.intern_string("a")),
+                    type_id: TypeId::STRING,
+                    optional: false,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(db.intern_string("b")),
+                    type_id: TypeId::NUMBER,
+                    optional: false,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert_eq!(result, "(a: string, b: number) => boolean");
+    }
+
+    #[test]
+    fn format_function_rest_param() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let arr = db.array(TypeId::STRING);
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("args")),
+                type_id: arr,
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(
+            result.contains("...args"),
+            "Expected rest param, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_function_with_type_params() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t_atom = db.intern_string("T");
+        let t_param = db.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let func = db.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: t_atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_param,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(result.contains("<T>"), "Expected type param, got: {result}");
+        assert!(result.contains("x: T"));
+        assert!(result.contains("=> T"));
+    }
+
+    #[test]
+    fn format_function_type_param_with_constraint() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t_atom = db.intern_string("T");
+        let t_param = db.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        });
+        let func = db.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: t_atom,
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_param,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(
+            result.contains("T extends string"),
+            "Expected 'T extends string', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_function_type_param_with_default() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t_atom = db.intern_string("T");
+        let t_param = db.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: Some(TypeId::STRING),
+            is_const: false,
+        });
+        let func = db.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: t_atom,
+                constraint: None,
+                default: Some(TypeId::STRING),
+                is_const: false,
+            }],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(
+            result.contains("T = string"),
+            "Expected 'T = string', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_constructor_function() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(
+            result.contains("new "),
+            "Constructor should start with 'new', got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Array/tuple formatting
+    // =================================================================
+
+    #[test]
+    fn format_array_primitive() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        assert_eq!(fmt.format(db.array(TypeId::STRING)), "string[]");
+        assert_eq!(fmt.format(db.array(TypeId::NUMBER)), "number[]");
+        assert_eq!(fmt.format(db.array(TypeId::BOOLEAN)), "boolean[]");
+    }
+
+    #[test]
+    fn format_array_of_function_parenthesized() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let arr = db.array(func);
+        let result = fmt.format(arr);
+        assert!(
+            result.starts_with('(') && result.ends_with(")[]"),
+            "Array of function should be parenthesized, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_tuple_empty() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tuple = db.tuple(vec![]);
+        assert_eq!(fmt.format(tuple), "[]");
+    }
+
+    #[test]
+    fn format_tuple_single_element() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tuple = db.tuple(vec![crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        }]);
+        assert_eq!(fmt.format(tuple), "[string]");
+    }
+
+    #[test]
+    fn format_tuple_two_elements() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tuple = db.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        assert_eq!(fmt.format(tuple), "[string, number]");
+    }
+
+    #[test]
+    fn format_tuple_named_elements() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tuple = db.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                name: Some(db.intern_string("name")),
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: Some(db.intern_string("age")),
+                optional: false,
+                rest: false,
+            },
+        ]);
+        assert_eq!(fmt.format(tuple), "[name: string, age: number]");
+    }
+
+    #[test]
+    fn format_tuple_optional_element() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tuple = db.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: true,
+                rest: false,
+            },
+        ]);
+        let result = fmt.format(tuple);
+        assert_eq!(result, "[string, number?]");
+    }
+
+    #[test]
+    fn format_tuple_rest_element() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let str_arr = db.array(TypeId::STRING);
+        let tuple = db.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: str_arr,
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ]);
+        let result = fmt.format(tuple);
+        assert_eq!(result, "[number, ...string[]]");
+    }
+
+    // =================================================================
+    // Conditional type formatting
+    // =================================================================
+
+    #[test]
+    fn format_conditional_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let cond = db.conditional(crate::types::ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::NUMBER,
+            true_type: TypeId::BOOLEAN,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        });
+        let result = fmt.format(cond);
+        assert_eq!(result, "string extends number ? boolean : never");
+    }
+
+    #[test]
+    fn format_conditional_type_nested() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // T extends string ? (T extends "a" ? 1 : 2) : 3
+        let inner = db.conditional(crate::types::ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: db.literal_string("a"),
+            true_type: db.literal_number(1.0),
+            false_type: db.literal_number(2.0),
+            is_distributive: false,
+        });
+        let outer = db.conditional(crate::types::ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::STRING,
+            true_type: inner,
+            false_type: db.literal_number(3.0),
+            is_distributive: false,
+        });
+        let result = fmt.format(outer);
+        assert!(result.contains("extends"));
+        assert!(result.contains("?"));
+        assert!(result.contains(":"));
+    }
+
+    // =================================================================
+    // Mapped type formatting
+    // =================================================================
+
+    #[test]
+    fn format_mapped_type_basic() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("K"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+        let result = fmt.format(mapped);
+        assert_eq!(result, "{ [K in string]: number }");
+    }
+
+    #[test]
+    fn format_mapped_type_with_remove_optional() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("K"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: Some(MappedModifier::Remove),
+        });
+        let result = fmt.format(mapped);
+        assert!(
+            result.contains("]-?:"),
+            "Expected remove optional modifier '-?', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_mapped_type_with_remove_readonly() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("K"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: Some(MappedModifier::Remove),
+            optional_modifier: None,
+        });
+        let result = fmt.format(mapped);
+        assert!(
+            result.contains("-readonly"),
+            "Expected remove readonly modifier, got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Template literal formatting
+    // =================================================================
+
+    #[test]
+    fn format_template_literal_text_only() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tl = db.template_literal(vec![TemplateSpan::Text(db.intern_string("hello"))]);
+        // Text-only template literals may be simplified by the interner
+        // but if they survive, they should format with backticks
+        let result = fmt.format(tl);
+        assert!(
+            result.contains("hello"),
+            "Expected 'hello' in template literal, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_template_literal_with_type_interpolation() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tl = db.template_literal(vec![
+            TemplateSpan::Text(db.intern_string("hello ")),
+            TemplateSpan::Type(TypeId::STRING),
+        ]);
+        let result = fmt.format(tl);
+        assert!(
+            result.contains("hello "),
+            "Expected 'hello ' prefix, got: {result}"
+        );
+        assert!(
+            result.contains("${string}"),
+            "Expected '${{string}}' interpolation, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_template_literal_complex() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tl = db.template_literal(vec![
+            TemplateSpan::Text(db.intern_string("key_")),
+            TemplateSpan::Type(TypeId::NUMBER),
+            TemplateSpan::Text(db.intern_string("_suffix")),
+        ]);
+        let result = fmt.format(tl);
+        assert!(result.contains("key_"), "Expected 'key_', got: {result}");
+        assert!(
+            result.contains("${number}"),
+            "Expected '${{number}}', got: {result}"
+        );
+        assert!(
+            result.contains("_suffix"),
+            "Expected '_suffix', got: {result}"
+        );
+    }
+
+    // =================================================================
+    // String intrinsic formatting
+    // =================================================================
+
+    #[test]
+    fn format_string_intrinsic_uppercase() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let upper = db.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+        assert_eq!(fmt.format(upper), "Uppercase<string>");
+    }
+
+    #[test]
+    fn format_string_intrinsic_lowercase() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let lower = db.string_intrinsic(StringIntrinsicKind::Lowercase, TypeId::STRING);
+        assert_eq!(fmt.format(lower), "Lowercase<string>");
+    }
+
+    #[test]
+    fn format_string_intrinsic_capitalize() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let cap = db.string_intrinsic(StringIntrinsicKind::Capitalize, TypeId::STRING);
+        assert_eq!(fmt.format(cap), "Capitalize<string>");
+    }
+
+    #[test]
+    fn format_string_intrinsic_uncapitalize() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let uncap = db.string_intrinsic(StringIntrinsicKind::Uncapitalize, TypeId::STRING);
+        assert_eq!(fmt.format(uncap), "Uncapitalize<string>");
+    }
+
+    // =================================================================
+    // Error type formatting
+    // =================================================================
+
+    #[test]
+    fn format_error_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+        assert_eq!(fmt.format(TypeId::ERROR), "error");
+    }
+
+    // =================================================================
+    // Depth limiting (deeply nested types)
+    // =================================================================
+
+    #[test]
+    fn format_deeply_nested_array_truncated() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // Create deeply nested arrays: string[][][][][][]...
+        let mut current = TypeId::STRING;
+        for _ in 0..10 {
+            current = db.array(current);
+        }
+        let result = fmt.format(current);
+        // At some depth, the formatter should produce "..." due to max_depth
+        assert!(
+            result.contains("..."),
+            "Deeply nested type should hit depth limit and show '...', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_deeply_nested_union_truncated() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        // Create nested unions: wrap in array at each level to increase depth
+        let mut current = TypeId::STRING;
+        for _ in 0..10 {
+            let inner_union = db.union(vec![current, TypeId::NUMBER]);
+            current = db.array(inner_union);
+        }
+        let result = fmt.format(current);
+        // Should hit depth limit
+        assert!(
+            result.contains("..."),
+            "Deeply nested type should truncate, got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Special types
+    // =================================================================
+
+    #[test]
+    fn format_type_parameter() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let tp = db.type_param(TypeParamInfo {
+            name: db.intern_string("MyType"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(fmt.format(tp), "MyType");
+    }
+
+    #[test]
+    fn format_keyof_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let keyof = db.keyof(TypeId::STRING);
+        assert_eq!(fmt.format(keyof), "keyof string");
+    }
+
+    #[test]
+    fn format_readonly_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let ro = db.readonly_type(TypeId::NUMBER);
+        assert_eq!(fmt.format(ro), "readonly number");
+    }
+
+    #[test]
+    fn format_index_access_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let idx = db.index_access(TypeId::STRING, TypeId::NUMBER);
+        assert_eq!(fmt.format(idx), "string[number]");
+    }
+
+    #[test]
+    fn format_this_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let this = db.this_type();
+        assert_eq!(fmt.format(this), "this");
+    }
+
+    #[test]
+    fn format_infer_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let infer = db.infer(TypeParamInfo {
+            name: db.intern_string("R"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(fmt.format(infer), "infer R");
+    }
+
+    #[test]
+    fn format_unique_symbol() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let sym = db.unique_symbol(crate::types::SymbolRef(999));
+        assert_eq!(fmt.format(sym), "unique symbol");
+    }
+
+    #[test]
+    fn format_no_infer_type() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let no_infer = db.no_infer(TypeId::STRING);
+        assert_eq!(fmt.format(no_infer), "NoInfer<string>");
+    }
+
+    // =================================================================
+    // Generic application formatting
+    // =================================================================
+
+    #[test]
+    fn format_application_single_arg() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let base = db.lazy(crate::def::DefId(100));
+        let app = db.application(base, vec![TypeId::NUMBER]);
+        let result = fmt.format(app);
+        // Without def store, base resolves to "Lazy(100)"
+        assert!(
+            result.contains("Lazy(100)"),
+            "Expected 'Lazy(100)', got: {result}"
+        );
+        assert!(
+            result.contains("<number>"),
+            "Expected '<number>', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_application_two_args() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let base = db.lazy(crate::def::DefId(200));
+        let app = db.application(base, vec![TypeId::STRING, TypeId::NUMBER]);
+        let result = fmt.format(app);
+        assert!(
+            result.contains("<string, number>"),
+            "Expected '<string, number>', got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Callable type formatting
+    // =================================================================
+
+    #[test]
+    fn format_callable_single_call_signature() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let callable = db.callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo {
+                    name: Some(db.intern_string("x")),
+                    type_id: TypeId::NUMBER,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: TypeId::STRING,
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        let result = fmt.format(callable);
+        // Single call sig with no props/index = arrow-style
+        assert!(result.contains("x: number"));
+        assert!(result.contains("=> string"));
+    }
+
+    #[test]
+    fn format_callable_multiple_call_signatures() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let callable = db.callable(CallableShape {
+            call_signatures: vec![
+                CallSignature {
+                    type_params: vec![],
+                    params: vec![ParamInfo {
+                        name: Some(db.intern_string("x")),
+                        type_id: TypeId::STRING,
+                        optional: false,
+                        rest: false,
+                    }],
+                    this_type: None,
+                    return_type: TypeId::NUMBER,
+                    type_predicate: None,
+                    is_method: false,
+                },
+                CallSignature {
+                    type_params: vec![],
+                    params: vec![ParamInfo {
+                        name: Some(db.intern_string("x")),
+                        type_id: TypeId::NUMBER,
+                        optional: false,
+                        rest: false,
+                    }],
+                    this_type: None,
+                    return_type: TypeId::STRING,
+                    type_predicate: None,
+                    is_method: false,
+                },
+            ],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        let result = fmt.format(callable);
+        // Multiple signatures => object-like format with { sig1; sig2 }
+        assert!(
+            result.contains("{") && result.contains("}"),
+            "Multiple sigs should use object format, got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Recursive / BoundParameter formatting
+    // =================================================================
+
+    #[test]
+    fn format_recursive_index() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let rec = db.recursive(0);
+        assert_eq!(fmt.format(rec), "Recursive(0)");
+
+        let rec2 = db.recursive(3);
+        assert_eq!(fmt.format(rec2), "Recursive(3)");
+    }
+
+    #[test]
+    fn format_bound_parameter() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let bp = db.bound_parameter(0);
+        assert_eq!(fmt.format(bp), "BoundParameter(0)");
+
+        let bp1 = db.bound_parameter(1);
+        assert_eq!(fmt.format(bp1), "BoundParameter(1)");
+    }
+
+    // =================================================================
+    // Property name quoting edge cases
+    // =================================================================
+
+    #[test]
+    fn needs_property_name_quotes_edge_cases() {
+        // Leading digit is not a valid identifier start
+        assert!(super::needs_property_name_quotes("1abc"));
+        // Underscore-only is valid
+        assert!(!super::needs_property_name_quotes("_"));
+        assert!(!super::needs_property_name_quotes("__proto__"));
+        // Dollar-only
+        assert!(!super::needs_property_name_quotes("$"));
+        assert!(!super::needs_property_name_quotes("$0"));
+        // Special characters
+        assert!(super::needs_property_name_quotes("."));
+        assert!(super::needs_property_name_quotes("@"));
+        assert!(super::needs_property_name_quotes("#private"));
+    }
+
+    // =================================================================
+    // Method shorthand formatting
+    // =================================================================
+
+    #[test]
+    fn format_object_method_shorthand() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let method_type = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let mut method_prop = PropertyInfo::new(db.intern_string("greet"), method_type);
+        method_prop.is_method = true;
+
+        let obj = db.object(vec![method_prop]);
+        let result = fmt.format(obj);
+        // Method shorthand: greet(x: number): string
+        assert!(
+            result.contains("greet(") && result.contains("): string"),
+            "Expected method shorthand, got: {result}"
+        );
+        // Should NOT use arrow notation
+        assert!(
+            !result.contains("=>"),
+            "Method shorthand should use ':' not '=>', got: {result}"
+        );
+    }
+
+    // =================================================================
+    // Const type parameter
+    // =================================================================
+
+    #[test]
+    fn format_const_type_param() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t_atom = db.intern_string("T");
+        let t_param = db.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+            is_const: true,
+        });
+        let func = db.function(FunctionShape {
+            type_params: vec![TypeParamInfo {
+                name: t_atom,
+                constraint: None,
+                default: None,
+                is_const: true,
+            }],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_param,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert!(
+            result.contains("const T"),
+            "Expected 'const T' in type params, got: {result}"
+        );
+    }
 }

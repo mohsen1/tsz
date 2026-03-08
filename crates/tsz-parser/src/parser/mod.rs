@@ -83,6 +83,10 @@ mod decorator_tests;
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 
+#[cfg(test)]
+#[path = "../../tests/parser_unit_tests.rs"]
+mod parser_unit_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 

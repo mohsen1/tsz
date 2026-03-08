@@ -886,3 +886,207 @@ fn dc_debug_double_leave_panics() {
     dc.leave();
     dc.leave(); // second leave at depth 0
 }
+
+// ===================================================================
+// is_visiting_any tests
+// ===================================================================
+
+#[test]
+fn is_visiting_any_no_match() {
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    assert_eq!(guard.enter(2u32), RecursionResult::Entered);
+
+    assert!(!guard.is_visiting_any(|&k| k > 10));
+
+    guard.leave(2);
+    guard.leave(1);
+}
+
+#[test]
+fn is_visiting_any_with_match() {
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter(5u32), RecursionResult::Entered);
+    assert_eq!(guard.enter(15u32), RecursionResult::Entered);
+
+    assert!(guard.is_visiting_any(|&k| k > 10));
+    assert!(guard.is_visiting_any(|&k| k == 5));
+    assert!(guard.is_visiting_any(|&k| k == 15));
+    assert!(!guard.is_visiting_any(|&k| k == 99));
+
+    guard.leave(15);
+    guard.leave(5);
+}
+
+#[test]
+fn is_visiting_any_empty_guard() {
+    let guard = RecursionGuard::<u32>::new(10, 100);
+    assert!(!guard.is_visiting_any(|_| true));
+}
+
+#[test]
+fn is_visiting_any_after_leave() {
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    assert!(guard.is_visiting_any(|&k| k == 1));
+
+    guard.leave(1);
+    assert!(!guard.is_visiting_any(|&k| k == 1));
+}
+
+#[test]
+fn is_visiting_any_with_tuple_keys() {
+    // Simulates symbol-level cycle detection where the predicate checks
+    // a sub-field of the key
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter((100u32, 200u32)), RecursionResult::Entered);
+    assert_eq!(guard.enter((300u32, 400u32)), RecursionResult::Entered);
+
+    // Check if any visiting key has first element == 100
+    assert!(guard.is_visiting_any(|&(a, _)| a == 100));
+    // Check if any visiting key has second element == 400
+    assert!(guard.is_visiting_any(|&(_, b)| b == 400));
+    // No key has first element == 999
+    assert!(!guard.is_visiting_any(|&(a, _)| a == 999));
+
+    guard.leave((300, 400));
+    guard.leave((100, 200));
+}
+
+// ===================================================================
+// Scope iteration tracking
+// ===================================================================
+
+#[test]
+fn scope_increments_iterations_on_success() {
+    let mut guard = RecursionGuard::new(10, 100);
+    let _ = guard.scope(1u32, || 42);
+    assert_eq!(guard.iterations(), 1);
+}
+
+#[test]
+fn scope_increments_iterations_on_denial() {
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    let _ = guard.scope(1u32, || 42); // cycle — denied
+    // 1 from enter + 1 from scope attempt
+    assert_eq!(guard.iterations(), 2);
+    guard.leave(1);
+}
+
+#[test]
+fn scope_iteration_exceeded() {
+    let mut guard = RecursionGuard::new(10, 1);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+    // iterations=1, max=1 — next enter exceeds
+    let result = guard.scope(2u32, || 42);
+    assert_eq!(result, Err(RecursionResult::IterationExceeded));
+}
+
+// ===================================================================
+// Additional profile-specific tests
+// ===================================================================
+
+#[test]
+fn profile_property_access_limits() {
+    let p = RecursionProfile::PropertyAccess;
+    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_variance_limits() {
+    let p = RecursionProfile::Variance;
+    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_shape_extraction_limits() {
+    let p = RecursionProfile::ShapeExtraction;
+    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_const_assertion_limits() {
+    let p = RecursionProfile::ConstAssertion;
+    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_expression_check_limits() {
+    let p = RecursionProfile::ExpressionCheck;
+    assert_eq!(p.max_depth(), 500);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_type_node_check_limits() {
+    let p = RecursionProfile::TypeNodeCheck;
+    assert_eq!(p.max_depth(), 500);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_call_resolution_limits() {
+    let p = RecursionProfile::CallResolution;
+    assert_eq!(p.max_depth(), 20);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_checker_recursion_limits() {
+    let p = RecursionProfile::CheckerRecursion;
+    assert_eq!(p.max_depth(), 50);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+#[test]
+fn profile_type_application_limits() {
+    let p = RecursionProfile::TypeApplication;
+    assert_eq!(p.max_depth(), 100);
+    assert_eq!(p.max_iterations(), 100_000);
+}
+
+// ===================================================================
+// DepthCounter with_initial_depth edge cases
+// ===================================================================
+
+#[test]
+fn dc_initial_depth_at_max_cannot_enter() {
+    let mut dc = DepthCounter::with_initial_depth(5, 5);
+    assert_eq!(dc.depth(), 5);
+    assert!(!dc.enter());
+    assert!(dc.is_exceeded());
+}
+
+#[test]
+fn dc_initial_depth_above_max_cannot_enter() {
+    // Edge case: initial depth exceeds max depth
+    let mut dc = DepthCounter::with_initial_depth(3, 10);
+    assert_eq!(dc.depth(), 10);
+    assert!(!dc.enter());
+    assert!(dc.is_exceeded());
+}
+
+// ===================================================================
+// RecursionGuard with string keys
+// ===================================================================
+
+#[test]
+fn string_keys() {
+    let mut guard = RecursionGuard::new(10, 100);
+    assert_eq!(guard.enter("foo"), RecursionResult::Entered);
+    assert_eq!(guard.enter("bar"), RecursionResult::Entered);
+    assert_eq!(guard.enter("foo"), RecursionResult::Cycle);
+
+    assert!(guard.is_visiting(&"foo"));
+    assert!(guard.is_visiting(&"bar"));
+    assert!(!guard.is_visiting(&"baz"));
+
+    guard.leave("bar");
+    guard.leave("foo");
+}
