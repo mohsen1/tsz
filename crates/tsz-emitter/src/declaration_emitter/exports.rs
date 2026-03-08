@@ -1161,7 +1161,7 @@ impl<'a> DeclarationEmitter<'a> {
             || self
                 .arena
                 .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_module(is_exported) {
+        if !self.should_emit_public_api_module(is_exported, module.name) {
             return;
         }
 

@@ -31,6 +31,22 @@ fn emit_dts_with_binding(source: &str) -> String {
     emitter.emit(root)
 }
 
+fn emit_dts_with_usage_analysis(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.emit(root)
+}
+
 fn emit_js_dts(source: &str) -> String {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -3164,6 +3180,49 @@ fn test_export_equals() {
     assert!(
         output.contains("export = myLib;"),
         "Expected export = : {output}"
+    );
+}
+
+#[test]
+fn test_export_equals_import_equals_keeps_namespace_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace m3 {
+        export namespace m2 {
+            export interface connectModule {
+                (res, req, next): void;
+            }
+            export interface connectExport {
+                use: (mod: connectModule) => connectExport;
+                listen: (port: number) => void;
+            }
+        }
+
+        export var server: {
+            (): m2.connectExport;
+            test1: m2.connectModule;
+            test2(): m2.connectModule;
+        };
+    }
+
+    import m = m3;
+    export = m;
+    "#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace m3")
+        .expect("Expected namespace dependency to be preserved");
+    let import_pos = output
+        .find("import m = m3;")
+        .expect("Expected import equals alias to be emitted");
+    let export_pos = output
+        .find("export = m;")
+        .expect("Expected export assignment to be emitted");
+
+    assert!(
+        namespace_pos < import_pos && import_pos < export_pos,
+        "Expected namespace, import alias, and export assignment to preserve source order: {output}"
     );
 }
 
