@@ -1620,7 +1620,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/functionCalls.
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInference.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functions/arrowFunctionContexts.ts
-FAIL TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedIifeStrict.ts
 FAIL TypeScript/tests/cases/conformance/expressions/identifiers/scopeResolutionIdentifiers.ts
 FAIL TypeScript/tests/cases/conformance/expressions/literals/literals.ts
 FAIL TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator1.ts
@@ -9678,6 +9677,7 @@ PASS TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentIn
 PASS TypeScript/tests/cases/conformance/expressions/functions/arrowFunctionExpressions.ts
 PASS TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedFunctionExpressionsAndReturnAnnotations.ts
 PASS TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedIife.ts
+PASS TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedIifeStrict.ts
 PASS TypeScript/tests/cases/conformance/expressions/functions/typeOfThisInFunctionExpression.ts
 PASS TypeScript/tests/cases/conformance/expressions/functions/voidParamAssignmentCompatibility.ts
 PASS TypeScript/tests/cases/conformance/expressions/literals/strictModeOctalLiterals.ts
