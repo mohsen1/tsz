@@ -217,6 +217,69 @@ impl<'a> CheckerState<'a> {
         best_candidate.map(|c| vec![c])
     }
 
+    // =========================================================================
+    // Lib Target Suggestion Helpers (TS2550)
+    // =========================================================================
+
+    /// Check if a missing property is available in a newer lib version.
+    pub(super) fn get_lib_suggestion_for_property(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+    ) -> Option<&'static str> {
+        let type_name = self.get_type_symbol_name(type_id)?;
+        get_lib_for_type_property(&type_name, prop_name)
+    }
+
+    /// Try to resolve the symbol name for a type.
+    fn get_type_symbol_name(&mut self, type_id: TypeId) -> Option<String> {
+        use tsz_solver::type_queries;
+
+        if tsz_solver::is_array_type(self.ctx.types, type_id) {
+            return Some("Array".to_string());
+        }
+        if type_id == TypeId::STRING || type_queries::is_string_literal(self.ctx.types, type_id) {
+            return Some("String".to_string());
+        }
+        if type_id == TypeId::NUMBER || type_queries::is_number_literal(self.ctx.types, type_id) {
+            return Some("Number".to_string());
+        }
+        if let Some(base) = type_queries::get_application_base(self.ctx.types, type_id) {
+            return self.get_type_symbol_name(base);
+        }
+
+        let sym_id = self
+            .ctx
+            .resolve_type_to_symbol_id(type_id)
+            .or_else(|| type_queries::get_type_shape_symbol(self.ctx.types, type_id));
+        if let Some(sym_id) = sym_id {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && !symbol.escaped_name.is_empty()
+            {
+                return Some(symbol.escaped_name.clone());
+            }
+            if let Some(&def_id) = self.ctx.symbol_to_def.borrow().get(&sym_id)
+                && let Some(def) = self.ctx.definition_store.get(def_id)
+            {
+                let name = self.ctx.types.resolve_atom(def.name);
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(type_id)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+
+        None
+    }
+
     fn chars_equal_ignore_case(a: char, b: char) -> bool {
         a.to_lowercase().eq(b.to_lowercase())
     }
@@ -294,5 +357,105 @@ impl<'a> CheckerState<'a> {
 
         let result = previous[s2_chars.len()];
         (result <= max).then_some(result)
+    }
+}
+
+/// Look up the minimum lib version required for a (type, property) pair.
+fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'static str> {
+    match type_name {
+        "Array" | "ReadonlyArray" => match prop_name {
+            "find" | "findIndex" | "fill" | "copyWithin" | "entries" | "keys" | "values" => {
+                Some("es2015")
+            }
+            "includes" => Some("es2016"),
+            "flatMap" | "flat" => Some("es2019"),
+            "at" => Some("es2022"),
+            "findLast" | "findLastIndex" => Some("es2023"),
+            "toReversed" | "toSorted" | "toSpliced" | "with" => Some("esnext"),
+            _ => None,
+        },
+        "SharedArrayBuffer" => match prop_name {
+            "grow" | "growable" | "maxByteLength" => Some("esnext"),
+            _ => Some("es2017"),
+        },
+        "Atomics" => match prop_name {
+            "waitAsync" => Some("es2024"),
+            _ => Some("es2017"),
+        },
+        "AsyncIterable" | "AsyncIterableIterator" | "AsyncGenerator" | "AsyncGeneratorFunction" => {
+            Some("es2018")
+        }
+        "RegExp" => match prop_name {
+            "dotAll" => Some("es2018"),
+            "hasIndices" => Some("es2022"),
+            _ => None,
+        },
+        "RegExpMatchArray" => match prop_name {
+            "groups" => Some("es2018"),
+            "indices" => Some("es2022"),
+            _ => None,
+        },
+        "Symbol" => match prop_name {
+            "asyncIterator" => Some("es2018"),
+            "description" => Some("es2019"),
+            _ => None,
+        },
+        "String" => match prop_name {
+            "trimStart" | "trimEnd" | "trimLeft" | "trimRight" => Some("es2019"),
+            "matchAll" => Some("es2020"),
+            "replaceAll" => Some("es2021"),
+            "at" => Some("es2022"),
+            "isWellFormed" | "toWellFormed" => Some("esnext"),
+            _ => None,
+        },
+        "ObjectConstructor" => match prop_name {
+            "fromEntries" => Some("es2019"),
+            "hasOwn" => Some("es2022"),
+            "groupBy" => Some("es2024"),
+            _ => None,
+        },
+        "BigInt" => Some("es2020"),
+        "BigInt64Array" | "BigUint64Array" => match prop_name {
+            "at" => Some("es2022"),
+            "findLast" | "findLastIndex" => Some("es2023"),
+            "toReversed" | "toSorted" | "with" => Some("esnext"),
+            _ => Some("es2020"),
+        },
+        "Promise" | "PromiseConstructor" => match prop_name {
+            "allSettled" => Some("es2020"),
+            "any" => Some("es2021"),
+            _ => None,
+        },
+        "WeakRef" | "FinalizationRegistry" | "AggregateError" => Some("es2021"),
+        "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array" | "Uint16Array"
+        | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array" => match prop_name {
+            "find" | "findIndex" | "fill" | "copyWithin" | "entries" | "keys" | "values" => {
+                Some("es2015")
+            }
+            "includes" => Some("es2016"),
+            "at" => Some("es2022"),
+            "findLast" | "findLastIndex" => Some("es2023"),
+            "toReversed" | "toSorted" | "with" => Some("esnext"),
+            _ => None,
+        },
+        "Error" | "ErrorConstructor" => match prop_name {
+            "cause" => Some("es2022"),
+            _ => None,
+        },
+        "Map" | "Set" | "WeakMap" | "WeakSet" => Some("es2015"),
+        "MapConstructor" => match prop_name {
+            "groupBy" => Some("es2024"),
+            _ => Some("es2015"),
+        },
+        "Intl" => match prop_name {
+            "Segmenter" | "Segments" | "SegmentData" => Some("esnext"),
+            _ => None,
+        },
+        "NumberConstructor" => match prop_name {
+            "isFinite" | "isInteger" | "isNaN" | "isSafeInteger" | "parseFloat" | "parseInt"
+            | "EPSILON" | "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" => Some("es2015"),
+            _ => None,
+        },
+        _ => None,
     }
 }
