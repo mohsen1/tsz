@@ -35,7 +35,6 @@ pub(crate) struct JsCommonjsExpandoDeclarations {
     pub(crate) function_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
     pub(crate) value_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
     pub(crate) prototype_methods: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
-    pub(crate) namespace_aliases: JsNamespaceExportAliases,
 }
 
 struct JsdocTypeAliasDecl {
@@ -43,6 +42,7 @@ struct JsdocTypeAliasDecl {
     type_params: Vec<String>,
     type_text: String,
     description_lines: Vec<String>,
+    render_verbatim: bool,
 }
 
 #[derive(Clone)]
@@ -1298,19 +1298,146 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    fn parse_jsdoc_property_type_alias(jsdoc: &str) -> Option<(String, String)> {
+        let (name, base_type) = Self::parse_jsdoc_typedef_alias(jsdoc)?;
+        if name == "default" || !matches!(base_type.as_str(), "Object" | "object") {
+            return None;
+        }
+
+        let mut properties = Vec::new();
+        let mut current_property: Option<(String, bool, String, Vec<String>)> = None;
+
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(rest) = line
+                .strip_prefix("@property")
+                .or_else(|| line.strip_prefix("@prop"))
+            {
+                if let Some(property) = current_property.take() {
+                    properties.push(property);
+                }
+
+                let rest = rest.trim();
+                let (type_expr, name_rest) = Self::parse_jsdoc_braced_type_and_name(rest)?;
+                let mut parts = name_rest.split_whitespace();
+                let property_name = parts.next()?.trim();
+                if property_name.is_empty() {
+                    return None;
+                }
+
+                let (property_name, optional) =
+                    if property_name.starts_with('[') && property_name.ends_with(']') {
+                        let trimmed = property_name
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .trim_end_matches('=')
+                            .to_string();
+                        (trimmed, true)
+                    } else {
+                        (property_name.to_string(), false)
+                    };
+
+                let inline_description = parts.collect::<Vec<_>>().join(" ");
+                let mut description_lines = Vec::new();
+                if !inline_description.is_empty() {
+                    description_lines.push(inline_description);
+                }
+
+                current_property = Some((
+                    property_name,
+                    optional,
+                    Self::normalize_jsdoc_primitive_type_name(type_expr),
+                    description_lines,
+                ));
+                continue;
+            }
+
+            if line.starts_with('@') {
+                if let Some(property) = current_property.take() {
+                    properties.push(property);
+                }
+                continue;
+            }
+
+            if let Some((_, _, _, description_lines)) = current_property.as_mut() {
+                description_lines.push(line.to_string());
+            }
+        }
+
+        if let Some(property) = current_property.take() {
+            properties.push(property);
+        }
+        if properties.is_empty() {
+            return None;
+        }
+
+        let mut type_text = String::from("{\n");
+        for (property_name, optional, property_type, description_lines) in properties {
+            if !description_lines.is_empty() {
+                type_text.push_str("    /**\n");
+                for line in description_lines {
+                    type_text.push_str("     * ");
+                    type_text.push_str(&line);
+                    type_text.push('\n');
+                }
+                type_text.push_str("     */\n");
+            }
+            type_text.push_str("    ");
+            type_text.push_str(&property_name);
+            if optional {
+                type_text.push('?');
+            }
+            type_text.push_str(": ");
+            type_text.push_str(&property_type);
+            type_text.push_str(";\n");
+        }
+        type_text.push('}');
+
+        Some((name, type_text))
+    }
+
+    fn normalize_jsdoc_primitive_type_name(type_name: &str) -> String {
+        match type_name.trim() {
+            "String" => "string".to_string(),
+            "Number" => "number".to_string(),
+            "Boolean" => "boolean".to_string(),
+            "Symbol" => "symbol".to_string(),
+            "BigInt" => "bigint".to_string(),
+            "Undefined" => "undefined".to_string(),
+            "Null" => "null".to_string(),
+            "Object" => "object".to_string(),
+            other => other.to_string(),
+        }
+    }
+
     fn parse_jsdoc_type_alias_decl(jsdoc: &str) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let description_lines = Self::jsdoc_description_lines(jsdoc);
 
         if let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(jsdoc) {
-            if name == "default" || Self::jsdoc_has_property_tags(jsdoc) {
+            if name == "default" {
                 return None;
+            }
+            if Self::jsdoc_has_property_tags(jsdoc) {
+                let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
+                return Some(JsdocTypeAliasDecl {
+                    name,
+                    type_params,
+                    type_text,
+                    description_lines: Vec::new(),
+                    render_verbatim: true,
+                });
             }
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
                 type_text,
                 description_lines: Vec::new(),
+                render_verbatim: false,
             });
         }
 
@@ -1320,6 +1447,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_params,
                 type_text,
                 description_lines,
+                render_verbatim: false,
             });
         }
 
@@ -1347,6 +1475,10 @@ impl<'a> DeclarationEmitter<'a> {
         source.push_str(" = ");
         source.push_str(&decl.type_text);
         source.push_str(";\n");
+
+        if decl.render_verbatim {
+            return Some(source);
+        }
 
         let mut parser = ParserState::new("jsdoc-alias.ts".to_string(), source);
         let root = parser.parse_source_file();
@@ -1620,14 +1752,34 @@ impl<'a> DeclarationEmitter<'a> {
             let Some((root_name, export_name, local_name)) =
                 self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root.as_deref())
             else {
+                if let Some((root_name, member_name, _initializer, kind)) =
+                    self.js_commonjs_expando_decl_for_statement(stmt_idx, js_export_equals_names)
+                    && matches!(
+                        kind,
+                        JsCommonjsExpandoDeclKind::Function | JsCommonjsExpandoDeclKind::Value
+                    ) && let Some(member_text) = self.get_identifier_text(member_name)
+                    {
+                        Self::push_js_namespace_export_alias(
+                            &mut aliases,
+                            &root_name,
+                            member_text.clone(),
+                            member_text,
+                        );
+                    }
                 continue;
             };
 
-            let entry = aliases.entry(root_name).or_insert_with(Vec::new);
-            if !entry.iter().any(|(existing_export, existing_local)| {
-                existing_export == &export_name && existing_local == &local_name
-            }) {
-                entry.push((export_name, local_name));
+            Self::push_js_namespace_export_alias(&mut aliases, &root_name, export_name, local_name);
+        }
+
+        if let Some(root_name) = commonjs_root.as_deref() {
+            for alias_name in self.collect_top_level_jsdoc_alias_names(source_file) {
+                Self::push_js_namespace_export_alias(
+                    &mut aliases,
+                    root_name,
+                    alias_name.clone(),
+                    alias_name,
+                );
             }
         }
 
@@ -1653,29 +1805,11 @@ impl<'a> DeclarationEmitter<'a> {
 
             match kind {
                 JsCommonjsExpandoDeclKind::Function => {
-                    let Some(member_text) = self.get_identifier_text(member_name) else {
-                        continue;
-                    };
-                    Self::push_js_namespace_export_alias(
-                        &mut declarations.namespace_aliases,
-                        &root_name,
-                        member_text.clone(),
-                        member_text,
-                    );
                     declarations
                         .function_statements
                         .insert(stmt_idx, (member_name, initializer));
                 }
                 JsCommonjsExpandoDeclKind::Value => {
-                    let Some(member_text) = self.get_identifier_text(member_name) else {
-                        continue;
-                    };
-                    Self::push_js_namespace_export_alias(
-                        &mut declarations.namespace_aliases,
-                        &root_name,
-                        member_text.clone(),
-                        member_text,
-                    );
                     declarations
                         .value_statements
                         .insert(stmt_idx, (member_name, initializer));
@@ -1691,19 +1825,6 @@ impl<'a> DeclarationEmitter<'a> {
                         entry.push((member_name, initializer));
                     }
                 }
-            }
-        }
-
-        if js_export_equals_names.len() == 1
-            && let Some(root_name) = js_export_equals_names.iter().next()
-        {
-            for alias_name in self.collect_top_level_jsdoc_alias_names(source_file) {
-                Self::push_js_namespace_export_alias(
-                    &mut declarations.namespace_aliases,
-                    root_name,
-                    alias_name.clone(),
-                    alias_name,
-                );
             }
         }
 
@@ -2136,8 +2257,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let lhs_access = self.arena.get_access_expr(lhs_node)?;
-        self
-            .get_identifier_text(lhs_access.name_or_argument)?;
+        self.get_identifier_text(lhs_access.name_or_argument)?;
 
         let rhs = self
             .arena
@@ -2344,9 +2464,7 @@ impl<'a> DeclarationEmitter<'a> {
         export_name: String,
         local_name: String,
     ) {
-        let entry = aliases
-            .entry(root_name.to_string())
-            .or_default();
+        let entry = aliases.entry(root_name.to_string()).or_default();
         if !entry.iter().any(|(existing_export, existing_local)| {
             existing_export == &export_name && existing_local == &local_name
         }) {
