@@ -573,7 +573,9 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 
-        let mut seen: rustc_hash::FxHashMap<String, NodeIndex> = rustc_hash::FxHashMap::default();
+        // Track (member_idx, type_annotation) for TS2717 comparison
+        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex)> =
+            rustc_hash::FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -586,17 +588,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                continue;
+            };
             let Some(name) = self.get_member_name(member_idx) else {
                 continue;
             };
+            let type_ann = sig.type_annotation;
 
-            if let Some(&prev_idx) = seen.get(&name) {
+            if let Some(&(prev_idx, prev_type_ann)) = seen.get(&name) {
                 // Report duplicate on the second occurrence
-                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    sig.name
-                } else {
-                    member_idx
-                };
+                let name_idx = sig.name;
                 self.error_at_node(
                     name_idx,
                     &format!("Duplicate identifier '{name}'."),
@@ -604,19 +606,44 @@ impl<'a> CheckerState<'a> {
                 );
                 // Also mark the first occurrence
                 if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
-                    let prev_name_idx = if let Some(sig) = self.ctx.arena.get_signature(prev_node) {
-                        sig.name
-                    } else {
-                        prev_idx
-                    };
+                    let prev_name_idx =
+                        if let Some(prev_sig) = self.ctx.arena.get_signature(prev_node) {
+                            prev_sig.name
+                        } else {
+                            prev_idx
+                        };
                     self.error_at_node(
                         prev_name_idx,
                         &format!("Duplicate identifier '{name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
                 }
+
+                // TS2717 on the subsequent declaration when types differ
+                let first_type = if prev_type_ann.is_some() {
+                    self.get_type_from_type_node(prev_type_ann)
+                } else {
+                    TypeId::ANY
+                };
+                let this_type = if type_ann.is_some() {
+                    self.get_type_from_type_node(type_ann)
+                } else {
+                    TypeId::ANY
+                };
+                if !self.type_contains_error(first_type)
+                    && !self.type_contains_error(this_type)
+                    && first_type != this_type
+                {
+                    let first_type_str = self.format_type(first_type);
+                    let this_type_str = self.format_type(this_type);
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                        &[&name, &first_type_str, &this_type_str],
+                    );
+                }
             } else {
-                seen.insert(name, member_idx);
+                seen.insert(name, (member_idx, type_ann));
             }
         }
     }

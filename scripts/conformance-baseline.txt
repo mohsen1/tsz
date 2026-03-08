@@ -532,7 +532,6 @@ FAIL TypeScript/tests/cases/compiler/instantiateContextualTypes.ts
 FAIL TypeScript/tests/cases/compiler/instantiateTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 FAIL TypeScript/tests/cases/compiler/interfaceClassMerging.ts
-FAIL TypeScript/tests/cases/compiler/interfaceDeclaration1.ts
 FAIL TypeScript/tests/cases/compiler/interfaceDeclaration4.ts
 FAIL TypeScript/tests/cases/compiler/interfaceExtendsClassWithPrivate1.ts
 FAIL TypeScript/tests/cases/compiler/interfaceExtendsClassWithPrivate2.ts
@@ -891,6 +890,7 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
+FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
 FAIL TypeScript/tests/cases/compiler/privacyImportParseErrors.ts
 FAIL TypeScript/tests/cases/compiler/privateFieldsInClassExpressionDeclaration.ts
@@ -926,7 +926,6 @@ FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
 FAIL TypeScript/tests/cases/compiler/reactReduxLikeDeferredInferenceAllowsAssignment.ts
 FAIL TypeScript/tests/cases/compiler/readonlyFloat32ArrayAssignableWithFloat32Array.ts
 FAIL TypeScript/tests/cases/compiler/readonlyTupleAndArrayElaboration.ts
-FAIL TypeScript/tests/cases/compiler/reassignStaticProp.ts
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck.ts
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck2.ts
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck3.ts
@@ -5235,6 +5234,7 @@ PASS TypeScript/tests/cases/compiler/interfaceAssignmentCompat.ts
 PASS TypeScript/tests/cases/compiler/interfaceClassMerging2.ts
 PASS TypeScript/tests/cases/compiler/interfaceContextualType.ts
 PASS TypeScript/tests/cases/compiler/interfacedecl.ts
+PASS TypeScript/tests/cases/compiler/interfaceDeclaration1.ts
 PASS TypeScript/tests/cases/compiler/interfaceDeclaration2.ts
 PASS TypeScript/tests/cases/compiler/interfaceDeclaration3.ts
 PASS TypeScript/tests/cases/compiler/interfaceDeclaration5.ts
@@ -6387,7 +6387,6 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
-PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primaryExpressionMods.ts
@@ -6542,6 +6541,7 @@ PASS TypeScript/tests/cases/compiler/readonlyInDeclarationFile.ts
 PASS TypeScript/tests/cases/compiler/readonlyInNonPropertyParameters.ts
 PASS TypeScript/tests/cases/compiler/readonlyMembers.ts
 PASS TypeScript/tests/cases/compiler/readonlyPropertySubtypeRelationDirected.ts
+PASS TypeScript/tests/cases/compiler/reassignStaticProp.ts
 PASS TypeScript/tests/cases/compiler/reboundBaseClassSymbol.ts
 PASS TypeScript/tests/cases/compiler/reboundIdentifierOnImportAlias.ts
 PASS TypeScript/tests/cases/compiler/rectype.ts
