@@ -334,6 +334,18 @@ impl<'a> CheckerState<'a> {
             self.get_type_from_type_node(prop.type_annotation)
         } else if prop.initializer.is_some() {
             let init_type = self.get_type_of_node(prop.initializer);
+            let init_type =
+                if init_type == TypeId::ANY && self.has_accessor_modifier(&prop.modifiers) {
+                    self.this_access_name_node(prop.initializer)
+                        .and_then(|name_idx| {
+                            self.infer_property_type_from_enclosing_class_assignments(
+                                name_idx, is_static,
+                            )
+                        })
+                        .unwrap_or(init_type)
+                } else {
+                    init_type
+                };
             // Widen literal types for mutable class properties (tsc behavior).
             // `class Foo { name = "" }` infers `name: string`, not `name: ""`.
             // Readonly properties preserve literal types:
@@ -347,6 +359,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.widen_literal_type(init_type)
             }
+        } else if self.has_accessor_modifier(&prop.modifiers) {
+            self.infer_property_type_from_enclosing_class_assignments(prop.name, is_static)
+                .unwrap_or(TypeId::ANY)
         } else {
             TypeId::ANY
         };

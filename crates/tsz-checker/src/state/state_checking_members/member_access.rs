@@ -4,10 +4,71 @@ use crate::query_boundaries::definite_assignment::constructor_assigned_propertie
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn infer_property_type_from_class_member_assignments(
+        &mut self,
+        member_nodes: &[NodeIndex],
+        prop_name: NodeIndex,
+        is_static: bool,
+    ) -> Option<TypeId> {
+        let property_name = self.get_property_name(prop_name)?;
+        let mut assigned_types = Vec::new();
+
+        for &member_idx in member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if !is_static && member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    continue;
+                };
+                if ctor.body.is_none() {
+                    continue;
+                }
+                self.collect_class_member_assignment_types(
+                    ctor.body,
+                    &property_name,
+                    member_nodes,
+                    is_static,
+                    &mut assigned_types,
+                );
+            } else if is_static
+                && member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                self.collect_class_member_assignment_types(
+                    member_idx,
+                    &property_name,
+                    member_nodes,
+                    is_static,
+                    &mut assigned_types,
+                );
+            }
+        }
+
+        if assigned_types.is_empty() {
+            None
+        } else {
+            Some(tsz_solver::utils::union_or_single(
+                self.ctx.types,
+                assigned_types,
+            ))
+        }
+    }
+
+    pub(crate) fn infer_property_type_from_enclosing_class_assignments(
+        &mut self,
+        prop_name: NodeIndex,
+        is_static: bool,
+    ) -> Option<TypeId> {
+        let member_nodes = self.ctx.enclosing_class.as_ref()?.member_nodes.clone();
+        self.infer_property_type_from_class_member_assignments(&member_nodes, prop_name, is_static)
+    }
+
     pub(crate) fn property_assigned_in_enclosing_class_constructor(
         &mut self,
         prop_name: NodeIndex,
@@ -80,6 +141,128 @@ impl<'a> CheckerState<'a> {
             self.analyze_constructor_assignments(member_idx, &tracked, false)
                 .contains(&key)
         })
+    }
+
+    fn collect_class_member_assignment_types(
+        &mut self,
+        node_idx: NodeIndex,
+        property_name: &str,
+        member_nodes: &[NodeIndex],
+        is_static: bool,
+        assigned_types: &mut Vec<TypeId>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::CLASS_EXPRESSION => return,
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                    && bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                    && self
+                        .this_access_name(bin.left)
+                        .as_deref()
+                        .is_some_and(|name| name == property_name)
+                {
+                    let mut rhs_type = self.get_type_of_node(bin.right);
+                    if rhs_type == TypeId::ANY
+                        && let Some(name_idx) = self.this_access_name_node(bin.right)
+                        && let Some(ref_name) = self.get_property_name(name_idx)
+                        && ref_name != property_name
+                    {
+                        rhs_type = self
+                            .class_member_declared_type(member_nodes, name_idx, is_static)
+                            .or_else(|| {
+                                self.infer_property_type_from_class_member_assignments(
+                                    member_nodes,
+                                    name_idx,
+                                    is_static,
+                                )
+                            })
+                            .unwrap_or(rhs_type);
+                    }
+                    let rhs_type = self.widen_literal_type(rhs_type);
+                    if rhs_type != TypeId::ERROR && rhs_type != TypeId::ANY {
+                        assigned_types.push(rhs_type);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_class_member_assignment_types(
+                child_idx,
+                property_name,
+                member_nodes,
+                is_static,
+                assigned_types,
+            );
+        }
+    }
+
+    fn this_access_name(&self, access_idx: NodeIndex) -> Option<String> {
+        let name_idx = self.this_access_name_node(access_idx)?;
+        self.get_property_name(name_idx)
+    }
+
+    pub(crate) fn this_access_name_node(&self, access_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(access_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let expr_node = self.ctx.arena.get(access.expression)?;
+        if expr_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        Some(access.name_or_argument)
+    }
+
+    fn class_member_declared_type(
+        &mut self,
+        member_nodes: &[NodeIndex],
+        prop_name: NodeIndex,
+        is_static: bool,
+    ) -> Option<TypeId> {
+        let property_name = self.get_property_name(prop_name)?;
+
+        for &member_idx in member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if self.has_static_modifier(&prop.modifiers) != is_static {
+                continue;
+            }
+            if self.get_property_name(prop.name).as_deref() != Some(property_name.as_str()) {
+                continue;
+            }
+
+            if let Some(&type_id) = self.ctx.node_types.get(&member_idx.0) {
+                return Some(type_id);
+            }
+            if prop.type_annotation.is_some() {
+                return Some(self.get_type_from_type_node(prop.type_annotation));
+            }
+            if prop.initializer.is_some() {
+                return Some(self.get_type_of_node(prop.initializer));
+            }
+        }
+
+        None
     }
 
     fn enclosing_class_constructor_param_names(&self) -> rustc_hash::FxHashSet<String> {
