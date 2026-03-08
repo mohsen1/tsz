@@ -1426,6 +1426,10 @@ impl<'a> Printer<'a> {
                 && let Some(access) = self.arena.get_access_expr(node)
                 && let Some(expr_node) = self.arena.get(access.expression)
                 && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                && self
+                    .get_identifier_text_opt(access.name_or_argument)
+                    .as_deref()
+                    == Some("meta")
             {
                 return true;
             }
