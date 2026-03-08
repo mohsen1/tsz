@@ -198,7 +198,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    fn next_disposable_env_names(&mut self) -> (String, String) {
+    pub(in crate::emitter) fn next_disposable_env_names(&mut self) -> (String, String) {
         loop {
             let env_name = format!("env_{}", self.next_disposable_env_id);
             let error_name = format!("e_{}", self.next_disposable_env_id);
