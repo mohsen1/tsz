@@ -538,9 +538,13 @@ impl NodeArena {
     #[inline]
     #[must_use]
     pub fn get_access_expr(&self, node: &Node) -> Option<&AccessExprData> {
-        use super::syntax_kind_ext::{ELEMENT_ACCESS_EXPRESSION, PROPERTY_ACCESS_EXPRESSION};
+        use super::syntax_kind_ext::{
+            ELEMENT_ACCESS_EXPRESSION, META_PROPERTY, PROPERTY_ACCESS_EXPRESSION,
+        };
         if node.has_data()
-            && (node.kind == PROPERTY_ACCESS_EXPRESSION || node.kind == ELEMENT_ACCESS_EXPRESSION)
+            && (node.kind == PROPERTY_ACCESS_EXPRESSION
+                || node.kind == ELEMENT_ACCESS_EXPRESSION
+                || node.kind == META_PROPERTY)
         {
             self.access_exprs.get(node.data_index as usize)
         } else {

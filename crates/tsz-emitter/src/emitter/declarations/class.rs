@@ -517,7 +517,17 @@ impl<'a> Printer<'a> {
 
             // Collect decorator nodes from modifiers
             let decorators = self.collect_class_decorators(modifiers);
-            if decorators.is_empty() {
+
+            // Collect parameter decorators for methods
+            let param_decorators: Vec<(usize, Vec<NodeIndex>)> =
+                if let MemberMetadata::Method { ref parameters, .. } = metadata {
+                    self.collect_param_decorators(parameters)
+                } else {
+                    Vec::new()
+                };
+
+            // Skip members with no decorators at all (neither member nor parameter level)
+            if decorators.is_empty() && param_decorators.is_empty() {
                 continue;
             }
 
@@ -535,14 +545,6 @@ impl<'a> Printer<'a> {
             if is_accessor && !emitted_accessor_names.insert(member_name.clone()) {
                 continue;
             }
-
-            // Collect parameter decorators for methods/constructors
-            let param_decorators: Vec<(usize, Vec<NodeIndex>)> =
-                if let MemberMetadata::Method { ref parameters, .. } = metadata {
-                    self.collect_param_decorators(parameters)
-                } else {
-                    Vec::new()
-                };
 
             self.write_helper("__decorate");
             self.write("([");
@@ -646,11 +648,13 @@ impl<'a> Printer<'a> {
         };
 
         // Check if any members have legacy decorators (method, property, accessor decorators)
+        // Also checks for parameter decorators on methods and constructors.
         let has_legacy_member_decorators = self.ctx.options.legacy_decorators
             && class.members.nodes.iter().any(|&m_idx| {
                 let Some(m_node) = self.arena.get(m_idx) else {
                     return false;
                 };
+                // Check member-level decorators
                 let mods = match m_node.kind {
                     k if k == syntax_kind_ext::METHOD_DECLARATION => self
                         .arena
@@ -669,20 +673,46 @@ impl<'a> Printer<'a> {
                     }
                     _ => None,
                 };
-                mods.is_some_and(|m| {
+                let has_member_decorator = mods.is_some_and(|m| {
                     m.nodes.iter().any(|&mod_idx| {
                         self.arena
                             .get(mod_idx)
                             .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                });
+                if has_member_decorator {
+                    return true;
+                }
+                // Check parameter decorators on methods and constructors
+                let params: Option<&tsz_parser::parser::NodeList> = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(m_node).map(|m| &m.parameters)
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        self.arena.get_constructor(m_node).map(|c| &c.parameters)
+                    }
+                    _ => None,
+                };
+                params.is_some_and(|p| {
+                    p.nodes.iter().any(|&param_idx| {
+                        let Some(param_node) = self.arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(param) = self.arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        !self.collect_class_decorators(&param.modifiers).is_empty()
                     })
                 })
             });
 
         if !legacy_class_decorators.is_empty() || has_legacy_member_decorators {
             let class_name = if class.name.is_none() {
+                // For anonymous default exports with decorators, ensure we have a name
+                // so __decorate calls can reference it (e.g., `default_1.prototype`)
                 self.anonymous_default_export_name
                     .clone()
-                    .unwrap_or_default()
+                    .unwrap_or_else(|| "default_1".to_string())
             } else {
                 self.get_identifier_text_idx(class.name)
             };
@@ -734,6 +764,17 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            // For anonymous classes that got a generated name (e.g., "default_1"),
+            // ensure `anonymous_default_export_name` is set so `emit_class_es6_with_options`
+            // can inject the name into the class expression.
+            let prev_anon_name =
+                if class.name.is_none() && self.anonymous_default_export_name.is_none() {
+                    self.anonymous_default_export_name = Some(class_name.clone());
+                    true
+                } else {
+                    false
+                };
+
             // When there are class-level decorators, emit as `let Name = class { ... };`
             // When only member decorators, emit as normal `class Name { ... }`
             if !legacy_class_decorators.is_empty() {
@@ -745,6 +786,11 @@ impl<'a> Printer<'a> {
                 );
             } else {
                 self.emit_class_es6_with_options(node, idx, false, None);
+            }
+
+            // Restore anonymous_default_export_name if we temporarily set it
+            if prev_anon_name {
+                self.anonymous_default_export_name = None;
             }
             // Only write newline if not already at line start (class declarations
             // with lowered static fields already end with write_line()).
