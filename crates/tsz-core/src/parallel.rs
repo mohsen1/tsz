@@ -779,6 +779,60 @@ pub struct MergedProgram {
     pub type_interner: TypeInterner,
 }
 
+/// High-level residency counters for `MergedProgram` state.
+///
+/// These numbers give a stable baseline for large-repo performance work without
+/// pretending to be exact heap accounting. The important question is how many
+/// arenas and declaration mappings the current pipeline retains after merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergedProgramResidencyStats {
+    /// Number of user files in the merged program.
+    pub file_count: usize,
+    /// Number of bound-file arena handles retained directly by `program.files`.
+    pub bound_file_arena_count: usize,
+    /// Number of unique `NodeArena` allocations retained across all arena maps.
+    pub unique_arena_count: usize,
+    /// Number of entries in the symbol -> arena lookup table.
+    pub symbol_arena_count: usize,
+    /// Number of declaration -> arena buckets retained for cross-file lookup.
+    pub declaration_arena_bucket_count: usize,
+    /// Total number of declaration -> arena edges across all buckets.
+    pub declaration_arena_mapping_count: usize,
+}
+
+impl MergedProgram {
+    /// Return residency-oriented counters for the current merged program.
+    #[must_use]
+    pub fn residency_stats(&self) -> MergedProgramResidencyStats {
+        let mut unique_arenas: FxHashSet<usize> = FxHashSet::default();
+
+        for file in &self.files {
+            unique_arenas.insert(Arc::as_ptr(&file.arena) as usize);
+        }
+        for arena in self.symbol_arenas.values() {
+            unique_arenas.insert(Arc::as_ptr(arena) as usize);
+        }
+        for arenas in self.declaration_arenas.values() {
+            for arena in arenas {
+                unique_arenas.insert(Arc::as_ptr(arena) as usize);
+            }
+        }
+
+        MergedProgramResidencyStats {
+            file_count: self.files.len(),
+            bound_file_arena_count: self.files.len(),
+            unique_arena_count: unique_arenas.len(),
+            symbol_arena_count: self.symbol_arenas.len(),
+            declaration_arena_bucket_count: self.declaration_arenas.len(),
+            declaration_arena_mapping_count: self
+                .declaration_arenas
+                .values()
+                .map(|arenas| arenas.len())
+                .sum(),
+        }
+    }
+}
+
 /// Check if two symbols can be merged across multiple files.
 ///
 /// TypeScript allows merging:
