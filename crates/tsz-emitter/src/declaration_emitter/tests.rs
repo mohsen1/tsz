@@ -1523,6 +1523,53 @@ const lambdaFoo = (/** left */ left: number, /** right */ right: number): number
 }
 
 #[test]
+fn test_any_dataview_new_expression_falls_back_to_generic_type() {
+    let source = "const dataView = new DataView(new ArrayBuffer(80));";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+    let var_stmt_idx = source_file.statements.nodes[0];
+    let var_decl = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing dataView declaration");
+
+    let interner = TypeInterner::new();
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(var_decl.name.0, TypeId::ANY);
+
+    let binder = BinderState::new();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const dataView: DataView<ArrayBuffer>;"),
+        "Expected DataView constructor fallback type: {output}"
+    );
+}
+
+#[test]
+fn test_dataview_new_expression_falls_back_without_type_cache() {
+    let output = emit_dts("const dataView = new DataView(new ArrayBuffer(80));");
+    assert!(
+        output.contains("declare const dataView: DataView<ArrayBuffer>;"),
+        "Expected DataView constructor fallback without type cache: {output}"
+    );
+}
+
+#[test]
 fn test_array_type_in_declaration() {
     let output = emit_dts("export type Numbers = number[];");
     assert!(output.contains("number[]"), "Expected array type: {output}");
