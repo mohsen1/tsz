@@ -7,6 +7,26 @@ fn create_test_project(dir: &Path, config: &str) -> PathBuf {
     config_path
 }
 
+fn project_name(graph: &ProjectReferenceGraph, id: ProjectId) -> String {
+    graph
+        .get_project(id)
+        .unwrap()
+        .config_path
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+}
+
+fn component_names(graph: &ProjectReferenceGraph, component: &[ProjectId]) -> Vec<String> {
+    component
+        .iter()
+        .map(|&project_id| project_name(graph, project_id))
+        .collect()
+}
+
 #[test]
 fn test_parse_project_reference() {
     let json = r#"{ "path": "./packages/core" }"#;
@@ -473,5 +493,205 @@ fn test_build_order_keeps_sibling_dependencies_deterministic() {
                 .to_string(),
         ],
         "build order should remain deterministic for sibling projects that share a dependency"
+    );
+}
+
+#[test]
+fn test_condensation_groups_cycle_members_deterministically() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let project_a = root.join("project-a");
+    std::fs::create_dir_all(&project_a).expect("directory creation should succeed in test");
+    let config_a = create_test_project(
+        &project_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-b" }]
+        }"#,
+    );
+
+    let project_b = root.join("project-b");
+    std::fs::create_dir_all(&project_b).expect("directory creation should succeed in test");
+    let config_b = create_test_project(
+        &project_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let project_c = root.join("project-c");
+    std::fs::create_dir_all(&project_c).expect("directory creation should succeed in test");
+    create_test_project(
+        &project_c,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [{ "path": "./project-c" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let condensation = graph.condensation_graph();
+
+    let a_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_a).unwrap())
+        .unwrap();
+    let b_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_b).unwrap())
+        .unwrap();
+    let cycle_component_id = condensation.component_for_project(a_id).unwrap();
+    assert_eq!(
+        condensation.component_for_project(b_id),
+        Some(cycle_component_id),
+        "project-a and project-b should collapse into the same SCC"
+    );
+
+    assert_eq!(
+        component_names(&graph, condensation.component_members(cycle_component_id)),
+        vec!["project-a".to_string(), "project-b".to_string()],
+        "cycle members should be stable and path-sorted inside the SCC"
+    );
+
+    let cycles = graph.detect_cycles();
+    assert_eq!(cycles.len(), 1, "expected exactly one cycle in the graph");
+    assert_eq!(
+        component_names(&graph, &cycles[0]),
+        vec!["project-a".to_string(), "project-b".to_string()],
+        "cycle reporting should remain deterministic after SCC condensation"
+    );
+}
+
+#[test]
+fn test_affected_projects_uses_condensation_graph_for_cycles() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let project_a = root.join("project-a");
+    std::fs::create_dir_all(&project_a).expect("directory creation should succeed in test");
+    let config_a = create_test_project(
+        &project_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-b" }]
+        }"#,
+    );
+
+    let project_b = root.join("project-b");
+    std::fs::create_dir_all(&project_b).expect("directory creation should succeed in test");
+    create_test_project(
+        &project_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let project_c = root.join("project-c");
+    std::fs::create_dir_all(&project_c).expect("directory creation should succeed in test");
+    let config_c = create_test_project(
+        &project_c,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [{ "path": "./project-c" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let a_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_a).unwrap())
+        .unwrap();
+    let b_id = graph
+        .get_project_id(&std::fs::canonicalize(project_b.join("tsconfig.json")).unwrap())
+        .unwrap();
+    let c_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_c).unwrap())
+        .unwrap();
+    let root_id = graph
+        .get_project_id(&std::fs::canonicalize(&root_config).unwrap())
+        .unwrap();
+
+    let affected = graph.affected_projects(a_id);
+    assert_eq!(
+        affected.len(),
+        3,
+        "peer cycle members and dependents should be included"
+    );
+    assert!(
+        affected.contains(&b_id),
+        "changing project-a should affect project-b in the same SCC"
+    );
+    assert!(
+        affected.contains(&c_id),
+        "changing project-a should affect direct dependent project-c"
+    );
+    assert!(
+        affected.contains(&root_id),
+        "changing project-a should affect the root project through project-c"
+    );
+}
+
+#[test]
+fn test_transitive_dependencies_exclude_self_inside_cycle() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let project_a = root.join("project-a");
+    std::fs::create_dir_all(&project_a).expect("directory creation should succeed in test");
+    let config_a = create_test_project(
+        &project_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-b" }]
+        }"#,
+    );
+
+    let project_b = root.join("project-b");
+    std::fs::create_dir_all(&project_b).expect("directory creation should succeed in test");
+    let config_b = create_test_project(
+        &project_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../project-a" }]
+        }"#,
+    );
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [{ "path": "./project-a" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let a_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_a).unwrap())
+        .unwrap();
+    let b_id = graph
+        .get_project_id(&std::fs::canonicalize(&config_b).unwrap())
+        .unwrap();
+
+    let dependencies = graph.transitive_dependencies(a_id);
+    assert!(
+        dependencies.contains(&b_id),
+        "project-a should still report project-b as a dependency inside the SCC"
+    );
+    assert!(
+        !dependencies.contains(&a_id),
+        "project-a should not report itself as a transitive dependency"
     );
 }

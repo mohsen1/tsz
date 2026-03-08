@@ -1175,19 +1175,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         .entry(global_id)
                         .or_insert_with(|| Arc::clone(lib_arena));
                     for &decl in &lib_sym.declarations {
-                        let target = declaration_arenas
-                            .entry((global_id, decl))
-                            .or_default();
+                        let target = declaration_arenas.entry((global_id, decl)).or_default();
                         push_unique_declaration_arena(target, lib_arena);
-                    }
-                }
-
-                // Also copy declaration_arenas for precise cross-file declaration lookup.
-                // This is needed when a symbol has declarations across multiple lib files.
-                if let Some(entries) = decl_arenas_by_sym.get(&local_id) {
-                    for (decl_idx, arena) in entries {
-                        let target = declaration_arenas.entry((global_id, *decl_idx)).or_default();
-                        push_unique_declaration_arena(target, arena);
                     }
                 }
             }

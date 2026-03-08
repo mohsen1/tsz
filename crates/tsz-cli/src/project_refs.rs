@@ -106,6 +106,119 @@ pub struct ResolvedProjectReference {
 /// Unique identifier for a project in the reference graph
 pub type ProjectId = usize;
 
+/// Unique identifier for a strongly connected component in the condensed project graph.
+pub type ProjectSccId = usize;
+
+/// SCC condensation view of the project reference graph.
+///
+/// This keeps cycle-aware dependency information available for invalidation and
+/// future scheduler work while the default build path still rejects cycles.
+#[derive(Debug, Clone)]
+pub struct ProjectReferenceCondensation {
+    components: Vec<Vec<ProjectId>>,
+    project_to_component: Vec<ProjectSccId>,
+    references: FxHashMap<ProjectSccId, Vec<ProjectSccId>>,
+    dependents: FxHashMap<ProjectSccId, Vec<ProjectSccId>>,
+}
+
+impl ProjectReferenceCondensation {
+    /// Get all SCC components in deterministic order.
+    pub fn components(&self) -> &[Vec<ProjectId>] {
+        &self.components
+    }
+
+    /// Get the number of SCC components.
+    pub const fn component_count(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Get the projects that belong to a component.
+    pub fn component_members(&self, id: ProjectSccId) -> &[ProjectId] {
+        self.components
+            .get(id)
+            .map_or(&[], |members| members.as_slice())
+    }
+
+    /// Get the SCC component that contains a project.
+    pub fn component_for_project(&self, project_id: ProjectId) -> Option<ProjectSccId> {
+        self.project_to_component.get(project_id).copied()
+    }
+
+    /// Get outgoing SCC edges for a component.
+    pub fn get_references(&self, id: ProjectSccId) -> &[ProjectSccId] {
+        self.references
+            .get(&id)
+            .map_or(&[], |edges| edges.as_slice())
+    }
+
+    /// Get incoming SCC edges for a component.
+    pub fn get_dependents(&self, id: ProjectSccId) -> &[ProjectSccId] {
+        self.dependents
+            .get(&id)
+            .map_or(&[], |edges| edges.as_slice())
+    }
+
+    /// Get all transitive dependencies of a project through the SCC condensation graph.
+    pub fn transitive_dependencies(&self, id: ProjectId) -> FxHashSet<ProjectId> {
+        let Some(start_component) = self.component_for_project(id) else {
+            return FxHashSet::default();
+        };
+
+        let mut dependencies = FxHashSet::default();
+        for &peer in self.component_members(start_component) {
+            if peer != id {
+                dependencies.insert(peer);
+            }
+        }
+
+        let mut visited_components = FxHashSet::default();
+        let mut stack = self.get_references(start_component).to_vec();
+        while let Some(component_id) = stack.pop() {
+            if !visited_components.insert(component_id) {
+                continue;
+            }
+            for &project_id in self.component_members(component_id) {
+                dependencies.insert(project_id);
+            }
+            for &next in self.get_references(component_id) {
+                stack.push(next);
+            }
+        }
+
+        dependencies
+    }
+
+    /// Get all projects affected by a change to a project through the SCC condensation graph.
+    pub fn affected_projects(&self, id: ProjectId) -> FxHashSet<ProjectId> {
+        let Some(start_component) = self.component_for_project(id) else {
+            return FxHashSet::default();
+        };
+
+        let mut affected = FxHashSet::default();
+        for &peer in self.component_members(start_component) {
+            if peer != id {
+                affected.insert(peer);
+            }
+        }
+
+        let mut visited_components = FxHashSet::default();
+        let mut stack = self.get_dependents(start_component).to_vec();
+        while let Some(component_id) = stack.pop() {
+            if !visited_components.insert(component_id) {
+                continue;
+            }
+            for &project_id in self.component_members(component_id) {
+                affected.insert(project_id);
+            }
+            for &next in self.get_dependents(component_id) {
+                stack.push(next);
+            }
+        }
+
+        affected
+    }
+}
+
 /// Graph of project references for build ordering
 #[derive(Debug, Default)]
 pub struct ProjectReferenceGraph {
@@ -227,47 +340,171 @@ impl ProjectReferenceGraph {
         self.dependents.get(&id).map_or(&[], |v| v.as_slice())
     }
 
-    /// Check for circular references
-    pub fn detect_cycles(&self) -> Vec<Vec<ProjectId>> {
-        let mut cycles = Vec::new();
-        let mut visited = FxHashSet::default();
-        let mut rec_stack = FxHashSet::default();
-        let mut path = Vec::new();
-
-        for id in 0..self.projects.len() {
-            if !visited.contains(&id) {
-                self.detect_cycles_dfs(id, &mut visited, &mut rec_stack, &mut path, &mut cycles);
-            }
-        }
-
-        cycles
+    fn compare_project_ids(&self, left: ProjectId, right: ProjectId) -> std::cmp::Ordering {
+        self.projects[left]
+            .config_path
+            .cmp(&self.projects[right].config_path)
     }
 
-    fn detect_cycles_dfs(
-        &self,
-        node: ProjectId,
-        visited: &mut FxHashSet<ProjectId>,
-        rec_stack: &mut FxHashSet<ProjectId>,
-        path: &mut Vec<ProjectId>,
-        cycles: &mut Vec<Vec<ProjectId>>,
-    ) {
-        visited.insert(node);
-        rec_stack.insert(node);
-        path.push(node);
+    fn sorted_project_ids(&self) -> Vec<ProjectId> {
+        let mut ids: Vec<ProjectId> = (0..self.projects.len()).collect();
+        ids.sort_by(|left, right| self.compare_project_ids(*left, *right));
+        ids
+    }
 
-        for &neighbor in self.get_references(node) {
-            if !visited.contains(&neighbor) {
-                self.detect_cycles_dfs(neighbor, visited, rec_stack, path, cycles);
-            } else if rec_stack.contains(&neighbor) {
-                // Found a cycle - extract it from path
-                if let Some(start_idx) = path.iter().position(|&x| x == neighbor) {
-                    cycles.push(path[start_idx..].to_vec());
+    fn has_self_reference(&self, id: ProjectId) -> bool {
+        self.get_references(id).contains(&id)
+    }
+
+    /// Build the SCC condensation graph in deterministic path order.
+    pub fn condensation_graph(&self) -> ProjectReferenceCondensation {
+        #[derive(Default)]
+        struct TarjanState {
+            index: usize,
+            indices: Vec<Option<usize>>,
+            lowlinks: Vec<usize>,
+            stack: Vec<ProjectId>,
+            on_stack: FxHashSet<ProjectId>,
+            components: Vec<Vec<ProjectId>>,
+        }
+
+        fn strong_connect(
+            graph: &ProjectReferenceGraph,
+            adjacency: &[Vec<ProjectId>],
+            node: ProjectId,
+            state: &mut TarjanState,
+        ) {
+            let node_index = state.index;
+            state.indices[node] = Some(node_index);
+            state.lowlinks[node] = node_index;
+            state.index += 1;
+            state.stack.push(node);
+            state.on_stack.insert(node);
+
+            for &neighbor in &adjacency[node] {
+                if state.indices[neighbor].is_none() {
+                    strong_connect(graph, adjacency, neighbor, state);
+                    state.lowlinks[node] = state.lowlinks[node].min(state.lowlinks[neighbor]);
+                } else if state.on_stack.contains(&neighbor)
+                    && let Some(neighbor_index) = state.indices[neighbor]
+                {
+                    state.lowlinks[node] = state.lowlinks[node].min(neighbor_index);
                 }
+            }
+
+            if state.lowlinks[node] == node_index {
+                let mut component = Vec::new();
+                while let Some(member) = state.stack.pop() {
+                    state.on_stack.remove(&member);
+                    component.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                component.sort_by(|left, right| graph.compare_project_ids(*left, *right));
+                state.components.push(component);
             }
         }
 
-        path.pop();
-        rec_stack.remove(&node);
+        let project_count = self.projects.len();
+        let mut adjacency = vec![Vec::new(); project_count];
+        for node in 0..project_count {
+            let mut refs = self.get_references(node).to_vec();
+            refs.sort_by(|left, right| self.compare_project_ids(*left, *right));
+            adjacency[node] = refs;
+        }
+
+        let mut state = TarjanState {
+            index: 0,
+            indices: vec![None; project_count],
+            lowlinks: vec![0; project_count],
+            stack: Vec::new(),
+            on_stack: FxHashSet::default(),
+            components: Vec::new(),
+        };
+
+        for node in self.sorted_project_ids() {
+            if state.indices[node].is_none() {
+                strong_connect(self, &adjacency, node, &mut state);
+            }
+        }
+
+        state
+            .components
+            .sort_by(|left, right| self.compare_project_ids(left[0], right[0]));
+
+        let mut project_to_component = vec![0; project_count];
+        for (component_id, component) in state.components.iter().enumerate() {
+            for &project_id in component {
+                project_to_component[project_id] = component_id;
+            }
+        }
+
+        let mut references: FxHashMap<ProjectSccId, Vec<ProjectSccId>> = FxHashMap::default();
+        let mut dependents: FxHashMap<ProjectSccId, Vec<ProjectSccId>> = FxHashMap::default();
+        for component_id in 0..state.components.len() {
+            references.insert(component_id, Vec::new());
+            dependents.insert(component_id, Vec::new());
+        }
+
+        let mut seen_edges = FxHashSet::default();
+        for (&from_project, refs) in &self.references {
+            let from_component = project_to_component[from_project];
+            for &to_project in refs {
+                let to_component = project_to_component[to_project];
+                if from_component == to_component
+                    || !seen_edges.insert((from_component, to_component))
+                {
+                    continue;
+                }
+
+                references
+                    .get_mut(&from_component)
+                    .expect("all SCC ids initialized in references map")
+                    .push(to_component);
+                dependents
+                    .get_mut(&to_component)
+                    .expect("all SCC ids initialized in dependents map")
+                    .push(from_component);
+            }
+        }
+
+        for edges in references.values_mut() {
+            edges.sort_by(|left, right| {
+                self.compare_project_ids(state.components[*left][0], state.components[*right][0])
+            });
+        }
+        for edges in dependents.values_mut() {
+            edges.sort_by(|left, right| {
+                self.compare_project_ids(state.components[*left][0], state.components[*right][0])
+            });
+        }
+
+        ProjectReferenceCondensation {
+            components: state.components,
+            project_to_component,
+            references,
+            dependents,
+        }
+    }
+
+    /// Get all strongly connected components in deterministic path order.
+    pub fn strongly_connected_components(&self) -> Vec<Vec<ProjectId>> {
+        self.condensation_graph().components
+    }
+
+    /// Check for circular references
+    pub fn detect_cycles(&self) -> Vec<Vec<ProjectId>> {
+        self.strongly_connected_components()
+            .into_iter()
+            .filter(|component| {
+                component.len() > 1
+                    || component
+                        .first()
+                        .copied()
+                        .is_some_and(|project_id| self.has_self_reference(project_id))
+            })
+            .collect()
     }
 
     /// Get a topologically sorted build order
@@ -330,34 +567,12 @@ impl ProjectReferenceGraph {
 
     /// Get all transitive dependencies of a project
     pub fn transitive_dependencies(&self, id: ProjectId) -> FxHashSet<ProjectId> {
-        let mut deps = FxHashSet::default();
-        let mut stack = vec![id];
-
-        while let Some(current) = stack.pop() {
-            for &dep_id in self.get_references(current) {
-                if deps.insert(dep_id) {
-                    stack.push(dep_id);
-                }
-            }
-        }
-
-        deps
+        self.condensation_graph().transitive_dependencies(id)
     }
 
     /// Get all projects that would be affected by changes in a project
     pub fn affected_projects(&self, id: ProjectId) -> FxHashSet<ProjectId> {
-        let mut affected = FxHashSet::default();
-        let mut stack = vec![id];
-
-        while let Some(current) = stack.pop() {
-            for &dep_id in self.get_dependents(current) {
-                if affected.insert(dep_id) {
-                    stack.push(dep_id);
-                }
-            }
-        }
-
-        affected
+        self.condensation_graph().affected_projects(id)
     }
 
     /// Validate project reference constraints.
