@@ -767,7 +767,8 @@ impl<'a> DeclarationEmitter<'a> {
                             };
                             if self
                                 .arena
-                                .get(prop.name).is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                                .get(prop.name)
+                                .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
                             {
                                 valid = false;
                                 break;
@@ -790,7 +791,8 @@ impl<'a> DeclarationEmitter<'a> {
                             };
                             if self
                                 .arena
-                                .get(method.name).is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                                .get(method.name)
+                                .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
                             {
                                 valid = false;
                                 break;

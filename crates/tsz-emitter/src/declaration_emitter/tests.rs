@@ -467,6 +467,25 @@ const foo = {
 }
 
 #[test]
+fn test_js_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+export class Preferences {
+    constructor() {}
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg JS constructors to be omitted from declaration emit: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_equals_emits_before_target_declaration() {
     let source = r#"
 const a = {};

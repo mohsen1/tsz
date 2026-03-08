@@ -262,12 +262,12 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter
                 };
-                let map_info = if declaration_bundle_path.is_none() && context.options.declaration_map
-                {
-                    map_output_info(&dts_path)
-                } else {
-                    None
-                };
+                let map_info =
+                    if declaration_bundle_path.is_none() && context.options.declaration_map {
+                        map_output_info(&dts_path)
+                    } else {
+                        None
+                    };
 
                 if let Some((_, _, output_name)) = map_info.as_ref() {
                     if let Some(source_text) = file
@@ -330,8 +330,10 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 }
 
                 if declaration_bundle_path.is_some() {
-                    declaration_bundle_chunks
-                        .push(bundle_declaration_output(&contents, context.options.printer.module));
+                    declaration_bundle_chunks.push(bundle_declaration_output(
+                        &contents,
+                        context.options.printer.module,
+                    ));
                 } else {
                     outputs.push(OutputFile {
                         path: dts_path,
