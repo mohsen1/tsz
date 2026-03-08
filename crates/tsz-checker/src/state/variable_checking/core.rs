@@ -1590,6 +1590,12 @@ impl<'a> CheckerState<'a> {
         {
             // Return the enum object type ("typeof E") instead of the enum union type
             if let Some(enum_obj) = self.enum_object_type(init_sym_id) {
+                // Register enum object type -> DefId so the formatter can display
+                // it as "typeof EnumName" instead of expanding structurally.
+                let def_id = self.ctx.get_or_create_def_id(init_sym_id);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(enum_obj, def_id);
                 return enum_obj;
             }
         }
@@ -1639,6 +1645,12 @@ impl<'a> CheckerState<'a> {
             && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
             && let Some(enum_obj) = self.enum_object_type(sym_id)
         {
+            // Register enum object type -> DefId so the formatter can display
+            // it as "typeof EnumName" instead of expanding structurally.
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(enum_obj, def_id);
             return enum_obj;
         }
 

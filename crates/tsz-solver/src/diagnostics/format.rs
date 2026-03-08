@@ -255,7 +255,14 @@ impl<'a> TypeFormatter<'a> {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
             {
-                return self.format_def_name(&def).into();
+                let name = self.format_def_name(&def);
+                // Enum and namespace value types are displayed as `typeof Name` by tsc.
+                // Class instance types and interfaces use just the name.
+                use crate::def::DefKind;
+                if matches!(def.kind, DefKind::Enum | DefKind::Namespace) {
+                    return format!("typeof {name}").into();
+                }
+                return name.into();
             }
         }
 
@@ -984,15 +991,16 @@ impl<'a> TypeFormatter<'a> {
         if let Some(sym_id) = shape.symbol
             && let Some(name) = self.format_symbol_name(sym_id)
         {
-            // Namespace/module value types are displayed as `typeof Name` by tsc.
+            // Namespace/module/enum value types are displayed as `typeof Name` by tsc.
             if let Some(arena) = self.symbol_arena
                 && let Some(sym) = arena.get(sym_id)
             {
                 use tsz_binder::symbol_flags;
                 let is_namespace =
                     sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+                let is_enum = sym.has_any_flags(symbol_flags::ENUM);
                 let is_class = sym.has_flags(symbol_flags::CLASS);
-                if is_namespace && !is_class {
+                if (is_namespace || is_enum) && !is_class {
                     return Some(format!("typeof {name}"));
                 }
             }
