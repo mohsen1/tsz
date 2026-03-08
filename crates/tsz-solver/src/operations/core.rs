@@ -1726,28 +1726,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // ArgumentTypeMismatch so the checker emits TS2345.
             if let Some(rest_param) = func.params.last().filter(|p| p.rest) {
                 let rest_type = self.unwrap_readonly(rest_param.type_id);
-                if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
+                // `...args: never` means any call is invalid — TSC builds an empty
+                // tuple and checks it against `never`, producing TS2345.
+                let should_type_check = if rest_type == TypeId::NEVER {
+                    true
+                } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
                     let elems = self.interner.tuple_list(elements);
-                    let has_variadic = elems.iter().any(|e| e.rest);
-                    if has_variadic {
-                        // Build tuple type from actual args
-                        let args_tuple_elems: Vec<TupleElement> = arg_types
-                            .iter()
-                            .map(|&t| TupleElement {
-                                type_id: t,
-                                name: None,
-                                optional: false,
-                                rest: false,
-                            })
-                            .collect();
-                        let args_tuple = self.interner.tuple(args_tuple_elems);
-                        return CallResult::ArgumentTypeMismatch {
-                            index: 0,
-                            expected: rest_type,
-                            actual: args_tuple,
-                            fallback_return: func.return_type,
-                        };
-                    }
+                    elems.iter().any(|e| e.rest)
+                } else {
+                    false
+                };
+                if should_type_check {
+                    // Build tuple type from actual args
+                    let args_tuple_elems: Vec<TupleElement> = arg_types
+                        .iter()
+                        .map(|&t| TupleElement {
+                            type_id: t,
+                            name: None,
+                            optional: false,
+                            rest: false,
+                        })
+                        .collect();
+                    let args_tuple = self.interner.tuple(args_tuple_elems);
+                    return CallResult::ArgumentTypeMismatch {
+                        index: 0,
+                        expected: rest_type,
+                        actual: args_tuple,
+                        fallback_return: func.return_type,
+                    };
                 }
             }
             return CallResult::ArgumentCountMismatch {
@@ -1771,6 +1777,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         if let Some(result) = self.check_argument_types(&func.params, arg_types, func.is_method) {
             return result;
+        }
+
+        // Even if arg count and individual arg types pass, a `...args: never` rest param
+        // means no call is valid. TSC checks the args-as-tuple against `never`.
+        if let Some(rest_param) = func.params.last().filter(|p| p.rest) {
+            let rest_type = self.unwrap_readonly(rest_param.type_id);
+            if rest_type == TypeId::NEVER {
+                let rest_start = func.params.len().saturating_sub(1);
+                let rest_args = &arg_types[rest_start.min(arg_types.len())..];
+                let args_tuple_elems: Vec<TupleElement> = rest_args
+                    .iter()
+                    .map(|&t| TupleElement {
+                        type_id: t,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    })
+                    .collect();
+                let args_tuple = self.interner.tuple(args_tuple_elems);
+                return CallResult::ArgumentTypeMismatch {
+                    index: 0,
+                    expected: rest_type,
+                    actual: args_tuple,
+                    fallback_return: func.return_type,
+                };
+            }
         }
 
         CallResult::Success(func.return_type)
