@@ -1529,8 +1529,14 @@ impl<'a> CheckerState<'a> {
             let trimmed = rest.trim_start();
             let has_type = trimmed.starts_with('{');
 
-            // Check if there are @property or @member tags
+            // Check if there are @property, @member, or @type tags
+            // Note: "@typedef" itself contains "@type" as substring, so we
+            // check for "@type " or "@type{" (with space or brace following).
+            let has_type_tag = comment_text.contains("@type ") || comment_text.contains("@type{");
             let has_property = comment_text.contains("@property")
+                || comment_text.contains("@prop ")
+                || comment_text.contains("@prop{")
+                || has_type_tag
                 || comment_text.contains("@member")
                     && !comment_text.contains("@memberOf")
                     && !comment_text.contains("@memberof");
