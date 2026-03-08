@@ -987,6 +987,75 @@ exports.K = K;
 }
 
 #[test]
+fn test_js_commonjs_property_access_export_reuses_assigned_initializer_type() {
+    let source = r#"
+var NS = {};
+NS.K = class {};
+exports.K = NS.K;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file");
+    };
+    let class_expr = parser
+        .arena
+        .get(source_file.statements.nodes[1])
+        .and_then(|node| parser.arena.get_expression_statement(node))
+        .map(|stmt| {
+            parser
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(stmt.expression)
+        })
+        .and_then(|expr| {
+            parser
+                .arena
+                .get(expr)
+                .and_then(|node| parser.arena.get_binary_expr(node))
+        })
+        .map(|binary| {
+            parser
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right)
+        })
+        .expect("missing assigned class expression");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let constructor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), TypeId::ANY)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(class_expr.0, constructor_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export var K: {"),
+        "Expected property-access CommonJS export to emit a synthetic declaration: {output}"
+    );
+    assert!(
+        output.contains("new (): any;"),
+        "Expected property-access CommonJS export to reuse the assigned initializer type: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
     let source = r#"
 class Handler {

@@ -33,6 +33,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) source_file_text: Option<Arc<str>>,
     /// Type cache for looking up inferred types
     pub(super) type_cache: Option<TypeCacheView>,
+    /// Root source-file node for the current emit pass.
+    pub(super) current_source_file_idx: Option<NodeIndex>,
     /// Type interner for printing types
     pub(super) type_interner: Option<&'a TypeInterner>,
     /// Binder state for symbol resolution (used by `UsageAnalyzer`)
@@ -183,6 +185,7 @@ impl<'a> DeclarationEmitter<'a> {
             public_api_scope_depth: 0,
             source_file_text: None,
             type_cache: None,
+            current_source_file_idx: None,
             type_interner: None,
             binder: None,
             used_symbols: None,
@@ -249,6 +252,7 @@ impl<'a> DeclarationEmitter<'a> {
             public_api_scope_depth: 0,
             source_file_text: None,
             type_cache: Some(type_cache),
+            current_source_file_idx: None,
             type_interner: Some(type_interner),
             binder: Some(binder),
             used_symbols: None,
@@ -581,6 +585,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_file_text = Some(source_file.text.clone());
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
+        self.current_source_file_idx = Some(root_idx);
         self.emit_public_api_only = self.has_public_api_exports(source_file);
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;
@@ -2927,7 +2932,11 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_emit_declare_keyword(is_exported) {
             self.write("declare ");
         }
-        self.write(if is_exported { "const " } else { "var " });
+        self.write(if is_exported {
+            self.js_synthetic_export_value_keyword(initializer)
+        } else {
+            "var "
+        });
         self.emit_node(name_idx);
         self.write(": ");
         self.write(&type_text);
@@ -3206,6 +3215,18 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         initializer: NodeIndex,
     ) -> Option<String> {
+        self.js_synthetic_export_value_type_text_inner(initializer, 0)
+    }
+
+    fn js_synthetic_export_value_type_text_inner(
+        &self,
+        initializer: NodeIndex,
+        depth: u8,
+    ) -> Option<String> {
+        if depth > 4 {
+            return None;
+        }
+
         let init_node = self.arena.get(initializer)?;
         if init_node.kind == SyntaxKind::UndefinedKeyword as u16
             || self.is_void_expression(init_node)
@@ -3240,6 +3261,20 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(self.print_type_id(type_id));
         }
 
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(reference_text) = self.nameable_constructor_expression_text(initializer)
+            && let Some(assigned_initializer) =
+                self.js_assigned_initializer_for_value_reference(initializer)
+        {
+            let printed =
+                self.js_synthetic_export_value_type_text_inner(assigned_initializer, depth + 1)?;
+            return Some(self.rewrite_recursive_js_class_expression_type(
+                assigned_initializer,
+                &reference_text,
+                printed,
+            ));
+        }
+
         match init_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
@@ -3256,6 +3291,135 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_unary_expr(node)
                 .is_some_and(|unary| unary.operator == SyntaxKind::VoidKeyword as u16)
+    }
+
+    fn js_synthetic_export_value_keyword(&self, initializer: NodeIndex) -> &'static str {
+        let resolved_initializer = self
+            .js_assigned_initializer_for_value_reference(initializer)
+            .unwrap_or(initializer);
+        let Some(init_node) = self.arena.get(resolved_initializer) else {
+            return "const ";
+        };
+        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            "var "
+        } else {
+            "const "
+        }
+    }
+
+    fn rewrite_recursive_js_class_expression_type(
+        &self,
+        initializer: NodeIndex,
+        reference_text: &str,
+        printed: String,
+    ) -> String {
+        let Some(class_expr) = self.arena.get_class_at(initializer) else {
+            return printed;
+        };
+
+        let mut rewritten = printed;
+        for &member_idx in &class_expr.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            if method.type_annotation.is_some()
+                || !method.body.is_some()
+                || !self.function_body_returns_new_reference(method.body, reference_text)
+            {
+                continue;
+            }
+            let Some(method_name) = self.get_identifier_text(method.name) else {
+                continue;
+            };
+            rewritten = rewritten.replacen(
+                &format!("{method_name}(): any;"),
+                &format!("{method_name}(): /*elided*/ any;"),
+                1,
+            );
+        }
+
+        rewritten
+    }
+
+    fn function_body_returns_new_reference(
+        &self,
+        body_idx: NodeIndex,
+        reference_text: &str,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+
+        block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| self.statement_returns_new_reference(stmt_idx, reference_text))
+    }
+
+    fn statement_returns_new_reference(&self, stmt_idx: NodeIndex, reference_text: &str) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => self
+                .arena
+                .get_return_statement(stmt_node)
+                .is_some_and(|ret| {
+                    self.expression_is_new_reference(ret.expression, reference_text)
+                }),
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|nested| self.statement_returns_new_reference(nested, reference_text))
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => self
+                .arena
+                .get_if_statement(stmt_node)
+                .is_some_and(|if_data| {
+                    self.statement_returns_new_reference(if_data.then_statement, reference_text)
+                        || (if_data.else_statement.is_some()
+                            && self.statement_returns_new_reference(
+                                if_data.else_statement,
+                                reference_text,
+                            ))
+                }),
+            _ => false,
+        }
+    }
+
+    fn expression_is_new_reference(&self, expr_idx: NodeIndex, reference_text: &str) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        self.nameable_constructor_expression_text(new_expr.expression)
+            .as_deref()
+            == Some(reference_text)
     }
 
     /// Recursively collects all Identifier `NodeIndices` from a `BindingPattern`.
