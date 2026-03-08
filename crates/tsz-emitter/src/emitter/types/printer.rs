@@ -1122,6 +1122,11 @@ impl<'a> TypePrinter<'a> {
                 continue;
             }
 
+            if let Some(accessors) = self.print_property_as_accessors(prop) {
+                parts.extend(accessors);
+                continue;
+            }
+
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
             let quoted_name = if needs_property_name_quoting(&name) {
