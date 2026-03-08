@@ -158,3 +158,46 @@ export { value };
         "expected named exports to behave like a statement node in type queries"
     );
 }
+
+#[test]
+fn recursive_iterator_chain_return_context_does_not_overflow() {
+    let diagnostics = compile_and_collect_diagnostics(
+        r#"
+type IterableLike<T> = {
+  next(): T | undefined;
+};
+
+type IteratorChain<T> = IterableLike<T> & {
+  map<U>(transform: (value: T) => U): IteratorChain<U>;
+};
+
+declare const emptyValues: <T>() => IterableLike<T>;
+
+class ArrayIteratorChain<T> implements IteratorChain<T> {
+  constructor(private readonly values: IterableLike<T>) {}
+
+  next(): T | undefined {
+    return this.values.next();
+  }
+
+  map<U>(_transform: (value: T) => U): IteratorChain<U> {
+    const nextValues: IterableLike<U> = emptyValues<U>();
+    return createIteratorChain(nextValues);
+  }
+}
+
+const createIteratorChain = <T>(input: IterableLike<T>): IteratorChain<T> =>
+  new ArrayIteratorChain(input);
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected no non-lib diagnostics for recursive iterator chain return context, got: {relevant:?}"
+    );
+}

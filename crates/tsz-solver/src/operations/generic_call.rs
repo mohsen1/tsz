@@ -17,6 +17,33 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn constrain_same_base_application_args(
+        &mut self,
+        infer_ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        source: TypeId,
+        target: TypeId,
+        priority: crate::types::InferencePriority,
+    ) -> bool {
+        let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        else {
+            return false;
+        };
+
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+        if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
+            return false;
+        }
+
+        for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+            self.constrain_types(infer_ctx, var_map, *s_arg, *t_arg, priority);
+        }
+
+        true
+    }
+
     pub(crate) fn resolve_generic_call(
         &mut self,
         func: &FunctionShape,
@@ -244,48 +271,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             let return_type_with_placeholders =
                 instantiate_type(self.interner, func.return_type, &substitution);
-            // CORRECT: return_type <: ctx_type
-            // In assignment `let x: Target = Source`, the relation is `Source <: Target`
-            // Therefore, the return value must be assignable to the expected type
-            self.constrain_types(
+            // For same-base Applications, infer through type arguments directly instead
+            // of structurally expanding the recursive surface during contextual return
+            // seeding. This keeps recursive aliases like IteratorChain<T> out of the
+            // structural constraint walker on hot generic-call paths.
+            if !self.constrain_same_base_application_args(
                 &mut infer_ctx,
                 &var_map,
-                return_type_with_placeholders, // source
-                ctx_type,                      // target
+                return_type_with_placeholders,
+                ctx_type,
                 crate::types::InferencePriority::ReturnType,
-            );
+            ) {
+                // CORRECT: return_type <: ctx_type
+                // In assignment `let x: Target = Source`, the relation is `Source <: Target`
+                // Therefore, the return value must be assignable to the expected type
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders, // source
+                    ctx_type,                      // target
+                    crate::types::InferencePriority::ReturnType,
+                );
+            }
 
             // Track whether the return type is a bare type parameter placeholder.
             // If so, we may need to add a ReturnType candidate AFTER Round 1
             // (see below, before fix_current_variables).
             if let Some(&var) = var_map.get(&return_type_with_placeholders) {
                 return_type_bare_var = Some((var, ctx_type));
-            }
-
-            // For same-base Application types (e.g., Promise<__infer_0> vs Promise<Obj>),
-            // also constrain type arguments directly. The general constraint engine
-            // evaluates Applications to structural forms (Objects), but for interfaces
-            // like Promise, structural decomposition through methods like `then` can't
-            // reach type args because those methods have their own generic signatures.
-            // This targeted pairwise extraction only runs during return type seeding,
-            // so it doesn't affect parameter-based inference (preserving variance).
-            if let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) = (
-                self.interner.lookup(return_type_with_placeholders),
-                self.interner.lookup(ctx_type),
-            ) {
-                let s_app = self.interner.type_application(s_app_id);
-                let t_app = self.interner.type_application(t_app_id);
-                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(
-                            &mut infer_ctx,
-                            &var_map,
-                            *s_arg,
-                            *t_arg,
-                            crate::types::InferencePriority::ReturnType,
-                        );
-                    }
-                }
             }
         }
 
@@ -1493,34 +1506,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             let return_type_with_placeholders =
                 instantiate_type(self.interner, func.return_type, &substitution);
-            self.constrain_types(
+            if !self.constrain_same_base_application_args(
                 &mut infer_ctx,
                 &var_map,
                 return_type_with_placeholders,
                 ctx_type,
                 InferencePriority::ReturnType,
-            );
-
-            // Same-base Application pairwise extraction (see resolve_generic_call_inner).
-            let evaluated_return_type = self.interner.evaluate_type(return_type_with_placeholders);
-            let evaluated_ctx_type = self.interner.evaluate_type(ctx_type);
-            if let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) = (
-                self.interner.lookup(evaluated_return_type),
-                self.interner.lookup(evaluated_ctx_type),
             ) {
-                let s_app = self.interner.type_application(s_app_id);
-                let t_app = self.interner.type_application(t_app_id);
-                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(
-                            &mut infer_ctx,
-                            &var_map,
-                            *s_arg,
-                            *t_arg,
-                            InferencePriority::ReturnType,
-                        );
-                    }
-                }
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders,
+                    ctx_type,
+                    InferencePriority::ReturnType,
+                );
             }
         }
 
