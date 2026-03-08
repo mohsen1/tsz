@@ -342,6 +342,38 @@ those facts through one AST-agnostic guard API. Every correct CFG edge fixes man
 - Estimated real fix scope: ~140-240 LOC across the two paths above, plus 2 focused checker tests.
 - Status: no conformance-affecting patch landed; experimental changes reverted.
 
+**Session notes (2026-03-08 early — narrowing-flow assignment/member access follow-up, no landing fix):**
+- Campaign basket used (code-level, targeted runner):
+  - `TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts`
+  - `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+  - `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+  - `TypeScript/tests/cases/compiler/discriminantNarrowingCouldBeCircular.ts`
+  - `TypeScript/tests/cases/conformance/salsa/assignmentToVoidZero2.ts`
+- Shared invariant investigated:
+  for `const` annotated unions with structural literal initializers, declaration assignment flow
+  should narrow to the uniquely compatible member so downstream property/call checks (e.g. `arr.push`)
+  run against the reduced type.
+- Attempted (then reverted) fix:
+  `crates/tsz-checker/src/flow/control_flow/assignment.rs::get_assigned_type`
+  with a helper selecting unique union members for const+annotated structural initializers
+  (including array-literal shape selection).
+- Why it still failed:
+  `assignmentTypeNarrowing.ts` remained unchanged (`expected [TS2454]`, `actual [TS2339, TS2454]`),
+  and a focused checker test mirroring `arr.push` still reported TS2339. This indicates the
+  declaration assignment reduction result is not the bottleneck actually consumed by property-access
+  member checking at the read site.
+- What tsc does differently (observed):
+  `arr.push` is accepted in `assignmentTypeNarrowing.ts`, while tsz keeps `arr` as `T | T[]` at
+  the call site.
+- Strong next owning path:
+  1. `crates/tsz-checker/src/flow/flow_analysis/usage.rs::check_flow_usage` and
+     `crates/tsz-checker/src/types/computation/identifier.rs` integration for const annotated declarations.
+  2. `crates/tsz-checker/src/types/computation/access.rs` receiver/member access path to verify it is
+     consuming flow-updated identifier types (not declaration type fallbacks) for method lookup.
+- Estimated scope for a real fix: ~160-260 LOC across `usage.rs`, `identifier.rs`, and possibly `access.rs`,
+  plus 2-3 focused tests around declaration assignment reduction at member-access sites.
+- Status: no conformance-affecting patch landed; all experimental changes reverted.
+
 ### Known Architecture Drift
 
 These are specific findings that should be addressed as part of campaign work:
@@ -8139,3 +8171,482 @@ VALIDATION:
 BLAST RADIUS / NEXT OWNING GAP:
 - This lands part of the switch-exhaustiveness lane (enum-wrapper domain mismatch).
 - Remaining mismatch in `exhaustiveSwitchStatements1.ts` suggests another switch-fallthrough edge remains in `reachability_checker`/`switch_falls_through` path (line-204 function shape) plus separate post-switch narrowing gap for `TS2367`.
+
+## Session 2026-03-08a — narrowing-flow switch lanes re-check (investigation only, no commit)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+- `TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue3.ts`
+- `TypeScript/tests/cases/compiler/neverAsDiscriminantType.ts`
+- `TypeScript/tests/cases/compiler/exhaustiveSwitchStatements1.ts` (regression guard)
+
+SHARED INVARIANT: switch/guard CFA must preserve and consume the same narrowed discriminant domain at clause entry and comparison sites; synthetic edges (implicit default, loop widen compensations) must not mask real no-overlap states.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP (current best evidence):
+1. `narrowingByTypeofInSwitch.ts` still reports extra `TS2322`/`TS2345` under conformance even after no-op rechecks of switch merge filtering; this indicates the remaining fault is not just post-switch implicit-default edge unioning.
+2. `narrowByClauseExpressionInSwitchTrue3.ts` still misses `TS2367` at duplicate `switch(true)` guard comparisons; current TS2367 suppression and/or comparison operand typing path is bypassing the expected no-overlap report.
+
+WHAT WAS TRIED (REVERTED):
+- Filtered exhaustive implicit-default switch edges during checker flow merge (`SWITCH_CLAUSE` / `BRANCH_LABEL` paths).
+- Restricted declared-type overlap TS2367 suppression to loop contexts only.
+- Added focused checker regression tests for these lanes; removed/reverted with the code because no representative conformance movement occurred.
+
+TSC DIFFERENCE OBSERVED:
+- `narrowingByTypeofInSwitch.ts`: tsc expects no diagnostics; tsz still emits extra `TS2322`/`TS2345`.
+- `narrowByClauseExpressionInSwitchTrue3.ts`: tsc emits `TS2367` for duplicate `shape.kind === "circle"` comparisons in `switch(true)` flow; tsz emits only `TS2339`.
+
+FIX BELONGS IN (next concrete owner path):
+- `crates/tsz-checker/src/types/computation/binary.rs`
+  - TS2367 decision gate and declared-type overlap suppression entry conditions, but only after verifying operand narrow types at the comparison site.
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+  - `handle_switch_clause_iterative` + clause-entry type composition for `switch(typeof ...)` / `switch(true)`.
+- `crates/tsz-checker/src/flow/flow_graph_builder/core.rs`
+  - validate expression-flow recording for clause-local comparison/return operands if flow links are missing at comparison sites.
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~140-260 LOC across switch clause flow composition + TS2367 gate routing, plus 2-4 focused checker tests.
+
+BLAST RADIUS IF FIXED:
+- `narrowingByTypeofInSwitch.ts` (`TS2322`/`TS2345` extras)
+- `narrowByClauseExpressionInSwitchTrue3.ts` (`TS2367` missing)
+- Nearby switch/discriminant narrowing baskets that currently drift via false widening or missed no-overlap diagnostics.
+
+Verification run snapshot for this session (no movement):
+- `./.target/dist-fast/tsz-conformance --filter narrowingByTypeofInSwitch --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --filter narrowByClauseExpressionInSwitchTrue3 --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --filter neverAsDiscriminantType --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --filter exhaustiveSwitchStatements1 --verbose --print-fingerprints` (PASS)
+
+## Session 2026-03-08b — narrowing-flow ternary branch-flow probe (investigation, reverted; no commit)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInIfStatement.ts`
+- `TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsInRightOperandOfOrOrOperator.ts`
+- `TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts`
+
+SHARED INVARIANT: Conditional-expression (`?:`) true/false arms must use branch-local flow facts so impossible branches narrow to `never` and emit `TS2339` on member access.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [x] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+- Suspected missing branch transport for ternary arms and parenthesized expression traversal.
+- Implemented a checker-local `flow_graph_builder` branch split + parenthesized/assertion traversal and added focused flow-builder tests.
+
+WHY IT DID NOT LAND:
+- Targeted conformance basket showed **zero movement** after rebuild:
+  - `typeGuardsInIfStatement.ts` still missing `TS2339` at `test.ts:139:17`.
+  - `typeGuardsInRightOperandOfOrOrOperator.ts` still missing `TS2339` at `test.ts:44:25`.
+  - `typeGuardsWithInstanceOf.ts` still missing three `TS2339` fingerprints (`test.ts:8:20`, `37:11`, `38:11`).
+- Root reason: production narrowing reads `binder.node_flow`; the checker-local flow builder path changed in the experiment is not the owning runtime source for these conformance diagnostics.
+- To avoid a half-working patch, all code/test edits from this lane were reverted.
+
+EXACT OWNING PATH FOR NEXT REAL FIX:
+1. `crates/tsz-binder/src/binding/declaration.rs::bind_expression`  
+   - verify branch-flow + node-flow recording for conditional and short-circuit expression arms in the binder-owned flow map actually consumed by checker flow analysis.
+2. `crates/tsz-checker/src/flow/flow_analysis/definite.rs::apply_flow_narrowing`  
+   - inspect parent-walk fallback selection for nested member-access receivers under ternary arms; ensure it lands on branch-local flow nodes.
+3. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`  
+   - verify post-assignment narrowing (`x = 10; typeof x === "number" ? ... : ...`) composes assignment reduction with branch exclusion to reach `never` on impossible arm.
+
+ESTIMATED SCOPE FOR REAL FIX: ~160-280 LOC across binder flow recording + checker flow lookup + one shared ternary narrowing transport path, plus 2-4 focused tests.
+
+STATUS: narrowing-flow remained blocked in this run (no representative basket movement); no conformance-affecting patch landed.
+
+## Session 2026-03-08c — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
+
+- **Status**: Narrowing-flow above remained blocked, so follow-on campaign claimed per queue: **big3**.
+- **Campaign query**:
+  - `./scripts/conformance.sh analyze --campaign big3`
+
+## Session 2026-03-08d — narrowing-flow assignment/switch transport probe (investigation only, reverted)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts`
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+- `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+
+SHARED INVARIANT:
+- Control-flow narrowing facts must transport from discriminant/assignment evidence to subsequent reads through one shared reference path (identifier and sibling property/index reads on the same base object).
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP (confirmed in code + targeted runs):
+1. `condition_narrowing::narrow_by_binary_expr` only performs discriminant filtering when the compared path is relative to the current target. For sibling reads (`switch (c[0])` then `c[1]`), `relative_discriminant_path(..., target)` returns `None`, so no narrowing is applied.
+2. Access reads (`s["square-size"]`, `s.width`, `c[1]`) rely on narrowed base/object transport, but current switch/discriminant path does not robustly project narrowing from base discriminant to sibling member/index reads.
+3. `assignmentTypeNarrowing.ts` (`arr.push`) remains extra TS2339, indicating const annotated union initializer assignment facts are not reaching later property reads through flow in the expected tsc-compatible way.
+
+WHAT WAS TRIED (reverted due no conformance movement):
+- Added a shared checker helper to treat “reference depends on discriminant base” as affected in switch/predicate gates.
+- Added a probe in `flow/control_flow/assignment.rs` for const annotated structural-literal union member selection.
+- Added focused tests for these probes; one probe test failed and conformance basket remained unchanged, so all code/test edits were reverted.
+
+TSC DIFFERENCE (targeted runner):
+- `assignmentTypeNarrowing.ts`: expected `[TS2454]`, actual `[TS2339, TS2454]` (extra `TS2339` at `arr.push`).
+- `narrowingByTypeofInSwitch.ts`: expected `[]`, actual `[TS2322, TS2345]`.
+- `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`: expected `[]`, actual `[TS2322, TS2339, TS7053]`.
+
+EXACT OWNING PATH FOR REAL FIX:
+1. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs::narrow_by_binary_expr`
+   - add a base-aware discriminant transport branch for sibling property/index references, instead of only target-relative path extraction.
+2. `crates/tsz-checker/src/flow/control_flow/narrowing.rs::relative_discriminant_path` + discriminant helpers
+   - introduce/query a shared “base + compared path” representation that can be consumed when target is not in the compared chain.
+3. `crates/tsz-checker/src/types/computation/access.rs`
+   - ensure element/property access reads consume narrowed base types consistently in case-clause contexts.
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~160-260 LOC across the three files above, plus 2-4 focused checker tests for sibling index/property transport and const-union assignment readback.
+
+BLAST RADIUS IF CORRECT:
+- `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+- `narrowingByTypeofInSwitch.ts`
+- `assignmentTypeNarrowing.ts`
+- nearby discriminant/indexed-access CFA clusters currently surfacing as `TS2322`/`TS2339`/`TS7053` extras.
+
+STATUS:
+- No conformance-affecting fix landed in this session; all experimental code was reverted.
+
+## Session 2026-03-08e — narrowing-flow TS2367 suppression gate probe (investigation only, reverted)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue3.ts`
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+- `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+
+SHARED INVARIANT:
+- No-overlap comparison diagnostics (`TS2367`) should only be suppressed for loop-widening artifacts; branch/switch-local narrowing should still report genuine no-overlap comparisons.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+1. `binary.rs` currently applies declared-type overlap suppression in the TS2367 gate for any identifier comparison, not obviously loop-scoped.
+2. Hypothesis: this over-suppresses TS2367 in `switch(true)` and post-branch repeated discriminant checks.
+
+WHAT WAS TRIED (reverted due no conformance movement):
+- Added loop-context gating around `declared_type_has_overlap` in `crates/tsz-checker/src/types/computation/binary.rs`.
+- Added focused checker unit coverage for the non-loop suppression case.
+- Local unit tests passed after adjustment, but targeted conformance basket remained unchanged.
+
+TARGETED VALIDATION (after rebuild):
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints`
+  - Unchanged: missing TS2367 at `test.ts:13:9` and `test.ts:16:14`.
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
+  - Unchanged: extra `TS2322`, `TS2345`.
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
+  - Unchanged: extra `TS2322`, `TS2339`, `TS7053`.
+
+TSC DIFFERENCE (still present):
+- tsc reports TS2367 for repeated impossible comparisons in `narrowByClauseExpressionInSwitchTrue3.ts`; tsz still misses them.
+- tsc reports no errors for the two switch/discriminant transport basket tests above; tsz still emits extra assignability/property/index diagnostics.
+
+EXACT OWNING PATH FOR NEXT REAL FIX:
+1. `crates/tsz-checker/src/flow/control_flow/core.rs::handle_switch_clause_iterative`
+   - verify case-clause entry flow for `switch(true)` comparisons uses prior-case false branch transport when checking each clause expression.
+2. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs::narrow_by_switch_true_case_clause` and `narrow_by_binary_expr`
+   - ensure discriminant narrowing facts are available at clause-expression check sites (not only statement bodies) and consumed for comparison typing.
+3. `crates/tsz-checker/src/flow/control_flow/core.rs::switch_can_affect_reference` + discriminant path helpers
+   - extend relevance/transport for sibling indexed/property reads sharing the same discriminant base (`switch(c[0])` should affect reads like `c[1]`).
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~180-320 LOC across switch clause flow transport + sibling-base discriminant relevance, plus 3-5 focused checker tests.
+
+BLAST RADIUS IF CORRECT:
+- `narrowByClauseExpressionInSwitchTrue3.ts`
+- `narrowingByTypeofInSwitch.ts`
+- `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+- nearby switch/discriminant control-flow clusters currently drifting as `TS2367` missing and `TS2322`/`TS2339`/`TS2345`/`TS7053` extras.
+
+STATUS:
+- No conformance-affecting patch landed in this run; experimental code was reverted.
+
+## Session 2026-03-08f — narrowing-flow switch(true) clause-expression flow transport probe (investigation only, reverted)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue3.ts`
+- `TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue7.ts`
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+
+SHARED INVARIANT:
+- `switch(true)` clause-expression checks must run under the accumulated false-branch state from prior clauses, and that flow must be consumed by comparison diagnostics (`TS2367`) and switch reachability transport.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [x] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP (confirmed):
+1. Binder currently reset each case expression check to pre-switch flow in `bind_switch_statement`, so clause-expression checks did not receive prior-case false branch facts.
+2. Even after patching binder flow shape, conformance still missed `TS2367` in `narrowByClauseExpressionInSwitchTrue3.ts`, showing that production comparison diagnostics are not consuming the improved clause-expression flow path at the right check site.
+
+WHAT WAS TRIED (reverted due no basket movement):
+- Patched `crates/tsz-binder/src/binding/declaration.rs::bind_switch_statement` to thread a `switch_true_remaining_flow` chain via `FALSE_CONDITION` for clause-expression binding.
+- Added focused checker flow test (`control_flow_tests`) proving second `switch(true)` clause condition sees prior false-branch narrowing at unit level.
+- Rebuilt `dist-fast` and re-ran targeted conformance filters.
+
+TARGETED VALIDATION (after rebuild):
+- `./.target/dist-fast/tsz-conformance --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints`
+  - unchanged: missing TS2367 at `test.ts:13:9` and `test.ts:16:14`.
+- `./.target/dist-fast/tsz-conformance --filter narrowByClauseExpressionInSwitchTrue7.ts --verbose --print-fingerprints`
+  - unchanged: extra TS2322 fingerprints at `test.ts:48:19` and `test.ts:64:19`.
+- `./.target/dist-fast/tsz-conformance --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
+  - unchanged: extra `TS2322`, `TS2345`.
+
+TSC DIFFERENCE:
+- tsc still reports `TS2367` for repeated impossible comparisons in `switch(true)` clause expressions (`shape.kind === "circle"` after prior exclusion).
+- tsz still fails to emit those `TS2367` diagnostics and still emits extra switch-related assignment/callability diagnostics in nearby basket tests.
+
+EXACT OWNING PATH FOR NEXT REAL FIX:
+1. `crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs::check_switch_case_comparable` and/or `crates/tsz-checker/src/statements.rs::check_switch_case_comparable`
+   - verify switch-case expression checking uses flow-narrowed operand types (especially in `switch(true)` clause-expression context), not only declared/widened types.
+2. `crates/tsz-checker/src/types/computation/binary.rs` TS2367 gate
+   - ensure clause-expression comparisons read the flow-narrowed operand/reference types at the point of case-expression checking.
+3. `crates/tsz-checker/src/flow/control_flow/core.rs::handle_switch_clause_iterative`
+   - keep clause-expression and clause-body flow transport aligned so `switch(true)` no-overlap checks and default reachability share one flow source.
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~180-320 LOC across switch case checking + binary TS2367 operand sourcing + focused flow/comparison tests.
+
+BLAST RADIUS IF CORRECT:
+- `narrowByClauseExpressionInSwitchTrue3.ts` (missing TS2367)
+- `narrowByClauseExpressionInSwitchTrue7.ts` (extra never-assignability fingerprints)
+- `narrowingByTypeofInSwitch.ts` and nearby switch/discriminant CFA drift.
+
+STATUS:
+- No conformance-affecting patch landed in this run; experimental code and tests were reverted.
+
+## Session 2026-03-08g — narrowing-flow const annotated union assignment readback probe (investigation only, reverted)
+
+CAMPAIGN: Narrowing / control-flow parity  
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts`
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+- `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+- `TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts` (fingerprint-only reference case)
+
+SHARED INVARIANT:
+- Assignment/switch narrowing facts must survive to later identifier/property/index reads through the same flow transport path; declaration-initializer assignments should not degrade to declared aliases when a constituent is provably selected.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [x] Binder — symbols / scopes / CFG facts
+- [x] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+WHAT WAS INVESTIGATED:
+1. Re-ran targeted basket with conformance binary:
+   - `assignmentTypeNarrowing.ts`: expected `[TS2454]`, actual `[TS2339, TS2454]` (extra `TS2339` on `arr.push`).
+   - `narrowingByTypeofInSwitch.ts`: expected `[]`, actual `[TS2322, TS2345]`.
+   - `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`: expected `[]`, actual `[TS2322, TS2339, TS7053]`.
+   - `controlFlowOptionalChain.ts`: code-level parity, fingerprint drift only.
+2. Probed assignment narrowing path:
+   - `get_type_of_identifier` confirmed `check_flow_usage` returns declared type for `arr` at `arr.push` (`flow == declared`), so no narrowing fact reached the read.
+   - Experimental patches in `flow/control_flow/assignment.rs` and `flow/flow_analysis/definite.rs` attempted to reduce const annotated structural initializers to matching union members; no basket movement.
+3. Unit validation:
+   - Existing regression `test_assignment_narrowing_prefers_declared_annotation_type` continued to pass.
+   - Added temporary repro test for `AOrArrA<T>` remained failing; all temp tests/code were reverted.
+
+TSC DIFFERENCE (confirmed):
+- tsc accepts `const arr: T | T[] = [{...}]; arr.push(...)` in `assignmentTypeNarrowing.ts` (no TS2339 at that site).
+- tsz still reads `arr` as declared alias-like union at usage, indicating assignment-reduction facts are not being materialized for that reference path.
+
+EXACT OWNING PATH FOR REAL FIX:
+1. `crates/tsz-checker/src/flow/control_flow/core.rs` assignment handling (`ASSIGNMENT` branch + `narrow_assignment`)
+   - ensure declaration-initializer assignment edges are consulted for subsequent identifier reads and that alias/application-wrapped declared types are reduced in a solver-consistent way.
+2. `crates/tsz-checker/src/flow/control_flow/assignment.rs::get_assigned_type`
+   - when declared annotation is alias/application wrapped, extract comparable assignment-reduction candidates via resolver-aware evaluation (not raw `union_members` on unresolved wrappers).
+3. `crates/tsz-checker/src/types/computation/identifier.rs` flow result consumption
+   - verify post-flow result preservation does not re-prefer declared type when flow and declared are wrapper-equivalent but semantically narrowed.
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~180-320 LOC across assignment reduction + alias/application evaluation boundary + identifier flow result consumption, plus 2-4 focused checker tests.
+
+BLAST RADIUS IF CORRECT:
+- `assignmentTypeNarrowing.ts`
+- likely nearby const/annotated union assignment readback failures in narrowing-flow and Big3 baskets where extra `TS2339`/`TS2322` appear after declaration assignments.
+
+STATUS:
+- No conformance-affecting patch landed in this run; all experimental code/tests were reverted.
+
+## Session 2026-03-08h — narrowing-flow nested destructured correlation scope probe (investigation only, reverted)
+
+CAMPAIGN: Narrowing / control-flow parity
+REPRESENTATIVE TEST BASKET:
+- `TypeScript/tests/cases/compiler/controlFlowAliasedDiscriminants.ts`
+- `TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts`
+- `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+- `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+
+SHARED INVARIANT:
+- Correlated destructuring narrowing must only transport along source-compatible flow facts; nested destructured aliases must not inherit sibling discriminant narrowing from an incompatible source shape.
+
+ROOT CAUSE LAYER:
+- [ ] Parser — AST / recovery / driver/config parity
+- [ ] Binder — symbols / scopes / CFG facts
+- [ ] Solver — type evaluation / inference / relation / narrowing
+- [x] Checker — boundary routing / orchestration / diagnostic selection
+- [ ] Emitter — only if this campaign explicitly requires it
+
+SPECIFIC GAP INVESTIGATED:
+1. `record_destructured_binding_group` recorded `DestructuredBindingInfo.source_type` using the outer pattern source for nested bindings.
+2. Hypothesis: this over-correlates nested aliases in control-flow narrowing and is responsible for missing `TS1360` in `controlFlowAliasedDiscriminants.ts`.
+
+WHAT WAS TRIED (reverted due no conformance movement):
+- Patched `crates/tsz-checker/src/state/variable_checking/destructuring.rs` to persist nested `curr_source_type` per binding instead of the outer `source_type`.
+- Added focused checker regression coverage in `definite_assignment_tests.rs` for nested destructured alias + discriminant + `satisfies` behavior.
+- Unit test passed locally under `cargo nextest run -p tsz-checker definite_assignment_tests::test_nested_destructured_alias_does_not_correlate_with_top_level_discriminant`.
+
+TARGETED VALIDATION (after rebuilding `dist-fast`):
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowAliasedDiscriminants.ts --verbose --print-fingerprints`
+  - unchanged: missing TS1360 at `test.ts:87:14` and `test.ts:99:19`.
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter assignmentTypeNarrowing.ts --verbose --print-fingerprints`
+  - unchanged: extra TS2339 (`arr.push`).
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
+  - unchanged: extra TS2322/TS2339/TS7053.
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
+  - unchanged: extra TS2322/TS2345.
+
+TSC DIFFERENCE (still present):
+- `controlFlowAliasedDiscriminants.ts` expects TS1360 on nested destructured alias `satisfies` checks; tsz still omits them.
+- Switch/discriminant and assignment readback basket tests remain unchanged with the same extra diagnostics.
+
+EXACT OWNING PATH FOR REAL FIX:
+1. `crates/tsz-checker/src/flow/flow_analysis/definite.rs::apply_correlated_narrowing`
+   - revisit sibling filtering to require source-compatible binding projections before applying member filtering; nested path handling likely still over-accepts.
+2. `crates/tsz-checker/src/state/variable_checking/destructuring.rs::record_destructured_binding_group`
+   - confirm group/source semantics for nested patterns align with tsc for correlation eligibility.
+3. `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+   - align discriminant transport used by correlated narrowing with switch/if base-reference relevance so one shared guard path drives narrowing.
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~140-240 LOC across correlated narrowing eligibility + source-compat checks + 2-4 focused control-flow tests.
+
+BLAST RADIUS IF CORRECT:
+- `controlFlowAliasedDiscriminants.ts` (missing TS1360)
+- related destructured/discriminant alias drift in narrowing-flow (especially `TS1360`/`TS2339`/`TS2322` clusters where sibling correlation is over/under-applied)
+
+STATUS:
+- No conformance-affecting patch landed in this run; experimental code/tests were reverted.
+
+## Session 2026-03-08i — narrowing-flow assignment lane blocked; follow-on `big3` TS7006 lane probe (no landing fix)
+
+PRIMARY CAMPAIGN STATUS:
+- Narrowing-flow remained blocked in this run.
+
+NARROWING-FLOW BASKET RE-CHECKED:
+- `assignmentTypeNarrowing.ts`
+- `narrowingByTypeofInSwitch.ts`
+- `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+- `neverAsDiscriminantType.ts`
+
+NARROWING-FLOW FINDINGS:
+- `assignmentTypeNarrowing.ts` remains `expected [TS2454]`, `actual [TS2339, TS2454]` (extra TS2339 at `arr.push`).
+- `narrowingByTypeofInSwitch.ts` remains `expected []`, `actual [TS2322, TS2345]`.
+- `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts` remains extra `[TS2322, TS2339, TS7053]`.
+- `neverAsDiscriminantType.ts` remains extra `[TS18048, TS2339, TS2536]`.
+- Shared assignment-reduction probes in `flow/control_flow/assignment.rs` (`narrow_assignment` relation gate and const-annotated structural initializer handling) did not move the basket; all such probes were reverted.
+
+FOLLOW-ON CAMPAIGN CLAIMED:
+- Per queue rule after primary block, claimed: **big3**.
+
+BIG3 PROBE BASKET (TS7006 false-positive cluster):
+- `contextuallyTypedByDiscriminableUnion.ts`
+- `contextuallyTypedByDiscriminableUnion2.ts`
+- `discriminantPropertyInference.ts`
+- `inferenceUnionOfObjectsMappedContextualType.ts`
+- `mappedTypeRecursiveInference2.ts`
+
+BIG3 SHARED INVARIANT TESTED:
+- Round-2 contextual parameter typing for sensitive callback args should prefer resolver-backed substitutions over Round-1 placeholder-contaminated instantiated params.
+
+WHAT WAS TRIED (REVERTED):
+- Patched `crates/tsz-checker/src/types/computation/call.rs` around Round-2 `round2_param` selection:
+  - for sensitive args, attempted to prefer a fully-resolved shape-param instantiation via `round2_substitution` before falling back to Round-1 instantiated params.
+- Added focused checker tests in `crates/tsz-checker/tests/conformance_issues.rs` for discriminant-union and mapped contextual callback parameter typing.
+
+VALIDATION:
+- `cargo nextest run -p tsz-checker` on those focused tests showed:
+  - mapped contextual callback test passed,
+  - discriminant-union callback test still failed with TS7006.
+- After rebuilding `dist-fast`, targeted conformance remained unchanged for all 5 basket tests above (still extra TS7006; zero basket movement).
+
+TSC DIFFERENCE (CONFIRMED):
+- tsc contextually types callback parameters in these discriminant/mapped object-literal generic call paths; tsz still emits TS7006.
+
+EXACT OWNING PATH FOR REAL FIX:
+1. `crates/tsz-checker/src/types/computation/call.rs`
+   - round2 contextual parameter sourcing should be decided by substitution coverage of referenced type params (per-parameter), not only by pollution heuristics.
+2. likely helper boundary in solver/checker query layer:
+   - “does substitution fully cover type params in this parameter type?” decision gate for sensitive arg handling.
+3. keep fallback for all-sensitive-arg calls where clean substitution is partial/empty (to avoid regressions noted in prior rounds).
+
+ESTIMATED SCOPE FOR REAL FIX:
+- ~120-220 LOC including a shared coverage check helper and targeted contextual typing tests.
+
+STATUS:
+- No conformance-affecting patch landed in this run; all experimental code/tests were reverted.
+
+## Session 2026-03-08b — narrowing-flow const annotated union assignment follow-up (no landing fix)
+
+- Representative basket (targeted runner):
+  - `TypeScript/tests/cases/conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts`
+  - `TypeScript/tests/cases/compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`
+  - `TypeScript/tests/cases/compiler/narrowingByTypeofInSwitch.ts`
+  - `TypeScript/tests/cases/compiler/discriminantNarrowingCouldBeCircular.ts`
+- Targeted baseline results confirmed:
+  - `assignmentTypeNarrowing.ts`: expected `[TS2454]`, actual `[TS2339, TS2454]` (extra TS2339 on `arr.push` at `test.ts:34:5`)
+  - `typeGuardNarrowsIndexedAccessOfKnownProperty1.ts`: expected `[]`, actual `[TS2322, TS2339, TS7053]`
+  - `narrowingByTypeofInSwitch.ts`: expected `[]`, actual `[TS2322, TS2345]`
+  - `discriminantNarrowingCouldBeCircular.ts`: expected `[]`, actual `[TS18048]`
+
+SHARED INVARIANT: flow-updated read types (after declaration assignment and guard-based narrowing) must be the source of truth for downstream member/index/call checks; otherwise diagnostics drift into container-shape/assignability errors.
+
+Attempted fix (reverted):
+- Tried to make `FlowAnalyzer::get_assigned_type` in `crates/tsz-checker/src/flow/control_flow/assignment.rs` keep narrowing data for `const` + annotated union + structural literal declaration initializers instead of early preserving declared type.
+- Also added focused checker regression tests for the `arr.push` scenario and an ambiguity guard case.
+
+Why it failed:
+- No behavioral change in targeted runs; `assignmentTypeNarrowing.ts` remained unchanged (`TS2339` still emitted on `arr.push`).
+- This indicates declaration-assignment narrowing is not the active bottleneck consumed at that use site; changing assignment RHS selection alone is insufficient.
+
+What tsc does differently (observed):
+- Accepts `const arr: AOrArrA<{x?: "ok"}> = [{ x: "ok" }]; arr.push(...)` without TS2339, i.e. method lookup sees the reduced array branch at read time.
+
+Owning paths for real fix:
+1. `crates/tsz-checker/src/flow/flow_analysis/usage.rs::check_flow_usage` and integration with `apply_flow_narrowing` (verify declaration-assignment reductions are actually consumed for identifier reads).
+2. `crates/tsz-checker/src/types/computation/identifier.rs` result-selection stages (verify no fallback re-widening to declared union on this path).
+3. `crates/tsz-checker/src/types/computation/access.rs` receiver typing for member access (confirm it consumes the flow-updated identifier type at method lookup time).
+
+Estimated scope for real fix:
+- ~160-260 LOC across the three owning files above, plus 2-3 focused checker tests that assert flow-reduced receiver type is used for member resolution.
+
+Status:
+- No conformance-affecting patch landed from this session; all experimental code/tests were reverted.
