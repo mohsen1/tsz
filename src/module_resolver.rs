@@ -61,7 +61,7 @@ pub const MODULE_RESOLUTION_MODE_MISMATCH: u32 = 2792;
 /// Example: `import data from './config.json'` without resolveJsonModule enabled
 pub const JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE: u32 = 2732;
 
-/// TS2834: Relative import paths need explicit file extensions in `EcmaScript` imports
+/// TS2834: Relative import paths need explicit file extensions in `ECMAScript` imports
 ///
 /// This error code is emitted when a relative import in an ESM context under Node16/NodeNext
 /// resolution mode does not include an explicit file extension. ESM requires explicit extensions.
@@ -266,7 +266,7 @@ pub enum ResolutionFailure {
         /// Span of the module specifier in source
         span: Span,
     },
-    /// TS2834: Relative import paths need explicit file extensions in `EcmaScript` imports
+    /// TS2834: Relative import paths need explicit file extensions in `ECMAScript` imports
     /// when '--moduleResolution' is 'node16' or 'nodenext'.
     ImportPathNeedsExtension {
         /// Module specifier that was used without an extension
@@ -376,7 +376,7 @@ impl ResolutionFailure {
                     Diagnostic::error(
                         containing_file,
                         *span,
-                        "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Consider adding an extension to the import path.".to_string(),
+                        "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Consider adding an extension to the import path.".to_string(),
                         IMPORT_PATH_NEEDS_EXTENSION,
                     )
                 } else {
@@ -385,7 +385,7 @@ impl ResolutionFailure {
                         containing_file,
                         *span,
                         format!(
-                            "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{specifier}{suggested_extension}'?",
+                            "Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{specifier}{suggested_extension}'?",
                         ),
                         IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
                     )
