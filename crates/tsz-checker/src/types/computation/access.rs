@@ -248,6 +248,31 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // TS2476: A const enum member can only be accessed using a string literal.
+        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
+        {
+            let arg_is_string_literal =
+                self.ctx
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|arg_node| {
+                        arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                            || arg_node.kind
+                                == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    });
+            if !arg_is_string_literal {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    access.name_or_argument,
+                    diagnostic_messages::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                    diagnostic_codes::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                );
+                return TypeId::ERROR;
+            }
+        }
+
         if let Some(index_value) = self
             .get_number_value_from_element_index(access.name_or_argument)
             .or_else(|| {

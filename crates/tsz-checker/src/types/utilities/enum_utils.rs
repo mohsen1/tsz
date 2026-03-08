@@ -5,6 +5,7 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -173,20 +174,8 @@ impl<'a> CheckerState<'a> {
                     op if op == SyntaxKind::PlusToken as u16 => Some(left + right),
                     op if op == SyntaxKind::MinusToken as u16 => Some(left - right),
                     op if op == SyntaxKind::AsteriskToken as u16 => Some(left * right),
-                    op if op == SyntaxKind::SlashToken as u16 => {
-                        if right == 0.0 {
-                            None
-                        } else {
-                            Some(left / right)
-                        }
-                    }
-                    op if op == SyntaxKind::PercentToken as u16 => {
-                        if right == 0.0 {
-                            None
-                        } else {
-                            Some(left % right)
-                        }
-                    }
+                    op if op == SyntaxKind::SlashToken as u16 => Some(left / right),
+                    op if op == SyntaxKind::PercentToken as u16 => Some(left % right),
                     op if op == SyntaxKind::BarToken as u16 => {
                         Some((left as i32 | right as i32) as f64)
                     }
@@ -216,6 +205,8 @@ impl<'a> CheckerState<'a> {
             _ => None,
         }
     }
+
+    // evaluate_const_enum_initializer is a free function in the const_enum_eval module below.
 
     // =========================================================================
     // Class Helper Functions
@@ -1200,4 +1191,185 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+}
+
+/// Evaluate a const enum member's initializer value, resolving references to other members.
+///
+/// This is a standalone function (not a method) so it can be called from both
+/// `CheckerState` and `DeclarationChecker` contexts.
+///
+/// Handles: numeric literals, bare identifiers (enum member refs), property access
+/// on enum (`E.A`), element access with string literal (`E["A"]`), unary/binary ops,
+/// and parenthesized expressions.
+pub(crate) fn evaluate_const_enum_initializer(
+    arena: &tsz_parser::parser::NodeArena,
+    expr_idx: NodeIndex,
+    enum_data: &tsz_parser::parser::node::EnumData,
+    enum_name: Option<&str>,
+    depth: u32,
+) -> Option<f64> {
+    if depth > 100 {
+        return None;
+    }
+    let node = arena.get(expr_idx)?;
+
+    match node.kind {
+        k if k == SyntaxKind::NumericLiteral as u16 => {
+            let lit = arena.get_literal(node)?;
+            lit.value.or_else(|| lit.text.parse::<f64>().ok())
+        }
+        k if k == SyntaxKind::Identifier as u16 => {
+            let name = arena.get_identifier_text(expr_idx)?;
+            resolve_enum_member_value(arena, name, enum_data, depth)
+        }
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+            let prop = arena.get_access_expr(node)?;
+            let left_node = arena.get(prop.expression)?;
+            if left_node.kind == SyntaxKind::Identifier as u16 {
+                let left_name = arena.get_identifier_text(prop.expression)?;
+                if Some(left_name) == enum_name {
+                    let member_name = arena.get_identifier_text(prop.name_or_argument)?;
+                    return resolve_enum_member_value(arena, member_name, enum_data, depth);
+                }
+            }
+            None
+        }
+        k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+            let elem = arena.get_access_expr(node)?;
+            let left_node = arena.get(elem.expression)?;
+            if left_node.kind == SyntaxKind::Identifier as u16 {
+                let left_name = arena.get_identifier_text(elem.expression)?;
+                if Some(left_name) == enum_name {
+                    let arg_node = arena.get(elem.name_or_argument)?;
+                    if arg_node.kind == SyntaxKind::StringLiteral as u16 {
+                        let lit = arena.get_literal(arg_node)?;
+                        return resolve_enum_member_value(arena, &lit.text, enum_data, depth);
+                    }
+                }
+            }
+            None
+        }
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+            let unary = arena.get_unary_expr(node)?;
+            let operand = evaluate_const_enum_initializer(
+                arena,
+                unary.operand,
+                enum_data,
+                enum_name,
+                depth + 1,
+            )?;
+            match unary.operator {
+                op if op == SyntaxKind::MinusToken as u16 => Some(-operand),
+                op if op == SyntaxKind::PlusToken as u16 => Some(operand),
+                op if op == SyntaxKind::TildeToken as u16 => Some(!(operand as i32) as f64),
+                _ => None,
+            }
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            let bin = arena.get_binary_expr(node)?;
+            let left =
+                evaluate_const_enum_initializer(arena, bin.left, enum_data, enum_name, depth + 1)?;
+            let right =
+                evaluate_const_enum_initializer(arena, bin.right, enum_data, enum_name, depth + 1)?;
+            match bin.operator_token {
+                op if op == SyntaxKind::PlusToken as u16 => Some(left + right),
+                op if op == SyntaxKind::MinusToken as u16 => Some(left - right),
+                op if op == SyntaxKind::AsteriskToken as u16 => Some(left * right),
+                op if op == SyntaxKind::SlashToken as u16 => Some(left / right),
+                op if op == SyntaxKind::PercentToken as u16 => Some(left % right),
+                op if op == SyntaxKind::BarToken as u16 => {
+                    Some((left as i32 | right as i32) as f64)
+                }
+                op if op == SyntaxKind::AmpersandToken as u16 => {
+                    Some((left as i32 & right as i32) as f64)
+                }
+                op if op == SyntaxKind::CaretToken as u16 => {
+                    Some((left as i32 ^ right as i32) as f64)
+                }
+                op if op == SyntaxKind::LessThanLessThanToken as u16 => {
+                    Some(((left as i32) << (right as u32 & 0x1f)) as f64)
+                }
+                op if op == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
+                    Some(((left as i32) >> (right as u32 & 0x1f)) as f64)
+                }
+                op if op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                    Some(((left as u32) >> (right as u32 & 0x1f)) as f64)
+                }
+                op if op == SyntaxKind::AsteriskAsteriskToken as u16 => Some(left.powf(right)),
+                _ => None,
+            }
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            let paren = arena.get_parenthesized(node)?;
+            evaluate_const_enum_initializer(
+                arena,
+                paren.expression,
+                enum_data,
+                enum_name,
+                depth + 1,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Resolve a member name to its computed value within an enum.
+///
+/// For members with explicit initializers, evaluates the initializer directly.
+/// For auto-incremented members, finds the nearest prior explicit initializer,
+/// evaluates it, then adds the offset.
+fn resolve_enum_member_value(
+    arena: &tsz_parser::parser::NodeArena,
+    name: &str,
+    enum_data: &tsz_parser::parser::node::EnumData,
+    depth: u32,
+) -> Option<f64> {
+    let enum_name = arena.get_identifier_text(enum_data.name);
+
+    // Find the target member's index
+    let target_idx = enum_data.members.nodes.iter().position(|&m_idx| {
+        arena
+            .get(m_idx)
+            .and_then(|m_node| arena.get_enum_member(m_node))
+            .and_then(|m_data| arena.get_identifier_text(m_data.name))
+            .is_some_and(|m_name| m_name == name)
+    })?;
+
+    let m_idx = enum_data.members.nodes[target_idx];
+    let m_node = arena.get(m_idx)?;
+    let m_data = arena.get_enum_member(m_node)?;
+
+    // If it has an explicit initializer, evaluate it directly
+    if m_data.initializer.is_some() {
+        return evaluate_const_enum_initializer(
+            arena,
+            m_data.initializer,
+            enum_data,
+            enum_name,
+            depth + 1,
+        );
+    }
+
+    // Auto-incremented member: find the nearest prior member with an initializer
+    // and count the offset
+    let mut offset = 1u32;
+    for i in (0..target_idx).rev() {
+        let prev_idx = enum_data.members.nodes[i];
+        let prev_node = arena.get(prev_idx)?;
+        let prev_data = arena.get_enum_member(prev_node)?;
+        if prev_data.initializer.is_some() {
+            let base = evaluate_const_enum_initializer(
+                arena,
+                prev_data.initializer,
+                enum_data,
+                enum_name,
+                depth + 1,
+            )?;
+            return Some(base + offset as f64);
+        }
+        offset += 1;
+    }
+
+    // No prior initializer found — auto-increment from 0
+    Some(target_idx as f64)
 }

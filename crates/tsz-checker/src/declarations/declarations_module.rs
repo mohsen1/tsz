@@ -48,6 +48,35 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
+            // TS2567: Namespace merging with const enum
+            if let Some(name_node) = self.ctx.arena.get(module.name)
+                && name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.ctx.binder.get_node_symbol(module_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let has_const_enum_decl = symbol.declarations.iter().any(|&decl_idx| {
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    {
+                        self.ctx.arena.get_enum(decl_node).is_some_and(|enum_data| {
+                            self.ctx
+                                .arena
+                                .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+                        })
+                    } else {
+                        false
+                    }
+                });
+                if has_const_enum_decl {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
+                        diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                    );
+                }
+            }
+
             // TS2668: 'export' modifier cannot be applied to ambient modules
             // This only applies to string-literal-named ambient modules (declare module "foo"),
             // not to namespace-form modules (declare namespace Foo)
