@@ -563,6 +563,9 @@ pub struct ExportDeclData {
     pub is_type_only: bool,
     /// True if this is `export default ...`
     pub is_default_export: bool,
+    /// Position of the `default` keyword token (used for TS1319 diagnostic spans).
+    /// Only set when `is_default_export` is true.
+    pub default_keyword_pos: Option<u32>,
     pub export_clause: NodeIndex,
     pub module_specifier: NodeIndex,
     pub attributes: NodeIndex,
