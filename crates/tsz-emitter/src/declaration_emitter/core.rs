@@ -982,7 +982,8 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if !self.should_emit_public_api_member(&func.modifiers)
+        if !is_exported
+            && !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
         {
             return;
@@ -1143,7 +1144,8 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
             || self.is_js_named_exported_name(class.name);
-        if !self.should_emit_public_api_member(&class.modifiers)
+        if !is_exported
+            && !self.should_emit_public_api_member(&class.modifiers)
             && !self.should_emit_public_api_dependency(class.name)
         {
             return;
@@ -2296,7 +2298,7 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         };
         let Some(block) = self.arena.get_block(body_node) else {
-            return true;
+            return false;
         };
         self.block_returns_void(&block.statements)
     }
@@ -2430,7 +2432,20 @@ impl<'a> DeclarationEmitter<'a> {
         let has_export_modifier = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&var_stmt.modifiers) {
+        let has_js_named_export = var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+            self.arena
+                .get(decl_list_idx)
+                .and_then(|decl_list_node| self.arena.get_variable(decl_list_node))
+                .is_some_and(|decl_list| {
+                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                        self.arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| self.is_js_named_exported_name(decl.name))
+                    })
+                })
+        });
+        if !has_js_named_export && !self.should_emit_public_api_member(&var_stmt.modifiers) {
             // Check if any individual variable is referenced by the public API
             let has_dependency = var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
                 if let Some(decl_list_node) = self.arena.get(decl_list_idx)

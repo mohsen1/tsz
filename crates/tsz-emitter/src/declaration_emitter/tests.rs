@@ -866,6 +866,68 @@ declare namespace foo {
 }
 
 #[test]
+fn test_js_commonjs_exported_arrow_function_preserves_any_return_type() {
+    let source = r#"
+const donkey = (ast) => ast;
+module.exports = donkey;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file");
+    };
+    let var_stmt_idx = source_file.statements.nodes[0];
+    let var_stmt = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing variable statement");
+    let decl_list = parser
+        .arena
+        .get(var_stmt.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl = parser
+        .arena
+        .get(decl_list.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let ast_atom = interner.intern_string("ast");
+    let donkey_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(ast_atom, TypeId::ANY)],
+        TypeId::ANY,
+    ));
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(decl.name.0, donkey_type);
+    type_cache
+        .node_types
+        .insert(decl.initializer.0, donkey_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function donkey(ast: any): any;"),
+        "Expected concise-arrow CommonJS export to preserve any return type: {output}"
+    );
+    assert!(
+        !output.contains("declare function donkey(ast: any): void;"),
+        "Did not expect concise-arrow CommonJS export to collapse to void: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_prototype_and_static_assignments_emit_synthetic_declarations() {
     let source = r#"
 module.exports = MyClass;
@@ -906,6 +968,21 @@ type DoneCB = (failures: number) => any;"#;
         output.trim(),
         expected,
         "Expected CommonJS static/prototype assignments to emit synthetic declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_marks_same_name_class_exported() {
+    let output = emit_js_dts(
+        r#"
+class K {}
+exports.K = K;
+"#,
+    );
+
+    assert!(
+        output.contains("export class K"),
+        "Expected same-name CommonJS export to reuse the class declaration: {output}"
     );
 }
 
