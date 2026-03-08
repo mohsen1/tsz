@@ -1406,3 +1406,7 @@ impl<'a> LoweringPass<'a> {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/lowering_helpers.rs"]
+mod tests;

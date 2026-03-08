@@ -16,3 +16,7 @@ pub mod output;
 pub mod safe_slice;
 pub mod transforms;
 pub mod type_cache_view;
+
+#[cfg(test)]
+#[path = "../tests/es5_transforms_e2e.rs"]
+mod es5_transforms_e2e;
