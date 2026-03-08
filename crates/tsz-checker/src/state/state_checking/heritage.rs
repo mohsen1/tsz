@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
                         // declarations (`interface Array` + `declare var Array: ArrayConstructor`),
                         // and the variable provides the constructor for extends.
                         let is_interface_only =
-                            self.ctx.binder.get_symbol(sym_to_check).is_some_and(|s| {
+                            self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
                                 (s.flags & symbol_flags::INTERFACE) != 0
                                     && (s.flags & symbol_flags::CLASS) == 0
                                     && (s.flags & symbol_flags::VARIABLE) == 0
@@ -396,9 +396,7 @@ impl<'a> CheckerState<'a> {
                                     // side provides the constructor even though the interface type
                                     // doesn't have construct signatures.
                                     && self
-                                        .ctx
-                                        .binder
-                                        .get_symbol(sym_to_check)
+                                        .get_cross_file_symbol(sym_to_check)
                                         .is_none_or(|s| {
                                             !((s.flags & symbol_flags::INTERFACE) != 0
                                                 && (s.flags & symbol_flags::VARIABLE) != 0)
