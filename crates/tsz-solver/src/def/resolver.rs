@@ -443,8 +443,8 @@ impl TypeEnvironment {
     }
 
     /// Get a symbol's type parameters.
-    pub fn get_params(&self, symbol: SymbolRef) -> Option<&Vec<TypeParamInfo>> {
-        self.type_params.get(&symbol.0)
+    pub fn get_params(&self, symbol: SymbolRef) -> Option<&[TypeParamInfo]> {
+        self.type_params.get(&symbol.0).map(|v| v.as_slice())
     }
 
     /// Check if the environment contains a symbol.
@@ -489,8 +489,8 @@ impl TypeEnvironment {
     }
 
     /// Get a `DefId`'s type parameters.
-    pub fn get_def_params(&self, def_id: DefId) -> Option<&Vec<TypeParamInfo>> {
-        self.def_type_params.get(&def_id.0)
+    pub fn get_def_params(&self, def_id: DefId) -> Option<&[TypeParamInfo]> {
+        self.def_type_params.get(&def_id.0).map(|v| v.as_slice())
     }
 
     /// Check if the environment contains a `DefId`.
@@ -611,14 +611,14 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
-        self.get_params(symbol).cloned()
+        self.get_params(symbol).map(|s| s.to_vec())
     }
 
     fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
-        self.get_def_params(def_id).cloned().or_else(|| {
+        self.get_def_params(def_id).map(|s| s.to_vec()).or_else(|| {
             // Fallback: resolve raw SymbolId-based DefIds to real DefIds
             let real_def = self.symbol_to_def.get(&def_id.0)?;
-            self.get_def_params(*real_def).cloned()
+            self.get_def_params(*real_def).map(|s| s.to_vec())
         })
     }
 
