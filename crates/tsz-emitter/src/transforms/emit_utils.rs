@@ -559,6 +559,29 @@ pub(crate) fn get_extends_expression_index(
     None
 }
 
+/// Check if the extends clause expression is the literal `null` (or `(null)`).
+pub(crate) fn extends_null_literal(
+    arena: &NodeArena,
+    heritage_clauses: &Option<tsz_parser::parser::NodeList>,
+) -> bool {
+    let Some(expr_idx) = get_extends_expression_index(arena, heritage_clauses) else {
+        return false;
+    };
+    let mut idx = expr_idx;
+    loop {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = arena.get_parenthesized(node)
+        {
+            idx = paren.expression;
+            continue;
+        }
+        return node.kind == SyntaxKind::NullKeyword as u16;
+    }
+}
+
 /// Convert an operator token kind (`u16`) to its string representation.
 ///
 /// Covers all binary, unary, assignment, and compound-assignment operators.
