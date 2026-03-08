@@ -5,6 +5,8 @@
 
 use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
@@ -39,6 +41,8 @@ pub struct TypePrinter<'a> {
     /// The enclosing symbol (namespace/class) whose qualified name prefix should
     /// be stripped from type references to produce context-relative names.
     enclosing_symbol: Option<SymbolId>,
+    /// AST access for deciding whether a symbol is nameable from declaration output.
+    node_arena: Option<&'a NodeArena>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -51,6 +55,7 @@ impl<'a> TypePrinter<'a> {
             max_depth: 10,
             indent_level: None,
             enclosing_symbol: None,
+            node_arena: None,
         }
     }
 
@@ -88,6 +93,12 @@ impl<'a> TypePrinter<'a> {
         self
     }
 
+    /// Set the AST arena for declaration-reachability checks.
+    pub const fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
+        self.node_arena = Some(node_arena);
+        self
+    }
+
     /// Check if a symbol is visible (exported) from the current module.
     ///
     /// A symbol is visible if:
@@ -114,6 +125,67 @@ impl<'a> TypePrinter<'a> {
         }
 
         false
+    }
+
+    fn symbol_is_nameable(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        if symbol.declarations.is_empty() {
+            return !symbol.parent.is_some();
+        }
+
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl| self.declaration_is_nameable(decl))
+    }
+
+    fn declaration_is_nameable(&self, decl_idx: tsz_parser::NodeIndex) -> bool {
+        let Some(node_arena) = self.node_arena else {
+            return false;
+        };
+        let Some(decl_node) = node_arena.get(decl_idx) else {
+            return false;
+        };
+
+        if decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION
+        {
+            return false;
+        }
+
+        let mut current = node_arena.get_extended(decl_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = node_arena.get(parent_idx) else {
+                break;
+            };
+
+            match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => return false,
+                k if k == syntax_kind_ext::FUNCTION_EXPRESSION => return false,
+                k if k == syntax_kind_ext::ARROW_FUNCTION => return false,
+                k if k == syntax_kind_ext::METHOD_DECLARATION => return false,
+                k if k == syntax_kind_ext::GET_ACCESSOR => return false,
+                k if k == syntax_kind_ext::SET_ACCESSOR => return false,
+                k if k == syntax_kind_ext::CONSTRUCTOR => return false,
+                k if k == syntax_kind_ext::BLOCK => return false,
+                k if k == syntax_kind_ext::CASE_BLOCK => return false,
+                k if k == syntax_kind_ext::SOURCE_FILE => return true,
+                k if k == syntax_kind_ext::MODULE_BLOCK => return true,
+                _ => {
+                    current = node_arena.get_extended(parent_idx).map(|ext| ext.parent);
+                }
+            }
+        }
+
+        true
     }
 
     /// Resolve a SymbolRef/SymbolId to its qualified name (e.g., "M.c" for `typeof M.c`).
@@ -348,7 +420,7 @@ impl<'a> TypePrinter<'a> {
         // If this object has a nominal symbol (class/interface instance), print the name.
         // Use the name when the symbol is visible (exported) or reachable (module-level).
         if let Some(sym_id) = shape.symbol
-            && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
+            && (self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
             return name;
@@ -434,7 +506,6 @@ impl<'a> TypePrinter<'a> {
                 let mut line = String::new();
                 line.push_str(&member_indent);
 
-                // Try to emit as method syntax if the property is a method
                 if property.is_method
                     && let Some(method_str) = nested.print_property_as_method(property)
                 {
@@ -572,29 +643,67 @@ impl<'a> TypePrinter<'a> {
         &self,
         property: &tsz_solver::types::PropertyInfo,
     ) -> Option<String> {
-        // Check if the property type is a simple function type
-        let func_id = visitor::function_shape_id(self.interner, property.type_id)?;
-        let func_shape = self.interner.function_shape(func_id);
-
-        let mut result = String::new();
-
-        // Property name (quote if needed)
         let name = self.resolve_atom(property.name);
-        if needs_property_name_quoting(&name) {
-            result.push_str(&quote_property_name(&name));
+        let printed_name = if needs_property_name_quoting(&name) {
+            quote_property_name(&name)
         } else {
-            result.push_str(&name);
+            name
+        };
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, property.type_id) {
+            let func_shape = self.interner.function_shape(func_id);
+            return Some(self.print_method_signature(
+                &printed_name,
+                property.optional,
+                &func_shape.type_params,
+                &func_shape.params,
+                func_shape.type_predicate.as_ref(),
+                func_shape.return_type,
+            ));
         }
 
-        // Optional marker for method
-        if property.optional {
+        let callable_id = visitor::callable_shape_id(self.interner, property.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+        if callable.call_signatures.len() != 1
+            || !callable.construct_signatures.is_empty()
+            || callable.string_index.is_some()
+            || callable.number_index.is_some()
+            || callable.properties.iter().any(|prop| {
+                let prop_name = self.resolve_atom(prop.name);
+                prop_name != "prototype" && !prop_name.starts_with("__private_brand_")
+            })
+        {
+            return None;
+        }
+
+        let sig = &callable.call_signatures[0];
+        Some(self.print_method_signature(
+            &printed_name,
+            property.optional,
+            &sig.type_params,
+            &sig.params,
+            sig.type_predicate.as_ref(),
+            sig.return_type,
+        ))
+    }
+
+    fn print_method_signature(
+        &self,
+        printed_name: &str,
+        optional: bool,
+        type_params: &[tsz_solver::types::TypeParamInfo],
+        params: &[tsz_solver::types::ParamInfo],
+        type_predicate: Option<&tsz_solver::types::TypePredicate>,
+        return_type: TypeId,
+    ) -> String {
+        let mut result = String::new();
+        result.push_str(printed_name);
+        if optional {
             result.push('?');
         }
 
-        // Type parameters
-        if !func_shape.type_params.is_empty() {
-            let params: Vec<String> = func_shape
-                .type_params
+        if !type_params.is_empty() {
+            let params: Vec<String> = type_params
                 .iter()
                 .map(|tp| self.print_type_parameter_decl(tp))
                 .collect();
@@ -603,10 +712,9 @@ impl<'a> TypePrinter<'a> {
             result.push('>');
         }
 
-        // Parameters
         result.push('(');
         let mut first = true;
-        for param in &func_shape.params {
+        for param in params {
             if !first {
                 result.push_str(", ");
             }
@@ -626,15 +734,14 @@ impl<'a> TypePrinter<'a> {
         }
         result.push(')');
 
-        // Return type (with type predicate if present)
         result.push_str(": ");
-        if let Some(ref pred) = func_shape.type_predicate {
+        if let Some(pred) = type_predicate {
             result.push_str(&self.print_type_predicate(pred));
         } else {
-            result.push_str(&self.print_type(func_shape.return_type));
+            result.push_str(&self.print_type(return_type));
         }
 
-        Some(result)
+        result
     }
 
     fn print_union(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
@@ -664,19 +771,24 @@ impl<'a> TypePrinter<'a> {
             return "unknown".to_string(); // Intersection of 0 types is unknown
         }
 
-        let mut parts = Vec::with_capacity(types.len());
+        let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
             let s = self.print_type(type_id);
             // Parenthesize function/constructor types in intersection position
             if visitor::function_shape_id(self.interner, type_id).is_some() {
-                parts.push(format!("({s})"));
+                members.push((self.intersection_member_priority(type_id), format!("({s})")));
             } else {
-                parts.push(s);
+                members.push((self.intersection_member_priority(type_id), s));
             }
         }
+        members.sort_by_key(|(priority, _)| *priority);
 
         // Join with " & "
-        parts.join(" & ")
+        members
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join(" & ")
     }
 
     fn print_tuple(&self, tuple_id: tsz_solver::types::TupleListId) -> String {
@@ -781,7 +893,7 @@ impl<'a> TypePrinter<'a> {
         // This matches tsc's behavior for declaration emit.
         if !callable.construct_signatures.is_empty()
             && let Some(sym_id) = callable.symbol
-            && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
+            && (self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
             return format!("typeof {name}");
@@ -1098,8 +1210,38 @@ impl<'a> TypePrinter<'a> {
         let Some(symbol) = arena.get(sym_id) else {
             return false;
         };
-        // A symbol with no parent is in the global scope
         !symbol.parent.is_some()
+    }
+
+    fn intersection_member_priority(&self, type_id: TypeId) -> u8 {
+        if visitor::type_param_info(self.interner, type_id).is_some() {
+            return 2;
+        }
+
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            let sym_id = SymbolId(sym_ref.0);
+            return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            if let Some(sym_id) = callable.symbol {
+                return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+            }
+            return 0;
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+            }
+            return 0;
+        }
+
+        1
     }
 
     fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
