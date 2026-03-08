@@ -355,6 +355,15 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     fn analyze_local_import_equals_dependency(&mut self, name_idx: NodeIndex) {
+        let mut seen_symbols = FxHashSet::default();
+        self.analyze_local_import_equals_dependency_inner(name_idx, &mut seen_symbols);
+    }
+
+    fn analyze_local_import_equals_dependency_inner(
+        &mut self,
+        name_idx: NodeIndex,
+        seen_symbols: &mut FxHashSet<SymbolId>,
+    ) {
         let Some(name_node) = self.arena.get(name_idx) else {
             return;
         };
@@ -364,14 +373,22 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) else {
             return;
         };
-        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+        if !seen_symbols.insert(sym_id) {
             return;
-        };
-
-        let mut declarations = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
-            declarations.push(symbol.value_declaration);
         }
+        let declarations = {
+            let Some(symbol) = self.binder.symbols.get(sym_id) else {
+                return;
+            };
+
+            let mut declarations = symbol.declarations.clone();
+            if symbol.value_declaration.is_some()
+                && !declarations.contains(&symbol.value_declaration)
+            {
+                declarations.push(symbol.value_declaration);
+            }
+            declarations
+        };
 
         for decl_idx in declarations {
             let Some(decl_node) = self.arena.get(decl_idx) else {
@@ -379,6 +396,14 @@ impl<'a> UsageAnalyzer<'a> {
             };
             if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 self.analyze_import_equals_declaration(decl_idx);
+                if let Some(import) = self.arena.get_import_decl(decl_node)
+                    && import.module_specifier.is_some()
+                {
+                    self.analyze_local_import_equals_dependency_inner(
+                        import.module_specifier,
+                        seen_symbols,
+                    );
+                }
             }
         }
     }
