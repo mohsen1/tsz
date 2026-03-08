@@ -88,7 +88,24 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // print version + help and exit 1 (matching tsc v6 behavior).
     if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
         println!("Version {TSC_VERSION}");
-        print!("{}", help::render_help(TSC_VERSION));
+        print!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
+    // TS5042: Option 'project' cannot be mixed with source files on a command line.
+    if args.project.is_some() && !args.files.is_empty() {
+        println!(
+            "error TS5042: Option 'project' cannot be mixed with source files on a command line."
+        );
+        std::process::exit(1);
+    }
+
+    // TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option
+    // 'declaration' or option 'composite'.
+    if args.emit_declaration_only && !args.declaration && !args.composite {
+        println!(
+            "error TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option 'declaration' or option 'composite'."
+        );
         std::process::exit(1);
     }
 
@@ -415,13 +432,16 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
 
     // --all takes precedence (with or without --help)
     if has_all {
-        print!("{}", help::render_help_all(TSC_VERSION));
+        print!(
+            "{}",
+            help::colorize_help(&help::render_help_all(TSC_VERSION))
+        );
         std::process::exit(0);
     }
 
     // --help / -h / -?
     if has_help {
-        print!("{}", help::render_help(TSC_VERSION));
+        print!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(0);
     }
 
@@ -434,11 +454,21 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     // Check for bare `--` and `-` which tsc treats as unknown options (TS5023).
     // These must be detected before clap sees them (clap treats `--` as
     // end-of-options and `-` as a positional arg).
+    // Also check for --boolFlag=value which tsc treats as an unknown option.
+    let boolean_flags = build_boolean_flag_set();
     for arg in expanded.iter().skip(1) {
         let s = arg.to_string_lossy();
         if s == "--" || s == "-" {
             println!("error TS5023: Unknown compiler option '{s}'.");
             std::process::exit(1);
+        }
+        // tsc treats --boolFlag=value as an unknown option (the whole --flag=value string)
+        if let Some(eq_pos) = s.find('=') {
+            let flag_part = &s[..eq_pos];
+            if boolean_flags.contains(flag_part) {
+                println!("error TS5023: Unknown compiler option '{s}'.");
+                std::process::exit(1);
+            }
         }
     }
 
@@ -886,8 +916,9 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                 for flag in &unknown_flags {
                     // Try to find a close match for TS5025
                     if let Some(suggestion) = find_closest_option(flag) {
+                        let suggestion_name = suggestion.strip_prefix("--").unwrap_or(suggestion);
                         println!(
-                            "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion}'?"
+                            "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion_name}'?"
                         );
                     } else {
                         println!("error TS5023: Unknown compiler option '{flag}'.");
@@ -913,14 +944,13 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                         "error TS6046: Argument for '--{option_name}' option must be: {valid_values}."
                     );
                 }
-                println!();
             } else {
                 let msg = msg
                     .lines()
                     .next()
                     .unwrap_or(&msg)
                     .trim_start_matches("error: ");
-                println!("error TS5023: {msg}\n");
+                println!("error TS5023: {msg}");
             }
             std::process::exit(1);
         }
@@ -946,14 +976,13 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                         .trim_start_matches("error: ");
                     println!("error TS5023: {msg}");
                 }
-                println!();
             } else {
                 let msg = msg
                     .lines()
                     .next()
                     .unwrap_or(&msg)
                     .trim_start_matches("error: ");
-                println!("error TS5023: {msg}\n");
+                println!("error TS5023: {msg}");
             }
             std::process::exit(1);
         }
@@ -967,7 +996,7 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                 .next()
                 .unwrap_or(&msg)
                 .trim_start_matches("error: ");
-            println!("error TS5023: {msg}\n");
+            println!("error TS5023: {msg}");
             std::process::exit(1);
         }
     }
@@ -1438,10 +1467,17 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         args.project
             .as_ref()
             .map(|p| {
-                if p.is_dir() {
-                    p.join("tsconfig.json")
+                // Canonicalize relative paths by joining with cwd first,
+                // so that p.parent() later returns a valid directory.
+                let resolved = if p.is_relative() {
+                    cwd.join(p)
                 } else {
                     p.clone()
+                };
+                if resolved.is_dir() {
+                    resolved.join("tsconfig.json")
+                } else {
+                    resolved
                 }
             })
             .or_else(|| Some(cwd.join("tsconfig.json")))
@@ -1502,13 +1538,18 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
     for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
         if let Some(serde_json::Value::String(s)) = compiler_options_map.get(*path_key) {
-            if !s.starts_with("./") && !s.starts_with("../") && !s.starts_with('/') {
-                let normalized = format!("./{s}");
-                compiler_options_map.insert(
-                    (*path_key).to_string(),
-                    serde_json::Value::String(normalized),
-                );
-            }
+            let normalized = if s == "." {
+                // "." → "./" (not "./.")
+                "./".to_string()
+            } else if !s.starts_with("./") && !s.starts_with("../") && !s.starts_with('/') {
+                format!("./{s}")
+            } else {
+                continue;
+            };
+            compiler_options_map.insert(
+                (*path_key).to_string(),
+                serde_json::Value::String(normalized),
+            );
         }
     }
 
@@ -1558,22 +1599,31 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // If no input files found, emit TS18003 error and exit 1
     if discovered_files.is_empty() && config.is_some() {
+        // tsc formats include/exclude as JSON arrays: '["**/*"]' and '[]'
+        let include_json = config
+            .as_ref()
+            .and_then(|c| c.include.as_ref())
+            .map(|items| {
+                let inner: Vec<String> = items.iter().map(|s| format!("\"{}\"", s)).collect();
+                format!("[{}]", inner.join(","))
+            })
+            .unwrap_or_else(|| "[]".to_string());
+        let exclude_json = config
+            .as_ref()
+            .and_then(|c| c.exclude.as_ref())
+            .map(|items| {
+                let inner: Vec<String> = items.iter().map(|s| format!("\"{}\"", s)).collect();
+                format!("[{}]", inner.join(","))
+            })
+            .unwrap_or_else(|| "[]".to_string());
         println!(
             "error TS18003: No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
             tsconfig_path
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default(),
-            config
-                .as_ref()
-                .and_then(|c| c.include.as_ref())
-                .map(|i| i.join("', '"))
-                .unwrap_or_default(),
-            config
-                .as_ref()
-                .and_then(|c| c.exclude.as_ref())
-                .map(|e| e.join("', '"))
-                .unwrap_or_default(),
+            include_json,
+            exclude_json,
         );
         std::process::exit(1);
     }
@@ -1634,6 +1684,33 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         output.push_str("    }");
     }
 
+    // tsc v6 output order: compilerOptions, references, files, include, exclude
+
+    // references (before files, matching tsc v6 ordering)
+    if let Some(ref cfg) = config {
+        if let Some(ref refs) = cfg.references {
+            output.push_str(",\n    \"references\": [\n");
+            for (i, r) in refs.iter().enumerate() {
+                if r.prepend {
+                    output.push_str(&format!(
+                        "        {{\n            \"path\": \"{}\",\n            \"prepend\": true\n        }}",
+                        r.path
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "        {{\n            \"path\": \"{}\"\n        }}",
+                        r.path
+                    ));
+                }
+                if i + 1 < refs.len() {
+                    output.push(',');
+                }
+                output.push('\n');
+            }
+            output.push_str("    ]");
+        }
+    }
+
     // files
     if !file_paths.is_empty() {
         output.push_str(",\n    \"files\": [\n");
@@ -1672,28 +1749,6 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             }
             output.push_str("    ]");
         }
-        // references
-        if let Some(ref refs) = cfg.references {
-            output.push_str(",\n    \"references\": [\n");
-            for (i, r) in refs.iter().enumerate() {
-                if r.prepend {
-                    output.push_str(&format!(
-                        "        {{\n            \"path\": \"{}\",\n            \"prepend\": true\n        }}",
-                        r.path
-                    ));
-                } else {
-                    output.push_str(&format!(
-                        "        {{\n            \"path\": \"{}\"\n        }}",
-                        r.path
-                    ));
-                }
-                if i + 1 < refs.len() {
-                    output.push(',');
-                }
-                output.push('\n');
-            }
-            output.push_str("    ]");
-        }
     }
 
     output.push_str("\n}\n");
@@ -1712,10 +1767,24 @@ fn show_config_compiler_options_to_json(
     let Some(opts) = opts else { return map };
 
     if let Some(ref v) = opts.target {
-        map.insert("target".into(), Value::String(v.to_lowercase()));
+        // tsc uses the first key in the type map: ES2015 → "es6"
+        let lowered = v.to_lowercase();
+        let normalized = if lowered == "es2015" {
+            "es6".to_string()
+        } else {
+            lowered
+        };
+        map.insert("target".into(), Value::String(normalized));
     }
     if let Some(ref v) = opts.module {
-        map.insert("module".into(), Value::String(v.to_lowercase()));
+        // tsc uses the first key in the type map: ES2015 → "es6"
+        let lowered = v.to_lowercase();
+        let normalized = if lowered == "es2015" {
+            "es6".to_string()
+        } else {
+            lowered
+        };
+        map.insert("module".into(), Value::String(normalized));
     }
     if let Some(ref v) = opts.module_resolution {
         map.insert("moduleResolution".into(), Value::String(v.to_lowercase()));
@@ -1872,7 +1941,7 @@ fn show_config_apply_cli_overrides(
     if let Some(target) = args.target {
         let s = match target {
             tsz_cli::args::Target::Es5 => "es5",
-            tsz_cli::args::Target::Es2015 => "es2015",
+            tsz_cli::args::Target::Es2015 => "es6",
             tsz_cli::args::Target::Es2016 => "es2016",
             tsz_cli::args::Target::Es2017 => "es2017",
             tsz_cli::args::Target::Es2018 => "es2018",
@@ -1894,7 +1963,7 @@ fn show_config_apply_cli_overrides(
             tsz_cli::args::Module::Amd => "amd",
             tsz_cli::args::Module::Umd => "umd",
             tsz_cli::args::Module::System => "system",
-            tsz_cli::args::Module::Es2015 => "es2015",
+            tsz_cli::args::Module::Es2015 => "es6",
             tsz_cli::args::Module::Es2020 => "es2020",
             tsz_cli::args::Module::Es2022 => "es2022",
             tsz_cli::args::Module::EsNext => "esnext",
@@ -2127,105 +2196,383 @@ fn show_config_apply_cli_overrides(
 }
 
 /// Add implied options that tsc v6 shows in --showConfig output.
+///
+/// Algorithm from tsc v6 `convertToTSConfig` (commandLineParser.ts:2686-2697):
+/// 1. Get the set of explicitly provided options (providedKeys)
+/// 2. For each computed option:
+///    a. If NOT in providedKeys AND transitively depends on any provided key
+///    b. Compute its value using the user's config
+///    c. Compute its value using empty config (defaults)
+///    d. Only show it if computed != default
 fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json::Value>) {
     use serde_json::Value;
-    use tsz::emitter::ScriptTarget;
 
-    let target_explicitly_set = map.contains_key("target");
-    let module_explicitly_set = map.contains_key("module");
-    let module_resolution_explicitly_set = map.contains_key("moduleResolution");
-    let use_define_explicitly_set = map.contains_key("useDefineForClassFields");
+    // Collect the set of explicitly provided option keys (owned to avoid borrow conflicts)
+    let provided: std::collections::HashSet<String> = map.keys().cloned().collect();
 
-    let effective_target = if let Some(Value::String(t)) = map.get("target") {
-        match t.to_lowercase().as_str() {
-            "es3" => Some(ScriptTarget::ES3),
-            "es5" => Some(ScriptTarget::ES5),
-            "es6" | "es2015" => Some(ScriptTarget::ES2015),
-            "es2016" => Some(ScriptTarget::ES2016),
-            "es2017" => Some(ScriptTarget::ES2017),
-            "es2018" => Some(ScriptTarget::ES2018),
-            "es2019" => Some(ScriptTarget::ES2019),
-            "es2020" => Some(ScriptTarget::ES2020),
-            "es2021" => Some(ScriptTarget::ES2021),
-            "es2022" => Some(ScriptTarget::ES2022),
-            "es2023" => Some(ScriptTarget::ES2023),
-            "es2024" => Some(ScriptTarget::ES2024),
-            "es2025" => Some(ScriptTarget::ES2025),
-            "esnext" => Some(ScriptTarget::ESNext),
-            _ => None,
-        }
-    } else {
-        None
-    };
-
-    if !module_explicitly_set && target_explicitly_set {
-        if let Some(target) = effective_target {
-            let implied = match target {
-                ScriptTarget::ES3 | ScriptTarget::ES5 => "commonjs",
-                ScriptTarget::ES2015
-                | ScriptTarget::ES2016
-                | ScriptTarget::ES2017
-                | ScriptTarget::ES2018
-                | ScriptTarget::ES2019 => "es2015",
-                ScriptTarget::ES2020 | ScriptTarget::ES2021 => "es2020",
-                ScriptTarget::ES2022
-                | ScriptTarget::ES2023
-                | ScriptTarget::ES2024
-                | ScriptTarget::ES2025 => "es2022",
-                ScriptTarget::ESNext => "esnext",
-            };
-            map.insert("module".into(), Value::String(implied.into()));
+    // --- Helper: parse target string to numeric level ---
+    fn parse_target(s: &str) -> u8 {
+        match s.to_lowercase().as_str() {
+            "es3" => 0,
+            "es5" => 1,
+            "es6" | "es2015" => 2,
+            "es2016" => 3,
+            "es2017" => 4,
+            "es2018" => 5,
+            "es2019" => 6,
+            "es2020" => 7,
+            "es2021" => 8,
+            "es2022" => 9,
+            "es2023" => 10,
+            "es2024" => 11,
+            "es2025" => 12,
+            "esnext" => 99,
+            _ => 12, // default ES2025
         }
     }
 
-    if !module_explicitly_set && !target_explicitly_set && module_resolution_explicitly_set {
-        if let Some(Value::String(mr)) = map.get("moduleResolution").cloned() {
-            match mr.to_lowercase().as_str() {
-                "node16" => {
-                    map.insert("module".into(), Value::String("node16".into()));
-                }
-                "nodenext" => {
-                    map.insert("module".into(), Value::String("nodenext".into()));
-                }
-                _ => {}
-            }
+    // --- Helper: compute module from target ---
+    fn compute_module(target: u8) -> &'static str {
+        if target == 99 {
+            "esnext"
+        } else if target >= 9 {
+            // >= ES2022
+            "es2022"
+        } else if target >= 7 {
+            // >= ES2020
+            "es2020"
+        } else if target >= 2 {
+            // >= ES2015
+            "es6"
+        } else {
+            "commonjs"
         }
     }
 
-    let effective_module = map
+    // --- Helper: compute moduleResolution from module string ---
+    fn compute_module_resolution(module_str: &str) -> &'static str {
+        match module_str.to_lowercase().as_str() {
+            "none" | "amd" | "umd" | "system" => "classic",
+            "nodenext" => "nodenext",
+            "node16" | "node18" | "node20" => "node16",
+            _ => "bundler",
+        }
+    }
+
+    // --- Helper: compute moduleDetection from module string ---
+    fn compute_module_detection(module_str: &str) -> &'static str {
+        match module_str.to_lowercase().as_str() {
+            "node16" | "node18" | "node20" | "nodenext" => "force",
+            _ => "auto",
+        }
+    }
+
+    // v6 defaults (empty config):
+    // target=es2025(12), module=es2022, moduleResolution=bundler
+    // esModuleInterop=true, allowSyntheticDefaultImports=true
+    // useDefineForClassFields=true (es2025 >= ES2022)
+    // strict sub-flags: false, declaration=false, incremental=false
+    const DEFAULT_TARGET: u8 = 12; // ES2025
+    const DEFAULT_MODULE_RESOLUTION: &str = "bundler";
+    const DEFAULT_MODULE_DETECTION: &str = "auto";
+
+    // --- Compute effective values using user's config ---
+    let user_target_str = map
+        .get("target")
+        .and_then(|v| v.as_str())
+        .unwrap_or("es2025");
+    let user_target = parse_target(user_target_str);
+
+    let user_strict = map.get("strict").and_then(|v| v.as_bool()).unwrap_or(false);
+    let user_composite = map
+        .get("composite")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let user_verbatim = map
+        .get("verbatimModuleSyntax")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let user_check_js = map
+        .get("checkJs")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let user_isolated_modules = map
+        .get("isolatedModules")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let user_rewrite_relative = map
+        .get("rewriteRelativeImportExtensions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // --- Helper: check if a computed option depends on any provided key ---
+    let depends_on_provided =
+        |deps: &[&str]| -> bool { deps.iter().any(|d| provided.contains(*d)) };
+
+    // --- target: deps=[], computed = target ?? ES2025 ---
+    // target has no deps, so it's only shown if explicitly set (already in map)
+
+    // --- module: deps=["target"] ---
+    if !provided.contains("module") && depends_on_provided(&["target"]) {
+        let computed = compute_module(user_target);
+        let default = compute_module(DEFAULT_TARGET); // es2022
+        if computed != default {
+            map.insert("module".into(), Value::String(computed.into()));
+        }
+    }
+
+    // Re-compute effective module after possible insertion (clone to avoid borrow)
+    let eff_module: String = map
         .get("module")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_lowercase());
-    if !module_resolution_explicitly_set {
-        if let Some(ref module_str) = effective_module {
-            let implied = match module_str.as_str() {
-                "none" | "amd" | "umd" | "system" => Some("classic"),
-                "nodenext" => Some("nodenext"),
-                "node16" | "node18" | "node20" => Some("node16"),
-                _ => Some("bundler"),
-            };
-            if let Some(mr) = implied {
-                map.insert("moduleResolution".into(), Value::String(mr.into()));
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| compute_module(user_target).to_string());
+
+    // --- moduleResolution: deps=["module","target"] ---
+    if !provided.contains("moduleResolution") && depends_on_provided(&["module", "target"]) {
+        let computed = compute_module_resolution(&eff_module);
+        if computed != DEFAULT_MODULE_RESOLUTION {
+            map.insert("moduleResolution".into(), Value::String(computed.into()));
+        }
+    }
+
+    // --- moduleDetection: deps=["module","target"] ---
+    if !provided.contains("moduleDetection") && depends_on_provided(&["module", "target"]) {
+        let computed = compute_module_detection(&eff_module);
+        if computed != DEFAULT_MODULE_DETECTION {
+            map.insert("moduleDetection".into(), Value::String(computed.into()));
+        }
+    }
+
+    // --- useDefineForClassFields: deps=["target","module"] ---
+    if !provided.contains("useDefineForClassFields") && depends_on_provided(&["target", "module"]) {
+        let computed = user_target >= 9; // >= ES2022
+        let default_val = DEFAULT_TARGET >= 9; // true
+        if computed != default_val {
+            map.insert("useDefineForClassFields".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- esModuleInterop: deps=[] ---
+    // No deps, so only shown if explicitly set (already in map)
+
+    // --- allowSyntheticDefaultImports: deps=[] ---
+    // No deps, so only shown if explicitly set (already in map)
+
+    // --- declaration: deps=["composite"] ---
+    if !provided.contains("declaration") && depends_on_provided(&["composite"]) {
+        let user_decl = map
+            .get("declaration")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let computed = user_decl || user_composite;
+        let default_val = false; // default declaration = false, default composite = false
+        if computed != default_val {
+            map.insert("declaration".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- incremental: deps=["composite"] ---
+    if !provided.contains("incremental") && depends_on_provided(&["composite"]) {
+        let user_incr = map
+            .get("incremental")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let computed = user_incr || user_composite;
+        let default_val = false;
+        if computed != default_val {
+            map.insert("incremental".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- strict sub-flags: deps=["strict"] ---
+    let strict_sub_flags = [
+        "noImplicitAny",
+        "noImplicitThis",
+        "strictNullChecks",
+        "strictFunctionTypes",
+        "strictBindCallApply",
+        "strictPropertyInitialization",
+        "strictBuiltinIteratorReturn",
+        "alwaysStrict",
+        "useUnknownInCatchVariables",
+    ];
+    for flag_name in &strict_sub_flags {
+        if !provided.contains(*flag_name) && depends_on_provided(&["strict"]) {
+            // computed = strict ?? false; default = false (no strict in empty config)
+            let computed = user_strict;
+            let default_val = false;
+            if computed != default_val {
+                map.insert((*flag_name).to_string(), Value::Bool(computed));
             }
         }
     }
 
-    if !use_define_explicitly_set && target_explicitly_set {
-        if let Some(target) = effective_target {
-            let use_define = (target as u32) >= (ScriptTarget::ES2022 as u32);
-            map.insert("useDefineForClassFields".into(), Value::Bool(use_define));
+    // --- isolatedModules: deps=["verbatimModuleSyntax"] ---
+    if !provided.contains("isolatedModules") && depends_on_provided(&["verbatimModuleSyntax"]) {
+        let computed = user_isolated_modules || user_verbatim;
+        let default_val = false;
+        if computed != default_val {
+            map.insert("isolatedModules".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- allowJs: deps=["checkJs"] ---
+    if !provided.contains("allowJs") && depends_on_provided(&["checkJs"]) {
+        let user_allow_js = map
+            .get("allowJs")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        // allowJs ?? checkJs
+        let computed = if provided.contains("allowJs") {
+            user_allow_js
+        } else {
+            user_check_js
+        };
+        let default_val = false;
+        if computed != default_val {
+            map.insert("allowJs".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- preserveConstEnums: deps=["isolatedModules","verbatimModuleSyntax"] ---
+    if !provided.contains("preserveConstEnums")
+        && depends_on_provided(&["isolatedModules", "verbatimModuleSyntax"])
+    {
+        let user_preserve = map
+            .get("preserveConstEnums")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let computed = user_preserve || user_isolated_modules || user_verbatim;
+        let default_val = false;
+        if computed != default_val {
+            map.insert("preserveConstEnums".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- declarationMap: deps=["declaration","composite"] ---
+    if !provided.contains("declarationMap") && depends_on_provided(&["declaration", "composite"]) {
+        let user_decl_map = map
+            .get("declarationMap")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let eff_declaration = map
+            .get("declaration")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let computed = user_decl_map && eff_declaration;
+        let default_val = false;
+        if computed != default_val {
+            map.insert("declarationMap".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- allowImportingTsExtensions: deps=["rewriteRelativeImportExtensions"] ---
+    if !provided.contains("allowImportingTsExtensions")
+        && depends_on_provided(&["rewriteRelativeImportExtensions"])
+    {
+        let user_allow = map
+            .get("allowImportingTsExtensions")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let computed = user_allow || user_rewrite_relative;
+        let default_val = false;
+        if computed != default_val {
+            map.insert("allowImportingTsExtensions".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- resolveJsonModule: deps=["moduleResolution","module","target"] ---
+    // Complex logic; for now skip unless we need it. tsc computes this based on
+    // whether moduleResolution >= Node16. The default (bundler) resolves to true.
+    // Only show if computed != default.
+    if !provided.contains("resolveJsonModule")
+        && depends_on_provided(&["moduleResolution", "module", "target"])
+    {
+        let user_resolve_json = map.get("resolveJsonModule").and_then(|v| v.as_bool());
+        // Compute: resolveJsonModule defaults to true if moduleResolution is node16/nodenext/bundler
+        let eff_mr = map
+            .get("moduleResolution")
+            .and_then(|v| v.as_str())
+            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
+        let mr_implies_json = matches!(
+            eff_mr.to_lowercase().as_str(),
+            "node16" | "nodenext" | "bundler"
+        );
+        let computed = user_resolve_json.unwrap_or(mr_implies_json);
+        // default: bundler implies true
+        let default_mr_implies = matches!(
+            DEFAULT_MODULE_RESOLUTION.to_lowercase().as_str(),
+            "node16" | "nodenext" | "bundler"
+        );
+        let default_val = default_mr_implies; // true
+        if computed != default_val {
+            map.insert("resolveJsonModule".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- resolvePackageJsonExports: deps=["moduleResolution","module","target"] ---
+    if !provided.contains("resolvePackageJsonExports")
+        && depends_on_provided(&["moduleResolution", "module", "target"])
+    {
+        let user_val = map
+            .get("resolvePackageJsonExports")
+            .and_then(|v| v.as_bool());
+        let eff_mr = map
+            .get("moduleResolution")
+            .and_then(|v| v.as_str())
+            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
+        let mr_implies = matches!(
+            eff_mr.to_lowercase().as_str(),
+            "node16" | "nodenext" | "bundler"
+        );
+        let computed = user_val.unwrap_or(mr_implies);
+        let default_val = true; // bundler implies true
+        if computed != default_val {
+            map.insert("resolvePackageJsonExports".into(), Value::Bool(computed));
+        }
+    }
+
+    // --- resolvePackageJsonImports: deps=["moduleResolution","resolvePackageJsonExports","module","target"] ---
+    if !provided.contains("resolvePackageJsonImports")
+        && depends_on_provided(&[
+            "moduleResolution",
+            "resolvePackageJsonExports",
+            "module",
+            "target",
+        ])
+    {
+        let user_val = map
+            .get("resolvePackageJsonImports")
+            .and_then(|v| v.as_bool());
+        let eff_mr = map
+            .get("moduleResolution")
+            .and_then(|v| v.as_str())
+            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
+        let mr_implies = matches!(
+            eff_mr.to_lowercase().as_str(),
+            "node16" | "nodenext" | "bundler"
+        );
+        let computed = user_val.unwrap_or(mr_implies);
+        let default_val = true; // bundler implies true
+        if computed != default_val {
+            map.insert("resolvePackageJsonImports".into(), Value::Bool(computed));
         }
     }
 }
 
 /// Format a JSON key-value pair for --showConfig output with proper indentation.
-fn format_json_value_with_indent(key: &str, value: &serde_json::Value, _indent: usize) -> String {
-    let formatted_value = format_json_value(value);
+/// `indent` is the current indentation level (number of spaces for the key line).
+fn format_json_value_with_indent(key: &str, value: &serde_json::Value, indent: usize) -> String {
+    let formatted_value = format_json_value(value, indent);
     format!("\"{key}\": {formatted_value}")
 }
 
 /// Format a serde_json::Value for --showConfig output.
-fn format_json_value(value: &serde_json::Value) -> String {
+/// `indent` is the indentation level of the line containing this value.
+/// Arrays and objects are formatted multi-line with items at indent+4 and
+/// closing bracket at indent.
+fn format_json_value(value: &serde_json::Value, indent: usize) -> String {
     match value {
         serde_json::Value::String(s) => format!("\"{}\"", s),
         serde_json::Value::Bool(b) => b.to_string(),
@@ -2234,16 +2581,44 @@ fn format_json_value(value: &serde_json::Value) -> String {
             if arr.is_empty() {
                 "[]".to_string()
             } else {
-                let items: Vec<String> = arr.iter().map(format_json_value).collect();
-                format!("[{}]", items.join(", "))
+                let item_indent = indent + 4;
+                let item_pad = " ".repeat(item_indent);
+                let close_pad = " ".repeat(indent);
+                let mut result = String::from("[\n");
+                for (i, item) in arr.iter().enumerate() {
+                    result.push_str(&item_pad);
+                    result.push_str(&format_json_value(item, item_indent));
+                    if i + 1 < arr.len() {
+                        result.push(',');
+                    }
+                    result.push('\n');
+                }
+                result.push_str(&close_pad);
+                result.push(']');
+                result
             }
         }
         serde_json::Value::Object(map) => {
-            let entries: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("\"{}\": {}", k, format_json_value(v)))
-                .collect();
-            format!("{{{}}}", entries.join(", "))
+            if map.is_empty() {
+                "{}".to_string()
+            } else {
+                let item_indent = indent + 4;
+                let item_pad = " ".repeat(item_indent);
+                let close_pad = " ".repeat(indent);
+                let mut result = String::from("{\n");
+                let entries: Vec<_> = map.iter().collect();
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    result.push_str(&item_pad);
+                    result.push_str(&format!("\"{}\": {}", k, format_json_value(v, item_indent)));
+                    if i + 1 < entries.len() {
+                        result.push(',');
+                    }
+                    result.push('\n');
+                }
+                result.push_str(&close_pad);
+                result.push('}');
+                result
+            }
         }
         serde_json::Value::Null => "null".to_string(),
     }
