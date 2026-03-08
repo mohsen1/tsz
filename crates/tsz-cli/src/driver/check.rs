@@ -773,10 +773,16 @@ pub(super) fn collect_diagnostics(
                 file_diagnostics.extend(checker_diagnostics);
             }
 
-            // TODO: Apply @ts-expect-error / @ts-ignore directive suppression.
+            // Apply @ts-expect-error / @ts-ignore directive suppression.
             // tsc suppresses all diagnostics on the line following such directives
             // and emits TS2578 for unused @ts-expect-error directives.
-            // apply_ts_directive_suppression is not yet implemented.
+            if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+                apply_ts_directive_suppression(
+                    &file.file_name,
+                    source.text.as_ref(),
+                    &mut file_diagnostics,
+                );
+            }
 
             // Update the cache and check for export hash changes
             if let Some(c) = cache.as_deref_mut() {
@@ -1101,8 +1107,14 @@ pub(super) fn check_file_for_parallel<'a>(
         file_diagnostics.extend(checker_diagnostics);
     }
 
-    // TODO: Apply @ts-expect-error / @ts-ignore directive suppression.
-    // apply_ts_directive_suppression is not yet implemented.
+    // Apply @ts-expect-error / @ts-ignore directive suppression.
+    if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+        apply_ts_directive_suppression(
+            &file.file_name,
+            source.text.as_ref(),
+            &mut file_diagnostics,
+        );
+    }
 
     let type_cache = checker.extract_cache();
     (file_diagnostics, Some(type_cache))

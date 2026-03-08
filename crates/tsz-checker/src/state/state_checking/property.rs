@@ -893,6 +893,12 @@ impl<'a> CheckerState<'a> {
         }
         let pattern = self.ctx.arena.get_binding_pattern(pattern_node)?;
 
+        // Empty binding pattern `var {} = ...` — no properties are being destructured,
+        // so no excess property check is needed. tsc treats `{}` as "ignore all properties".
+        if pattern.elements.nodes.is_empty() {
+            return None;
+        }
+
         for &element_idx in &pattern.elements.nodes {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
