@@ -696,6 +696,56 @@ export = a;
 }
 
 #[test]
+fn test_js_module_exports_emits_before_target_declaration() {
+    let source = r#"
+const a = {};
+module.exports = a;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = a;\ndeclare const a: {};"),
+        "Expected JS module.exports assignment to emit as export=: {output}"
+    );
+    assert_eq!(
+        output.matches("export = a;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_function_expandos_emit_as_namespace_exports() {
+    let source = r#"
+function foo() {}
+foo.foo = foo;
+foo.default = foo;
+module.exports = foo;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = foo;
+declare function foo(): void;
+declare namespace foo {
+    export { foo };
+    export { foo as default };
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS function expandos to emit as namespace exports: {output}"
+    );
+}
+
+#[test]
 fn test_js_reexports_from_same_module_are_grouped() {
     let source = r#"
 export { default } from "fs";
