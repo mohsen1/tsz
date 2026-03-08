@@ -127,7 +127,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if a module name is relative (starts with ./ or ../)
     pub(crate) fn is_relative_module_name(&self, name: &str) -> bool {
         if name.starts_with("./")
+            || name.starts_with(".\\")
             || name.starts_with("../")
+            || name.starts_with("..\\")
             || name == "."
             || name == ".."
             || name.starts_with('/')
