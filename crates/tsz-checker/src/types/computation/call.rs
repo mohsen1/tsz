@@ -506,7 +506,11 @@ impl<'a> CheckerState<'a> {
             callee_type_for_context,
             self.ctx.compiler_options.no_implicit_any,
         );
-        let check_excess_properties = overload_signatures.is_none();
+        // For union callees, skip excess property checking during argument collection.
+        // The solver's resolve_union_call intersects parameter types across members,
+        // so `{x: 0, y: 0}` is valid for `((a: {x}) => R) | ((a: {y}) => R)` even
+        // though it has "excess" properties against each individual member type.
+        let check_excess_properties = overload_signatures.is_none() && !callee_is_union;
         let normalize_contextual_param_type =
             |this: &mut Self,
              helper: &ContextualTypeContext,

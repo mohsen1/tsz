@@ -1195,7 +1195,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let mut param_types_at_pos = Vec::new();
             let mut any_required = false;
 
-            for (params, _, _) in &all_signatures {
+            for (params, _, has_rest) in &all_signatures {
                 if i < params.len() {
                     let param = &params[i];
                     if param.rest {
@@ -1216,10 +1216,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if param.is_required() {
                         any_required = true;
                     }
+                } else if *has_rest {
+                    // Position i is beyond this member's positional params, but the
+                    // member has a rest param that covers all remaining positions.
+                    // Include its element type in the intersection.
+                    if let Some(rest_param) = params.last().filter(|p| p.rest) {
+                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                            self.interner,
+                            rest_param.type_id,
+                        ) {
+                            param_types_at_pos.push(elem);
+                        }
+                    }
                 }
-                // If a member doesn't have a param at this position, it doesn't
-                // constrain the type (absent). But if ANY member requires it,
-                // the combined signature requires it.
+                // If a member doesn't have a param at this position and has no rest,
+                // it doesn't constrain the type (absent). But if ANY member requires
+                // it, the combined signature requires it.
             }
 
             // Intersect all param types at this position
@@ -1512,7 +1524,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         }
-
         // Phase 3: Result aggregation.
         // When we have a combined signature and some members fail on arity
         // (because they have fewer params than the combined requires),
@@ -1546,6 +1557,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
                 return CallResult::Success(combined.return_type);
+            }
+
+            // When all per-member resolutions fail (with any combination of arity
+            // or type mismatches), validate against the combined (intersected)
+            // parameter types instead. TSC intersects parameter types across union
+            // members, so an arg like `{x: 0, y: 0}` satisfies `{x: number} &
+            // {y: number}` even though it fails excess-property checks against each
+            // individual member type. Individual members may also fail on arity when
+            // they have fewer params than the combined signature allows.
+            if !failures.is_empty() && return_types.is_empty() {
+                let mut all_pass = true;
+                for (i, &arg_type) in arg_types.iter().enumerate() {
+                    if i < combined.param_types.len() {
+                        let param_type = combined.param_types[i];
+                        if !self.checker.is_assignable_to(arg_type, param_type) {
+                            all_pass = false;
+                            break;
+                        }
+                    }
+                }
+                if all_pass {
+                    return CallResult::Success(combined.return_type);
+                }
             }
         }
 
