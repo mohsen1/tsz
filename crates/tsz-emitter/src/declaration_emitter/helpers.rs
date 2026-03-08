@@ -4317,6 +4317,10 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if has_initializer
+                && self.function_initializer_has_inline_parameter_comments(initializer)
+                && self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
+            {
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
@@ -4410,6 +4414,141 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": any");
             }
         }
+    }
+
+    fn emit_function_initializer_type_annotation(
+        &mut self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        self.write(": ");
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(") => ");
+
+        if func.type_annotation.is_some() {
+            self.emit_type(func.type_annotation);
+            return true;
+        }
+
+        if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            let func_type_id = cache
+                .node_types
+                .get(&initializer.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) =
+                    tsz_solver::type_queries::get_return_type(*interner, func_type_id)
+            {
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func.body.is_some()
+                    && self.body_returns_void(func.body)
+                {
+                    self.write("void");
+                } else {
+                    self.write(&self.print_type_id(return_type_id));
+                }
+                return true;
+            }
+        }
+
+        if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write("void");
+        } else {
+            self.write("any");
+        }
+
+        true
+    }
+
+    fn function_initializer_has_inline_parameter_comments(&self, initializer: NodeIndex) -> bool {
+        if self.remove_comments {
+            return false;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        func.parameters.nodes.iter().any(|&param_idx| {
+            self.arena.get(param_idx).is_some_and(|param_node| {
+                self.parameter_has_leading_inline_block_comment(param_node.pos)
+            })
+        })
+    }
+
+    fn parameter_has_leading_inline_block_comment(&self, param_pos: u32) -> bool {
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = param_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+
+        for comment in &self.all_comments {
+            if comment.end > actual_start {
+                break;
+            }
+            let c_pos = comment.pos as usize;
+            let c_end = comment.end as usize;
+            let ct = &text[c_pos..c_end];
+            if !ct.starts_with("/*") {
+                continue;
+            }
+
+            let mut p = c_pos;
+            let mut leading = true;
+            while p > 0 {
+                p -= 1;
+                match bytes[p] {
+                    b' ' | b'\t' | b'\r' | b'\n' => continue,
+                    b'(' | b',' | b'[' | b'<' => break,
+                    b'/' if p > 0 && bytes[p - 1] == b'*' => break,
+                    _ => {
+                        leading = false;
+                        break;
+                    }
+                }
+            }
+
+            if leading {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if a type should be printed with a `typeof` prefix because the
