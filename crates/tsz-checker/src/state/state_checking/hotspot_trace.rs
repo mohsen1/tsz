@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn trace_expression_hotspots_with_progress<F: FnMut(&str)>(
+    pub(crate) fn trace_expression_hotspots_with_progress<F: FnMut(&str)>(
         &mut self,
         expr_idx: NodeIndex,
         prefix: &str,

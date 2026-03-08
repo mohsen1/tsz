@@ -336,6 +336,14 @@ impl<'a> CheckerState<'a> {
                                 &mut statement_report,
                             );
                         }
+                        syntax_kind_ext::CLASS_DECLARATION => {
+                            let mut statement_report =
+                                |phase: &str| report(&format!("{statement_phase}::{phase}:start"));
+                            self.check_class_declaration_with_progress(
+                                stmt_idx,
+                                &mut statement_report,
+                            );
+                        }
                         _ => self.check_statement(stmt_idx),
                     }
                     stats
@@ -1753,6 +1761,104 @@ export class Box {
                     == "check_top_level_statements::statement_0::kind_279::check_export_clause_statement::class::implements_clause_checks:start"
             }),
             "expected implements-clause progress marker, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_file_with_progress_traces_direct_class_subphases() {
+        let source = r#"
+class IteratorBox<T> {
+  readonly value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  get current(): T {
+    return this.value;
+  }
+}
+"#;
+
+        let mut parser = ParserState::new("class.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "class.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.check_source_file_with_progress(root, |phase| phases.push(phase.to_string()));
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase == "check_top_level_statements::statement_0::kind_264::check_class_members:start"
+            }),
+            "expected direct class tracing to include class member checks, got: {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase == "check_top_level_statements::statement_0::kind_264::class_instance_type:start"
+            }),
+            "expected direct class tracing to include class instance type resolution, got: {phases:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_file_with_progress_traces_class_method_return_expression_subphases() {
+        let source = r#"
+type Mapper<T> = {
+  map<U>(transform: (value: T) => U): readonly U[];
+};
+
+class IteratorBox<T> {
+  constructor(private readonly values: Mapper<T>) {}
+
+  map<U>(transform: (value: T) => U): readonly U[] {
+    return this.values.map(transform);
+  }
+}
+"#;
+
+        let mut parser = ParserState::new("class-return.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "class-return.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.check_source_file_with_progress(root, |phase| phases.push(phase.to_string()));
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase == "check_top_level_statements::statement_1::kind_264::check_class_members::member_1::kind_175::body::statement_0::kind_254::return_expression::call_callee_receiver_resolve_property_access_with_env:start"
+            }),
+            "expected class method return tracing to include receiver property lookup, got: {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase == "check_top_level_statements::statement_1::kind_264::check_class_members::member_1::kind_175::body::statement_0::kind_254::return_expression::call_callee_get_type_of_node:start"
+            }),
+            "expected class method return tracing to include callee typing, got: {phases:?}"
         );
     }
 

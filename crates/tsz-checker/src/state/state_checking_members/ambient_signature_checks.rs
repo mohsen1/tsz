@@ -827,6 +827,25 @@ impl<'a> CheckerState<'a> {
             report(&statement_phase);
 
             if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                && let Some(ret_stmt) = self.ctx.arena.get_return_statement(stmt_node)
+                && ret_stmt.expression.is_some()
+            {
+                let mut hotspot_report = |phase: &str| {
+                    if let Some(stripped) = phase.strip_suffix(":start") {
+                        report(stripped);
+                    } else {
+                        report(phase);
+                    }
+                };
+                self.trace_expression_hotspots_with_progress(
+                    ret_stmt.expression,
+                    &format!("{statement_phase}::return_expression"),
+                    &mut hotspot_report,
+                    0,
+                );
+                self.check_statement(stmt_idx);
+            } else if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
                 && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node)
             {

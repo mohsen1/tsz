@@ -416,7 +416,7 @@ run_sample() {
     set -e
 
     local timed_out=false
-    if grep -q "time: command terminated abnormally" "$log_path"; then
+    if [ "$exit_code" -eq 142 ]; then
         timed_out=true
     fi
 
