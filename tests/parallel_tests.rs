@@ -301,6 +301,28 @@ fn test_merged_program_residency_stats_track_unique_file_arenas() {
     assert!(stats.symbol_arena_count >= 2);
     assert!(stats.declaration_arena_bucket_count >= 2);
     assert!(stats.declaration_arena_mapping_count >= 2);
+    assert_eq!(stats.global_symbol_count, program.symbols.len());
+    assert_eq!(
+        stats.file_local_symbol_count,
+        program
+            .file_locals
+            .iter()
+            .map(|locals| locals.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.module_export_symbol_count,
+        program
+            .module_exports
+            .values()
+            .map(|exports| exports.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.cross_file_node_symbol_arena_count,
+        program.cross_file_node_symbols.len()
+    );
+    assert_eq!(stats.lib_symbol_count, program.lib_symbol_ids.len());
 }
 
 #[test]
@@ -322,6 +344,28 @@ fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
     );
     assert!(stats.symbol_arena_count >= 2);
     assert!(stats.declaration_arena_mapping_count >= 2);
+    assert_eq!(stats.global_symbol_count, program.symbols.len());
+    assert_eq!(
+        stats.file_local_symbol_count,
+        program
+            .file_locals
+            .iter()
+            .map(|locals| locals.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.module_export_symbol_count,
+        program
+            .module_exports
+            .values()
+            .map(|exports| exports.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.cross_file_node_symbol_arena_count,
+        program.cross_file_node_symbols.len()
+    );
+    assert_eq!(stats.lib_symbol_count, program.lib_symbol_ids.len());
 }
 
 #[test]
@@ -673,6 +717,68 @@ fn test_check_with_stats() {
     assert_eq!(stats.file_count, 3);
     assert_eq!(stats.function_count, 3);
     assert_eq!(result.file_results.len(), 3);
+    assert_eq!(stats.program_residency, program.residency_stats());
+    assert_eq!(stats.program_residency.file_count, 3);
+    assert!(stats.program_residency.global_symbol_count >= 3);
+}
+
+#[test]
+fn test_check_files_with_stats_matches_parallel_check() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "const x: number = \"oops\";".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export function ok() { return 1; }".to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let options = crate::checker::context::CheckerOptions::default();
+    let expected = check_files_parallel(&program, &options, &[]);
+    let (actual, stats) = check_files_with_stats(&program, &options, &[]);
+
+    assert_eq!(actual.file_results.len(), expected.file_results.len());
+    assert_eq!(actual.diagnostic_count, expected.diagnostic_count);
+    assert_eq!(stats.file_count, expected.file_results.len());
+    assert_eq!(stats.function_count, 0);
+    assert_eq!(stats.diagnostic_count, expected.diagnostic_count);
+    assert_eq!(stats.program_residency, program.residency_stats());
+    assert!(stats.program_residency.unique_arena_count > 0);
+
+    for (actual_file, expected_file) in actual.file_results.iter().zip(&expected.file_results) {
+        assert_eq!(actual_file.file_name, expected_file.file_name);
+
+        let actual_diags: Vec<_> = actual_file
+            .diagnostics
+            .iter()
+            .map(|diag| {
+                (
+                    diag.code,
+                    diag.start,
+                    diag.length,
+                    diag.message_text.clone(),
+                )
+            })
+            .collect();
+        let expected_diags: Vec<_> = expected_file
+            .diagnostics
+            .iter()
+            .map(|diag| {
+                (
+                    diag.code,
+                    diag.start,
+                    diag.length,
+                    diag.message_text.clone(),
+                )
+            })
+            .collect();
+
+        assert_eq!(actual_diags, expected_diags);
+    }
 }
 
 #[test]

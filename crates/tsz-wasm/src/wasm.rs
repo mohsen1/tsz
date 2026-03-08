@@ -40,7 +40,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::panic;
-use tsz::parallel::{BindStats, CheckStats, ParallelStats, compile_files};
+use tsz::parallel::{
+    BindStats, CheckStats, MergedProgramResidencyStats, ParallelStats, compile_files,
+};
 use tsz_solver::TypeInterner;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
@@ -140,6 +142,7 @@ pub struct WasmCheckStats {
     pub file_count: usize,
     pub function_count: usize,
     pub diagnostic_count: usize,
+    pub program_residency: MergedProgramResidencyStats,
 }
 
 impl From<CheckStats> for WasmCheckStats {
@@ -148,6 +151,7 @@ impl From<CheckStats> for WasmCheckStats {
             file_count: stats.file_count,
             function_count: stats.function_count,
             diagnostic_count: stats.diagnostic_count,
+            program_residency: stats.program_residency,
         }
     }
 }
@@ -327,6 +331,7 @@ impl WasmParallelChecker {
                         file_count: 0,
                         function_count: 0,
                         diagnostic_count: 1,
+                        program_residency: MergedProgramResidencyStats::default(),
                     },
                     diagnostics: vec![WasmDiagnostic {
                         file: "internal".to_string(),

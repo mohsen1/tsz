@@ -42,7 +42,7 @@ use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]
 use std::cell::RefCell;
-use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
+use tsz::parallel::{self, BindResult, BoundFile, CheckStats, MergedProgram};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::{NodeAccess, NodeArena};
@@ -94,6 +94,8 @@ pub struct CompilationResult {
     pub files_read: Vec<PathBuf>,
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
+    /// Optional residency-oriented checking stats for diagnostics reporting.
+    pub check_stats: Option<CheckStats>,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -769,6 +771,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            check_stats: None,
         });
     }
 
@@ -796,6 +799,7 @@ fn compile_inner(
                     emitted_files: Vec::new(),
                     files_read: Vec::new(),
                     file_infos: Vec::new(),
+                    check_stats: None,
                 });
             }
             return Err(e);
@@ -844,6 +848,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            check_stats: None,
         });
     }
 
@@ -928,6 +933,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            check_stats: None,
         });
     }
 
@@ -1287,11 +1293,19 @@ fn compile_inner(
         );
     }
 
+    let check_stats = Some(CheckStats {
+        file_count: program.files.len(),
+        function_count: 0,
+        diagnostic_count: diagnostics.len(),
+        program_residency: program.residency_stats(),
+    });
+
     Ok(CompilationResult {
         diagnostics,
         emitted_files,
         files_read,
         file_infos,
+        check_stats,
     })
 }
 
@@ -1304,6 +1318,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         emitted_files: Vec::new(),
         files_read: Vec::new(),
         file_infos: Vec::new(),
+        check_stats: None,
     }
 }
 

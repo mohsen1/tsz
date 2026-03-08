@@ -45,6 +45,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -784,7 +785,7 @@ pub struct MergedProgram {
 /// These numbers give a stable baseline for large-repo performance work without
 /// pretending to be exact heap accounting. The important question is how many
 /// arenas and declaration mappings the current pipeline retains after merge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct MergedProgramResidencyStats {
     /// Number of user files in the merged program.
     pub file_count: usize,
@@ -798,6 +799,16 @@ pub struct MergedProgramResidencyStats {
     pub declaration_arena_bucket_count: usize,
     /// Total number of declaration -> arena edges across all buckets.
     pub declaration_arena_mapping_count: usize,
+    /// Number of symbols retained in the merged global symbol arena.
+    pub global_symbol_count: usize,
+    /// Total entries retained across per-file local symbol tables.
+    pub file_local_symbol_count: usize,
+    /// Total entries retained across all module export tables.
+    pub module_export_symbol_count: usize,
+    /// Number of arena-scoped cross-file node-symbol maps retained after merge.
+    pub cross_file_node_symbol_arena_count: usize,
+    /// Number of remapped lib symbols retained in the merged symbol space.
+    pub lib_symbol_count: usize,
 }
 
 impl MergedProgram {
@@ -829,6 +840,11 @@ impl MergedProgram {
                 .values()
                 .map(|arenas| arenas.len())
                 .sum(),
+            global_symbol_count: self.symbols.len(),
+            file_local_symbol_count: self.file_locals.iter().map(SymbolTable::len).sum(),
+            module_export_symbol_count: self.module_exports.values().map(SymbolTable::len).sum(),
+            cross_file_node_symbol_arena_count: self.cross_file_node_symbols.len(),
+            lib_symbol_count: self.lib_symbol_ids.len(),
         }
     }
 }
@@ -2413,13 +2429,18 @@ pub fn create_binder_from_bound_file(
 /// Check function bodies with statistics
 pub fn check_functions_with_stats(program: &MergedProgram) -> (CheckResult, CheckStats) {
     let result = check_functions_parallel(program);
+    let stats = build_check_stats(program, &result);
+    (result, stats)
+}
 
-    let stats = CheckStats {
-        file_count: result.file_results.len(),
-        function_count: result.function_count,
-        diagnostic_count: result.diagnostic_count,
-    };
-
+/// Type check full source files in parallel and return residency-oriented stats.
+pub fn check_files_with_stats(
+    program: &MergedProgram,
+    checker_options: &CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> (CheckResult, CheckStats) {
+    let result = check_files_parallel(program, checker_options, lib_files);
+    let stats = build_check_stats(program, &result);
     (result, stats)
 }
 
@@ -2432,6 +2453,17 @@ pub struct CheckStats {
     pub function_count: usize,
     /// Number of diagnostics produced
     pub diagnostic_count: usize,
+    /// Residency-oriented counters for the merged program being checked.
+    pub program_residency: MergedProgramResidencyStats,
+}
+
+fn build_check_stats(program: &MergedProgram, result: &CheckResult) -> CheckStats {
+    CheckStats {
+        file_count: result.file_results.len(),
+        function_count: result.function_count,
+        diagnostic_count: result.diagnostic_count,
+        program_residency: program.residency_stats(),
+    }
 }
 
 /// Parse files and collect statistics
