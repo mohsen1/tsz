@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -20,7 +20,19 @@ fn main() -> Result<()> {
     tsz_cli::tracing_config::init_tracing();
 
     let preprocessed = preprocess_args(std::env::args_os().collect());
-    let args = CliArgs::parse_from(preprocessed);
+
+    // Check for TS6369: --build must be the first argument
+    if let Some(msg) = check_build_position(&preprocessed) {
+        eprintln!("{msg}");
+        std::process::exit(1);
+    }
+
+    let args = match CliArgs::try_parse_from(&preprocessed) {
+        Ok(args) => args,
+        Err(e) => {
+            return handle_clap_error(e, &preprocessed);
+        }
+    };
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
 
     // Run on a larger stack for project-sized and multi-file workflows.
@@ -280,24 +292,24 @@ fn run_batch_mode() -> Result<()> {
 /// Preprocess command-line arguments for tsc compatibility.
 ///
 /// Handles:
-/// - `-v` → `-V` conversion (tsc uses lowercase `-v` for version; clap uses `-V`)
 /// - `@file` response file expansion (tsc reads args from response files)
+/// - Build mode flag remapping: when `--build`/`-b` is the first argument,
+///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
+/// - Outside build mode: `-v` → `-V` conversion (tsc uses lowercase `-v` for version; clap uses `-V`)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
-    let mut result = Vec::with_capacity(args.len());
+    // First pass: expand response files and collect all args
+    let mut expanded = Vec::with_capacity(args.len());
 
     for (i, arg) in args.iter().enumerate() {
         let arg_str = arg.to_string_lossy();
 
         if i == 0 {
             // Always keep the program name as-is
-            result.push(arg.clone());
+            expanded.push(arg.clone());
             continue;
         }
 
-        if arg_str == "-v" {
-            // tsc uses -v for version; clap uses -V
-            result.push(OsString::from("-V"));
-        } else if arg_str.starts_with('@') && arg_str.len() > 1 {
+        if arg_str.starts_with('@') && arg_str.len() > 1 {
             // Response file: @path reads arguments from file
             let path = &arg_str[1..];
             match std::fs::read_to_string(path) {
@@ -309,7 +321,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                             // Split on whitespace, respecting quoted strings
                             // (matching tsc behavior for response files)
                             for part in split_response_line(trimmed) {
-                                result.push(OsString::from(part));
+                                expanded.push(OsString::from(part));
                             }
                         }
                     }
@@ -317,9 +329,57 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 Err(_) => {
                     // If the file can't be read, pass the argument through
                     // (clap will report an unknown argument error)
-                    result.push(arg.clone());
+                    expanded.push(arg.clone());
                 }
             }
+        } else {
+            expanded.push(arg.clone());
+        }
+    }
+
+    // Second pass: detect build mode and remap flags
+    let is_build_mode = expanded
+        .get(1)
+        .map(|a| {
+            let s = a.to_string_lossy();
+            s == "--build" || s == "-b"
+        })
+        .unwrap_or(false);
+
+    let mut result = Vec::with_capacity(expanded.len());
+    for (i, arg) in expanded.iter().enumerate() {
+        if i == 0 {
+            result.push(arg.clone());
+            continue;
+        }
+
+        let arg_str = arg.to_string_lossy();
+
+        if is_build_mode && i > 1 {
+            // In build mode, remap short flags:
+            //   -v → --build-verbose (not --version)
+            //   -d → --dry           (not --declaration)
+            //   -f → --force
+            match arg_str.as_ref() {
+                "-v" => {
+                    result.push(OsString::from("--build-verbose"));
+                    continue;
+                }
+                "-d" => {
+                    result.push(OsString::from("--dry"));
+                    continue;
+                }
+                "-f" => {
+                    result.push(OsString::from("--force"));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        if !is_build_mode && arg_str == "-v" {
+            // Outside build mode: tsc uses -v for version; clap uses -V
+            result.push(OsString::from("-V"));
         } else {
             result.push(arg.clone());
         }
@@ -369,6 +429,309 @@ fn split_response_line(line: &str) -> Vec<String> {
     }
 
     args
+}
+
+/// Check that --build/-b is the first argument (TS6369).
+/// Returns an error message if --build/-b appears but is not first.
+fn check_build_position(args: &[OsString]) -> Option<String> {
+    // Skip program name (index 0)
+    let mut found_build_pos: Option<usize> = None;
+    let mut first_non_program = true;
+
+    for (i, arg) in args.iter().enumerate().skip(1) {
+        let s = arg.to_string_lossy();
+        if s == "--build" || s == "-b" {
+            if !first_non_program {
+                found_build_pos = Some(i);
+            }
+            break;
+        }
+        first_non_program = false;
+    }
+
+    found_build_pos.map(|_| {
+        "error TS6369: Option '--build' must be the first command line argument.\n".to_string()
+    })
+}
+
+/// Handle a clap parsing error by reformatting it as a tsc-style diagnostic.
+fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
+    use clap::error::ErrorKind;
+
+    match err.kind() {
+        ErrorKind::UnknownArgument => {
+            // Extract the unknown flag from the error info
+            if let Some(flag) = extract_unknown_flag_from_args(args) {
+                // Try to find a close match for TS5025
+                if let Some(suggestion) = find_closest_option(&flag) {
+                    eprintln!(
+                        "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion}'?\n"
+                    );
+                } else {
+                    eprintln!("error TS5023: Unknown compiler option '{flag}'.\n");
+                }
+            } else {
+                // Fallback: just print TS5023 with whatever info we have
+                eprintln!("error TS5023: Unknown compiler option.\n");
+            }
+            std::process::exit(1);
+        }
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+            // For help and version, let clap handle it normally
+            err.exit();
+        }
+        _ => {
+            // For other clap errors (missing value, etc.), still use exit code 1
+            // and tsc-style formatting where possible
+            let msg = err.to_string();
+            // Strip clap's formatting prefix
+            let msg = msg
+                .lines()
+                .next()
+                .unwrap_or(&msg)
+                .trim_start_matches("error: ");
+            eprintln!("error TS5023: {msg}\n");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Extract the first unknown flag from the preprocessed args by trying clap parsing.
+/// Walks args looking for anything starting with `-` that is not a known flag.
+fn extract_unknown_flag_from_args(args: &[OsString]) -> Option<String> {
+    // Collect all known options from clap's command definition
+    let cmd = CliArgs::command();
+    let mut known: Vec<String> = Vec::new();
+    for a in cmd.get_arguments() {
+        if let Some(long) = a.get_long() {
+            known.push(format!("--{long}"));
+        }
+        // get_visible_aliases returns individual aliases
+        for alias in a.get_visible_aliases().unwrap_or_default() {
+            known.push(format!("--{alias}"));
+        }
+        if let Some(short) = a.get_short() {
+            known.push(format!("-{short}"));
+        }
+    }
+    // Also add -V (clap's version flag after our -v remapping)
+    known.push("-V".to_string());
+    known.push("--version".to_string());
+    known.push("--help".to_string());
+    known.push("-h".to_string());
+
+    // Walk preprocessed args (skip program name) to find the first unknown flag
+    for arg in args.iter().skip(1) {
+        let s = arg.to_string_lossy();
+        if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 {
+            // Short flag like -x
+            if !known.iter().any(|k| k == s.as_ref()) {
+                return Some(s.into_owned());
+            }
+        } else if s.starts_with("--") {
+            // Long flag like --badFlag (may have =value)
+            let flag_part = s.split('=').next().unwrap_or(&s);
+            if !known.iter().any(|k| k == flag_part) {
+                return Some(flag_part.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// All known tsc compiler option long names (for edit-distance matching).
+/// These are the canonical --camelCase forms that tsc recognizes.
+const KNOWN_TSC_OPTIONS: &[&str] = &[
+    "--all",
+    "--allowArbitraryExtensions",
+    "--allowImportingTsExtensions",
+    "--allowJs",
+    "--allowSyntheticDefaultImports",
+    "--allowUmdGlobalAccess",
+    "--allowUnreachableCode",
+    "--allowUnusedLabels",
+    "--alwaysStrict",
+    "--assumeChangesOnlyAffectDirectDependencies",
+    "--baseUrl",
+    "--build",
+    "--charset",
+    "--checkJs",
+    "--clean",
+    "--composite",
+    "--customConditions",
+    "--declaration",
+    "--declarationDir",
+    "--declarationMap",
+    "--diagnostics",
+    "--disableReferencedProjectLoad",
+    "--disableSizeLimit",
+    "--disableSolutionSearching",
+    "--disableSourceOfProjectReferenceRedirect",
+    "--downlevelIteration",
+    "--dry",
+    "--emitBOM",
+    "--emitDeclarationOnly",
+    "--emitDecoratorMetadata",
+    "--erasableSyntaxOnly",
+    "--esModuleInterop",
+    "--exactOptionalPropertyTypes",
+    "--excludeDirectories",
+    "--excludeFiles",
+    "--experimentalDecorators",
+    "--explainFiles",
+    "--extendedDiagnostics",
+    "--fallbackPolling",
+    "--force",
+    "--forceConsistentCasingInFileNames",
+    "--generateCpuProfile",
+    "--generateTrace",
+    "--help",
+    "--ignoreConfig",
+    "--importHelpers",
+    "--importsNotUsedAsValues",
+    "--incremental",
+    "--init",
+    "--inlineSourceMap",
+    "--inlineSources",
+    "--isolatedDeclarations",
+    "--isolatedModules",
+    "--jsx",
+    "--jsxFactory",
+    "--jsxFragmentFactory",
+    "--jsxImportSource",
+    "--keyofStringsOnly",
+    "--lib",
+    "--libReplacement",
+    "--listEmittedFiles",
+    "--listFiles",
+    "--listFilesOnly",
+    "--locale",
+    "--mapRoot",
+    "--maxNodeModuleJsDepth",
+    "--module",
+    "--moduleDetection",
+    "--moduleResolution",
+    "--moduleSuffixes",
+    "--newLine",
+    "--noCheck",
+    "--noEmit",
+    "--noEmitHelpers",
+    "--noEmitOnError",
+    "--noErrorTruncation",
+    "--noFallthroughCasesInSwitch",
+    "--noImplicitAny",
+    "--noImplicitOverride",
+    "--noImplicitReturns",
+    "--noImplicitThis",
+    "--noImplicitUseStrict",
+    "--noLib",
+    "--noPropertyAccessFromIndexSignature",
+    "--noResolve",
+    "--noStrictGenericChecks",
+    "--noUncheckedIndexedAccess",
+    "--noUncheckedSideEffectImports",
+    "--noUnusedLocals",
+    "--noUnusedParameters",
+    "--out",
+    "--outDir",
+    "--outFile",
+    "--paths",
+    "--plugins",
+    "--preserveConstEnums",
+    "--preserveSymlinks",
+    "--preserveValueImports",
+    "--preserveWatchOutput",
+    "--pretty",
+    "--project",
+    "--reactNamespace",
+    "--removeComments",
+    "--resolveJsonModule",
+    "--resolvePackageJsonExports",
+    "--resolvePackageJsonImports",
+    "--rewriteRelativeImportExtensions",
+    "--rootDir",
+    "--rootDirs",
+    "--showConfig",
+    "--skipDefaultLibCheck",
+    "--skipLibCheck",
+    "--sourceMap",
+    "--sourceRoot",
+    "--stopBuildOnErrors",
+    "--strict",
+    "--strictBindCallApply",
+    "--strictBuiltinIteratorReturn",
+    "--strictFunctionTypes",
+    "--strictNullChecks",
+    "--strictPropertyInitialization",
+    "--strict",
+    "--stripInternal",
+    "--suppressExcessPropertyErrors",
+    "--suppressImplicitAnyIndexErrors",
+    "--synchronousWatchDirectory",
+    "--target",
+    "--traceResolution",
+    "--tsBuildInfoFile",
+    "--typeRoots",
+    "--types",
+    "--useDefineForClassFields",
+    "--useUnknownInCatchVariables",
+    "--verbatimModuleSyntax",
+    "--version",
+    "--watch",
+    "--watchDirectory",
+    "--watchFile",
+];
+
+/// Compute Levenshtein edit distance between two strings (case-insensitive).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+    let a_chars: Vec<char> = a_lower.chars().collect();
+    let b_chars: Vec<char> = b_lower.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 0..=m {
+        dp[i][0] = i;
+    }
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[m][n]
+}
+
+/// Find the closest known tsc option to the given unknown flag.
+/// Returns `Some(suggestion)` if a reasonably close match exists (edit distance <= 3).
+fn find_closest_option(unknown: &str) -> Option<&'static str> {
+    let mut best: Option<(&str, usize)> = None;
+    for &known in KNOWN_TSC_OPTIONS {
+        let dist = edit_distance(unknown, known);
+        if let Some((_, best_dist)) = best {
+            if dist < best_dist {
+                best = Some((known, dist));
+            }
+        } else {
+            best = Some((known, dist));
+        }
+    }
+
+    // Only suggest if the distance is small enough to be a plausible typo.
+    // tsc uses a threshold roughly proportional to the option name length;
+    // we use <=3 as a pragmatic cutoff.
+    best.and_then(|(name, dist)| if dist <= 3 { Some(name) } else { None })
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
