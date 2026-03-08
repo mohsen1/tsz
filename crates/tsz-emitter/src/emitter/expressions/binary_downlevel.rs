@@ -22,12 +22,7 @@ impl<'a> Printer<'a> {
         let left = self.unwrap_type_assertion_paren(binary.left);
         let right = self.unwrap_type_assertion_paren(binary.right);
         if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
-            self.emit(binary.left);
-            self.write(" = Math.pow(");
-            self.emit(left);
-            self.write(", ");
-            self.emit(right);
-            self.write(")");
+            self.emit_exponentiation_assignment(binary.left, left, right);
         } else {
             self.write("Math.pow(");
             self.emit(left);
@@ -35,6 +30,134 @@ impl<'a> Printer<'a> {
             self.emit(right);
             self.write(")");
         }
+    }
+
+    /// Emit `lhs **= rhs` as `lhs = Math.pow(lhs, rhs)` with temp variables
+    /// for complex LHS expressions to avoid double-evaluation of side effects.
+    ///
+    /// tsc patterns:
+    /// - `x **= y` → `x = Math.pow(x, y)`
+    /// - `a.b **= y` → `(_a = a).b = Math.pow(_a.b, y)` (temp for base if complex)
+    /// - `a[i] **= y` → `(_a = a)[_b = i] = Math.pow(_a[_b], y)` (temps for base + index, always)
+    ///
+    /// tsc allocates temps bottom-up (inner `**=` first, then outer) because it
+    /// uses a recursive transformer. We match this by emitting the RHS into a
+    /// buffer first, which allocates inner temps, then allocating our own temps.
+    fn emit_exponentiation_assignment(
+        &mut self,
+        original_left: NodeIndex,
+        unwrapped_left: NodeIndex,
+        right: NodeIndex,
+    ) {
+        let Some(left_node) = self.arena.get(original_left) else {
+            self.emit(original_left);
+            self.write(" = Math.pow(");
+            self.emit(unwrapped_left);
+            self.write(", ");
+            self.emit(right);
+            self.write(")");
+            return;
+        };
+
+        let is_element_access = left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        let is_property_access = left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+
+        if !is_element_access && !is_property_access {
+            // Simple identifier: `x **= y` → `x = Math.pow(x, y)`
+            self.emit(original_left);
+            self.write(" = Math.pow(");
+            self.emit(unwrapped_left);
+            self.write(", ");
+            self.emit(right);
+            self.write(")");
+            return;
+        }
+
+        let Some(access) = self.arena.get_access_expr(left_node) else {
+            self.emit(original_left);
+            self.write(" = Math.pow(");
+            self.emit(unwrapped_left);
+            self.write(", ");
+            self.emit(right);
+            self.write(")");
+            return;
+        };
+
+        let base_is_simple = self.is_simple_logical_assignment_base(access.expression);
+        let needs_base_temp = if is_element_access {
+            // Element access: tsc always temps both base and index
+            true
+        } else {
+            // Property access: temp only for complex base
+            !base_is_simple
+        };
+
+        if !needs_base_temp {
+            // Simple property access: `obj.prop **= y` → `obj.prop = Math.pow(obj.prop, y)`
+            self.emit(original_left);
+            self.write(" = Math.pow(");
+            self.emit(unwrapped_left);
+            self.write(", ");
+            self.emit(right);
+            self.write(")");
+            return;
+        }
+
+        // Emit the RHS into a buffer first, so inner `**=` expressions allocate
+        // their temps before we allocate ours (matching tsc's bottom-up order).
+        let rhs_text = self.capture_emit(right);
+
+        if is_property_access {
+            // `expr.prop **= y` → `(_a = expr).prop = Math.pow(_a.prop, <rhs>)`
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(").");
+            self.emit(access.name_or_argument);
+            self.write(" = Math.pow(");
+            self.write(&base_temp);
+            self.write(".");
+            self.emit(access.name_or_argument);
+            self.write(", ");
+            self.write(&rhs_text);
+            self.write(")");
+        } else {
+            // Element access: `a[i] **= y` → `(_a = a)[_b = i] = Math.pow(_a[_b], <rhs>)`
+            let base_temp = self.make_unique_name_hoisted();
+            let index_temp = self.make_unique_name_hoisted();
+
+            // LHS: (_a = expr)[_b = idx]
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")[");
+            self.write(&index_temp);
+            self.write(" = ");
+            self.emit(access.name_or_argument);
+            self.write("]");
+
+            // = Math.pow(_a[_b], <rhs>)
+            self.write(" = Math.pow(");
+            self.write(&base_temp);
+            self.write("[");
+            self.write(&index_temp);
+            self.write("], ");
+            self.write(&rhs_text);
+            self.write(")");
+        }
+    }
+
+    /// Emit a node into a temporary buffer string, then rewind the writer.
+    /// This allows pre-emitting the RHS to allocate inner temp names first.
+    fn capture_emit(&mut self, node: NodeIndex) -> String {
+        let start = self.writer.len();
+        self.emit(node);
+        let output = self.writer.get_output()[start..].to_string();
+        self.writer.truncate(start);
+        output
     }
 
     /// Unwrap `ParenthesizedExpression` wrapping type assertions for `Math.pow()` args.
