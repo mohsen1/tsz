@@ -16,8 +16,8 @@
 
 use crate::intern::TypeInterner;
 use crate::narrowing::{
-    NarrowingContext, TypeGuard, TypeofKind, find_discriminants, narrow_by_discriminant,
-    narrow_by_typeof,
+    GuardSense, NarrowingContext, TypeGuard, TypeofKind, find_discriminants,
+    narrow_by_discriminant, narrow_by_typeof,
 };
 use crate::types::{PropertyInfo, TypeId};
 
@@ -773,7 +773,7 @@ fn typeof_negation_excludes_string() {
     // string | number, typeof !== "string" -> number
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let guard = TypeGuard::Typeof(TypeofKind::String);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, TypeId::NUMBER);
 }
 
@@ -784,7 +784,7 @@ fn typeof_negation_excludes_number() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
     let guard = TypeGuard::Typeof(TypeofKind::Number);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     let expected = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
     assert_eq!(narrowed, expected);
 }
@@ -796,7 +796,7 @@ fn typeof_negation_excludes_boolean() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
     let guard = TypeGuard::Typeof(TypeofKind::Boolean);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, TypeId::STRING);
 }
 
@@ -808,7 +808,7 @@ fn typeof_negation_no_match_returns_all() {
     // string | number, typeof !== "boolean" -> string | number (no boolean to exclude)
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let guard = TypeGuard::Typeof(TypeofKind::Boolean);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, union);
 }
 
@@ -910,7 +910,7 @@ fn truthiness_via_type_guard() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
     let guard = TypeGuard::Truthy;
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     assert_eq!(narrowed, TypeId::STRING);
 }
 
@@ -944,7 +944,7 @@ fn equality_narrows_to_literal() {
 
     // x === "foo"
     let guard = TypeGuard::LiteralEquality(foo);
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     assert_eq!(narrowed, foo);
 }
 
@@ -960,7 +960,7 @@ fn equality_excludes_literal() {
 
     // x !== "foo"
     let guard = TypeGuard::LiteralEquality(foo);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     let expected = interner.union(vec![bar, baz]);
     assert_eq!(narrowed, expected);
 }
@@ -973,7 +973,7 @@ fn equality_narrows_null() {
     // string | null, x === null
     let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
     let guard = TypeGuard::LiteralEquality(TypeId::NULL);
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     assert_eq!(narrowed, TypeId::NULL);
 }
 
@@ -985,7 +985,7 @@ fn equality_excludes_null() {
     // string | null, x !== null -> string
     let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
     let guard = TypeGuard::LiteralEquality(TypeId::NULL);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, TypeId::STRING);
 }
 
@@ -997,7 +997,7 @@ fn equality_narrows_undefined() {
     // number | undefined, x === undefined
     let union = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
     let guard = TypeGuard::LiteralEquality(TypeId::UNDEFINED);
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     assert_eq!(narrowed, TypeId::UNDEFINED);
 }
 
@@ -1012,7 +1012,7 @@ fn nullish_equality_narrows_to_nullish() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
     let guard = TypeGuard::NullishEquality;
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     let expected = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
     assert_eq!(narrowed, expected);
 }
@@ -1024,7 +1024,7 @@ fn nullish_inequality_narrows_to_non_nullish() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
     let guard = TypeGuard::NullishEquality;
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, TypeId::STRING);
 }
 
@@ -1094,7 +1094,7 @@ fn type_guard_discriminant_positive() {
         property_path: vec![kind],
         value_type: kind_a,
     };
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
     assert_eq!(narrowed, member1);
 }
 
@@ -1115,7 +1115,7 @@ fn type_guard_discriminant_negative() {
         property_path: vec![kind],
         value_type: kind_a,
     };
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed, member2);
 }
 

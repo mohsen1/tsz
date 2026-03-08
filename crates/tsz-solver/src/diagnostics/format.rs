@@ -13,6 +13,7 @@ use crate::types::{
     TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::trace;
 use tsz_binder::SymbolId;
@@ -144,18 +145,18 @@ impl<'a> TypeFormatter<'a> {
             if !template.contains(&placeholder) {
                 continue;
             }
-            let replacement = match arg {
+            let replacement: Cow<'_, str> = match arg {
                 DiagnosticArg::Type(type_id) => self.format(*type_id),
                 DiagnosticArg::Symbol(sym_id) => {
                     if let Some(name) = self.format_symbol_name(*sym_id) {
-                        name
+                        Cow::Owned(name)
                     } else {
-                        format!("Symbol({})", sym_id.0)
+                        Cow::Owned(format!("Symbol({})", sym_id.0))
                     }
                 }
-                DiagnosticArg::Atom(atom) => self.atom(*atom).to_string(),
-                DiagnosticArg::String(s) => s.to_string(),
-                DiagnosticArg::Number(n) => n.to_string(),
+                DiagnosticArg::Atom(atom) => Cow::Owned(self.atom(*atom).to_string()),
+                DiagnosticArg::String(s) => Cow::Owned(s.to_string()),
+                DiagnosticArg::Number(n) => Cow::Owned(n.to_string()),
             };
             result = result.replace(&placeholder, &replacement);
         }
@@ -164,33 +165,36 @@ impl<'a> TypeFormatter<'a> {
     }
 
     /// Format a type as a human-readable string.
-    pub fn format(&mut self, type_id: TypeId) -> String {
+    ///
+    /// Returns `Cow::Borrowed` for static type names (e.g., `"never"`, `"any"`)
+    /// and `Cow::Owned` for dynamically formatted types.
+    pub fn format(&mut self, type_id: TypeId) -> Cow<'static, str> {
         if self.current_depth >= self.max_depth {
-            return "...".to_string();
+            return Cow::Borrowed("...");
         }
 
         // Handle intrinsic types
         match type_id {
-            TypeId::NEVER => return "never".to_string(),
-            TypeId::UNKNOWN => return "unknown".to_string(),
-            TypeId::ANY => return "any".to_string(),
-            TypeId::VOID => return "void".to_string(),
-            TypeId::UNDEFINED => return "undefined".to_string(),
-            TypeId::NULL => return "null".to_string(),
-            TypeId::BOOLEAN => return "boolean".to_string(),
-            TypeId::NUMBER => return "number".to_string(),
-            TypeId::STRING => return "string".to_string(),
-            TypeId::BIGINT => return "bigint".to_string(),
-            TypeId::SYMBOL => return "symbol".to_string(),
-            TypeId::OBJECT => return "object".to_string(),
-            TypeId::FUNCTION => return "Function".to_string(),
-            TypeId::ERROR => return "error".to_string(),
+            TypeId::NEVER => return Cow::Borrowed("never"),
+            TypeId::UNKNOWN => return Cow::Borrowed("unknown"),
+            TypeId::ANY => return Cow::Borrowed("any"),
+            TypeId::VOID => return Cow::Borrowed("void"),
+            TypeId::UNDEFINED => return Cow::Borrowed("undefined"),
+            TypeId::NULL => return Cow::Borrowed("null"),
+            TypeId::BOOLEAN => return Cow::Borrowed("boolean"),
+            TypeId::NUMBER => return Cow::Borrowed("number"),
+            TypeId::STRING => return Cow::Borrowed("string"),
+            TypeId::BIGINT => return Cow::Borrowed("bigint"),
+            TypeId::SYMBOL => return Cow::Borrowed("symbol"),
+            TypeId::OBJECT => return Cow::Borrowed("object"),
+            TypeId::FUNCTION => return Cow::Borrowed("Function"),
+            TypeId::ERROR => return Cow::Borrowed("error"),
             _ => {}
         }
 
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
-            None => return format!("Type({})", type_id.0),
+            None => return format!("Type({})", type_id.0).into(),
         };
 
         // For composite types that don't already have a symbol name, check if this
@@ -210,7 +214,7 @@ impl<'a> TypeFormatter<'a> {
             && let Some(def_id) = def_store.find_type_alias_by_body(type_id)
             && let Some(def) = def_store.get(def_id)
         {
-            return self.format_def_name(&def);
+            return self.format_def_name(&def).into();
         }
 
         // For class/interface instance types, check the type-to-def reverse map.
@@ -221,7 +225,7 @@ impl<'a> TypeFormatter<'a> {
             && let Some(def_id) = def_store.find_def_for_type(type_id)
             && let Some(def) = def_store.get(def_id)
         {
-            return self.format_def_name(&def);
+            return self.format_def_name(&def).into();
         }
 
         self.current_depth += 1;
@@ -230,31 +234,31 @@ impl<'a> TypeFormatter<'a> {
         result
     }
 
-    fn format_key(&mut self, key: &TypeData) -> String {
+    fn format_key(&mut self, key: &TypeData) -> Cow<'static, str> {
         match key {
-            TypeData::Intrinsic(kind) => self.format_intrinsic(*kind),
-            TypeData::Literal(lit) => self.format_literal(lit),
+            TypeData::Intrinsic(kind) => Cow::Borrowed(self.format_intrinsic(*kind)),
+            TypeData::Literal(lit) => self.format_literal(lit).into(),
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
-                    return name;
+                    return name.into();
                 }
-                self.format_object(shape.properties.as_slice())
+                self.format_object(shape.properties.as_slice()).into()
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
-                    return name;
+                    return name.into();
                 }
-                self.format_object_with_index(shape.as_ref())
+                self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
                 let members = self.interner.type_list(*members);
-                self.format_union(members.as_ref())
+                self.format_union(members.as_ref()).into()
             }
             TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
-                self.format_intersection(members.as_ref())
+                self.format_intersection(members.as_ref()).into()
             }
             TypeData::Array(elem) => {
                 let elem_formatted = self.format(*elem);
@@ -268,31 +272,27 @@ impl<'a> TypeFormatter<'a> {
                     )
                 );
                 if needs_parens {
-                    format!("({elem_formatted})[]")
+                    format!("({elem_formatted})[]").into()
                 } else {
-                    format!("{elem_formatted}[]")
+                    format!("{elem_formatted}[]").into()
                 }
             }
             TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(*elements);
-                self.format_tuple(elements.as_ref())
+                self.format_tuple(elements.as_ref()).into()
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
-                self.format_function(shape.as_ref())
+                self.format_function(shape.as_ref()).into()
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
-                self.format_callable(shape.as_ref())
+                self.format_callable(shape.as_ref()).into()
             }
-            TypeData::TypeParameter(info) => self.atom(info.name).to_string(),
-            TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy"),
-            TypeData::Recursive(idx) => {
-                format!("Recursive({idx})")
-            }
-            TypeData::BoundParameter(idx) => {
-                format!("BoundParameter({idx})")
-            }
+            TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
+            TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy").into(),
+            TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
+            TypeData::BoundParameter(idx) => format!("BoundParameter({idx})").into(),
             TypeData::Application(app) => {
                 let app = self.interner.type_application(*app);
                 let base_key = self.interner.lookup(app.base);
@@ -306,23 +306,23 @@ impl<'a> TypeFormatter<'a> {
 
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
-                let base_str = if let Some(TypeData::Lazy(def_id)) = base_key {
+                let base_str: Cow<'_, str> = if let Some(TypeData::Lazy(def_id)) = base_key {
                     let name = self.format_def_id(def_id, "Lazy");
                     trace!(
                         def_id = %def_id.0,
                         name = %name,
                         "Application base resolved from DefId"
                     );
-                    name
+                    Cow::Owned(name)
                 } else if let Some(TypeData::TypeQuery(sym)) = base_key {
                     // For Application(TypeQuery(sym), args) — class instantiation
                     // like D<string>. Display as "D<string>" not "typeof D<string>",
                     // since typeof X<T> is not valid TS syntax and this represents
                     // the instantiated class type.
                     if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
-                        name
+                        Cow::Owned(name)
                     } else {
-                        format!("Ref({})", sym.0)
+                        Cow::Owned(format!("Ref({})", sym.0))
                     }
                 } else {
                     let formatted = self.format(app.base);
@@ -333,25 +333,26 @@ impl<'a> TypeFormatter<'a> {
                     formatted
                 };
 
-                let args: Vec<String> = app.args.iter().map(|&arg| self.format(arg)).collect();
+                let args: Vec<Cow<'static, str>> =
+                    app.args.iter().map(|&arg| self.format(arg)).collect();
                 let result = format!("{}<{}>", base_str, args.join(", "));
                 trace!(result = %result, "Application formatted");
-                result
+                result.into()
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
-                self.format_conditional(cond.as_ref())
+                self.format_conditional(cond.as_ref()).into()
             }
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
-                self.format_mapped(mapped.as_ref())
+                self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
-                format!("{}[{}]", self.format(*obj), self.format(*idx))
+                format!("{}[{}]", self.format(*obj), self.format(*idx)).into()
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(*spans);
-                self.format_template_literal(spans.as_ref())
+                self.format_template_literal(spans.as_ref()).into()
             }
             TypeData::TypeQuery(sym) => {
                 let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
@@ -359,14 +360,14 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("Ref({})", sym.0)
                 };
-                format!("typeof {name}")
+                format!("typeof {name}").into()
             }
-            TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
-            TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
-            TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
-            TypeData::UniqueSymbol(_) => "unique symbol".to_string(),
-            TypeData::Infer(info) => format!("infer {}", self.atom(info.name)),
-            TypeData::ThisType => "this".to_string(),
+            TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)).into(),
+            TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
+            TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)).into(),
+            TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
+            TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
+            TypeData::ThisType => Cow::Borrowed("this"),
             TypeData::StringIntrinsic { kind, type_arg } => {
                 let kind_name = match kind {
                     StringIntrinsicKind::Uppercase => "Uppercase",
@@ -374,22 +375,22 @@ impl<'a> TypeFormatter<'a> {
                     StringIntrinsicKind::Capitalize => "Capitalize",
                     StringIntrinsicKind::Uncapitalize => "Uncapitalize",
                 };
-                format!("{}<{}>", kind_name, self.format(*type_arg))
+                format!("{}<{}>", kind_name, self.format(*type_arg)).into()
             }
-            TypeData::Enum(def_id, _member_type) => self.format_def_id(*def_id, "Enum"),
+            TypeData::Enum(def_id, _member_type) => self.format_def_id(*def_id, "Enum").into(),
             TypeData::ModuleNamespace(sym) => {
                 let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
                     name
                 } else {
                     format!("module({})", sym.0)
                 };
-                format!("typeof import(\"{name}\")")
+                format!("typeof import(\"{name}\")").into()
             }
-            TypeData::Error => "error".to_string(),
+            TypeData::Error => Cow::Borrowed("error"),
         }
     }
 
-    fn format_intrinsic(&self, kind: IntrinsicKind) -> String {
+    const fn format_intrinsic(&self, kind: IntrinsicKind) -> &'static str {
         match kind {
             IntrinsicKind::Any => "any",
             IntrinsicKind::Unknown => "unknown",
@@ -405,7 +406,6 @@ impl<'a> TypeFormatter<'a> {
             IntrinsicKind::Object => "object",
             IntrinsicKind::Function => "Function",
         }
-        .to_string()
     }
 
     fn format_literal(&mut self, lit: &LiteralValue) -> String {
@@ -588,8 +588,8 @@ impl<'a> TypeFormatter<'a> {
         };
         let type_params = self.format_type_params(type_params);
         let params = self.format_params(params, this_type);
-        let return_str = if is_construct && return_type == TypeId::UNKNOWN {
-            "any".to_string()
+        let return_str: Cow<'static, str> = if is_construct && return_type == TypeId::UNKNOWN {
+            Cow::Borrowed("any")
         } else {
             self.format(return_type)
         };
@@ -683,7 +683,7 @@ impl<'a> TypeFormatter<'a> {
         if matches!(self.interner.lookup(id), Some(TypeData::Intersection(_))) {
             format!("({formatted})")
         } else {
-            formatted
+            formatted.into_owned()
         }
     }
 
@@ -711,7 +711,7 @@ impl<'a> TypeFormatter<'a> {
         if matches!(self.interner.lookup(id), Some(TypeData::Union(_))) {
             format!("({formatted})")
         } else {
-            formatted
+            formatted.into_owned()
         }
     }
 

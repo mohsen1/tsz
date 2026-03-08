@@ -78,7 +78,7 @@ impl TsTypeChecker {
 
         let interner = &*self.interner;
         let mut formatter = TypeFormatter::new(interner);
-        formatter.format(type_id)
+        formatter.format(type_id).into_owned()
     }
 
     /// Format a symbol as a string

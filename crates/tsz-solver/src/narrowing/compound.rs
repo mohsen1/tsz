@@ -9,6 +9,16 @@
 
 use super::NarrowingContext;
 use super::utils::NarrowingVisitor;
+
+/// Describes whether nullish types (null | undefined) should be kept or excluded
+/// when narrowing by nullishness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NullishFilter {
+    /// Keep only the nullish part (null | undefined).
+    KeepNullish,
+    /// Exclude the nullish part, keeping everything else.
+    ExcludeNullish,
+}
 use crate::relations::subtype::{SubtypeChecker, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{LiteralValue, TypeData, TypeId};
@@ -314,13 +324,15 @@ impl<'a> NarrowingContext<'a> {
     /// Narrows a type by nullishness (like `if (x != null)` or `if (x == null)`).
     /// If `nullish` is true, returns the nullish part (null | undefined).
     /// If `nullish` is false, returns the non-nullish part.
-    pub fn narrow_by_nullishness(&self, source_type: TypeId, nullish: bool) -> TypeId {
+    pub fn narrow_by_nullishness(&self, source_type: TypeId, filter: NullishFilter) -> TypeId {
+        let keep_nullish = matches!(filter, NullishFilter::KeepNullish);
+
         if source_type == TypeId::ANY {
             return source_type;
         }
 
         if source_type == TypeId::UNKNOWN {
-            if nullish {
+            if keep_nullish {
                 return self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
             } else {
                 let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
@@ -329,7 +341,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         let (non_nullish, null_part) = super::utils::split_nullish_type(self.db, source_type);
-        if nullish {
+        if keep_nullish {
             null_part.unwrap_or(TypeId::NEVER)
         } else {
             non_nullish.unwrap_or(TypeId::NEVER)

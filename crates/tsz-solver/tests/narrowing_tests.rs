@@ -1048,7 +1048,7 @@ fn test_narrow_to_interface_type() {
 // TypeGuard and narrow_type() Tests
 // =============================================================================
 
-use crate::narrowing::{NarrowingContext, TypeGuard, TypeofKind};
+use crate::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
 
 #[test]
 fn test_type_guard_typeof_string() {
@@ -1060,7 +1060,7 @@ fn test_type_guard_typeof_string() {
 
     // typeof x === "string"
     let guard = TypeGuard::Typeof(TypeofKind::String);
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
     // Should narrow to string
     assert_eq!(narrowed, TypeId::STRING);
@@ -1076,7 +1076,7 @@ fn test_type_guard_typeof_string_negated() {
 
     // typeof x !== "string" (sense=false)
     let guard = TypeGuard::Typeof(TypeofKind::String);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
 
     // Should narrow to number (exclude string)
     assert_eq!(narrowed, TypeId::NUMBER);
@@ -1094,7 +1094,7 @@ fn test_type_guard_literal_equality() {
 
     // x === "foo"
     let guard = TypeGuard::LiteralEquality(foo);
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
     // Should narrow to "foo"
     assert_eq!(narrowed, foo);
@@ -1112,7 +1112,7 @@ fn test_type_guard_literal_equality_negated() {
 
     // x !== "foo" (sense=false)
     let guard = TypeGuard::LiteralEquality(foo);
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
 
     // Should narrow to "bar" (exclude "foo")
     assert_eq!(narrowed, bar);
@@ -1128,7 +1128,7 @@ fn test_type_guard_nullish_equality() {
 
     // x == null
     let guard = TypeGuard::NullishEquality;
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
     // Should narrow to null | undefined
     let nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
@@ -1145,7 +1145,7 @@ fn test_type_guard_nullish_equality_negated() {
 
     // x != null (sense=false)
     let guard = TypeGuard::NullishEquality;
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
 
     // Should narrow to string (exclude null and undefined)
     assert_eq!(narrowed, TypeId::STRING);
@@ -1171,7 +1171,7 @@ fn test_type_guard_discriminant() {
         property_path: vec![kind_name],
         value_type: kind_a,
     };
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
     // Should narrow to { kind: "a" }
     assert_eq!(narrowed, member1);
@@ -1197,7 +1197,7 @@ fn test_type_guard_discriminant_negated() {
         property_path: vec![kind_name],
         value_type: kind_a,
     };
-    let narrowed = ctx.narrow_type(union, &guard, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
 
     // Should narrow to { kind: "b" }
     assert_eq!(narrowed, member2);
@@ -1213,7 +1213,7 @@ fn test_type_guard_truthy() {
 
     // if (x) { ... }  (truthy check)
     let guard = TypeGuard::Truthy;
-    let narrowed = ctx.narrow_type(union, &guard, true);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
 
     // Should narrow to string (exclude null and undefined)
     assert_eq!(narrowed, TypeId::STRING);
