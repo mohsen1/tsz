@@ -290,37 +290,52 @@ impl<'a> ES5ClassTransformer<'a> {
 
         if has_extends {
             // For derived classes, emit super() transformation
-            // var _this = _super.call(this, arg1, arg2, ...) || this;
-            self.use_this_capture = true;
-
             let (super_args, super_stmt_idx) = self.extract_super_call_args(body_idx);
             let mut call_args = vec![IRNode::this()];
             call_args.extend(super_args);
 
-            stmts.push(IRNode::var_decl(
-                "_this",
-                Some(IRNode::LogicalOr {
+            // Check if we can use the simple `return _super.call(this, ...) || this;` form.
+            // This applies when super() is the only statement and there are no instance props.
+            let body_stmts = self.transform_block_contents_skip(body_idx, super_stmt_idx);
+            let can_use_simple_return = instance_props.is_empty() && body_stmts.is_empty();
+
+            if can_use_simple_return {
+                // Simple form: return _super.call(this, args...) || this;
+                stmts.push(IRNode::ret(Some(IRNode::LogicalOr {
                     left: Box::new(IRNode::call(
                         IRNode::prop(IRNode::id("_super"), "call"),
                         call_args,
                     )),
                     right: Box::new(IRNode::this()),
-                }),
-            ));
+                })));
+            } else {
+                // var _this = _super.call(this, arg1, arg2, ...) || this;
+                self.use_this_capture = true;
 
-            // Emit instance property initializers
-            for &prop_idx in instance_props {
-                if let Some(ir) = self.transform_property_initializer(prop_idx, true) {
-                    stmts.push(ir);
+                stmts.push(IRNode::var_decl(
+                    "_this",
+                    Some(IRNode::LogicalOr {
+                        left: Box::new(IRNode::call(
+                            IRNode::prop(IRNode::id("_super"), "call"),
+                            call_args,
+                        )),
+                        right: Box::new(IRNode::this()),
+                    }),
+                ));
+
+                // Emit instance property initializers
+                for &prop_idx in instance_props {
+                    if let Some(ir) = self.transform_property_initializer(prop_idx, true) {
+                        stmts.push(ir);
+                    }
                 }
+
+                // Remaining body statements (skipping super())
+                stmts.extend(body_stmts);
+
+                // Add return _this
+                stmts.push(IRNode::ret(Some(IRNode::id("_this"))));
             }
-
-            // Transform body statements, skipping the super() call we already handled
-            let body_stmts = self.transform_block_contents_skip(body_idx, super_stmt_idx);
-            stmts.extend(body_stmts);
-
-            // Add return _this
-            stmts.push(IRNode::ret(Some(IRNode::id("_this"))));
         } else {
             // Non-derived class
             // Emit instance property initializers
