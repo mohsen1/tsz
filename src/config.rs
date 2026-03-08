@@ -182,6 +182,9 @@ pub struct CompilerOptions {
     /// Enable experimental support for legacy experimental decorators
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub experimental_decorators: Option<bool>,
+    /// Emit design-type metadata for decorated declarations in source files
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub emit_decorator_metadata: Option<bool>,
     /// Import emit helpers from tslib instead of inlining them per-file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub import_helpers: Option<bool>,
@@ -865,6 +868,10 @@ pub fn resolve_compiler_options(
     if let Some(experimental_decorators) = options.experimental_decorators {
         resolved.checker.experimental_decorators = experimental_decorators;
         resolved.printer.legacy_decorators = experimental_decorators;
+    }
+
+    if let Some(emit_decorator_metadata) = options.emit_decorator_metadata {
+        resolved.printer.emit_decorator_metadata = emit_decorator_metadata;
     }
 
     if let Some(allow_js) = options.allow_js {
@@ -2212,6 +2219,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             es_module_interop,
             allow_synthetic_default_imports,
             experimental_decorators,
+            emit_decorator_metadata,
             import_helpers,
             allow_js,
             check_js,

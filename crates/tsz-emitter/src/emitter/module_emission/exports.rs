@@ -389,12 +389,14 @@ impl<'a> Printer<'a> {
                                 self.write(";");
                                 self.write_line();
                                 // Emit __decorate call for ES2015+
+                                let members = class.members.nodes.clone();
                                 self.emit_legacy_class_decorator_assignment(
                                     &name,
                                     &legacy_decorators,
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
+                                    &members,
                                 );
                             }
                             return;
