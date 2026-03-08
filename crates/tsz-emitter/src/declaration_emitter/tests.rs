@@ -310,6 +310,27 @@ export interface Box {
 }
 
 #[test]
+fn test_multiline_parameter_comments_keep_interface_signature_indent() {
+    let output = emit_dts(
+        r#"
+export interface ICallSignatureWithParameters {
+    /** This is comment for function signature*/
+    (/** this is comment about a*/a: string,
+        /** this is comment for b*/
+        b: number): void;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    (/** this is comment about a*/ a: string, \n    /** this is comment for b*/\n    b: number): void;"
+        ),
+        "Expected multiline parameter comments to keep interface signature indentation: {output}"
+    );
+}
+
+#[test]
 fn test_get_accessor_uses_matching_setter_parameter_type_for_computed_name() {
     let output = emit_dts(
         r#"
