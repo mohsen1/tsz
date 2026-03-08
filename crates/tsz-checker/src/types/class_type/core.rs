@@ -195,6 +195,14 @@ impl<'a> CheckerState<'a> {
             visibility: Visibility,
         }
 
+        struct DeferredAccessor<'b> {
+            member_idx: NodeIndex,
+            accessor: &'b tsz_parser::parser::node::AccessorData,
+            is_getter: bool,
+            name_atom: Atom,
+            visibility: Visibility,
+        }
+
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
@@ -209,6 +217,7 @@ impl<'a> CheckerState<'a> {
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
         let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData)> =
             Vec::new();
+        let mut deferred_accessors: Vec<DeferredAccessor<'_>> = Vec::new();
 
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -331,36 +340,13 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
-                    let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
-                        getter: None,
-                        setter: None,
+                    deferred_accessors.push(DeferredAccessor {
+                        member_idx,
+                        accessor,
+                        is_getter: k == syntax_kind_ext::GET_ACCESSOR,
+                        name_atom,
                         visibility,
                     });
-
-                    if k == syntax_kind_ext::GET_ACCESSOR {
-                        let getter_type = if accessor.type_annotation.is_some() {
-                            self.get_type_from_type_node(accessor.type_annotation)
-                        } else {
-                            let t = self.infer_getter_return_type(accessor.body);
-                            // Cache so the declaration emitter can look it up
-                            self.ctx.node_types.insert(member_idx.0, t);
-                            t
-                        };
-                        entry.getter = Some(getter_type);
-                    } else {
-                        let setter_type = accessor
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                            .and_then(|param| {
-                                (param.type_annotation.is_some())
-                                    .then(|| self.get_type_from_type_node(param.type_annotation))
-                            })
-                            .unwrap_or(TypeId::UNKNOWN);
-                        entry.setter = Some(setter_type);
-                    }
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
                     let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
@@ -511,37 +497,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Convert accessors to properties
-        for (name, accessor) in accessors {
-            if methods.contains_key(&name) {
-                continue;
-            }
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
-            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
-            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
-            properties.insert(
-                name,
-                PropertyInfo {
-                    name,
-                    type_id: read_type,
-                    write_type,
-                    optional: false,
-                    readonly,
-                    is_method: false,
-                    is_class_prototype: true,
-                    visibility: accessor.visibility,
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                },
-            );
-        }
-
         // Phase 2: Process deferred methods with a partial `this` type so that
         // method body inference can resolve `this.x` references (e.g. `return this.b`).
         if !deferred_methods.is_empty() {
@@ -588,6 +543,22 @@ impl<'a> CheckerState<'a> {
                             declaration_order: 0,
                         });
                     }
+                }
+            }
+            for deferred in &deferred_accessors {
+                if !partial_props.iter().any(|p| p.name == deferred.name_atom) {
+                    partial_props.push(PropertyInfo {
+                        name: deferred.name_atom,
+                        type_id: TypeId::ANY,
+                        write_type: TypeId::UNKNOWN,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: true,
+                        visibility: deferred.visibility,
+                        parent_id: current_sym,
+                        declaration_order: 0,
+                    });
                 }
             }
             let partial_type = factory.object_with_index(ObjectShape {
@@ -643,6 +614,123 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.this_type_stack.pop();
+        }
+
+        if !deferred_accessors.is_empty() {
+            let mut partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            for (&name, method) in &methods {
+                let (signatures, optional) = if !method.overload_signatures.is_empty() {
+                    (&method.overload_signatures, method.overload_optional)
+                } else {
+                    (&method.impl_signatures, method.impl_optional)
+                };
+                if signatures.is_empty() {
+                    continue;
+                }
+                let type_id = factory.callable(CallableShape {
+                    call_signatures: signatures.clone(),
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                });
+                partial_props.push(PropertyInfo {
+                    name,
+                    type_id,
+                    write_type: type_id,
+                    optional,
+                    readonly: false,
+                    is_method: true,
+                    is_class_prototype: true,
+                    visibility: method.visibility,
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                });
+            }
+            let partial_type = factory.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: partial_props,
+                string_index: string_index.clone(),
+                number_index: number_index.clone(),
+                symbol: current_sym,
+            });
+            self.ctx.this_type_stack.push(partial_type);
+
+            for deferred in &deferred_accessors {
+                if deferred.is_getter {
+                    let getter_type = if deferred.accessor.type_annotation.is_some() {
+                        self.get_type_from_type_node(deferred.accessor.type_annotation)
+                    } else {
+                        let t = self.infer_getter_return_type(deferred.accessor.body);
+                        self.ctx.node_types.insert(deferred.member_idx.0, t);
+                        t
+                    };
+                    let entry = accessors
+                        .entry(deferred.name_atom)
+                        .or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                            visibility: deferred.visibility,
+                        });
+                    entry.getter = Some(getter_type);
+                } else {
+                    let setter_type = deferred
+                        .accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .and_then(|param| {
+                            (param.type_annotation.is_some())
+                                .then(|| self.get_type_from_type_node(param.type_annotation))
+                        })
+                        .unwrap_or(TypeId::UNKNOWN);
+                    let entry = accessors
+                        .entry(deferred.name_atom)
+                        .or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                            visibility: deferred.visibility,
+                        });
+                    entry.setter = Some(setter_type);
+                }
+            }
+
+            self.ctx.this_type_stack.pop();
+        }
+
+        // Convert accessors to properties
+        for (name, accessor) in accessors {
+            if methods.contains_key(&name) {
+                continue;
+            }
+            let read_type = accessor.getter.unwrap_or_else(|| {
+                if accessor.setter.is_some() {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::UNKNOWN
+                }
+            });
+            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            properties.insert(
+                name,
+                PropertyInfo {
+                    name,
+                    type_id: read_type,
+                    write_type,
+                    optional: false,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: true,
+                    visibility: accessor.visibility,
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                },
+            );
         }
 
         // Convert methods to callable properties

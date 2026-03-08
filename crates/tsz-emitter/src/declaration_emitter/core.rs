@@ -1383,7 +1383,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write(";");
-        self.emit_trailing_comment(prop_node_end);
+        if !prop.initializer.is_some() {
+            self.emit_trailing_comment(prop_node_end);
+        }
         self.write_line();
     }
 
