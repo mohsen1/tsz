@@ -343,6 +343,33 @@ export { x, f };
 }
 
 #[test]
+fn test_js_named_exports_preserve_explicit_export_order() {
+    let source = r#"
+function require() {}
+const exports = {};
+class Object {}
+export const __esModule = false;
+export { require, exports, Object };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export const __esModule: false;
+export function require(): void;
+export const exports: {};
+export class Object {
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected explicit JS exports to stay ahead of folded named exports: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_import_equals_drops_export_keyword() {
     let source = "export import fs2 = require(\"fs\");";
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());

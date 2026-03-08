@@ -14,6 +14,12 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+type JsFoldedNamedExports = (
+    FxHashSet<String>,
+    FxHashMap<NodeIndex, Vec<NodeIndex>>,
+    FxHashSet<NodeIndex>,
+);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_expression(&mut self, expr_idx: NodeIndex) {
         let Some(expr_node) = self.arena.get(expr_idx) else {
@@ -334,14 +340,18 @@ impl<'a> DeclarationEmitter<'a> {
             || lower.ends_with(".cjs")
     }
 
-    pub(crate) fn collect_js_named_export_names(
+    pub(crate) fn collect_js_folded_named_exports(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> FxHashSet<String> {
+    ) -> JsFoldedNamedExports {
         let mut names = FxHashSet::default();
+        let mut folded_exports = FxHashMap::default();
+        let mut deferred_statements = FxHashSet::default();
         if !self.source_file_is_js(source_file) {
-            return names;
+            return (names, folded_exports, deferred_statements);
         }
+
+        let export_targets = self.collect_js_named_export_targets(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -372,27 +382,205 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            let mut foldable_names = Vec::new();
+            let mut target_statements = Vec::new();
+            let mut seen_target_statements = FxHashSet::default();
+
             for &spec_idx in &named.elements.nodes {
                 let Some(spec_node) = self.arena.get(spec_idx) else {
-                    continue;
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
                 };
                 let Some(spec) = self.arena.get_specifier(spec_node) else {
-                    continue;
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
                 };
                 if spec.property_name.is_some() {
-                    continue;
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
                 }
                 let Some(name_node) = self.arena.get(spec.name) else {
-                    continue;
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
                 };
                 let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
+                };
+                let name = name_ident.escaped_text.clone();
+                let Some(&target_stmt_idx) = export_targets.get(&name) else {
+                    foldable_names.clear();
+                    target_statements.clear();
+                    break;
+                };
+                foldable_names.push(name);
+                if seen_target_statements.insert(target_stmt_idx) {
+                    target_statements.push(target_stmt_idx);
+                }
+            }
+
+            if foldable_names.is_empty() {
+                continue;
+            }
+
+            for name in foldable_names {
+                names.insert(name);
+            }
+
+            let mut deferred_targets = Vec::new();
+            for target_stmt_idx in target_statements {
+                let Some(target_stmt_node) = self.arena.get(target_stmt_idx) else {
                     continue;
                 };
-                names.insert(name_ident.escaped_text.clone());
+                if self.stmt_has_export_modifier(target_stmt_node)
+                    || self.statement_has_attached_jsdoc(source_file, target_stmt_node)
+                {
+                    continue;
+                }
+                if deferred_statements.insert(target_stmt_idx) {
+                    deferred_targets.push(target_stmt_idx);
+                }
+            }
+
+            folded_exports.insert(stmt_idx, deferred_targets);
+        }
+
+        (names, folded_exports, deferred_statements)
+    }
+
+    fn collect_js_named_export_targets(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashMap<String, NodeIndex> {
+        let mut targets = FxHashMap::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    let Some(func) = self.arena.get_function(stmt_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.arena.get(func.name) else {
+                        continue;
+                    };
+                    let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    targets.insert(name_ident.escaped_text.clone(), stmt_idx);
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    let Some(class) = self.arena.get_class(stmt_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.arena.get(class.name) else {
+                        continue;
+                    };
+                    let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    targets.insert(name_ident.escaped_text.clone(), stmt_idx);
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                        continue;
+                    };
+
+                    let mut declaration_names = Vec::new();
+                    let mut supported = true;
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                            supported = false;
+                            break;
+                        };
+                        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                            supported = false;
+                            break;
+                        };
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            let Some(decl_node) = self.arena.get(decl_idx) else {
+                                supported = false;
+                                break;
+                            };
+                            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                                supported = false;
+                                break;
+                            };
+                            let Some(name_node) = self.arena.get(decl.name) else {
+                                supported = false;
+                                break;
+                            };
+                            if name_node.kind != SyntaxKind::Identifier as u16 {
+                                supported = false;
+                                break;
+                            }
+                            let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                                supported = false;
+                                break;
+                            };
+                            declaration_names.push(name_ident.escaped_text.clone());
+                        }
+                        if !supported {
+                            break;
+                        }
+                    }
+
+                    if supported && declaration_names.len() == 1 {
+                        targets.insert(declaration_names.pop().unwrap_or_default(), stmt_idx);
+                    }
+                }
+                _ => {}
             }
         }
 
-        names
+        targets
+    }
+
+    fn statement_has_attached_jsdoc(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        stmt_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let text = source_file.text.as_ref();
+        let bytes = text.as_bytes();
+        let mut actual_start = stmt_node.pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let mut scan_start = actual_start;
+        for comment in source_file.comments.iter().rev() {
+            if comment.end as usize > scan_start {
+                continue;
+            }
+
+            let between = &text[comment.end as usize..scan_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+
+            let comment_text = &text[comment.pos as usize..comment.end as usize];
+            if comment_text.starts_with("/**") && comment_text != "/**/" {
+                return true;
+            }
+
+            scan_start = comment.pos as usize;
+        }
+
+        false
     }
 
     pub(crate) fn collect_js_export_equals_names(
@@ -520,46 +708,6 @@ impl<'a> DeclarationEmitter<'a> {
         !(self.inside_declare_namespace
             || self.source_is_declaration_file
             || (self.source_is_js_file && is_exported))
-    }
-
-    pub(crate) fn should_fold_js_named_export_clause(&self, export_idx: NodeIndex) -> bool {
-        if !self.source_is_js_file {
-            return false;
-        }
-
-        let Some(export_node) = self.arena.get(export_idx) else {
-            return false;
-        };
-        let Some(export) = self.arena.get_export_decl(export_node) else {
-            return false;
-        };
-        if export.module_specifier.is_some() || export.export_clause.is_none() {
-            return false;
-        }
-
-        let Some(clause_node) = self.arena.get(export.export_clause) else {
-            return false;
-        };
-        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-            return false;
-        }
-
-        let Some(named) = self.arena.get_named_imports(clause_node) else {
-            return false;
-        };
-        if named.elements.nodes.is_empty() {
-            return false;
-        }
-
-        named.elements.nodes.iter().all(|&spec_idx| {
-            let Some(spec_node) = self.arena.get(spec_idx) else {
-                return false;
-            };
-            let Some(spec) = self.arena.get_specifier(spec_node) else {
-                return false;
-            };
-            spec.property_name.is_none() && self.is_js_named_exported_name(spec.name)
-        })
     }
 
     pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {

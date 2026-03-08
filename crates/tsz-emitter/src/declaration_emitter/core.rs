@@ -101,6 +101,11 @@ pub struct DeclarationEmitter<'a> {
     pub(super) ambient_module_has_scope_marker: bool,
     /// Top-level JS bindings that are re-exported via a foldable `export { x }` clause.
     pub(super) js_named_export_names: FxHashSet<String>,
+    /// Foldable JS named export clauses mapped to deferred local statements.
+    pub(super) js_folded_named_export_statements: FxHashMap<NodeIndex, Vec<NodeIndex>>,
+    /// JS local statements skipped at their original position and re-emitted at
+    /// a later `export { ... }` clause to preserve declaration order.
+    pub(super) js_deferred_named_export_statements: FxHashSet<NodeIndex>,
     /// Top-level JS bindings referenced by an explicit `export = name` assignment.
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
@@ -179,6 +184,8 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_module_indicator: false,
             ambient_module_has_scope_marker: false,
             js_named_export_names: FxHashSet::default(),
+            js_folded_named_export_statements: FxHashMap::default(),
+            js_deferred_named_export_statements: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
@@ -235,6 +242,8 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_module_indicator: false,
             ambient_module_has_scope_marker: false,
             js_named_export_names: FxHashSet::default(),
+            js_folded_named_export_statements: FxHashMap::default(),
+            js_deferred_named_export_statements: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
@@ -528,7 +537,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
         self.emit_public_api_only = self.has_public_api_exports(source_file);
-        self.js_named_export_names = self.collect_js_named_export_names(source_file);
+        let (js_named_export_names, folded_named_exports, deferred_named_exports) =
+            self.collect_js_folded_named_exports(source_file);
+        self.js_named_export_names = js_named_export_names;
+        self.js_folded_named_export_statements = folded_named_exports;
+        self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
         let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
@@ -672,9 +685,28 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(super) fn emit_statement(&mut self, stmt_idx: NodeIndex) {
+        self.emit_statement_with_options(stmt_idx, false);
+    }
+
+    pub(crate) fn emit_deferred_js_named_export_statement(&mut self, stmt_idx: NodeIndex) {
+        self.emit_statement_with_options(stmt_idx, true);
+    }
+
+    fn emit_statement_with_options(
+        &mut self,
+        stmt_idx: NodeIndex,
+        allow_deferred_js_named_export: bool,
+    ) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
+
+        if !allow_deferred_js_named_export
+            && self.js_deferred_named_export_statements.contains(&stmt_idx)
+        {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
 
         let kind = stmt_node.kind;
 
