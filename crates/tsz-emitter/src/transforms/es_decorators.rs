@@ -929,3 +929,7 @@ struct ConstructorInfo {
     params: String,
     body_lines: Vec<String>,
 }
+
+#[cfg(test)]
+#[path = "../../tests/es_decorators.rs"]
+mod tests;

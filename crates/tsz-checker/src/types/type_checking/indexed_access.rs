@@ -65,27 +65,28 @@ impl<'a> CheckerState<'a> {
         // member types (e.g., generic type applications) just to check key validity.
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
             && let Some(obj_node) = self.ctx.arena.get(data.object_type)
-                && obj_node.kind == syntax_kind_ext::TYPE_LITERAL
-                && let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node) {
-                    let mut key_types = Vec::new();
-                    for &member_idx in &type_lit.members.nodes {
-                        if let Some(member_node) = self.ctx.arena.get(member_idx)
-                            && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                                && let Some(name) = self.get_property_name(sig.name) {
-                                    let atom = self.ctx.types.intern_string(&name);
-                                    key_types
-                                        .push(self.ctx.types.factory().literal_string_atom(atom));
-                                }
-                    }
-                    if !key_types.is_empty() {
-                        let keyof_type = self.ctx.types.factory().union(key_types);
-                        let check_index = index_constraint.unwrap_or(index_type);
-                        let check_index_eval = self.evaluate_type_with_env(check_index);
-                        if self.is_assignable_to(check_index_eval, keyof_type) {
-                            return;
-                        }
-                    }
+            && obj_node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node)
+        {
+            let mut key_types = Vec::new();
+            for &member_idx in &type_lit.members.nodes {
+                if let Some(member_node) = self.ctx.arena.get(member_idx)
+                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                    && let Some(name) = self.get_property_name(sig.name)
+                {
+                    let atom = self.ctx.types.intern_string(&name);
+                    key_types.push(self.ctx.types.factory().literal_string_atom(atom));
                 }
+            }
+            if !key_types.is_empty() {
+                let keyof_type = self.ctx.types.factory().union(key_types);
+                let check_index = index_constraint.unwrap_or(index_type);
+                let check_index_eval = self.evaluate_type_with_env(check_index);
+                if self.is_assignable_to(check_index_eval, keyof_type) {
+                    return;
+                }
+            }
+        }
 
         let mut object_type_for_check = self.evaluate_type_with_env(object_type);
         // Indexing `never` is always valid (produces `never`), so suppress TS2536.

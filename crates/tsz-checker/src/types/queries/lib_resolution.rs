@@ -355,13 +355,14 @@ impl<'a> CheckerState<'a> {
 
         // Check shared cross-file lib cache first
         if let Some(ref shared_cache) = self.ctx.shared_lib_type_cache
-            && let Some(entry) = shared_cache.get(name) {
-                let result = *entry;
-                self.ctx
-                    .lib_type_resolution_cache
-                    .insert(name.to_string(), result);
-                return result;
-            }
+            && let Some(entry) = shared_cache.get(name)
+        {
+            let result = *entry;
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), result);
+            return result;
+        }
 
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
@@ -799,10 +800,9 @@ impl<'a> CheckerState<'a> {
             .global_augmentations
             .get(name)
             .is_some_and(|v| !v.is_empty());
-        if !has_augmentations
-            && let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
-                shared_cache.insert(name.to_string(), lib_type_id);
-            }
+        if !has_augmentations && let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
+            shared_cache.insert(name.to_string(), lib_type_id);
+        }
 
         lib_type_id
     }
