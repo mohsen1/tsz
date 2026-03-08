@@ -492,6 +492,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                if saw_assignment_binary {
+                    // The error comes from an inner assignment expression within a
+                    // variable initializer (e.g. `const x = a = b;`). In tsc, the
+                    // diagnostic anchors at the inner assignment target (`a`), not
+                    // the entire variable statement.
+                    return idx;
+                }
                 var_decl = Some(parent);
             }
 

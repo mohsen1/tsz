@@ -1556,4 +1556,35 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn inner_assignment_in_variable_decl_anchors_at_assignment_target() {
+        let source = r#"interface A { x: number; }
+interface B { y: string; }
+declare let b: B;
+declare let a: A;
+const x = a = b;"#;
+
+        let diagnostics = diagnostics_for(source);
+
+        let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+        assert!(
+            !ts2741.is_empty(),
+            "expected TS2741 for inner assignment in variable decl, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, d.start, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+
+        // The diagnostic should anchor at `a` (the inner assignment target),
+        // NOT at `const` (the variable statement start).
+        let diag = ts2741[0];
+        let a_offset = source.find("const x = a = b;").unwrap() + "const x = ".len();
+        assert_eq!(
+            diag.start as usize, a_offset,
+            "TS2741 should point to inner assignment target 'a' (offset {}), not offset {}",
+            a_offset, diag.start
+        );
+    }
 }
