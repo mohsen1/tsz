@@ -47,7 +47,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
         // the raw DefId value equals the SymbolId. In that case, use the SymbolId
         // directly and redirect through the proper DefId mapping.
-        let sym_id = self.def_to_symbol_id(def_id).or_else(|| {
+        let sym_id = self.def_to_symbol_id_with_fallback(def_id).or_else(|| {
             // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
             // where N is the raw SymbolId value. The DefId(N) doesn't exist in the
             // definition store. Try using N as a SymbolId and redirect.
