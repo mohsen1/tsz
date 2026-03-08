@@ -369,7 +369,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Try to find a leading `JSDoc` comment and its start position.
-    fn try_leading_jsdoc_with_pos(
+    pub(crate) fn try_leading_jsdoc_with_pos(
         &self,
         comments: &[tsz_common::comments::CommentRange],
         pos: u32,
@@ -1491,6 +1491,61 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS,
                     );
                 }
+            }
+        }
+    }
+
+    /// Check for `@typedef` tags that have neither a type annotation nor
+    /// `@property`/`@member` tags. Emits TS8021.
+    ///
+    /// Valid: `/** @typedef {Object} Foo */` or `/** @typedef Foo \n @property {string} name */`
+    /// Invalid: `/** @typedef T */` (no type, no properties)
+    pub(crate) fn check_typedef_missing_type(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        for comment in comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let comment_text = comment.get_text(source_text);
+
+            // Find @typedef tag
+            let Some(typedef_pos) = comment_text.find("@typedef") else {
+                continue;
+            };
+
+            let after_typedef = typedef_pos + "@typedef".len();
+            let rest = &comment_text[after_typedef..];
+
+            // Check if there's a type annotation: @typedef {SomeType} Name
+            let trimmed = rest.trim_start();
+            let has_type = trimmed.starts_with('{');
+
+            // Check if there are @property or @member tags
+            let has_property = comment_text.contains("@property")
+                || comment_text.contains("@member")
+                    && !comment_text.contains("@memberOf")
+                    && !comment_text.contains("@memberof");
+
+            if !has_type && !has_property {
+                // Emit TS8021 at the @typedef position
+                let error_pos = comment.pos + typedef_pos as u32;
+                let error_len = "@typedef".len() as u32;
+                self.ctx.error(
+                    error_pos,
+                    error_len,
+                    diagnostic_messages::JSDOC_TYPEDEF_TAG_SHOULD_EITHER_HAVE_A_TYPE_ANNOTATION_OR_BE_FOLLOWED_BY_PROPERT
+                        .to_string(),
+                    diagnostic_codes::JSDOC_TYPEDEF_TAG_SHOULD_EITHER_HAVE_A_TYPE_ANNOTATION_OR_BE_FOLLOWED_BY_PROPERT,
+                );
             }
         }
     }
