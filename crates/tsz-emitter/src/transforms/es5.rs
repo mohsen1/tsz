@@ -221,8 +221,13 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        // Default constructor
-        let body = self.build_default_constructor_body(&instance_props, has_extends);
+        // Default constructor - skip _super.apply for `extends null`
+        let extends_null = crate::transforms::emit_utils::extends_null_literal(
+            self.arena,
+            &class_data.heritage_clauses,
+        );
+        let body =
+            self.build_default_constructor_body(&instance_props, has_extends && !extends_null);
         IRNode::func_decl(class_name, vec![], body)
     }
 

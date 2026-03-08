@@ -105,6 +105,7 @@ pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
     class_name: String,
     has_extends: bool,
+    extends_null: bool,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
     auto_accessors: Vec<AutoAccessorFieldInfo>,
@@ -126,6 +127,7 @@ impl<'a> ES5ClassTransformer<'a> {
             arena,
             class_name: String::new(),
             has_extends: false,
+            extends_null: false,
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             auto_accessors: Vec::new(),
@@ -692,6 +694,10 @@ impl<'a> ES5ClassTransformer<'a> {
         // Check for extends clause
         let base_class = self.get_extends_class(&class_data.heritage_clauses);
         self.has_extends = base_class.is_some();
+        self.extends_null = crate::transforms::emit_utils::extends_null_literal(
+            self.arena,
+            &class_data.heritage_clauses,
+        );
 
         // Build IIFE body
         let mut body = Vec::new();
@@ -900,7 +906,7 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         } else {
             // Default constructor
-            if self.has_extends {
+            if self.has_extends && !self.extends_null {
                 if instance_props.is_empty() && !has_private_fields {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
                     ctor_body.push(IRNode::ret(Some(IRNode::logical_or(
