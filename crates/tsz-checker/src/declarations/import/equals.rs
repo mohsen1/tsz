@@ -729,7 +729,7 @@ impl<'a> CheckerState<'a> {
                 let name = &ident.escaped_text;
                 // Skip if identifier is empty (parse error created a placeholder)
                 // or if it's a reserved word that should be handled by TS1359
-                if name.is_empty() || name == "null" {
+                if name.is_empty() || name == "null" || name == "globalThis" {
                     return;
                 }
                 // Try to resolve the identifier as a namespace/module

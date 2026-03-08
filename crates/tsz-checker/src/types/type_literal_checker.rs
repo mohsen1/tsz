@@ -126,6 +126,34 @@ impl<'a> CheckerState<'a> {
             let name = ident.escaped_text.as_str();
 
             if has_type_args {
+                // Handle compiler-intrinsic types that need special TypeData
+                // variants instead of generic Application types.
+                // NoInfer, Uppercase, etc. are intrinsic — their DefId has no body,
+                // so Application(Lazy(DefId), args) can never be evaluated.
+                if self.lookup_type_parameter(name).is_none() {
+                    match name {
+                        "NoInfer" => {
+                            if let Some(args) = &type_ref.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let inner = self.get_type_from_type_node_in_type_literal(first_arg);
+                                return self.ctx.types.no_infer(inner);
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize" => {
+                            if let Some(args) = &type_ref.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg =
+                                    self.get_type_from_type_node_in_type_literal(first_arg);
+                                return self.ctx.types.string_intrinsic_by_name(name, type_arg);
+                            }
+                            return TypeId::ERROR;
+                        }
+                        _ => {}
+                    }
+                }
                 let is_builtin_array = name == "Array" || name == "ReadonlyArray";
                 let type_param = self.lookup_type_parameter(name);
                 let type_resolution =

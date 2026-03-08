@@ -331,7 +331,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
 
             // TS2666/TS2667: Imports/exports are not permitted in module augmentations
-            if has_declare && is_string_named && self.is_external_module() {
+            // Only check imports/exports if the augmentation target module actually exists.
+            // tsc uses the Transient flag (set only on merged augmentations) to skip
+            // this check for unresolved targets — avoiding cascading errors.
+            // However, duplicate value declaration tracking (TS2451) must always run.
+            let module_augmentation_target_exists = has_declare
+                && is_string_named
+                && self.is_external_module()
+                && self
+                    .ctx
+                    .arena
+                    .get(module.name)
+                    .and_then(|n| self.ctx.arena.get_literal(n))
+                    .is_some_and(|lit| self.module_exists(&lit.text));
+            let should_check_augmentation_body =
+                has_declare && is_string_named && self.is_external_module();
+            if should_check_augmentation_body {
                 let module_specifier = self
                     .ctx
                     .arena
@@ -366,13 +381,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     };
                     for &stmt_idx in &stmts.nodes {
                         if reported_import && reported_export {
-                            break;
+                            // Once both import/export errors are reported, we still
+                            // need to continue for duplicate value tracking below,
+                            // so don't break.
                         }
                         let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                             continue;
                         };
                         let kind = stmt_node.kind;
-                        if !reported_import
+                        if module_augmentation_target_exists
+                            && !reported_import
                             && (kind == syntax_kind_ext::IMPORT_DECLARATION
                                 || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
                         {
@@ -383,7 +401,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                             diagnostic_codes::IMPORTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS_CONSIDER_MOVING_THEM_TO_THE_EN,
                                         );
                             reported_import = true;
-                        } else if !reported_export {
+                        } else if module_augmentation_target_exists && !reported_export {
                             let is_forbidden_export = if kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                                 || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                             {

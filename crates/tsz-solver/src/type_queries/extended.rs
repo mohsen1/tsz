@@ -718,8 +718,11 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         Some(TypeData::Tuple(_)) => ElementIndexableKind::Tuple,
         Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
+            let has_late_bound = shape
+                .flags
+                .contains(crate::types::ObjectFlags::HAS_LATE_BOUND_MEMBERS);
             ElementIndexableKind::ObjectWithIndex {
-                has_string: shape.string_index.is_some(),
+                has_string: shape.string_index.is_some() || has_late_bound,
                 has_number: shape.number_index.is_some(),
             }
         }
@@ -732,6 +735,19 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         Some(TypeData::Literal(crate::LiteralValue::String(_)))
         | Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => {
             ElementIndexableKind::StringLike
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            let has_string = shape.string_index.is_some();
+            let has_number = shape.number_index.is_some();
+            if has_string || has_number {
+                ElementIndexableKind::ObjectWithIndex {
+                    has_string,
+                    has_number,
+                }
+            } else {
+                ElementIndexableKind::Other
+            }
         }
         // Enums support reverse mapping: E[value] returns the name, E["name"] returns the value.
         // Type parameters represent unknown types whose index signatures are deferred —

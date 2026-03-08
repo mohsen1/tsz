@@ -135,6 +135,7 @@ impl<'a> CheckerState<'a> {
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut static_string_index: Option<IndexSignature> = None;
         let mut static_number_index: Option<IndexSignature> = None;
+        let mut has_static_late_bound_members = false;
 
         // Process all static class members
         for &member_idx in &class.members.nodes {
@@ -151,6 +152,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let Some(name) = self.get_property_name_resolved(prop.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(prop.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_static_late_bound_members = true;
+                        }
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -229,6 +238,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let Some(name) = self.get_property_name_resolved(method.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(method.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_static_late_bound_members = true;
+                        }
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -268,6 +285,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let Some(name) = self.get_property_name_resolved(accessor.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(accessor.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_static_late_bound_members = true;
+                        }
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -1012,11 +1037,22 @@ impl<'a> CheckerState<'a> {
         // classes with identical structures get different TypeIds
         let class_symbol = self.ctx.binder.get_node_symbol(class_idx);
 
+        // When the class has static members with unresolvable computed property names,
+        // tsc treats the constructor type as implicitly string-indexable to suppress TS7053.
+        let effective_string_index = static_string_index.or_else(|| {
+            has_static_late_bound_members.then_some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::ANY,
+                readonly: false,
+                param_name: None,
+            })
+        });
+
         let constructor_type = factory.callable(CallableShape {
             call_signatures: Vec::new(),
             construct_signatures,
             properties,
-            string_index: static_string_index,
+            string_index: effective_string_index,
             number_index: static_number_index,
             symbol: class_symbol,
             is_abstract: is_abstract_class,

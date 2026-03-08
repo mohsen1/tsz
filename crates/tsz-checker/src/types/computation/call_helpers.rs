@@ -24,6 +24,11 @@ impl<'a> CheckerState<'a> {
         if Self::is_in_cross_arena_delegation() {
             return false;
         }
+        // Skip TDZ checks in declaration files (.d.ts).
+        // Declaration files have no runtime ordering, so forward references are valid.
+        if self.ctx.is_declaration_file() {
+            return false;
+        }
         let is_tdz_in_static_block =
             self.is_variable_used_before_declaration_in_static_block(sym_id, idx);
         let is_tdz_in_property_initializer =

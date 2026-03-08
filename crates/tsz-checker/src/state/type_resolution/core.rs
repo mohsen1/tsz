@@ -288,7 +288,20 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ERROR;
                 }
-                if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                // Compiler-intrinsic types (NoInfer, string manipulation) must go
+                // through the lowering path which creates the correct TypeData
+                // variants (NoInfer, StringIntrinsic). The lib binder fallback
+                // below would create generic Application(Lazy(DefId), args) which
+                // can't be evaluated because intrinsic types have no body.
+                let is_intrinsic_type = matches!(
+                    name,
+                    "NoInfer" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
+                );
+                if !is_intrinsic_type
+                    && !is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                {
                     // Only try resolving from lib binders if lib files are loaded (noLib is false)
                     if has_libs {
                         // Try resolving from lib binders before falling back to UNKNOWN
@@ -503,41 +516,67 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings);
                 let result = lowering.lower_type(idx);
 
-                // Ensure Application types from lib type aliases have their base
-                // registered in type_env. Due to DefId instability (get_or_create_def_id
-                // can return different DefIds for the same symbol across calls), the
-                // DefId in the Application's Lazy base may differ from the DefId used
-                // when resolve_lib_type_by_name registered the body. Fix this by copying
-                // the registration to the Application's actual DefId.
+                // Ensure Application types from lib types have their base DefId
+                // fully registered (body + params) in BOTH type environments.
+                // NarrowingContext (used for flow analysis) needs both body and params
+                // to instantiate generics like ArrayLike<any> during narrowing.
+                // type_env and type_environment are separate TypeEnvironment instances:
+                // type_env is the working copy modified during type resolution,
+                // type_environment is the snapshot used by FlowAnalyzer.
                 if let Some((app_base, _app_args)) =
                     query::get_application_info(self.ctx.types, result)
                     && let Some(app_def_id) = query::get_lazy_def_id(self.ctx.types, app_base)
+                    && !self.ctx.lib_contexts.is_empty()
                 {
-                    let has_body_in_env = self
+                    // Check if body+params are fully registered in type_environment
+                    // (the one used by FlowAnalyzer/NarrowingContext)
+                    let needs_flow_env_fix = self
                         .ctx
-                        .type_env
+                        .type_environment
                         .try_borrow()
-                        .map(|env| env.get_def(app_def_id).is_some())
-                        .unwrap_or(true);
-                    if !has_body_in_env && !self.ctx.lib_contexts.is_empty() {
-                        // The Application's base DefId isn't in type_env.
-                        // Re-resolve the lib type to register with the current DefId.
-                        if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
-                            // lib_type is Lazy(DefId_new). Copy its registration
-                            // to the Application's actual DefId.
-                            if let Some(lib_def_id) =
-                                query::get_lazy_def_id(self.ctx.types, lib_type)
-                                && lib_def_id != app_def_id
-                                && let Ok(env) = self.ctx.type_env.try_borrow()
+                        .map(|env| {
+                            env.get_def(app_def_id).is_none()
+                                || env.get_def_params(app_def_id).is_none()
+                        })
+                        .unwrap_or(false);
+
+                    if needs_flow_env_fix {
+                        // Try to get body and params. The body may already be in type_env
+                        // (registered by another path), but params might only be in
+                        // CheckerContext's def_type_params storage.
+                        let body = self
+                            .ctx
+                            .type_env
+                            .try_borrow()
+                            .ok()
+                            .and_then(|env| env.get_def(app_def_id))
+                            .or_else(|| {
+                                // Fallback: re-resolve the lib type
+                                self.resolve_lib_type_by_name(name).and_then(|_| {
+                                    self.ctx
+                                        .type_env
+                                        .try_borrow()
+                                        .ok()
+                                        .and_then(|env| env.get_def(app_def_id))
+                                })
+                            });
+                        let params = self
+                            .ctx
+                            .type_env
+                            .try_borrow()
+                            .ok()
+                            .and_then(|env| env.get_def_params(app_def_id).cloned())
+                            .or_else(|| self.ctx.get_def_type_params(app_def_id));
+
+                        if let (Some(body), Some(params)) = (body, params) {
+                            // Also fix type_env if it's missing params
+                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+                                && env.get_def_params(app_def_id).is_none()
                             {
-                                let body = env.get_def(lib_def_id);
-                                let params = env.get_def_params(lib_def_id).cloned();
-                                if let (Some(body), Some(params)) = (body, params) {
-                                    drop(env);
-                                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                        env.insert_def_with_params(app_def_id, body, params);
-                                    }
-                                }
+                                env.insert_def_with_params(app_def_id, body, params.clone());
+                            }
+                            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                                env.insert_def_with_params(app_def_id, body, params);
                             }
                         }
                     }
@@ -1150,6 +1189,26 @@ impl<'a> CheckerState<'a> {
                             if !params.is_empty() {
                                 self.ctx.insert_def_type_params(def_id, params);
                             }
+                        }
+                    }
+
+                    // Step 1.75: Ensure the DefId→TypeId mapping exists in the TypeEnvironment.
+                    // When get_type_of_symbol hits the symbol_types cache (common for cross-file
+                    // lib types like ArrayLike, Iterable, Promise), it returns early and skips
+                    // the TypeEnvironment registration block. This leaves resolve_lazy(DefId)
+                    // returning None, breaking Application type resolution in narrowing contexts
+                    // (e.g., type predicate narrowing can't check if ArrayLike<any> is assignable
+                    // to { length: unknown } because the Application can't be expanded).
+                    if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::ANY
+                        && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+                        && env.get_def(def_id).is_none()
+                    {
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        if type_params.is_empty() {
+                            env.insert_def(def_id, structural_type);
+                        } else {
+                            env.insert_def_with_params(def_id, structural_type, type_params);
                         }
                     }
 

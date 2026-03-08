@@ -876,6 +876,11 @@ bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
     pub struct ObjectFlags: u32 {
         const FRESH_LITERAL = 1 << 0;
+        /// The type has members with computed property names whose key types
+        /// could not be resolved to a single string/number literal (e.g.,
+        /// union keys like `"a" | "b"`, template literals like `` `prefix-${string}` ``).
+        /// tsc treats such types as implicitly string-indexable for TS7053 purposes.
+        const HAS_LATE_BOUND_MEMBERS = 1 << 1;
     }
 }
 

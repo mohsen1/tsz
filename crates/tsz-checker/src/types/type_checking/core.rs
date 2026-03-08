@@ -210,9 +210,12 @@ impl<'a> CheckerState<'a> {
             // TS1164: Computed property names are not allowed in enums.
             // Emitted here (checker grammar check) rather than in the parser to avoid
             // position-based dedup conflicts with TS1357 (missing comma between members).
-            // tsc only emits TS1164 for non-literal computed expressions (e.g. [e]),
-            // not for literal ones like ["foo"] or [42].
-            if name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            // tsc only emits TS1164 for non-literal computed names (e.g. [e]).
+            // Literal computed names like [2], ["foo"] get TS2452 instead (if numeric).
+            // Suppress when parse errors exist — tsc doesn't emit TS1164 alongside
+            // parse-level errors like TS1357 on the same enum members.
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME && !self.has_parse_errors()
+            {
                 let is_literal_computed = self
                     .ctx
                     .arena
@@ -221,8 +224,9 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|expr| {
                         expr.kind == SyntaxKind::NumericLiteral as u16
                             || expr.kind == SyntaxKind::StringLiteral as u16
+                            || expr.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                     });
-                if !is_literal_computed {
+                if !is_literal_computed && !self.has_parse_errors() {
                     self.error_at_node(
                         member.name,
                         "Computed property names are not allowed in enums.",
@@ -1964,16 +1968,14 @@ impl<'a> CheckerState<'a> {
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
-            // Suppress TS2536 when either the index or the object type is
-            // deferred (conditional, application, keyof, error). TSC defers
-            // these checks to instantiation time.
-            // Check both pre-evaluation and post-evaluation forms: evaluation
-            // may partially resolve an Application into a union of conditionals,
-            // losing the top-level Application marker.
+            // Suppress TS2536 for deferred types (conditional, application, keyof,
+            // error, index-access). tsc defers these checks to instantiation time.
             if is_deferred_type(index_type_for_check)
                 || is_deferred_type(index_type)
                 || is_deferred_type(object_type_for_check)
                 || is_deferred_type(object_type)
+                || tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
+                || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
             {
                 return;
             }

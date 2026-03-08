@@ -590,7 +590,11 @@ impl<'a> CheckerState<'a> {
         };
 
         if !is_const && !is_readonly && left_type != TypeId::ANY {
-            let mut check_assignability = !is_array_destructuring;
+            // For destructuring assignments (both object and array patterns),
+            // skip the whole-object assignability check. tsc processes each
+            // property/element individually, which correctly handles private
+            // members and other access-controlled properties.
+            let mut check_assignability = !is_destructuring;
 
             if check_assignability {
                 let widened_left = tsz_solver::widening::widen_type(self.ctx.types, left_type);

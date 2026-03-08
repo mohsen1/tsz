@@ -517,7 +517,7 @@ impl<'a> CheckerState<'a> {
                 let elem_type = if tuple_context.is_some() {
                     spread_expr_type
                 } else {
-                    self.for_of_element_type(spread_expr_type)
+                    self.for_of_element_type(spread_expr_type, false)
                 };
 
                 self.ctx.contextual_type = prev_context;
