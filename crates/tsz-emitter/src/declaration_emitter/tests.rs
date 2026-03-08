@@ -444,6 +444,29 @@ function f(x) {
 }
 
 #[test]
+fn test_js_object_literal_functions_emit_namespace() {
+    let source = r#"
+const foo = {
+    f1: (params) => {}
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"declare namespace foo {
+    function f1(params: any): void;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected namespace-like JS object literals to emit as declare namespaces: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_equals_emits_before_target_declaration() {
     let source = r#"
 const a = {};

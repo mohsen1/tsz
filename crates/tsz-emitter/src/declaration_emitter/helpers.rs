@@ -674,6 +674,151 @@ impl<'a> DeclarationEmitter<'a> {
         (groups, skipped)
     }
 
+    pub(crate) fn collect_js_namespace_object_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
+                || self.statement_has_attached_jsdoc(source_file, stmt_node)
+            {
+                continue;
+            }
+
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+
+            let mut candidate_decl: Option<NodeIndex> = None;
+            let mut initializer: Option<NodeIndex> = None;
+            let mut valid = true;
+
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    valid = false;
+                    break;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    valid = false;
+                    break;
+                };
+                if decl_list.declarations.nodes.len() != 1 {
+                    valid = false;
+                    break;
+                }
+                let decl_idx = decl_list.declarations.nodes[0];
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    valid = false;
+                    break;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    valid = false;
+                    break;
+                };
+                let Some(name_node) = self.arena.get(decl.name) else {
+                    valid = false;
+                    break;
+                };
+                if name_node.kind != SyntaxKind::Identifier as u16 || !decl.initializer.is_some() {
+                    valid = false;
+                    break;
+                }
+                let Some(init_node) = self.arena.get(decl.initializer) else {
+                    valid = false;
+                    break;
+                };
+                if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    valid = false;
+                    break;
+                }
+                let Some(object) = self.arena.get_literal_expr(init_node) else {
+                    valid = false;
+                    break;
+                };
+                if object.elements.nodes.is_empty() {
+                    valid = false;
+                    break;
+                }
+
+                for &member_idx in &object.elements.nodes {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        valid = false;
+                        break;
+                    };
+                    match member_node.kind {
+                        k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                            let Some(prop) = self.arena.get_property_assignment(member_node) else {
+                                valid = false;
+                                break;
+                            };
+                            if self
+                                .arena
+                                .get(prop.name).is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                            {
+                                valid = false;
+                                break;
+                            }
+                            let Some(prop_init) = self.arena.get(prop.initializer) else {
+                                valid = false;
+                                break;
+                            };
+                            if prop_init.kind != syntax_kind_ext::ARROW_FUNCTION
+                                && prop_init.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            let Some(method) = self.arena.get_method_decl(member_node) else {
+                                valid = false;
+                                break;
+                            };
+                            if self
+                                .arena
+                                .get(method.name).is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+
+                if !valid {
+                    break;
+                }
+
+                candidate_decl = Some(decl.name);
+                initializer = Some(decl.initializer);
+            }
+
+            if valid && candidate_decl.is_some() && initializer.is_some() {
+                deferred.insert(stmt_idx);
+            }
+        }
+
+        deferred
+    }
+
     fn groupable_js_reexport_info(&self, export_idx: NodeIndex) -> Option<(String, bool)> {
         let export_node = self.arena.get(export_idx)?;
         if export_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
