@@ -953,6 +953,23 @@ impl<'a> Printer<'a> {
                 self.emit_property_access(node);
             }
 
+            // Meta property (new.target, import.meta)
+            k if k == syntax_kind_ext::META_PROPERTY => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    // The expression is the keyword token (new/import)
+                    if let Some(kw_node) = self.arena.get(access.expression) {
+                        if kw_node.kind == SyntaxKind::NewKeyword as u16 {
+                            self.write("new");
+                        } else if kw_node.kind == SyntaxKind::ImportKeyword as u16 {
+                            self.write("import");
+                        }
+                    }
+                    self.write(".");
+                    let name = self.get_identifier_text_idx(access.name_or_argument);
+                    self.write(&name);
+                }
+            }
+
             // Element access
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.emit_element_access(node);

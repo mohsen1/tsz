@@ -132,6 +132,27 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.convert_element_access(idx)
             }
+            k if k == syntax_kind_ext::META_PROPERTY => {
+                // new.target, import.meta — emit as raw text
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    let keyword = if let Some(kw_node) = self.arena.get(access.expression) {
+                        if kw_node.kind == SyntaxKind::NewKeyword as u16 {
+                            "new"
+                        } else if kw_node.kind == SyntaxKind::ImportKeyword as u16 {
+                            "import"
+                        } else {
+                            ""
+                        }
+                    } else {
+                        ""
+                    };
+                    let name = get_identifier_text(self.arena, access.name_or_argument)
+                        .unwrap_or_default();
+                    IRNode::Raw(format!("{keyword}.{name}"))
+                } else {
+                    IRNode::ASTRef(idx)
+                }
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => self.convert_binary_expression(idx),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self.convert_prefix_unary(idx),
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => self.convert_postfix_unary(idx),
