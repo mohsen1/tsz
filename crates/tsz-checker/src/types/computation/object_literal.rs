@@ -448,20 +448,11 @@ impl<'a> CheckerState<'a> {
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
                     // case to prevent a spurious TS2304 for the property name identifier.
-                    //
-                    // Preserve literal types during property value evaluation so that
-                    // boolean literals (true/false) are not eagerly widened to `boolean`.
-                    // This matches tsc where `getWidenedLiteralType` does not widen
-                    // non-fresh boolean literals, producing e.g. `{ x: true }` not
-                    // `{ x: boolean }` in fresh object literal types.
-                    let prev_preserve = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
                     let value_type = if prop.initializer == prop.name {
                         TypeId::ANY
                     } else {
                         self.get_type_of_node(prop.initializer)
                     };
-                    self.ctx.preserve_literal_types = prev_preserve;
 
                     // TS2779: The left-hand side of an assignment expression may not be
                     // an optional property access. Applies to destructuring targets like
@@ -526,16 +517,8 @@ impl<'a> CheckerState<'a> {
                         // produces `{ x: string }`.  Only preserve literals when:
                         // - A const assertion is active (`as const`)
                         // - A contextual type narrows the property to a literal
-                        //
-                        // Use `widen_literal_type_preserving_booleans` to match tsc's
-                        // `getWidenedLiteralType` which does NOT widen non-fresh boolean
-                        // literal types (true/false). This produces `{ x: string; y: true }`
-                        // instead of `{ x: string; y: boolean }` for fresh object literals.
                         if !self.ctx.in_const_assertion && property_context_type.is_none() {
-                            tsz_solver::widening::widen_literal_type_preserving_booleans(
-                                self.ctx.types,
-                                value_type,
-                            )
+                            self.widen_literal_type(value_type)
                         } else {
                             value_type
                         }
@@ -794,14 +777,10 @@ impl<'a> CheckerState<'a> {
                         property_context_type,
                     );
 
-                    // Widen literal types for shorthand properties (same as named properties).
-                    // Use boolean-preserving widening to match tsc behavior.
+                    // Widen literal types for shorthand properties (same as named properties)
                     let value_type =
                         if !self.ctx.in_const_assertion && property_context_type.is_none() {
-                            tsz_solver::widening::widen_literal_type_preserving_booleans(
-                                self.ctx.types,
-                                value_type,
-                            )
+                            self.widen_literal_type(value_type)
                         } else {
                             value_type
                         };

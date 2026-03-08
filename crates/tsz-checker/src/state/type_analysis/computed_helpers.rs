@@ -44,6 +44,14 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
+        // In tsc, `boolean` is `true | false` (a union of boolean literal types),
+        // so the union-member path in this function handles it automatically. In
+        // tsz, `BOOLEAN` is an intrinsic (not a union), so we need an explicit
+        // check to ensure that contextual type `boolean` allows boolean literals
+        // like `true`/`false` to be preserved instead of being widened.
+        if is_boolean_context_for_boolean_literal(ctx_type, literal_type) {
+            return true;
+        }
         if !visited.insert(ctx_type) {
             return false;
         }
@@ -754,4 +762,32 @@ impl<'a> CheckerState<'a> {
             Some((_, true))
         )
     }
+}
+
+/// Check if the contextual type is `boolean` and the literal is a boolean literal.
+///
+/// In tsc, `boolean` is represented as `true | false` (a union of boolean literal
+/// types), so the union member path in `contextual_type_allows_literal_inner`
+/// handles it automatically via `isLiteralOfContextualType`. In tsz, `BOOLEAN` is
+/// an intrinsic type (not a union), so we need this explicit check to ensure that
+/// contextual type `boolean` allows literal `true`/`false` to be preserved instead
+/// of being widened.
+///
+/// Note: This does NOT apply to other primitives (`string`, `number`, `bigint`)
+/// because in tsc those are primitive types, not unions of literals. tsc's
+/// `isLiteralOfContextualType` only preserves literals when the contextual type is
+/// itself a literal type, a union containing literal types, or a type parameter.
+fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId) -> bool {
+    if ctx_type != TypeId::BOOLEAN
+        && ctx_type != TypeId::BOOLEAN_TRUE
+        && ctx_type != TypeId::BOOLEAN_FALSE
+    {
+        return false;
+    }
+
+    // Check if the literal type is a boolean literal.
+    // Boolean literals are always interned to intrinsic IDs (BOOLEAN_TRUE /
+    // BOOLEAN_FALSE) by the solver's `get_intrinsic_id`, so we only need to
+    // compare against those constants — no type data inspection required.
+    literal_type == TypeId::BOOLEAN_TRUE || literal_type == TypeId::BOOLEAN_FALSE
 }

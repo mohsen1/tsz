@@ -159,30 +159,6 @@ fn widen_type_cached(
     result
 }
 
-/// Widen a literal type to its primitive, but preserve boolean literals.
-///
-/// This matches TypeScript's `getWidenedLiteralType` behavior: string, number,
-/// and bigint literals are widened to their primitive types, but `true`/`false`
-/// are preserved because the intrinsic boolean literal types in tsc are NOT
-/// considered "fresh" literals and thus `getWidenedLiteralType` does not widen them.
-///
-/// Used for object literal property types where tsc produces e.g.
-/// `{ x: string; y: true }` rather than `{ x: string; y: boolean }`.
-pub fn widen_literal_type_preserving_booleans(
-    db: &dyn crate::TypeDatabase,
-    type_id: TypeId,
-) -> TypeId {
-    // Boolean literal intrinsics are NOT widened (matches tsc: they are non-fresh)
-    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
-        return type_id;
-    }
-    // For Literal(Boolean(...)) created via literal_boolean(), also preserve
-    if let Some(TypeData::Literal(crate::types::LiteralValue::Boolean(_))) = db.lookup(type_id) {
-        return type_id;
-    }
-    widen_type(db, type_id)
-}
-
 /// Widen only object literal property types (not top-level types or union members).
 ///
 /// This is used during inference resolution to match TypeScript's behavior:
