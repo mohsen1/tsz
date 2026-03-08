@@ -79,7 +79,7 @@ impl ParserState {
                 language_version: 99,
                 language_variant: 0,
                 script_kind: 3,
-                is_declaration_file: false,
+                is_declaration_file: self.is_declaration_file(),
                 has_no_default_lib: false,
                 comments, // Cached comment ranges
                 parent: NodeIndex::NONE,

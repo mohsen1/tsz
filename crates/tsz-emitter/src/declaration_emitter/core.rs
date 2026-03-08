@@ -23,6 +23,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) pending_source_pos: Option<SourcePosition>,
     /// Whether we're currently emitting a declaration file.
     pub(super) source_is_declaration_file: bool,
+    /// Whether the source file being lowered is JavaScript-like (.js/.jsx/.mjs/.cjs).
+    pub(super) source_is_js_file: bool,
     /// If true, only emit declarations that are part of the public API surface.
     pub(super) emit_public_api_only: bool,
     /// Track whether we're currently emitting inside a public-API namespace/module.
@@ -97,6 +99,12 @@ pub struct DeclarationEmitter<'a> {
     /// exported and non-exported members, so `export` keywords should be
     /// preserved even though `inside_declare_namespace` is true.
     pub(super) ambient_module_has_scope_marker: bool,
+    /// Top-level JS bindings that are re-exported via a foldable `export { x }` clause.
+    pub(super) js_named_export_names: FxHashSet<String>,
+    /// Top-level JS bindings referenced by an explicit `export = name` assignment.
+    pub(super) js_export_equals_names: FxHashSet<String>,
+    /// JS `export = name` assignments already emitted ahead of their declaration.
+    pub(super) emitted_js_export_equals_names: FxHashSet<String>,
 }
 
 pub(super) struct SourceMapState {
@@ -132,6 +140,7 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_state: None,
             pending_source_pos: None,
             source_is_declaration_file: false,
+            source_is_js_file: false,
             emit_public_api_only: false,
             public_api_scope_depth: 0,
             source_file_text: None,
@@ -165,6 +174,9 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_scope_marker: false,
             emitted_module_indicator: false,
             ambient_module_has_scope_marker: false,
+            js_named_export_names: FxHashSet::default(),
+            js_export_equals_names: FxHashSet::default(),
+            emitted_js_export_equals_names: FxHashSet::default(),
         }
     }
 
@@ -182,6 +194,7 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_state: None,
             pending_source_pos: None,
             source_is_declaration_file: false,
+            source_is_js_file: false,
             emit_public_api_only: false,
             public_api_scope_depth: 0,
             source_file_text: None,
@@ -215,6 +228,9 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_scope_marker: false,
             emitted_module_indicator: false,
             ambient_module_has_scope_marker: false,
+            js_named_export_names: FxHashSet::default(),
+            js_export_equals_names: FxHashSet::default(),
+            emitted_js_export_equals_names: FxHashSet::default(),
         }
     }
 
@@ -502,7 +518,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.source_file_text = Some(source_file.text.clone());
         self.source_is_declaration_file = source_file.is_declaration_file;
+        self.source_is_js_file = self.source_file_is_js(source_file);
         self.emit_public_api_only = self.has_public_api_exports(source_file);
+        self.js_named_export_names = self.collect_js_named_export_names(source_file);
+        self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
+        self.emitted_js_export_equals_names.clear();
 
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;
@@ -675,7 +695,7 @@ impl<'a> DeclarationEmitter<'a> {
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
 
-        let has_export_modifier = self.stmt_has_export_modifier(stmt_node);
+        let has_effective_export = self.statement_has_effective_export(stmt_idx);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -757,7 +777,7 @@ impl<'a> DeclarationEmitter<'a> {
             if is_scope_marker {
                 self.emitted_scope_marker = true;
                 self.emitted_module_indicator = true;
-            } else if has_export_modifier
+            } else if has_effective_export
                 || kind == syntax_kind_ext::EXPORT_DECLARATION
                 || kind == syntax_kind_ext::IMPORT_DECLARATION
                 || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
@@ -766,7 +786,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emitted_module_indicator = true;
             }
 
-            if !has_export_modifier && kind != syntax_kind_ext::EXPORT_DECLARATION {
+            if !has_effective_export && kind != syntax_kind_ext::EXPORT_DECLARATION {
                 // A declaration without export modifier was emitted
                 let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
                     || kind == syntax_kind_ext::CLASS_DECLARATION
@@ -793,7 +813,8 @@ impl<'a> DeclarationEmitter<'a> {
         // Check for export modifier
         let is_exported = self
             .arena
-            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
+            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+            || self.is_js_named_exported_name(func.name);
 
         // `export default function() { ... }` — delegate to the export default handler
         // which correctly emits `export default function (): ReturnType;`
@@ -840,11 +861,12 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        self.emit_pending_js_export_equals_for_name(func.name);
         self.write_indent();
         if is_exported {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(is_exported) {
             self.write("declare ");
         }
         self.write("function ");
@@ -921,7 +943,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let is_exported = self
             .arena
-            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
+            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+            || self.is_js_named_exported_name(class.name);
         if !self.should_emit_public_api_member(&class.modifiers)
             && !self.should_emit_public_api_dependency(class.name)
         {
@@ -934,11 +957,12 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
+        self.emit_pending_js_export_equals_for_name(class.name);
         self.write_indent();
         if is_exported {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(is_exported) {
             self.write("declare ");
         }
         if is_abstract {
@@ -1682,7 +1706,7 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(is_exported) {
             self.write("declare ");
         }
         if is_const {
@@ -2075,7 +2099,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self
+        let has_export_modifier = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&var_stmt.modifiers) {
@@ -2144,33 +2168,50 @@ impl<'a> DeclarationEmitter<'a> {
 
                         if is_destructuring {
                             // Emit destructuring as individual declarations
+                            let is_exported =
+                                has_export_modifier || self.is_js_named_exported_name(decl.name);
                             self.emit_flattened_variable_declaration(
                                 decl.name,
                                 keyword,
                                 is_exported,
                             );
                         } else {
-                            regular_decls.push((decl_idx, decl_node, decl));
+                            let is_exported =
+                                has_export_modifier || self.is_js_named_exported_name(decl.name);
+                            regular_decls.push((is_exported, decl_idx, decl_node, decl));
                         }
                     }
                 }
 
-                // Emit all regular declarations together on one line
-                if !regular_decls.is_empty() {
+                // Emit regular declarations in contiguous export/non-export groups.
+                let mut group_start = 0;
+                while group_start < regular_decls.len() {
+                    let is_exported = regular_decls[group_start].0;
+                    let mut group_end = group_start;
+                    while group_end < regular_decls.len()
+                        && regular_decls[group_end].0 == is_exported
+                    {
+                        group_end += 1;
+                    }
+                    for (_, _, _, decl) in &regular_decls[group_start..group_end] {
+                        self.emit_pending_js_export_equals_for_name(decl.name);
+                    }
                     self.write_indent();
                     if is_exported {
                         self.write("export ");
                     }
-                    if !self.inside_declare_namespace {
+                    if self.should_emit_declare_keyword(is_exported) {
                         self.write("declare ");
                     }
                     self.write(keyword);
                     self.write(" ");
 
-                    for (i, (decl_idx, _decl_node, decl)) in regular_decls.iter().enumerate() {
-                        if i > 0 {
+                    let mut i = group_start;
+                    while i < group_end {
+                        if i > group_start {
                             self.write(", ");
                         }
+                        let (_is_exported, decl_idx, _decl_node, decl) = &regular_decls[i];
 
                         // Emit inline comments between keyword and name
                         // (e.g. `var /*4*/ point = ...` → `declare var /*4*/ point: ...`)
@@ -2208,10 +2249,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.skip_comments_in_node(dn.pos, skip_end);
                             }
                         }
+                        i += 1;
                     }
 
                     self.write(";");
                     self.write_line();
+                    group_start = group_end;
                 }
             }
         }
@@ -2273,7 +2316,7 @@ impl<'a> DeclarationEmitter<'a> {
             if is_exported {
                 self.write("export ");
             }
-            if !self.inside_declare_namespace {
+            if self.should_emit_declare_keyword(is_exported) {
                 self.write("declare ");
             }
             self.write(keyword);

@@ -18,6 +18,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self.should_fold_js_named_export_clause(export_idx) {
+            return;
+        }
+
         if export.is_default_export {
             if export.export_clause.is_some()
                 && let Some(clause_node) = self.arena.get(export.export_clause)
@@ -77,10 +81,14 @@ impl<'a> DeclarationEmitter<'a> {
                     return;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                    // Emit: export import x = require(...)
-                    self.write_indent();
-                    self.write("export ");
-                    self.emit_import_equals_declaration(export.export_clause, true);
+                    if self.source_is_js_file {
+                        self.emit_import_equals_declaration_without_export(export.export_clause);
+                    } else {
+                        // Emit: export import x = require(...)
+                        self.write_indent();
+                        self.write("export ");
+                        self.emit_import_equals_declaration(export.export_clause, true);
+                    }
                     return;
                 }
                 _ => {}
@@ -132,6 +140,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
         if assign.is_export_equals {
+            if self.source_is_js_file
+                && let Some(expr_node) = self.arena.get(assign.expression)
+                && expr_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.arena.get_identifier(expr_node)
+                && !self
+                    .emitted_js_export_equals_names
+                    .insert(ident.escaped_text.clone())
+            {
+                return;
+            }
             self.write("export = ");
             self.emit_expression(assign.expression);
             self.write(";");
@@ -464,7 +482,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(true) {
             self.write("declare ");
         }
         if is_abstract {
@@ -549,7 +567,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(true) {
             self.write("declare ");
         }
         self.write("function ");
@@ -652,7 +670,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
-        if !self.inside_declare_namespace {
+        if self.should_emit_declare_keyword(true) {
             self.write("declare ");
         }
         if is_const {
@@ -795,7 +813,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
                         self.write("export ");
                     }
-                    if !self.inside_declare_namespace {
+                    if self.should_emit_declare_keyword(true) {
                         self.write("declare ");
                     }
                     self.write(keyword);
@@ -1185,6 +1203,38 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Emit " = require(...)"
+        if let Some(module_node) = self.arena.get(import_eq.module_specifier) {
+            if module_node.kind == SyntaxKind::StringLiteral as u16 {
+                self.write(" = require(");
+                self.emit_node(import_eq.module_specifier);
+                self.write(")");
+            } else {
+                self.write(" = ");
+                self.emit_node(import_eq.module_specifier);
+            }
+        } else {
+            self.write(" = ");
+        }
+
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_import_equals_declaration_without_export(&mut self, import_idx: NodeIndex) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import_eq) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        self.write_indent();
+        self.write("import ");
+
+        if import_eq.import_clause.is_some() {
+            self.emit_node(import_eq.import_clause);
+        }
+
         if let Some(module_node) = self.arena.get(import_eq.module_specifier) {
             if module_node.kind == SyntaxKind::StringLiteral as u16 {
                 self.write(" = require(");

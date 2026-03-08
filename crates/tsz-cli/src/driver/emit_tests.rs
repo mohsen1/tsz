@@ -66,6 +66,46 @@ fn test_js_extension_for_unknown_ext() {
 }
 
 #[test]
+fn test_declaration_file_name_for_ts_inputs() {
+    assert_eq!(
+        declaration_file_name("file.ts"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.tsx"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.mts"),
+        Some("file.d.mts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.cts"),
+        Some("file.d.cts".to_string())
+    );
+}
+
+#[test]
+fn test_declaration_file_name_for_js_inputs() {
+    assert_eq!(
+        declaration_file_name("file.js"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.jsx"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.mjs"),
+        Some("file.d.mts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.cjs"),
+        Some("file.d.cts".to_string())
+    );
+}
+
+#[test]
 fn test_normalize_type_roots_keeps_existing_absolute_root() {
     let temp = tempdir().unwrap();
     let types_dir = temp.path().join("types");

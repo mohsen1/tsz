@@ -186,6 +186,17 @@ export function parseBaseline(content: string): BaselineContent {
         return name === `${base}.d.ts`;
       });
       if (isDtsOutput) {
+        // Some multi-file baselines include companion declaration source files
+        // (e.g. a.ts + a.d.ts) before later source files. Those .d.ts files are
+        // auxiliary inputs, not the compiler output section.
+        const hasLaterTsSource = segments.slice(i + 1).some(seg => {
+          const laterName = seg.name.trim();
+          return !laterName.startsWith('tests/cases/') && isTsSourceLike(laterName);
+        });
+        if (hasLaterTsSource) {
+          seenNames.add(name);
+          continue;
+        }
         if (lastAuxIndex >= i) {
           continue;
         }
