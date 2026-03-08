@@ -1064,6 +1064,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if func_body.is_some()
+            && self
+                .get_identifier_text(func.name)
+                .is_some_and(|name| self.function_body_returns_identifier(func_body, &name))
+        {
+            self.write(": typeof ");
+            self.emit_node(func.name);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
             let func_type_id = cache
@@ -1083,6 +1090,14 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func_body.is_some()
+                    && self
+                        .get_identifier_text(func.name)
+                        .is_some_and(|name| self.function_body_returns_identifier(func_body, &name))
+                {
+                    self.write(": typeof ");
+                    self.emit_node(func.name);
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));

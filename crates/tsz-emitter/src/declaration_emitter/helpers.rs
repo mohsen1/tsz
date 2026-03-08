@@ -4481,7 +4481,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
-                && self.function_initializer_has_inline_parameter_comments(initializer)
+                && (self.function_initializer_has_inline_parameter_comments(initializer)
+                    || self.function_initializer_is_self_returning(initializer))
                 && self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
             {
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
@@ -4653,16 +4654,16 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(func) = self.arena.get_function(init_node) else {
             return false;
         };
+        let is_self_returning = func.type_annotation.is_none()
+            && self.function_initializer_is_self_returning(initializer);
 
         self.write(": ");
-        if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty()
-        {
-            self.emit_type_parameters(type_params);
+        if is_self_returning {
+            self.emit_recursive_function_initializer_type(func, false);
+            return true;
         }
-        self.write("(");
-        self.emit_parameters_with_body(&func.parameters, func.body);
-        self.write(") => ");
+
+        self.emit_function_initializer_signature(func);
 
         if func.type_annotation.is_some() {
             self.emit_type(func.type_annotation);
@@ -4700,6 +4701,33 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    fn emit_recursive_function_initializer_type(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        elide_return: bool,
+    ) {
+        self.emit_function_initializer_signature(func);
+        if elide_return {
+            self.write("/*elided*/ any");
+        } else {
+            self.emit_recursive_function_initializer_type(func, true);
+        }
+    }
+
+    fn emit_function_initializer_signature(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(") => ");
+    }
+
     fn function_initializer_has_inline_parameter_comments(&self, initializer: NodeIndex) -> bool {
         if self.remove_comments {
             return false;
@@ -4722,6 +4750,112 @@ impl<'a> DeclarationEmitter<'a> {
                 self.parameter_has_leading_inline_block_comment(param_node.pos)
             })
         })
+    }
+
+    fn function_initializer_is_self_returning(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(func.name) else {
+            return false;
+        };
+        self.function_body_returns_identifier(func.body, &name)
+    }
+
+    pub(super) fn function_body_returns_identifier(&self, body_idx: NodeIndex, name: &str) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+        block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| self.statement_returns_identifier(stmt_idx, name))
+    }
+
+    fn statement_returns_identifier(&self, stmt_idx: NodeIndex, name: &str) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => self
+                .arena
+                .get_return_statement(stmt_node)
+                .and_then(|ret| self.return_expression_is_identifier(ret.expression, name))
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|child| self.statement_returns_identifier(child, name))
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => self
+                .arena
+                .get_if_statement(stmt_node)
+                .is_some_and(|if_data| {
+                    self.statement_returns_identifier(if_data.then_statement, name)
+                        || (!if_data.else_statement.is_none()
+                            && self.statement_returns_identifier(if_data.else_statement, name))
+                }),
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.arena.get_try(stmt_node).is_some_and(|try_data| {
+                    self.statement_returns_identifier(try_data.try_block, name)
+                        || (!try_data.catch_clause.is_none()
+                            && self.statement_returns_identifier(try_data.catch_clause, name))
+                        || (!try_data.finally_block.is_none()
+                            && self.statement_returns_identifier(try_data.finally_block, name))
+                })
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => self
+                .arena
+                .get_catch_clause(stmt_node)
+                .is_some_and(|catch_data| {
+                    self.statement_returns_identifier(catch_data.block, name)
+                }),
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => self
+                .arena
+                .get_case_clause(stmt_node)
+                .is_some_and(|case_data| {
+                    case_data
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|child| self.statement_returns_identifier(child, name))
+                }),
+            _ => false,
+        }
+    }
+
+    fn return_expression_is_identifier(&self, expr_idx: NodeIndex, name: &str) -> Option<bool> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return Some(
+                self.get_identifier_text(expr_idx)
+                    .is_some_and(|text| text == name),
+            );
+        }
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return self
+                .arena
+                .get_parenthesized(expr_node)
+                .and_then(|paren| self.return_expression_is_identifier(paren.expression, name));
+        }
+        Some(false)
     }
 
     fn parameter_has_leading_inline_block_comment(&self, param_pos: u32) -> bool {
