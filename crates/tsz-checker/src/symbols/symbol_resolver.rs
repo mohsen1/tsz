@@ -81,6 +81,46 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Check if a symbol is a string-literal ambient module declaration
+    /// (e.g., `declare module "foobar"`). These should not be accessible as bare
+    /// identifiers — only namespace declarations with identifier names
+    /// (e.g., `declare namespace Foo`) should resolve in expression context.
+    fn is_string_literal_module_symbol(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders);
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        // Only check symbols with MODULE flags
+        if (symbol.flags & symbol_flags::MODULE) == 0 {
+            return false;
+        }
+        // Check if ALL declarations are module declarations with string literal names
+        if symbol.declarations.is_empty() {
+            return false;
+        }
+        symbol.declarations.iter().all(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                // Can't find node (possibly cross-file) — conservatively not a string module
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module) = self.ctx.arena.get_module(node) else {
+                return false;
+            };
+            // If the name node is a StringLiteral, this is a string-literal module
+            self.ctx
+                .arena
+                .get(module.name)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
+        })
+    }
+
     /// Resolve an identifier node to its symbol ID.
     ///
     /// This function walks the scope chain from the identifier's location upward,
@@ -169,6 +209,11 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|symbol| symbol.escaped_name.as_str() == expected_name)
             })
         };
+
+        // Filter out string-literal ambient module declarations (e.g. `declare module "foobar"`)
+        // These should not resolve as bare identifiers — they are only reachable via import.
+        let result =
+            result.filter(|&sym_id| !self.is_string_literal_module_symbol(sym_id, &lib_binders));
 
         trace!(
             ident_name = ?ident_name,

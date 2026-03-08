@@ -1266,7 +1266,10 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
     matches!(
         code,
         1005  // '{0}' expected
-        | 1009 // Trailing comma not allowed (sometimes real syntax error)
+        // Note: TS1009 (Trailing comma not allowed) is intentionally excluded.
+        // It does not corrupt the AST enough to suppress semantic errors like
+        // TS2304. Files with only TS1009 parse errors (e.g., `extends A,`)
+        // still have valid identifiers that need name resolution.
         | 1014 // A rest parameter must be last in a parameter list
         | 1036 // Statements are not allowed in ambient contexts
         | 1109 // Expression expected
