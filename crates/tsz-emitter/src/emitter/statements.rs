@@ -257,6 +257,44 @@ impl<'a> Printer<'a> {
             }
         };
 
+        // Block-level using-declaration lowering for non-ES5 targets below ES2025.
+        // When a block contains `using`/`await using` declarations, tsc wraps ALL
+        // statements in the block inside a single try/catch/finally, not just the
+        // using declarations. We detect this here and set up the env + try wrapper.
+        let block_using_lowered =
+            if !self.ctx.target_es5 && !self.ctx.options.target.supports_es2025() {
+                self.block_has_using_declarations(&block.statements)
+            } else {
+                false
+            };
+        let prev_block_using_env = self.block_using_env.take();
+        let block_using_names: Option<(String, String, bool)> = if block_using_lowered {
+            let using_async = self.block_has_await_using(&block.statements);
+            let (env_name, error_name) = self.next_disposable_env_names();
+
+            // Hoist `var` declarations for all using-declared variables before the try block.
+            // tsc emits `var name;` before try, then `name = __addDisposableResource(...)` inside.
+            let using_var_names = self.collect_using_var_names(&block.statements);
+            if !using_var_names.is_empty() {
+                self.write("var ");
+                self.write(&using_var_names.join(", "));
+                self.write(";");
+                self.write_line();
+            }
+
+            self.write("const ");
+            self.write(&env_name);
+            self.write(" = { stack: [], error: void 0, hasError: false };");
+            self.write_line();
+            self.write("try {");
+            self.write_line();
+            self.increase_indent();
+            self.block_using_env = Some((env_name.clone(), using_async));
+            Some((env_name, error_name, using_async))
+        } else {
+            None
+        };
+
         // Pre-collect statement indices so we can look up the next statement's
         // position as an upper bound for trailing comment scanning. Our parser sets
         // stmt_node.end past the statement boundary into the next statement's tokens,
@@ -394,6 +432,46 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Close the block-level using try/catch/finally if active
+        if let Some((env_name, error_name, using_async)) = block_using_names {
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("catch (");
+            self.write(&error_name);
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.write(&env_name);
+            self.write(".error = ");
+            self.write(&error_name);
+            self.write(";");
+            self.write_line();
+            self.write(&env_name);
+            self.write(".hasError = true;");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("finally {");
+            self.write_line();
+            self.increase_indent();
+            if using_async {
+                self.write("await ");
+            }
+            self.write("__disposeResources(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            // Restore previous block_using_env
+            self.block_using_env = prev_block_using_env;
+        } else {
+            self.block_using_env = prev_block_using_env;
+        }
+
         // Emit comments between the last statement and the closing `}`.
         // tsc preserves these comments inside the block at the block's
         // indentation level for both function bodies and control-flow blocks.
@@ -477,19 +555,39 @@ impl<'a> Printer<'a> {
         };
 
         // Lower `using`/`await using` declarations for non-ES5 targets below ES2025.
-        // The ES5 path handles this in es5/bindings.rs; for ES2015+ we do it here.
+        // When block_using_env is set, the block-level try/catch is already active,
+        // so we just emit `const x = __addDisposableResource(env, expr, async)`.
+        // When not set (standalone), emit the full try/catch per-statement.
         let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
         if using_is_lowered && !self.ctx.target_es5 {
-            for &decl_list_idx in &var_stmt.declarations.nodes {
-                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
-                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
-                {
-                    let flags = decl_list_node.flags as u32;
-                    if (flags & node_flags::USING) != 0 {
-                        self.emit_using_declaration_lowered(decl_list, flags);
-                    } else {
-                        self.emit(decl_list_idx);
-                        self.write_semicolon();
+            if let Some((ref env_name, using_async)) = self.block_using_env.clone() {
+                // Block-level try/catch is active — just emit the __addDisposableResource calls
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                        && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                    {
+                        let flags = decl_list_node.flags as u32;
+                        if (flags & node_flags::USING) != 0 {
+                            self.emit_using_addresource_only(decl_list, env_name, using_async);
+                        } else {
+                            self.emit(decl_list_idx);
+                            self.write_semicolon();
+                        }
+                    }
+                }
+            } else {
+                // No block-level wrapper — emit full try/catch per-statement (legacy path)
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                        && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                    {
+                        let flags = decl_list_node.flags as u32;
+                        if (flags & node_flags::USING) != 0 {
+                            self.emit_using_declaration_lowered(decl_list, flags);
+                        } else {
+                            self.emit(decl_list_idx);
+                            self.write_semicolon();
+                        }
                     }
                 }
             }
@@ -552,17 +650,6 @@ impl<'a> Printer<'a> {
         let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
         let (env_name, error_name) = self.next_disposable_env_names();
 
-        self.write("const ");
-        self.write(&env_name);
-        self.write(" = { stack: [], error: void 0, hasError: false };");
-        self.write_line();
-
-        self.write("try {");
-        self.write_line();
-        self.increase_indent();
-
-        // For non-ES5 targets, emit all declarations on one line as comma-separated:
-        // const d1 = __addDisposableResource(env, expr1, false), d2 = __addDisposableResource(env, expr2, false);
         let initialized_decls: Vec<_> = decl_list
             .declarations
             .nodes
@@ -576,12 +663,37 @@ impl<'a> Printer<'a> {
             })
             .collect();
 
+        // Hoist `var` declarations before the try block — variables must remain
+        // accessible after the try/catch/finally completes.
         if !initialized_decls.is_empty() {
-            self.write("const ");
-            for (i, &decl_idx) in initialized_decls.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
+            let mut var_names = Vec::new();
+            for &decl_idx in &initialized_decls {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.collect_binding_names(decl.name, &mut var_names);
                 }
+            }
+            if !var_names.is_empty() {
+                self.write("var ");
+                self.write(&var_names.join(", "));
+                self.write(";");
+                self.write_line();
+            }
+        }
+
+        self.write("const ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit assignments (no `const`/`let` prefix — vars are hoisted above)
+        if !initialized_decls.is_empty() {
+            for (i, &decl_idx) in initialized_decls.iter().enumerate() {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
@@ -593,6 +705,9 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");
+                    if i + 1 < initialized_decls.len() {
+                        self.write(", ");
+                    }
                 }
             }
             self.write(";");
@@ -1695,6 +1810,133 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
             self.decrease_indent();
+        }
+    }
+
+    /// Collect the declared variable names from all `using`/`await using` declarations in a block.
+    fn collect_using_var_names(&self, statements: &NodeList) -> Vec<String> {
+        let mut names = Vec::new();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                if (decl_list_node.flags as u32 & node_flags::USING) == 0 {
+                    continue;
+                }
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        && decl.initializer.is_some()
+                    {
+                        let mut decl_names = Vec::new();
+                        self.collect_binding_names(decl.name, &mut decl_names);
+                        names.extend(decl_names);
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// Check if a statement list contains any `using`/`await using` declarations.
+    fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    continue;
+                };
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                        && (decl_list_node.flags as u32 & node_flags::USING) != 0 {
+                            return true;
+                        }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a statement list contains any `await using` declarations.
+    fn block_has_await_using(&self, statements: &NodeList) -> bool {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    continue;
+                };
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                        && (decl_list_node.flags as u32 & node_flags::AWAIT_USING)
+                            == node_flags::AWAIT_USING
+                        {
+                            return true;
+                        }
+                }
+            }
+        }
+        false
+    }
+
+    /// Emit just the `__addDisposableResource` calls for a using declaration,
+    /// without the try/catch/finally wrapper (used when block-level wrapping is active).
+    fn emit_using_addresource_only(
+        &mut self,
+        decl_list: &tsz_parser::parser::node::VariableData,
+        env_name: &str,
+        using_async: bool,
+    ) {
+        let initialized_decls: Vec<_> = decl_list
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.arena
+                    .get(decl_idx)
+                    .and_then(|n| self.arena.get_variable_declaration(n))
+                    .is_some_and(|d| d.initializer.is_some())
+            })
+            .collect();
+
+        // Emit assignments only (no `const` prefix) — variables are hoisted as `var`
+        // before the try block by the block-level wrapper.
+        for (i, &decl_idx) in initialized_decls.iter().enumerate() {
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+            {
+                self.emit(decl.name);
+                self.write(" = __addDisposableResource(");
+                self.write(env_name);
+                self.write(", ");
+                self.emit(decl.initializer);
+                self.write(", ");
+                self.write(if using_async { "true" } else { "false" });
+                self.write(")");
+                if i + 1 < initialized_decls.len() {
+                    self.write(", ");
+                }
+            }
+        }
+        if !initialized_decls.is_empty() {
+            self.write(";");
         }
     }
 }

@@ -50,7 +50,10 @@ impl<'a> Printer<'a> {
 
     /// Serialize a type annotation node to its runtime metadata representation.
     /// Returns a string like "String", "Number", "Function", "Object", "void 0", etc.
+    /// Uses `self.metadata_class_type_params` for in-scope type parameters; references
+    /// to these are serialized as `"Object"` (matching tsc behavior).
     fn serialize_type_for_metadata(&self, type_idx: NodeIndex) -> String {
+        let type_param_names = self.metadata_class_type_params.as_deref().unwrap_or(&[]);
         let Some(type_node) = self.arena.get(type_idx) else {
             return "Object".to_string();
         };
@@ -73,11 +76,15 @@ impl<'a> Printer<'a> {
             k if k == sk(SyntaxKind::UnknownKeyword) => "Object".to_string(),
             k if k == sk(SyntaxKind::ObjectKeyword) => "Object".to_string(),
 
-            // Type reference → emit the type name (class/enum reference)
+            // Type reference → emit the type name (class/enum reference).
+            // If the referenced name is a type parameter, emit "Object" instead.
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
                     let name = self.get_identifier_text_idx(type_ref.type_name);
                     if !name.is_empty() {
+                        if type_param_names.iter().any(|tp| tp == &name) {
+                            return "Object".to_string();
+                        }
                         return name;
                     }
                 }
@@ -557,6 +564,25 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
+            // Set type parameter names for metadata serialization so that
+            // generic type params (T, U, etc.) serialize as "Object" not the param name.
+            if self.ctx.options.emit_decorator_metadata
+                && let Some(ref tp_list) = class.type_parameters {
+                    let tp_names: Vec<String> = tp_list
+                        .nodes
+                        .iter()
+                        .filter_map(|&tp_idx| {
+                            let tp_node = self.arena.get(tp_idx)?;
+                            let tp = self.arena.get_type_parameter(tp_node)?;
+                            let name = self.get_identifier_text_idx(tp.name);
+                            if name.is_empty() { None } else { Some(name) }
+                        })
+                        .collect();
+                    if !tp_names.is_empty() {
+                        self.metadata_class_type_params = Some(tp_names);
+                    }
+                }
+
             // Emit __decorate calls for member decorators (methods, properties, accessors)
             if has_legacy_member_decorators {
                 self.emit_legacy_member_decorator_calls(&class_name, &class.members.nodes);
@@ -579,6 +605,9 @@ impl<'a> Printer<'a> {
                 false,
                 &class.members.nodes,
             );
+
+            // Clear type parameter names after decorator emission
+            self.metadata_class_type_params = None;
 
             return;
         }
