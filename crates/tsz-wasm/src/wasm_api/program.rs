@@ -271,10 +271,7 @@ impl TsProgram {
     }
 
     /// Collect syntactic diagnostics as structured values
-    fn collect_syntactic_diagnostics(
-        &mut self,
-        file_name: Option<&str>,
-    ) -> Vec<serde_json::Value> {
+    fn collect_syntactic_diagnostics(&mut self, file_name: Option<&str>) -> Vec<serde_json::Value> {
         self.ensure_compiled();
 
         let merged = match &self.merged {
@@ -308,10 +305,7 @@ impl TsProgram {
     }
 
     /// Collect semantic diagnostics as structured values
-    fn collect_semantic_diagnostics(
-        &mut self,
-        file_name: Option<&str>,
-    ) -> Vec<serde_json::Value> {
+    fn collect_semantic_diagnostics(&mut self, file_name: Option<&str>) -> Vec<serde_json::Value> {
         self.ensure_compiled();
 
         let merged = match &self.merged {
