@@ -8,7 +8,8 @@ use tsz::emitter::{ModuleKind, ScriptTarget};
 #[derive(Parser, Debug)]
 #[command(
     name = "tsz",
-    version,
+    disable_version_flag = true,
+    disable_help_flag = true,
     about = "Codename Zang (Persian for rust) - TypeScript in Rust"
 )]
 pub struct CliArgs {
@@ -36,6 +37,14 @@ pub struct CliArgs {
     /// Print the final configuration instead of building.
     #[arg(long = "showConfig", alias = "show-config")]
     pub show_config: bool,
+
+    /// Ignore tsconfig.json — use only CLI options and explicit file arguments.
+    #[arg(long = "ignoreConfig", alias = "ignore-config")]
+    pub ignore_config: bool,
+
+    /// Enable lib replacement.
+    #[arg(long = "libReplacement", alias = "lib-replacement")]
+    pub lib_replacement: bool,
 
     /// Watch input files and recompile on changes.
     #[arg(short = 'w', long)]
@@ -419,7 +428,7 @@ pub struct CliArgs {
     /// Catches common unsoundness like mutable array covariance, method bivariance,
     /// `any` escapes, and excess properties via sticky freshness.
     /// Uses `TS9xxx` diagnostic codes (TS9001-TS9008).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub sound: bool,
 
     /// Add 'undefined' to a type when accessed using an index.
@@ -517,7 +526,7 @@ pub struct CliArgs {
     pub trace_resolution: bool,
 
     /// Log all dependencies that were resolved during compilation.
-    #[arg(long = "traceDependencies", alias = "trace-dependencies")]
+    #[arg(long = "traceDependencies", alias = "trace-dependencies", hide = true)]
     pub trace_dependencies: bool,
 
     /// Generates an event trace and a list of types.
@@ -683,7 +692,8 @@ pub struct CliArgs {
     #[arg(
         long = "typesVersions",
         alias = "types-versions",
-        value_name = "VERSION"
+        value_name = "VERSION",
+        hide = true
     )]
     pub types_versions_compiler_version: Option<String>,
 
@@ -702,7 +712,6 @@ pub struct CliArgs {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Target {
-    Es3,
     Es5,
     #[value(alias = "es6")]
     Es2015,
@@ -723,7 +732,6 @@ pub enum Target {
 impl Target {
     pub const fn to_script_target(self) -> ScriptTarget {
         match self {
-            Self::Es3 => ScriptTarget::ES3,
             Self::Es5 => ScriptTarget::ES5,
             Self::Es2015 => ScriptTarget::ES2015,
             Self::Es2016 => ScriptTarget::ES2016,

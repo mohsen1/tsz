@@ -737,7 +737,10 @@ fn compile_inner(
     };
 
     let cwd = canonicalize_or_owned(cwd);
-    let tsconfig_path = if let Some(path) = explicit_config_path {
+    let tsconfig_path = if args.ignore_config {
+        // --ignoreConfig: skip tsconfig.json discovery and loading entirely
+        None
+    } else if let Some(path) = explicit_config_path {
         Some(path.to_path_buf())
     } else {
         match resolve_tsconfig_path(&cwd, args.project.as_deref()) {

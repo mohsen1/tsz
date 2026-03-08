@@ -48,11 +48,22 @@ where
     }
 }
 
+/// Represents the `extends` field which can be a single string or an array of strings.
+/// tsc 5.0+ supports `"extends": ["./base1.json", "./base2.json"]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ExtendsValue {
+    /// A single config path to extend from.
+    Single(String),
+    /// An array of config paths to extend from (applied in order, later overrides earlier).
+    Array(Vec<String>),
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TsConfig {
     #[serde(default)]
-    pub extends: Option<String>,
+    pub extends: Option<ExtendsValue>,
     #[serde(default)]
     pub compiler_options: Option<CompilerOptions>,
     #[serde(default)]
@@ -2092,10 +2103,25 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
 
     let extends = config.extends.take();
-    if let Some(extends_path) = extends {
-        let base_path = resolve_extends_path(path, &extends_path)?;
-        let base_config = load_tsconfig_inner(&base_path, visited)?;
-        config = merge_configs(base_config, config);
+    if let Some(extends_value) = extends {
+        let extends_paths = match extends_value {
+            ExtendsValue::Single(s) => vec![s],
+            ExtendsValue::Array(arr) => arr,
+        };
+        // Apply extends in order: later entries override earlier ones.
+        // Each base is merged into the accumulated config.
+        let mut accumulated: Option<TsConfig> = None;
+        for extends_path_str in &extends_paths {
+            let base_path = resolve_extends_path(path, extends_path_str)?;
+            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            accumulated = Some(match accumulated {
+                Some(acc) => merge_configs(acc, base_config),
+                None => base_config,
+            });
+        }
+        if let Some(base) = accumulated {
+            config = merge_configs(base, config);
+        }
     }
 
     visited.remove(&canonical);
@@ -2118,10 +2144,23 @@ fn load_tsconfig_inner_with_diagnostics(
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
 
     let extends = parsed.config.extends.take();
-    if let Some(extends_path) = extends {
-        let base_path = resolve_extends_path(path, &extends_path)?;
-        let base_config = load_tsconfig_inner(&base_path, visited)?;
-        parsed.config = merge_configs(base_config, parsed.config);
+    if let Some(extends_value) = extends {
+        let extends_paths = match extends_value {
+            ExtendsValue::Single(s) => vec![s],
+            ExtendsValue::Array(arr) => arr,
+        };
+        let mut accumulated: Option<TsConfig> = None;
+        for extends_path_str in &extends_paths {
+            let base_path = resolve_extends_path(path, extends_path_str)?;
+            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            accumulated = Some(match accumulated {
+                Some(acc) => merge_configs(acc, base_config),
+                None => base_config,
+            });
+        }
+        if let Some(base) = accumulated {
+            parsed.config = merge_configs(base, parsed.config);
+        }
     }
 
     visited.remove(&canonical);
@@ -2132,16 +2171,50 @@ fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
     let base_dir = current_path
         .parent()
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
+
+    // Check if this is a relative or absolute path
+    if extends.starts_with('.') || extends.starts_with('/') {
+        let mut candidate = PathBuf::from(extends);
+        if candidate.extension().is_none() {
+            candidate.set_extension("json");
+        }
+
+        if candidate.is_absolute() {
+            return Ok(candidate);
+        }
+        return Ok(base_dir.join(candidate));
+    }
+
+    // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json")
+    // Resolve through node_modules, walking up directory ancestors.
+    let mut search_dir = base_dir.to_path_buf();
+    loop {
+        let mut candidate = search_dir.join("node_modules").join(extends);
+        if candidate.extension().is_none() {
+            candidate.set_extension("json");
+        }
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+        // Also try the package's tsconfig.json if extends points to a directory
+        let dir_candidate = search_dir.join("node_modules").join(extends);
+        if dir_candidate.is_dir() {
+            let tsconfig_in_dir = dir_candidate.join("tsconfig.json");
+            if tsconfig_in_dir.exists() {
+                return Ok(tsconfig_in_dir);
+            }
+        }
+        if !search_dir.pop() {
+            break;
+        }
+    }
+
+    // Fallback: treat as relative path (original behavior)
     let mut candidate = PathBuf::from(extends);
     if candidate.extension().is_none() {
         candidate.set_extension("json");
     }
-
-    if candidate.is_absolute() {
-        Ok(candidate)
-    } else {
-        Ok(base_dir.join(candidate))
-    }
+    Ok(base_dir.join(candidate))
 }
 
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
@@ -2262,7 +2335,10 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
         "es2019" => ScriptTarget::ES2019,
         "es2020" => ScriptTarget::ES2020,
         "es2021" => ScriptTarget::ES2021,
-        "es2022" | "es2023" | "es2024" => ScriptTarget::ES2022,
+        "es2022" => ScriptTarget::ES2022,
+        "es2023" => ScriptTarget::ES2023,
+        "es2024" => ScriptTarget::ES2024,
+        "es2025" => ScriptTarget::ES2025,
         "esnext" => ScriptTarget::ESNext,
         _ => bail!("unsupported compilerOptions.target '{value}'"),
     };
@@ -2772,7 +2848,7 @@ fn normalize_option(value: &str) -> String {
     normalized
 }
 
-fn strip_jsonc(input: &str) -> String {
+pub fn strip_jsonc(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     let mut in_string = false;

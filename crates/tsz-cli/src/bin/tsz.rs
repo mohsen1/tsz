@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz_cli::args::CliArgs;
+use tsz_cli::help::{self, TSC_VERSION};
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
 
 /// tsc exit status codes (matching TypeScript's `ExitStatus` enum)
@@ -74,11 +75,6 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return handle_list_files_only(&args, &cwd);
     }
 
-    // Handle --all: show all compiler options
-    if args.all {
-        return handle_all();
-    }
-
     // Handle --build mode
     if args.build {
         return handle_build(&args, &cwd);
@@ -86,6 +82,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
 
     if args.watch {
         return watch::run(&args, &cwd);
+    }
+
+    // No-input behavior: if no files given, no --project, and no tsconfig.json in cwd,
+    // print version + help and exit 1 (matching tsc v6 behavior).
+    if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
+        println!("Version {TSC_VERSION}");
+        print!("{}", help::render_help(TSC_VERSION));
+        std::process::exit(1);
     }
 
     // Initialize tracer if --generateTrace is specified
@@ -101,7 +105,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
     // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
     if let Some(ref _profile_path) = args.generate_cpu_profile {
-        println!(
+        eprintln!(
             "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
         );
     }
@@ -201,8 +205,8 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            // Use eprint (not eprintln) because render() already includes all newlines
-            print!("{output}");
+            // Diagnostics go to stderr (matching tsc behavior)
+            eprint!("{output}");
         }
     }
 
@@ -291,23 +295,24 @@ fn run_batch_mode() -> Result<()> {
 
 /// Preprocess command-line arguments for tsc compatibility.
 ///
-/// Handles:
+/// Handles (BEFORE clap parsing):
+/// - `--version` / `-v` / `-V` → print version, exit 0
+/// - `--help` / `-h` / `-?` → print help, exit 0
+/// - `--all` (with or without `--help`) → print all options, exit 0
 /// - `@file` response file expansion (tsc reads args from response files)
 /// - Build mode flag remapping: when `--build`/`-b` is the first argument,
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
-/// - Outside build mode: `-v` → `-V` conversion (tsc uses lowercase `-v` for version; clap uses `-V`)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
-    // First pass: expand response files and collect all args
+    // First pass: expand response files and collect normalized arg strings
     let mut expanded = Vec::with_capacity(args.len());
 
     for (i, arg) in args.iter().enumerate() {
-        let arg_str = arg.to_string_lossy();
-
         if i == 0 {
-            // Always keep the program name as-is
             expanded.push(arg.clone());
             continue;
         }
+
+        let arg_str = arg.to_string_lossy();
 
         if arg_str.starts_with('@') && arg_str.len() > 1 {
             // Response file: @path reads arguments from file
@@ -316,10 +321,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 Ok(content) => {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        // Skip empty lines and comments
                         if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                            // Split on whitespace, respecting quoted strings
-                            // (matching tsc behavior for response files)
                             for part in split_response_line(trimmed) {
                                 expanded.push(OsString::from(part));
                             }
@@ -327,8 +329,6 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     }
                 }
                 Err(_) => {
-                    // If the file can't be read, pass the argument through
-                    // (clap will report an unknown argument error)
                     expanded.push(arg.clone());
                 }
             }
@@ -337,7 +337,54 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         }
     }
 
-    // Second pass: detect build mode and remap flags
+    // Second pass: detect --help/-h/-?/--all/--version/-v/-V before clap
+    // In build mode, -v means --build-verbose, not --version
+    let is_build_mode = expanded
+        .get(1)
+        .map(|a| {
+            let s = a.to_string_lossy();
+            s == "--build" || s == "-b"
+        })
+        .unwrap_or(false);
+
+    let mut has_help = false;
+    let mut has_all = false;
+    let mut has_version = false;
+
+    for (i, arg) in expanded.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        let s = arg.to_string_lossy();
+        match s.as_ref() {
+            "--help" | "-h" | "-?" => has_help = true,
+            "--all" => has_all = true,
+            "--version" | "-V" => has_version = true,
+            // -v means version only outside build mode; in build mode it means --build-verbose
+            "-v" if !is_build_mode => has_version = true,
+            _ => {}
+        }
+    }
+
+    // --all takes precedence (with or without --help)
+    if has_all {
+        print!("{}", help::render_help_all(TSC_VERSION));
+        std::process::exit(0);
+    }
+
+    // --help / -h / -?
+    if has_help {
+        print!("{}", help::render_help(TSC_VERSION));
+        std::process::exit(0);
+    }
+
+    // --version / -v / -V
+    if has_version {
+        println!("Version {TSC_VERSION}");
+        std::process::exit(0);
+    }
+
+    // Third pass: detect build mode and remap flags
     let is_build_mode = expanded
         .get(1)
         .map(|a| {
@@ -377,12 +424,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
             }
         }
 
-        if !is_build_mode && arg_str == "-v" {
-            // Outside build mode: tsc uses -v for version; clap uses -V
-            result.push(OsString::from("-V"));
-        } else {
-            result.push(arg.clone());
-        }
+        result.push(arg.clone());
     }
 
     result
@@ -477,7 +519,8 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
             std::process::exit(1);
         }
         ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-            // For help and version, let clap handle it normally
+            // Help and version are handled in preprocess_args before clap,
+            // but keep this arm for safety
             err.exit();
         }
         _ => {
@@ -894,32 +937,33 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         )
     })?;
 
-    println!(
-        "\nCreated a new tsconfig.json\n\n\
-You can learn more at https://aka.ms/tsconfig"
-    );
+    println!("Created a new tsconfig.json\n\nYou can learn more at https://aka.ms/tsconfig");
 
     Ok(())
 }
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
-    use tsz_cli::driver::apply_cli_overrides;
+    use tsz_cli::config::{load_tsconfig, resolve_compiler_options, strip_jsonc};
+    use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    let tsconfig_path = args
-        .project
-        .as_ref()
-        .map(|p| {
-            if p.is_dir() {
-                p.join("tsconfig.json")
-            } else {
-                p.clone()
-            }
-        })
-        .or_else(|| {
-            let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then_some(default_path)
-        });
+    // --ignoreConfig: skip tsconfig loading
+    let tsconfig_path = if args.ignore_config {
+        None
+    } else {
+        args.project
+            .as_ref()
+            .map(|p| {
+                if p.is_dir() {
+                    p.join("tsconfig.json")
+                } else {
+                    p.clone()
+                }
+            })
+            .or_else(|| {
+                let default_path = cwd.join("tsconfig.json");
+                default_path.exists().then_some(default_path)
+            })
+    };
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
         Some(load_tsconfig(path)?)
@@ -927,205 +971,245 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         None
     };
 
-    let mut resolved = resolve_compiler_options(
-        config
+    // Parse raw JSON from the tsconfig file to extract explicitly set compilerOptions
+    // This avoids relying on struct field coverage -- we reflect back exactly what was set.
+    let raw_compiler_options: serde_json::Map<String, serde_json::Value> =
+        if let Some(ref path) = tsconfig_path {
+            let source = std::fs::read_to_string(path).unwrap_or_default();
+            let stripped = strip_jsonc(&source);
+            // Remove trailing commas for valid JSON parsing
+            let normalized = remove_trailing_commas_for_showconfig(&stripped);
+            if let Ok(raw_val) = serde_json::from_str::<serde_json::Value>(&normalized) {
+                raw_val
+                    .get("compilerOptions")
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                serde_json::Map::new()
+            }
+        } else {
+            serde_json::Map::new()
+        };
+
+    let raw_opts = config
+        .as_ref()
+        .and_then(|cfg| cfg.compiler_options.as_ref());
+
+    // We need resolved options for file discovery (allow_js, out_dir).
+    // For --showConfig, lib file resolution failure is non-fatal.
+    let resolved = resolve_compiler_options(raw_opts).ok();
+    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false);
+    let out_dir = resolved.as_ref().and_then(|r| r.out_dir.clone());
+
+    // Discover resolved file list
+    let base_dir = tsconfig_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(cwd);
+
+    let explicit_files: Vec<std::path::PathBuf> = if !args.files.is_empty() {
+        args.files.clone()
+    } else if let Some(ref cfg) = config {
+        cfg.files
             .as_ref()
-            .and_then(|cfg| cfg.compiler_options.as_ref()),
-    )?;
-    apply_cli_overrides(&mut resolved, args)?;
+            .map(|f| f.iter().map(std::path::PathBuf::from).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
-    // Build compilerOptions as a serde_json::Map for proper JSON output (matching tsc)
-    let mut opts = serde_json::Map::new();
+    let files_explicitly_set =
+        !args.files.is_empty() || config.as_ref().and_then(|c| c.files.as_ref()).is_some();
+    let discovery = FileDiscoveryOptions {
+        base_dir: base_dir.to_path_buf(),
+        files: explicit_files,
+        files_explicitly_set,
+        include: config.as_ref().and_then(|c| c.include.clone()),
+        exclude: config.as_ref().and_then(|c| c.exclude.clone()),
+        out_dir,
+        follow_links: false,
+        allow_js,
+    };
 
-    // Language and Environment
-    opts.insert(
-        "target".into(),
-        serde_json::Value::String(format!("{:?}", resolved.printer.target).to_lowercase()),
-    );
-    opts.insert(
-        "module".into(),
-        serde_json::Value::String(format!("{:?}", resolved.printer.module).to_lowercase()),
-    );
+    let discovered_files = discover_ts_files(&discovery).unwrap_or_default();
 
-    // Modules
-    if let Some(ref module_resolution) = resolved.module_resolution {
-        opts.insert(
-            "moduleResolution".into(),
-            serde_json::Value::String(format!("{module_resolution:?}").to_lowercase()),
+    // If no input files found, emit TS18003 error to stderr and exit 1
+    if discovered_files.is_empty() && config.is_some() {
+        eprintln!(
+            "error TS18003: No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
+            tsconfig_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            config
+                .as_ref()
+                .and_then(|c| c.include.as_ref())
+                .map(|i| i.join("', '"))
+                .unwrap_or_default(),
+            config
+                .as_ref()
+                .and_then(|c| c.exclude.as_ref())
+                .map(|e| e.join("', '"))
+                .unwrap_or_default(),
         );
-    }
-    if let Some(ref out_dir) = resolved.out_dir {
-        opts.insert(
-            "outDir".into(),
-            serde_json::Value::String(out_dir.display().to_string()),
-        );
-    }
-    if let Some(ref root_dir) = resolved.root_dir {
-        opts.insert(
-            "rootDir".into(),
-            serde_json::Value::String(root_dir.display().to_string()),
-        );
-    }
-    if let Some(ref out_file) = resolved.out_file {
-        opts.insert(
-            "outFile".into(),
-            serde_json::Value::String(out_file.display().to_string()),
-        );
-    }
-    if let Some(ref base_url) = resolved.base_url {
-        opts.insert(
-            "baseUrl".into(),
-            serde_json::Value::String(base_url.display().to_string()),
-        );
-    }
-    if let Some(ref declaration_dir) = resolved.declaration_dir {
-        opts.insert(
-            "declarationDir".into(),
-            serde_json::Value::String(declaration_dir.display().to_string()),
-        );
+        std::process::exit(1);
     }
 
-    // Strict checks
-    opts.insert("strict".into(), resolved.checker.strict.into());
-    opts.insert(
-        "noImplicitAny".into(),
-        resolved.checker.no_implicit_any.into(),
-    );
-    opts.insert(
-        "strictNullChecks".into(),
-        resolved.checker.strict_null_checks.into(),
-    );
-    opts.insert(
-        "strictFunctionTypes".into(),
-        resolved.checker.strict_function_types.into(),
-    );
-    opts.insert(
-        "strictPropertyInitialization".into(),
-        resolved.checker.strict_property_initialization.into(),
-    );
-    opts.insert(
-        "strictBindCallApply".into(),
-        resolved.checker.strict_bind_call_apply.into(),
-    );
-    opts.insert(
-        "noImplicitThis".into(),
-        resolved.checker.no_implicit_this.into(),
-    );
-    opts.insert(
-        "noImplicitReturns".into(),
-        resolved.checker.no_implicit_returns.into(),
-    );
-    opts.insert(
-        "useUnknownInCatchVariables".into(),
-        resolved.checker.use_unknown_in_catch_variables.into(),
-    );
-    opts.insert(
-        "noUncheckedIndexedAccess".into(),
-        resolved.checker.no_unchecked_indexed_access.into(),
-    );
-    opts.insert(
-        "exactOptionalPropertyTypes".into(),
-        resolved.checker.exact_optional_property_types.into(),
-    );
-    opts.insert(
-        "isolatedModules".into(),
-        resolved.checker.isolated_modules.into(),
-    );
-    opts.insert(
-        "esModuleInterop".into(),
-        resolved.checker.es_module_interop.into(),
-    );
-    opts.insert(
-        "allowSyntheticDefaultImports".into(),
-        resolved.checker.allow_synthetic_default_imports.into(),
-    );
+    // Build file paths relative to tsconfig dir with "./" prefix (matching tsc)
+    let file_paths: Vec<String> = discovered_files
+        .iter()
+        .map(|f| {
+            if let Ok(rel) = f.strip_prefix(base_dir) {
+                format!("./{}", rel.display())
+            } else {
+                f.display().to_string()
+            }
+        })
+        .collect();
 
-    // Emit
-    opts.insert("declaration".into(), resolved.emit_declarations.into());
-    opts.insert("declarationMap".into(), resolved.declaration_map.into());
-    opts.insert("sourceMap".into(), resolved.source_map.into());
-    opts.insert("noEmit".into(), resolved.no_emit.into());
-    opts.insert("noEmitOnError".into(), resolved.no_emit_on_error.into());
-    opts.insert(
-        "removeComments".into(),
-        resolved.printer.remove_comments.into(),
-    );
-    opts.insert(
-        "noEmitHelpers".into(),
-        resolved.printer.no_emit_helpers.into(),
-    );
+    // Build the output manually with 4-space indentation (matching tsc --showConfig)
+    let mut output = String::from("{\n");
 
-    // Projects
-    if resolved.composite {
-        opts.insert("composite".into(), true.into());
+    // compilerOptions - reflect raw values from tsconfig (only explicitly set options)
+    output.push_str("    \"compilerOptions\": {");
+    if raw_compiler_options.is_empty() {
+        output.push('}');
+    } else {
+        output.push('\n');
+        let entries: Vec<_> = raw_compiler_options.iter().collect();
+        for (i, (key, value)) in entries.iter().enumerate() {
+            output.push_str("        ");
+            output.push_str(&format_json_value_with_indent(key, value, 8));
+            if i + 1 < entries.len() {
+                output.push(',');
+            }
+            output.push('\n');
+        }
+        output.push_str("    }");
     }
 
-    // Other
-    opts.insert("incremental".into(), resolved.incremental.into());
-    opts.insert("noCheck".into(), resolved.no_check.into());
+    // files
+    if !file_paths.is_empty() {
+        output.push_str(",\n    \"files\": [\n");
+        for (i, f) in file_paths.iter().enumerate() {
+            output.push_str(&format!("        \"{}\"", f));
+            if i + 1 < file_paths.len() {
+                output.push(',');
+            }
+            output.push('\n');
+        }
+        output.push_str("    ]");
+    }
 
-    // Build top-level JSON object
-    let mut top = serde_json::Map::new();
-    top.insert("compilerOptions".into(), serde_json::Value::Object(opts));
-
-    // Include files/include/exclude/references from tsconfig
+    // include
     if let Some(ref cfg) = config {
-        if let Some(ref refs) = cfg.references {
-            top.insert(
-                "references".into(),
-                serde_json::Value::Array(
-                    refs.iter()
-                        .map(|r| {
-                            let mut obj = serde_json::Map::new();
-                            obj.insert("path".into(), serde_json::Value::String(r.path.clone()));
-                            if r.prepend {
-                                obj.insert("prepend".into(), true.into());
-                            }
-                            serde_json::Value::Object(obj)
-                        })
-                        .collect(),
-                ),
-            );
-        }
-        if let Some(ref files) = cfg.files {
-            top.insert(
-                "files".into(),
-                serde_json::Value::Array(
-                    files
-                        .iter()
-                        .map(|f| serde_json::Value::String(f.clone()))
-                        .collect(),
-                ),
-            );
-        }
         if let Some(ref include) = cfg.include {
-            top.insert(
-                "include".into(),
-                serde_json::Value::Array(
-                    include
-                        .iter()
-                        .map(|f| serde_json::Value::String(f.clone()))
-                        .collect(),
-                ),
-            );
+            output.push_str(",\n    \"include\": [\n");
+            for (i, v) in include.iter().enumerate() {
+                output.push_str(&format!("        \"{}\"", v));
+                if i + 1 < include.len() {
+                    output.push(',');
+                }
+                output.push('\n');
+            }
+            output.push_str("    ]");
         }
+        // exclude
         if let Some(ref exclude) = cfg.exclude {
-            top.insert(
-                "exclude".into(),
-                serde_json::Value::Array(
-                    exclude
-                        .iter()
-                        .map(|f| serde_json::Value::String(f.clone()))
-                        .collect(),
-                ),
-            );
+            output.push_str(",\n    \"exclude\": [\n");
+            for (i, v) in exclude.iter().enumerate() {
+                output.push_str(&format!("        \"{}\"", v));
+                if i + 1 < exclude.len() {
+                    output.push(',');
+                }
+                output.push('\n');
+            }
+            output.push_str("    ]");
+        }
+        // references
+        if let Some(ref refs) = cfg.references {
+            output.push_str(",\n    \"references\": [\n");
+            for (i, r) in refs.iter().enumerate() {
+                if r.prepend {
+                    output.push_str(&format!(
+                        "        {{\n            \"path\": \"{}\",\n            \"prepend\": true\n        }}",
+                        r.path
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "        {{\n            \"path\": \"{}\"\n        }}",
+                        r.path
+                    ));
+                }
+                if i + 1 < refs.len() {
+                    output.push(',');
+                }
+                output.push('\n');
+            }
+            output.push_str("    ]");
         }
     }
 
-    let json = serde_json::Value::Object(top);
-    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    output.push_str("\n}\n");
+    print!("{output}");
 
     Ok(())
+}
+
+/// Format a JSON key-value pair for --showConfig output with proper indentation.
+fn format_json_value_with_indent(key: &str, value: &serde_json::Value, _indent: usize) -> String {
+    let formatted_value = format_json_value(value);
+    format!("\"{key}\": {formatted_value}")
+}
+
+/// Format a serde_json::Value for --showConfig output.
+fn format_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => format!("\"{}\"", s),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Array(arr) => {
+            if arr.is_empty() {
+                "[]".to_string()
+            } else {
+                let items: Vec<String> = arr.iter().map(format_json_value).collect();
+                format!("[{}]", items.join(", "))
+            }
+        }
+        serde_json::Value::Object(map) => {
+            let entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("\"{}\": {}", k, format_json_value(v)))
+                .collect();
+            format!("{{{}}}", entries.join(", "))
+        }
+        serde_json::Value::Null => "null".to_string(),
+    }
+}
+
+/// Remove trailing commas from JSON strings (for showConfig raw JSON parsing).
+fn remove_trailing_commas_for_showconfig(s: &str) -> String {
+    // Simple approach: remove commas before } or ]
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    for i in 0..len {
+        let ch = chars[i];
+        if ch == ',' {
+            // Look ahead to see if the next non-whitespace character is } or ]
+            let mut j = i + 1;
+            while j < len && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < len && (chars[j] == '}' || chars[j] == ']') {
+                // Skip this comma
+                continue;
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
@@ -1133,20 +1217,24 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::driver::apply_cli_overrides;
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    let tsconfig_path = args
-        .project
-        .as_ref()
-        .map(|p| {
-            if p.is_dir() {
-                p.join("tsconfig.json")
-            } else {
-                p.clone()
-            }
-        })
-        .or_else(|| {
-            let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then_some(default_path)
-        });
+    // --ignoreConfig: skip tsconfig loading
+    let tsconfig_path = if args.ignore_config {
+        None
+    } else {
+        args.project
+            .as_ref()
+            .map(|p| {
+                if p.is_dir() {
+                    p.join("tsconfig.json")
+                } else {
+                    p.clone()
+                }
+            })
+            .or_else(|| {
+                let default_path = cwd.join("tsconfig.json");
+                default_path.exists().then_some(default_path)
+            })
+    };
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
         Some(load_tsconfig(path)?)
@@ -1199,23 +1287,6 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn handle_all() -> Result<()> {
-    use clap::CommandFactory;
-
-    println!("tsz: The TypeScript Compiler - Codename Zang\n");
-    println!("ALL COMPILER OPTIONS\n");
-
-    // Use clap to generate the full help text
-    let mut cmd = tsz_cli::args::CliArgs::command();
-    let help = cmd.render_long_help();
-    println!("{help}");
-
-    println!(
-        "\nYou can learn about all of the compiler options at https://www.typescriptlang.org/tsconfig"
-    );
-    Ok(())
-}
-
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz::checker::diagnostics::DiagnosticCategory;
     use tsz_cli::build;
@@ -1257,7 +1328,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .pretty
             .unwrap_or_else(|| std::io::stderr().is_terminal());
         for diag in &ref_diagnostics {
-            println!("error TS{}: {}", diag.code, diag.message);
+            eprintln!("error TS{}: {}", diag.code, diag.message);
         }
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
@@ -1271,7 +1342,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let build_order: Vec<tsz_cli::project_refs::ProjectId> = match graph.build_order() {
         Ok(order) => order,
         Err(e) => {
-            println!("Error: {e}");
+            eprintln!("Error: {e}");
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
         }
     };
@@ -1339,13 +1410,13 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             if !result.diagnostics.is_empty() {
                 let output = reporter.render(&result.diagnostics);
                 if !output.is_empty() {
-                    print!("{output}");
+                    eprint!("{output}");
                 }
             }
 
             // Stop on first error if --stopBuildOnErrors is set
             if args.stop_build_on_errors {
-                println!(
+                eprintln!(
                     "\nBuild stopped due to errors in {}",
                     project.config_path.display()
                 );
@@ -1454,7 +1525,7 @@ fn handle_build_single_project(
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            print!("{output}");
+            eprint!("{output}");
         }
     }
 
