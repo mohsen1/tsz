@@ -91,6 +91,7 @@ impl<'a> CheckerState<'a> {
         // Cache all terminal outcomes (including ERROR) so pathological
         // inheritance graphs don't repeatedly recompute the same failing class.
         self.ctx.class_instance_type_cache.insert(class_idx, result);
+
         result
     }
 
@@ -115,11 +116,6 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
 
         // Try to insert into global class_instance_resolution_set for recursion prevention.
-        // If the symbol is already in the set, it means this type is currently being resolved
-        // somewhere up the call stack — return ERROR to break the recursion. Do NOT emit
-        // TS2506 here: this is a recursion guard, not a cycle detector. The symbol being
-        // in the set does not prove circular inheritance. True TS2506 cycle detection is
-        // handled by dedicated inheritance checks in class_inheritance.rs.
         let did_insert_into_global_set = if let Some(sym_id) = current_sym {
             if self.ctx.class_instance_resolution_set.insert(sym_id) {
                 true // We inserted it
@@ -592,6 +588,21 @@ impl<'a> CheckerState<'a> {
                 symbol: current_sym,
             });
             self.ctx.this_type_stack.push(partial_type);
+
+            // Cache the partial instance type in the node-indexed cache only.
+            // Method return-type inference can trigger property access on
+            // self-referential parameters (e.g. `p.x` where `p: Point` inside
+            // class Point).  resolve_type_for_property_access_inner checks
+            // class_instance_type_cache as a fallback for in-progress builds,
+            // so Lazy(DefId) resolves to this partial type during building and
+            // to the final type afterward.
+            //
+            // We avoid caching in symbol_instance_types here because parameter
+            // types cached by get_type_of_node would permanently hold the
+            // partial type, causing private-name brand-check failures.
+            self.ctx
+                .class_instance_type_cache
+                .insert(class_idx, partial_type);
 
             for (member_idx, method) in deferred_methods {
                 let Some(name) = self.get_property_name_resolved(method.name) else {
