@@ -394,7 +394,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
                 let source_cond = self.interner.conditional_type(source_cond_id);
                 let target_cond = self.interner.conditional_type(target_cond_id);
-                return self.check_conditional_subtype(source_cond.as_ref(), target_cond.as_ref());
+                if self
+                    .check_conditional_subtype(source_cond.as_ref(), target_cond.as_ref())
+                    .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+                // Conditional-to-conditional structural check failed (e.g., different extends types).
+                // Fall through to conditional_branches_subtype which uses constraint decomposition.
             }
 
             // Before decomposing the conditional into branches, check if the target

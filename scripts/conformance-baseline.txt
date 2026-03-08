@@ -539,7 +539,6 @@ FAIL TypeScript/tests/cases/compiler/inheritedOverloadedSpecializedSignatures.ts
 FAIL TypeScript/tests/cases/compiler/initializedDestructuringAssignmentTypes.ts
 FAIL TypeScript/tests/cases/compiler/inKeywordAndUnknown.ts
 FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts
-FAIL TypeScript/tests/cases/compiler/inlineConditionalHasSimilarAssignability.ts
 FAIL TypeScript/tests/cases/compiler/innerModExport1.ts
 FAIL TypeScript/tests/cases/compiler/innerModExport2.ts
 FAIL TypeScript/tests/cases/compiler/instanceofOnInstantiationExpression.ts
@@ -1114,7 +1113,6 @@ FAIL TypeScript/tests/cases/compiler/typeArgInference2WithError.ts
 FAIL TypeScript/tests/cases/compiler/typeArgumentDefaultUsesConstraintOnCircularDefault.ts
 FAIL TypeScript/tests/cases/compiler/typeArgumentInferenceApparentType1.ts
 FAIL TypeScript/tests/cases/compiler/typeArgumentsOnFunctionsWithNoTypeParameters.ts
-FAIL TypeScript/tests/cases/compiler/typedArrayConstructorOverloads.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardConstructorClassAndNumber.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardConstructorDerivedClass.ts
 FAIL TypeScript/tests/cases/compiler/typeGuardConstructorNarrowPrimitivesInUnion.ts
@@ -5216,6 +5214,7 @@ PASS TypeScript/tests/cases/compiler/initializersInAmbientEnums.ts
 PASS TypeScript/tests/cases/compiler/initializerWithThisPropertyAccess.ts
 PASS TypeScript/tests/cases/compiler/inKeywordAndIntersection.ts
 PASS TypeScript/tests/cases/compiler/inKeywordNarrowingWithNoUncheckedIndexedAccess.ts
+PASS TypeScript/tests/cases/compiler/inlineConditionalHasSimilarAssignability.ts
 PASS TypeScript/tests/cases/compiler/inlinedAliasAssignableToConstraintSameAsAlias.ts
 PASS TypeScript/tests/cases/compiler/inlineMappedTypeModifierDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/inlineSourceMap.ts
@@ -7242,6 +7241,7 @@ PASS TypeScript/tests/cases/compiler/typeCheckReturnExpression.ts
 PASS TypeScript/tests/cases/compiler/typeCheckTypeArgument.ts
 PASS TypeScript/tests/cases/compiler/typeComparisonCaching.ts
 PASS TypeScript/tests/cases/compiler/typeConstraintsWithConstructSignatures.ts
+PASS TypeScript/tests/cases/compiler/typedArrayConstructorOverloads.ts
 PASS TypeScript/tests/cases/compiler/typedArrays-es5.ts
 PASS TypeScript/tests/cases/compiler/typedArrays-es6.ts
 PASS TypeScript/tests/cases/compiler/typedArrays.ts

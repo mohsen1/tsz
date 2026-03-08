@@ -264,8 +264,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Target-position usage is handled via `subtype_of_conditional_target`
                 // which also uses the constraint approach.
                 //
-                // Type parameter hasn't been substituted - defer evaluation
-                return self.interner().conditional(cond.clone());
+                // Type parameter hasn't been substituted - defer evaluation.
+                // Use evaluated check/extends types so the deferred conditional has
+                // resolved TypeParameter references (not Lazy(DefId) wrappers).
+                // This is critical for the subtype checker's get_conditional_constraint
+                // which needs to recognize TypeParameter check_types via is_check_type_param.
+                // Also evaluate true/false types to resolve Lazy alias references.
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
             }
 
             // Step 2a: Non-naked compound type parameter deferral.

@@ -99,6 +99,21 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 return Some(*instance_type);
             }
 
+            // For type parameters, look up in type_parameter_scope by name.
+            // Type parameters are NOT stored in symbol_types — they live in the
+            // dynamic type_parameter_scope which maps name → TypeParameter TypeId.
+            // The symbol_types cache may contain a fallback `any` for type params
+            // from compute_type_of_symbol, which is incorrect for Lazy resolution.
+            // When the type parameter is in the current scope, return its TypeParameter
+            // TypeId directly. When out of scope (e.g., a generic alias's own T),
+            // fall through to symbol_types which handles already-instantiated contexts.
+            if let Some(symbol) = symbol
+                && (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
+                && let Some(&tp_type) = self.type_parameter_scope.get(symbol.escaped_name.as_str())
+            {
+                return Some(tp_type);
+            }
+
             // Look up the cached type for this symbol (constructor type for classes)
             if let Some(&ty) = self.symbol_types.get(&sym_id) {
                 tracing::trace!(
