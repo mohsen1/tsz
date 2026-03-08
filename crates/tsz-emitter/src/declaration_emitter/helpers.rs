@@ -4298,7 +4298,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_type(type_annotation);
             } else if is_unique_symbol {
                 self.write(": unique symbol");
-            } else if is_const_null_or_undefined {
+            } else if is_const_null_or_undefined
+                || (has_initializer
+                    && self.initializer_uses_inaccessible_class_constructor(initializer))
+            {
                 self.write(": any");
             } else if self.source_is_js_file
                 && let Some(type_text) = self
@@ -4498,6 +4501,80 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn initializer_uses_inaccessible_class_constructor(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+
+        let Some(new_expr) = self.arena.get_call_expr(init_node) else {
+            return false;
+        };
+        let Some(sym_id) = self.new_expression_target_symbol(new_expr.expression) else {
+            return false;
+        };
+
+        self.symbol_has_inaccessible_constructor(sym_id)
+    }
+
+    fn new_expression_target_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
+            return Some(sym_id);
+        }
+
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .get_identifier_text(expr_idx)
+                .and_then(|name| binder.file_locals.get(&name)),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                let access = self.arena.get_access_expr(expr_node)?;
+                binder.get_node_symbol(access.name_or_argument)
+            }
+            _ => None,
+        }
+    }
+
+    fn symbol_has_inaccessible_constructor(&self, sym_id: SymbolId) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(class_decl) = self.arena.get_class(decl_node) else {
+                return false;
+            };
+
+            class_decl.members.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                    return false;
+                }
+                let Some(ctor) = self.arena.get_constructor(member_node) else {
+                    return false;
+                };
+                self.arena
+                    .has_modifier(&ctor.modifiers, SyntaxKind::PrivateKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&ctor.modifiers, SyntaxKind::ProtectedKeyword)
+            })
+        })
     }
 
     fn js_literal_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
