@@ -264,3 +264,57 @@ const value = makeBox(1).value;
         "Expected deferred class/function environment build to preserve checking, got: {relevant:?}"
     );
 }
+
+#[test]
+fn build_type_environment_defers_alias_symbols() {
+    let source = r#"
+namespace Types {
+  export class Box<T> {
+    constructor(readonly value: T) {}
+  }
+}
+
+import BoxAlias = Types.Box;
+
+const value: BoxAlias<number> = new BoxAlias(1);
+"#;
+
+    let (parser, binder, types, root) = build_program(source);
+    let import_equals_idx =
+        find_first_node_by_kind(&parser, syntax_kind_ext::IMPORT_EQUALS_DECLARATION);
+    let alias_sym = binder
+        .node_symbols
+        .get(&import_equals_idx.0)
+        .copied()
+        .expect("expected import-equals alias symbol");
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let _ = checker.build_type_environment();
+
+    assert!(
+        !checker.ctx.symbol_types.contains_key(&alias_sym),
+        "expected build_type_environment to defer alias symbols"
+    );
+
+    checker.check_source_file(root);
+
+    let relevant: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected deferred alias environment build to preserve checking, got: {relevant:?}"
+    );
+}

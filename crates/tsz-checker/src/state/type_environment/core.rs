@@ -687,6 +687,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Imported/re-exported alias symbols are another cold-build trap for
+            // barrel files: eagerly resolving them here expands the full target
+            // export surface even when this file never uses the alias locally.
+            // The checker already resolves alias symbols on demand during actual
+            // statement checking, so reserve a stable DefId and leave the real
+            // symbol type lazy.
+            if flags & symbol_flags::ALIAS != 0 {
+                let _ = self.ctx.get_or_create_def_id(sym_id);
+                continue;
+            }
+
             // Pure type-only declarations can stay lazy until the checker actually needs
             // their bodies. Type references already route through Lazy(DefId) and
             // resolve_and_insert_def_type on demand, so eagerly lowering every interface
