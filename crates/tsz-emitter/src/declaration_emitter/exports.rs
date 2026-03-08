@@ -293,7 +293,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write("(");
-        self.emit_parameters(&func.parameters);
+        self.emit_parameters_with_body(&func.parameters, func.body);
         self.write(")");
 
         let func_body = func.body;
@@ -639,7 +639,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write("(");
-        self.emit_parameters(&func.parameters);
+        self.emit_parameters_with_body(&func.parameters, func.body);
         self.write(")");
 
         let func_body = func.body;
@@ -1337,6 +1337,10 @@ impl<'a> DeclarationEmitter<'a> {
     // Helper methods
 
     pub(crate) fn emit_parameters(&mut self, params: &NodeList) {
+        self.emit_parameters_with_body(params, NodeIndex::NONE);
+    }
+
+    pub(crate) fn emit_parameters_with_body(&mut self, params: &NodeList, body_idx: NodeIndex) {
         // Find the index of the last required parameter (no ?, no initializer, no rest).
         // Parameters with initializers before the last required param cannot use `?` syntax;
         // instead they emit `param: Type | undefined` (matching tsc behavior).
@@ -1408,6 +1412,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+
+        if self.should_emit_js_arguments_rest_param(params, body_idx) {
+            if !first {
+                self.write(", ");
+            }
+            self.write("...args: any[]");
+        }
     }
 
     /// Emit parameters without type annotations (used for private accessors)
@@ -1441,6 +1452,24 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+    }
+
+    fn should_emit_js_arguments_rest_param(&self, params: &NodeList, body_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file || body_idx.is_none() {
+            return false;
+        }
+
+        let has_rest_param = params.nodes.iter().any(|&param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|param_node| self.arena.get_parameter(param_node))
+                .is_some_and(|param| param.dot_dot_dot_token)
+        });
+        if has_rest_param {
+            return false;
+        }
+
+        tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx)
     }
 
     pub(crate) fn emit_type_parameters(&mut self, type_params: &NodeList) {
