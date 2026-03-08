@@ -47,22 +47,32 @@ impl<'a> CheckerState<'a> {
                     .types
                     .contextual_property_type(member, property_name);
 
-                if property_type.is_none() {
-                    property_type = this
+                // When the property type is `any`, it may come from an index signature
+                // in an intersection with unresolved Lazy members (e.g.,
+                // `Lazy(Interface) & { [k: string]: any }`). Try the resolved paths
+                // which can evaluate Lazy types to get the specific property type.
+                if (property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY))
+                    && let Some(pt) = this
                         .ctx
                         .types
-                        .contextual_property_type(resolved_member, property_name);
+                        .contextual_property_type(resolved_member, property_name)
+                    && (pt != tsz_solver::TypeId::ANY || property_type.is_none())
+                {
+                    property_type = Some(pt);
                 }
 
-                if property_type.is_none() {
-                    property_type = this.ctx.types.contextual_property_type(
+                if (property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY))
+                    && let Some(pt) = this.ctx.types.contextual_property_type(
                         evaluated_member_for_property_access,
                         property_name,
-                    );
+                    )
+                    && (pt != tsz_solver::TypeId::ANY || property_type.is_none())
+                {
+                    property_type = Some(pt);
                 }
 
                 let mut alternate_member_for_property_access = None;
-                if property_type.is_none() {
+                if property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY) {
                     use tsz_solver::TypeEvaluator;
 
                     let mut evaluator = TypeEvaluator::with_resolver(this.ctx.types, &this.ctx);
@@ -116,13 +126,18 @@ impl<'a> CheckerState<'a> {
             .types
             .contextual_property_type(original_contextual_type, property_name)
         {
-            tracing::trace!(
-                contextual_type = original_contextual_type.0,
-                property_name,
-                property_type = property_type.0,
-                "contextual_object_literal_property_type: pre-eval extracted"
-            );
-            return Some(self.sanitize_contextual_property_type(property_type));
+            // When the property type is `any`, it may come from an index signature
+            // in a distributed intersection. Don't return eagerly — fall through
+            // to resolved paths which can extract the specific property type.
+            if property_type != tsz_solver::TypeId::ANY {
+                tracing::trace!(
+                    contextual_type = original_contextual_type.0,
+                    property_name,
+                    property_type = property_type.0,
+                    "contextual_object_literal_property_type: pre-eval extracted"
+                );
+                return Some(self.sanitize_contextual_property_type(property_type));
+            }
         }
 
         if let Some(property_type) =

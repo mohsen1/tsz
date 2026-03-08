@@ -779,6 +779,23 @@ impl<'a> ContextualTypeContext<'a> {
                     })
                     .collect();
 
+                // When some union members contribute `any` (typically from index
+                // signatures like `{ [k: string]: any }`) and others contribute
+                // specific types, filter out the `any` values. The `any` from
+                // index signatures doesn't carry useful contextual information and
+                // would cause literal types to be widened incorrectly.
+                let prop_types = if prop_types.len() > 1
+                    && prop_types.contains(&TypeId::ANY)
+                    && prop_types.iter().any(|&t| t != TypeId::ANY)
+                {
+                    prop_types
+                        .into_iter()
+                        .filter(|&t| t != TypeId::ANY)
+                        .collect()
+                } else {
+                    prop_types
+                };
+
                 return if prop_types.is_empty() {
                     None
                 } else if prop_types.len() == 1 {

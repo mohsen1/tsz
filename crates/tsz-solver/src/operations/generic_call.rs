@@ -508,6 +508,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Continue with partial fixing, final resolution will detect errors
         }
 
+        // Build a substitution from fixed variables (Round 1 results).
+        // This maps placeholder names to their resolved types, but ONLY for
+        // variables that were actually fixed. Unfixed placeholders remain
+        // intact so Round 2 can still infer them.
+        let mut fixed_subst = TypeSubstitution::new();
+        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+            if let Some(resolved) = infer_ctx.probe(var) {
+                // This var was fixed in Round 1 — map its placeholder name to the resolved type
+                use std::fmt::Write;
+                placeholder_buf.clear();
+                write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+                let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                fixed_subst.insert(placeholder_atom, resolved);
+                // Also map the original type param name, in case target_type references it
+                fixed_subst.insert(tp.name, resolved);
+            }
+        }
+
         // === Round 2: Process contextual arguments ===
         // These are arguments like lambdas that need contextual typing.
         // Now that non-contextual arguments have been processed, we can provide
@@ -528,14 +546,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     continue;
                 }
 
-                // Check if target_type contains placeholders BEFORE any re-instantiation
+                // Check if original target_type contains placeholders BEFORE re-instantiation.
                 placeholder_visited.clear();
-                let target_has_placeholders =
+                let original_has_placeholders =
                     self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
                 let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                     && i >= instantiated_params.len().saturating_sub(1);
 
-                if target_has_placeholders && !is_rest_param_arg {
+                if original_has_placeholders && !is_rest_param_arg {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                         target_type,
                         &var_map,
@@ -544,8 +562,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ));
                 }
 
-                if !target_has_placeholders {
-                    // No placeholders in target - direct assignability check
+                if !original_has_placeholders {
+                    // No placeholders in original target - direct assignability check
                     if !self.checker.is_assignable_to(arg_type, target_type)
                         && !self.is_function_union_compat(arg_type, target_type)
                     {
@@ -557,15 +575,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                 } else {
-                    // Target has placeholders - collect constraints using the original target_type
-                    // This preserves the connection to inference variables (e.g., U in (x: T) => U)
-                    // IMPORTANT: Use target_type directly, not contextual_target, to maintain
-                    // the placeholder connection for unresolved type parameters
+                    // Re-instantiate target_type with fixed Round 1 results.
+                    // This replaces resolved placeholders with their inferred types while
+                    // preserving unresolved placeholders for further Round 2 inference.
+                    let r2_target = if !fixed_subst.is_empty() {
+                        let candidate = instantiate_type(self.interner, target_type, &fixed_subst);
+                        placeholder_visited.clear();
+                        if self.type_contains_placeholder(
+                            candidate,
+                            &var_map,
+                            &mut placeholder_visited,
+                        ) {
+                            // Mixed case: some placeholders resolved, some remaining.
+                            // Use re-instantiated target so resolved params provide
+                            // concrete contextual types to callbacks.
+                            candidate
+                        } else {
+                            // All placeholders resolved — keep original for constraint
+                            // collection to preserve inference variable connection.
+                            target_type
+                        }
+                    } else {
+                        target_type
+                    };
+
+                    // Collect constraints using the (possibly re-instantiated) target
                     self.constrain_types(
                         &mut infer_ctx,
                         &var_map,
                         arg_type,
-                        target_type,
+                        r2_target,
                         crate::types::InferencePriority::ReturnType,
                     );
 
