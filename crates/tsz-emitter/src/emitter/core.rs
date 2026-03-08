@@ -406,6 +406,10 @@ pub struct Printer<'a> {
 
     /// Deferred static block IIFEs.
     pub(crate) deferred_class_static_blocks: Vec<(NodeIndex, usize)>,
+
+    /// Source file name for jsx=react-jsxdev mode (e.g., "file.tsx").
+    /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
+    pub(crate) jsx_dev_file_name: Option<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -539,6 +543,7 @@ impl<'a> Printer<'a> {
             pending_weakmap_inits: Vec::new(),
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
+            jsx_dev_file_name: None,
         }
     }
 
