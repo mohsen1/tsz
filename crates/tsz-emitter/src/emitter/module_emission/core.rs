@@ -425,6 +425,30 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // When an ES5-transformed class is exported in ESM mode, tsc separates the
+        // declaration from the export: `var C = (function() { ... }());` then
+        // `export { C };` (or `export default C;`). We detect this by checking if
+        // the class has an ES5 transform directive.
+        if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && !self.ctx.is_commonjs()
+            && self.transforms.has_transform(export.export_clause)
+            && let Some(class) = self.arena.get_class(clause_node)
+                && let Some(name) = self.get_identifier_text_opt(class.name)
+            {
+                self.emit(export.export_clause);
+                self.write_line();
+                if export.is_default_export {
+                    self.write("export default ");
+                    self.write(&name);
+                    self.write(";");
+                } else {
+                    self.write("export { ");
+                    self.write(&name);
+                    self.write(" };");
+                }
+                return;
+            }
+
         // For merged enums/namespaces/classes/functions, the second+ declaration
         // should not be prefixed with `export`. The first declaration gets
         // `export var E;` and subsequent ones are bare IIFEs. We detect this by
