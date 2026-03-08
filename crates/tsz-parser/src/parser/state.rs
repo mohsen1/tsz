@@ -965,8 +965,8 @@ impl ParserState {
                         && value > 0x10FFFF
                     {
                         self.parse_error_at(
-                            self.u32_from_usize(content_start + i),
-                            (close + 1 - i) as u32,
+                            self.u32_from_usize(content_start + i + 3),
+                            (close - i - 3) as u32,
                             diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
                             diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
                         );

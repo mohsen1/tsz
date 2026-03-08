@@ -249,9 +249,34 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 };
 
                 if !is_valid_context && let Some(name_node) = self.ctx.arena.get(module.name) {
+                    // tsc spans from the outermost keyword (`export` or `namespace`)
+                    // to the end of the name. If the module is inside an EXPORT_DECLARATION,
+                    // use that parent's pos to include the `export` keyword.
+                    let decl_pos = self
+                        .ctx
+                        .arena
+                        .get_extended(module_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .filter(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION)
+                        .map(|p| p.pos)
+                        .or_else(|| self.ctx.arena.get(module_idx).map(|n| n.pos))
+                        .unwrap_or(name_node.pos);
+                    // Skip leading whitespace/newlines to find actual keyword start
+                    let start = if let Some(sf) = self.ctx.arena.source_files.first() {
+                        let bytes = sf.text.as_bytes();
+                        let mut pos = decl_pos as usize;
+                        while pos < bytes.len()
+                            && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n')
+                        {
+                            pos += 1;
+                        }
+                        pos as u32
+                    } else {
+                        decl_pos
+                    };
                     self.ctx.error(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
+                        start,
+                        name_node.end - start,
                         diagnostic_messages::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL.to_string(),
                         diagnostic_codes::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL,
                     );
@@ -503,7 +528,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                             self.ctx.error(
                                                                                     node.pos,
                                                                                     node.end - node.pos,
-                                                                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                                    format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                                     diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                                                 );
                                                         }
@@ -526,7 +551,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                 self.ctx.error(
                                                                         node.pos,
                                                                         node.end - node.pos,
-                                                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                        format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                         diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                                     );
                                             }
@@ -544,7 +569,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                         self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
-                                                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
                                     }
@@ -560,7 +585,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                         self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
-                                                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
                                     }
@@ -611,7 +636,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                             self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
-                                                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
                                         }
@@ -658,7 +683,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                     self.ctx.error(
                                                                             node.pos,
                                                                             node.end - node.pos,
-                                                                            diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                            format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                             diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                                         );
                                                 }
@@ -675,7 +700,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                         self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
-                                                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&ident.escaped_text]),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
                                     }
@@ -695,8 +720,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 self.ctx.error(
                                     node.pos,
                                     node.end - node.pos,
-                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
-                                        .to_string(),
+                                    format_message(
+                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                        &[&ident.escaped_text],
+                                    ),
                                     diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                 );
                             }
@@ -714,8 +741,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 self.ctx.error(
                                     node.pos,
                                     node.end - node.pos,
-                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
-                                        .to_string(),
+                                    format_message(
+                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                        &[&ident.escaped_text],
+                                    ),
                                     diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                 );
                             }
@@ -733,8 +762,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             self.ctx.error(
                                 node.pos,
                                 node.end - node.pos,
-                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
-                                    .to_string(),
+                                format_message(
+                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                    &[&ident.escaped_text],
+                                ),
                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                             );
                         }
