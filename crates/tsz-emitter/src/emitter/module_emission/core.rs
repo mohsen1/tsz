@@ -1,4 +1,4 @@
-use super::super::{ModuleKind, Printer};
+use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::emit_utils;
@@ -281,9 +281,60 @@ impl<'a> Printer<'a> {
                     false
                 };
 
-            if class_has_legacy_class_decorators {
-                // Emit the class (it handles the `let C = class C {};` + `__decorate` internally).
-                // Then emit `export default C;` afterward.
+            // When a default-exported class has static field initializers that will be
+            // lowered (emitted after the class body), tsc separates the export:
+            //   class C { }
+            //   C.s = 0;
+            //   export default C;
+            // This is needed because static initializers must come after the class body
+            // but before the export statement.
+            let class_needs_separated_export = if !class_has_legacy_class_decorators {
+                if let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && let Some(class) = self.arena.get_class(clause_node)
+                {
+                    let needs_class_field_lowering = (self.ctx.options.target as u32)
+                        < (ScriptTarget::ES2022 as u32)
+                        || !self.ctx.options.use_define_for_class_fields;
+                    if needs_class_field_lowering {
+                        // Check if the class has any static properties with initializers
+                        class.members.nodes.iter().any(|&member_idx| {
+                            if let Some(member_node) = self.arena.get(member_idx)
+                                && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                                && let Some(prop) = self.arena.get_property_decl(member_node)
+                                && prop.initializer.is_some()
+                                && self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                            {
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if class_has_legacy_class_decorators || class_needs_separated_export {
+                // Emit the class without `export default` prefix, then emit
+                // `export default C;` afterward. For legacy decorators, the class
+                // emitter handles `let C = class C {};` + `__decorate` internally.
                 let class_name = if let Some(clause_node) = self.arena.get(export.export_clause)
                     && let Some(class) = self.arena.get_class(clause_node)
                 {
@@ -304,7 +355,12 @@ impl<'a> Printer<'a> {
                 self.emit(export.export_clause);
                 self.anonymous_default_export_name = prev_name;
                 if !class_name.is_empty() {
-                    self.write_line();
+                    // Only add a newline if the class emitter didn't already end on one.
+                    // ES2015 classes with static inits end with write_line() after
+                    // `ClassName.field = value;`, but ES5 IIFEs end with `}());`.
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
                     self.write("export default ");
                     self.write(&class_name);
                     self.write(";");
