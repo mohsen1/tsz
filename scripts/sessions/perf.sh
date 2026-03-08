@@ -3,163 +3,192 @@
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cat <<PROMPT
 You are working in $REPO_ROOT.
-Goal: make tsz 2x faster than tsgo across all benchmarks — WITHOUT breaking
-tests, conformance, or code maintainability.
+Goal: make tsz ≥2x faster than tsgo on EVERY benchmark shown at https://tsz.dev/benchmarks/
+WITHOUT breaking tests, conformance, or code maintainability.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 1 — ESTABLISH BASELINES (before any changes)
+KNOWN REGRESSIONS (from tsz.dev/benchmarks)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+These are the benchmarks where tsz is LOSING or below the 2x target.
+Attack them in this priority order:
+
+  TSGO WINS (tsz is slower — top priority):
+  - ts-toolbelt Object/Invert.ts  — TSGO 2.0x faster (tsz 562ms vs tsgo 287ms)
+  - ts-essentials deep readonly.ts — TSGO 1.1x faster (tsz 324ms vs tsgo 290ms)
+
+  BELOW 2x TARGET (tsz wins but not enough):
+  - ts-toolbelt Any/Compute.ts — tsz only 1.1x faster (249ms vs 284ms)
+  - ts-essentials paths.ts     — tsz only 1.6x faster (174ms vs 287ms)
+
+All of these are external library benchmarks involving deeply recursive/mapped
+types and lib type-environment lowering. The root causes are architectural:
+  1. Merged lib-interface lowering is re-computed per lookup (no cross-arena cache)
+  2. Recursive mapped-type evaluation has no memoization across segments
+  3. Optional-chain property resolution does redundant work
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KNOWN DEAD ENDS (do NOT re-investigate these)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read docs/todos/perf.md for the full list. Key traps to avoid:
+
+  DO NOT chase conformance timeouts under --workers 16:
+  - correlatedUnions.ts, resolvingClassDeclarationWhenInBaseTypeResolution.ts,
+    nonInferrableTypePropagation1.ts — these only time out under full worker
+    contention. Single-test runs pass in ~6-8s. The problem is contention-
+    sensitive, NOT an algorithmic blowup. 40+ perf.md entries were wasted on this.
+
+  DO NOT try these micro-optimizations (already exhausted):
+  - RefCell -> Cell conversions (already done)
+  - Heritage symbol memoization (already done)
+  - Class constructor/instance caches (already done)
+  - Flow step budget tuning (already done, fragile)
+  - Optional-chain property-access fast paths (already done, sub-2x remains)
+  - env_eval_cache + widen_type memoization (already done, big win already captured)
+
+  The remaining gains require ARCHITECTURAL changes, not micro-optimizations:
+  - Cross-arena lib-lowering cache (crates/tsz-lowering/src/lower.rs)
+  - Persistent per-process lib type data (avoid rebuilding TypeEnvironment per file)
+  - Solver-level memoization of repeated mapped-type chain instantiation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 1 — QUICK BASELINE (5 minutes max)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1) git pull origin main
-2) Read CLAUDE.md
-3) Read docs/todos/perf.md — this contains notes from previous sessions
-   (known issues, skipped items, prior investigations). Use it to avoid
-   re-investigating already-known issues and to pick up where the last session
-   left off.
-4) Verify pre-commit hooks are installed: ls -la .git/hooks/pre-commit
-   If missing, run: ./scripts/setup.sh
-   NEVER use --no-verify on git commit. The pre-commit hook runs tests and
-   lint to catch regressions BEFORE they reach CI. Skipping it is forbidden.
-5) Record baselines — you MUST capture these numbers before changing anything:
+2) Read CLAUDE.md and docs/todos/perf.md
+3) Verify pre-commit hooks: ls -la .git/hooks/pre-commit
+   If missing: ./scripts/setup.sh
+   NEVER use --no-verify on commit.
+4) Run ONLY the targeted benchmarks (skip full conformance — it takes minutes):
 
-   a) Run: cargo nextest run --no-fail-fast 2>&1 | tail -5
-      Record the total tests passed/failed/skipped.
+   ./scripts/bench-vs-tsgo.sh --quick --filter 'Object/Invert|deep readonly|Any/Compute|paths\\.ts'
 
-   b) Run: ./scripts/conformance.sh run 2>&1 | tail -20
-      Record the conformance pass rate (e.g. "8941/12574 (71.1%)").
-
-   c) Run: ./scripts/bench-vs-tsgo.sh --quick
-      Record benchmark ratios.
-
-   d) Run: ./scripts/conformance.sh run 2>&1 | grep -ci "timeout"
-      Record the number of timed-out conformance tests.
-
-   Write down these four baselines — you will compare against them later.
+   Record the ratios. These are your targets.
+   Also run unit tests for the crates you'll touch:
+   cargo nextest run -p tsz-checker -p tsz-solver -p tsz-lowering --no-fail-fast 2>&1 | tail -5
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 2 — IDENTIFY WORK
+PHASE 2 — PROFILE (not guess)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-6) Analyze the benchmark output carefully:
+5) Pick the worst-ratio benchmark from Phase 1. Profile it:
 
-   PRIORITY 1 — Fix type-check failures first:
-   If any benchmark file shows "tsz error" (tsz fails to type-check a file
-   that tsgo handles), fix the type-checking bug BEFORE doing any perf work.
-   A benchmark we can't even run is worse than a slow benchmark.
+   # Build the dist binary with debug info for profiling:
+   CARGO_TARGET_DIR=.target-bench cargo build --profile dist -p tsz-cli
+   # You may need: RUSTFLAGS="-C force-frame-pointers=yes"
 
-   PRIORITY 2 — Fix conformance/emit test timeouts:
-   Run: ./scripts/conformance.sh run 2>&1 | grep -i "timeout\|timed out"
-   Run: cargo nextest run -p tsz-emitter --no-fail-fast 2>&1 | grep -i "timeout\|SIGTERM\|time limit"
-   If any conformance or emit tests are timing out, they indicate infinite loops
-   or exponential blowups in the checker/solver/emitter. These are perf bugs:
-   - Profile the specific test input to find the hot loop or recursive blowup
-   - Fix the algorithmic issue (add memoization, limit recursion, break cycles)
-   - Verify the test passes within normal time after the fix
-   A test that hangs forever is as bad as a test that fails.
+   # Profile with samply (preferred — gives interactive flamegraph):
+   samply record .target-bench/dist/tsz --noEmit <benchmark-file>
 
-   PRIORITY 3 — Optimize slowest benchmarks:
-   Look at the ratio column. Our target is 2x faster than tsgo on every
-   benchmark. Focus on:
-   - Any benchmark where tsgo wins (ratio < 1.0) — these are regressions
-   - Any benchmark where tsz wins but ratio < 2.0 — not yet at target
-   - Pick the one with the worst ratio and investigate why it's slow
+   # Alternative: cargo-flamegraph
+   cargo flamegraph --profile dist -p tsz-cli -- --noEmit <benchmark-file>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 3 — IMPLEMENT (with maintainability constraints)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   The external benchmark files are at:
+   - .target-bench/external/ts-toolbelt/sources/Object/Invert.ts
+   - .target-bench/external/ts-toolbelt/sources/Any/Compute.ts
+   - .target-bench/external/ts-essentials/lib/deep-readonly.ts
+   - .target-bench/external/ts-essentials/lib/paths.ts
+   (Run bench-vs-tsgo.sh once first to clone these repos)
 
-7) For type-check failures: diagnose the error, implement the minimal fix
-   in checker/solver, verify the file now type-checks correctly.
+6) In the profile, look for:
+   - Functions consuming >10% of total time
+   - Repeated calls to the same function with the same arguments (cache miss)
+   - Deep recursion stacks (>50 frames of the same function)
+   - Allocation hotspots (many small Vec/HashMap allocations in tight loops)
 
-8) For timeout fixes: reproduce the hang with a minimal input, profile to find
-   the runaway loop or unbounded recursion, and apply a targeted fix (cache,
-   cycle breaker, depth limit). Verify the test completes in <30s after the fix.
-
-9) For perf work: profile the slow benchmark using flamegraph or sampling
-   profiler, identify the hottest function, implement a targeted optimization.
-
-   MAINTAINABILITY RULES — Every optimization MUST follow these:
-   - Keep changes minimal and focused. One optimization per commit.
-   - Do NOT introduce complex unsafe code unless absolutely necessary and
-     the gain is >20%. Document why it's safe.
-   - Do NOT inline large functions or duplicate code for speed. If a
-     function is hot, optimize its internals, don't copy-paste it.
-   - Do NOT add feature flags, conditional compilation, or runtime switches
-     for optimizations. Just make the fast path the only path.
-   - Prefer algorithmic improvements (better data structures, caching,
-     avoiding redundant work) over micro-optimizations.
-   - If an optimization makes the code significantly harder to read or
-     maintain, document it clearly with a comment explaining the tradeoff.
-   - Respect the architecture: solver owns type computation, checker is
-     thin orchestration. Do NOT move logic across boundaries for speed.
-
-10) Write a unit test:
-   - For type-check fixes: test the specific Rust logic you changed
-   - For perf fixes: test correctness of the optimized path
-   - Run: cargo nextest run -p <crate> to verify
+   Write down the top 3 hottest call stacks before proceeding.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 4 — VERIFY (mandatory, non-negotiable)
+PHASE 3 — IMPLEMENT (one optimization at a time)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Before committing, you MUST pass ALL of these checks. If any check fails,
-fix the regression before proceeding. Do NOT commit with regressions.
+7) Based on the profile, implement ONE focused optimization:
 
-11) Run: cargo nextest run --no-fail-fast
-   ✓ REQUIRED: Same or more tests passing compared to baseline from step 3a.
-   ✗ BLOCKER: If any previously-passing test now fails, fix it before continuing.
+   LIKELY ROOT CAUSES for the known regressions:
 
-12) Run: ./scripts/conformance.sh run 2>&1 | tail -20
-   ✓ REQUIRED: Conformance pass rate must be >= baseline from step 3b.
-   ✓ REQUIRED: No new timeouts introduced (grep for "timeout" in output).
-   ✗ BLOCKER: If conformance % dropped or new timeouts appeared, your change
-     broke type-checking correctness or introduced a perf regression. Fix first.
+   a) Lib-lowering cache miss (paths.ts, deep readonly):
+      - TypeLowering::lower_merged_interface_declarations is called repeatedly
+        for the same lib interfaces (Array, ReadonlyArray, etc.)
+      - FIX: add a cache keyed by (declaration NodeIndex, lib file) that
+        persists across multiple type-environment lookups in the same check run
+      - Location: crates/tsz-lowering/src/lower.rs
 
-13) Re-run: ./scripts/bench-vs-tsgo.sh --quick
-    ✓ REQUIRED: No new "tsz error" entries appeared.
-    ✓ REQUIRED: The targeted ratio improved (or at minimum didn't regress).
-    ✓ DESIRED: No other benchmark ratio regressed by more than 5%.
+   b) Recursive mapped-type re-evaluation (Object/Invert.ts):
+      - Mapped types like Invert<T> expand T's properties, and each property
+        evaluation may re-evaluate the same mapped type with the same key
+      - FIX: add solver-level memoization for mapped-type member evaluation
+        keyed by (mapped_type_id, property_name)
+      - Location: crates/tsz-solver/src/operations/ or evaluation modules
+
+   c) Type-environment rebuild per symbol (Any/Compute.ts):
+      - build_type_environment does upfront symbol/type population
+      - FIX: share pre-computed lib type data across evaluations
+      - Location: crates/tsz-checker/src/state/state_type_environment.rs
+
+   MAINTAINABILITY RULES:
+   - One optimization per commit. Keep changes minimal.
+   - No complex unsafe code unless gain >20%.
+   - No code duplication for speed.
+   - Prefer algorithmic improvements over micro-optimizations.
+   - Respect architecture: solver owns type computation, checker is thin.
+   - No feature flags or conditional compilation.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 5 — COMMIT & REPORT
+PHASE 4 — VERIFY (mandatory)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-14) Only after ALL checks in Phase 4 pass:
-    NEVER use --no-verify. Let the pre-commit hook run all tests and lint.
-    If the hook fails, fix the issue and try again — do NOT bypass the hook.
-    Create ONE small commit. Include in the commit message:
-    - What was optimized/fixed and why
-    - Before/after benchmark numbers for the targeted benchmark
-    - Conformance: <before> → <after> (should be same or better)
-    - Tests: <before> → <after> (should be same or better)
+8) Re-run the targeted benchmarks:
+   ./scripts/bench-vs-tsgo.sh --quick --filter 'Object/Invert|deep readonly|Any/Compute|paths\\.ts'
+
+   ✓ REQUIRED: Target benchmark ratio improved
+   ✓ REQUIRED: No other benchmark regressed >10%
+
+9) Run unit tests for affected crates:
+   cargo nextest run -p <crates-you-changed> --no-fail-fast
+
+   ✓ REQUIRED: No test regressions
+
+10) Run a broader benchmark check (catches cross-benchmark regressions):
+    ./scripts/bench-vs-tsgo.sh --quick
+
+    ✓ REQUIRED: No new "tsz error" entries
+    ✓ DESIRED: All benchmarks still ≥2x where they were before
+
+11) If you changed solver/checker logic, also verify conformance:
+    ./scripts/conformance.sh run 2>&1 | tail -20
+
+    ✓ REQUIRED: Pass rate same or better
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 5 — COMMIT & ITERATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+12) Only after Phase 4 passes:
+    NEVER use --no-verify. Let pre-commit hook run.
+    Commit with before/after numbers in the message.
     Then push: git push origin main
 
-15) Append any issues you investigated but punted on (too complex, needs
-    architecture work, blocked by another issue, etc.) to
-    docs/todos/perf.md — include function/module, current ratio, and a
-    one-line reason why you skipped it.
+13) If time remains, go back to Phase 2 with the next worst benchmark.
+    Iterate: profile → optimize → verify → commit.
 
-16) git add docs/todos/perf.md (if changed) and amend or create a
-    second commit, then push: git push origin main
+14) Before finishing, update docs/todos/perf.md with:
+    - What you investigated and the outcome
+    - Any new dead ends discovered (with module/function/ratio)
+    - What the next session should try
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REGRESSION SUMMARY TABLE (print before committing)
+REGRESSION TABLE (print before every commit)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Print a table like this before every commit:
+  Benchmark               | Before    | After     | Status
+  ------------------------|-----------|-----------|--------
+  Target benchmark        | X.XXx     | X.XXx     | improved?
+  Unit tests              | XXX pass  | XXX pass  | same/better?
+  Other benchmarks        | no regress| no regress| ok?
 
-  Check              | Baseline     | Current      | Status
-  -------------------|--------------|--------------|--------
-  Unit tests         | XXX passed   | XXX passed   | ✓ / ✗
-  Conformance        | XX.X%        | XX.X%        | ✓ / ✗
-  Timeouts           | N tests      | N tests      | ✓ / ✗
-  Target benchmark   | X.XXx ratio  | X.XXx ratio  | ✓ / ✗
-  Other benchmarks   | (no regress) | (no regress) | ✓ / ✗
-
-ALL rows must show ✓ before you commit. If any row shows ✗, fix it first.
-
-Target: tsz should be ≥2x faster than tsgo on every benchmark. We are not
-done until every row in the benchmark table shows tsz winning with ratio ≥2.0.
+ALL rows must be green before committing.
 
 Do not ask user questions. Keep going until this run is complete.
 PROMPT
