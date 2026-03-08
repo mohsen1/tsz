@@ -361,6 +361,73 @@ var notOK = 0;
 }
 
 #[test]
+fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
+    let source = r#"
+export {};
+/** @typedef {string | number | symbol} PropName */
+/**
+ * Callback
+ *
+ * @callback NumberToStringCb
+ * @param {number} a
+ * @returns {string}
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export type PropName = string | number | symbol;"),
+        "Expected trailing JSDoc typedef alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("export type NumberToStringCb = (a: number) => string;"),
+        "Expected trailing JSDoc callback alias to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Did not expect an extra export scope marker once JSDoc aliases are emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
+    let source = r#"
+/** @typedef {{x: string} | number} SomeType */
+/**
+ * @param {number} x
+ * @returns {SomeType}
+ */
+export function doTheThing(x) {
+  return x;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export type SomeType = {\n    x: string;\n} | number;"),
+        "Expected leading JSDoc typedef alias before exported function: {output}"
+    );
+    let alias_pos = output
+        .find("export type SomeType =")
+        .expect("Expected typedef alias to be emitted");
+    let function_pos = output
+        .find("export function doTheThing(")
+        .expect("Expected exported function declaration to be emitted");
+    assert!(
+        alias_pos < function_pos,
+        "Expected typedef alias to be emitted before the function declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;

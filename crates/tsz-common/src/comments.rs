@@ -219,7 +219,7 @@ pub fn format_multi_line_comment(text: &str, indent: &str) -> String {
 #[must_use]
 pub fn is_jsdoc_comment(comment: &CommentRange, source: &str) -> bool {
     let text = comment.get_text(source);
-    text.starts_with("/**") && !text.starts_with("/***")
+    text.starts_with("/**") && !text.starts_with("/***") && text != "/**/"
 }
 
 /// Check if a comment is a triple-slash directive.
@@ -233,7 +233,7 @@ pub fn is_triple_slash_directive(comment: &CommentRange, source: &str) -> bool {
 #[must_use]
 pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
     let text = comment.get_text(source);
-    if text.starts_with("/**") && text.ends_with("*/") {
+    if text.starts_with("/**") && text.ends_with("*/") && text.len() >= 5 {
         let inner = &text[3..text.len() - 2];
         // Remove leading * from each line
         inner
