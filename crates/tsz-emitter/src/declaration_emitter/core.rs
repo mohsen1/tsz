@@ -2437,12 +2437,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if prop_name_node.kind != SyntaxKind::Identifier as u16 {
                         return false;
                     }
-                    let Some(init_node) = self.arena.get(prop.initializer) else {
-                        return false;
-                    };
-                    if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                        && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-                    {
+                    if !self.js_namespace_object_member_initializer_supported(prop.initializer) {
                         return false;
                     }
                 }
@@ -2486,16 +2481,24 @@ impl<'a> DeclarationEmitter<'a> {
                     let Some(init_node) = self.arena.get(prop.initializer) else {
                         continue;
                     };
-                    let Some(func) = self.arena.get_function(init_node) else {
-                        continue;
-                    };
-                    self.emit_js_namespace_function_member(
-                        prop.name,
-                        func.type_parameters.as_ref(),
-                        &func.parameters,
-                        func.body,
-                        func.type_annotation,
-                    );
+                    if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        let Some(func) = self.arena.get_function(init_node) else {
+                            continue;
+                        };
+                        self.emit_js_namespace_function_member(
+                            prop.name,
+                            func.type_parameters.as_ref(),
+                            &func.parameters,
+                            func.body,
+                            func.type_annotation,
+                        );
+                    } else if let Some(type_text) =
+                        self.js_namespace_value_member_type_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_value_member(prop.name, &type_text);
+                    }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     let Some(method) = self.arena.get_method_decl(member_node) else {
@@ -2549,6 +2552,37 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.write(";");
         self.write_line();
+    }
+
+    fn emit_js_namespace_value_member(&mut self, name_idx: NodeIndex, type_text: &str) {
+        self.write_indent();
+        self.write("let ");
+        self.emit_node(name_idx);
+        self.write(": ");
+        self.write(type_text);
+        self.write(";");
+        self.write_line();
+    }
+
+    fn js_namespace_value_member_type_text(&self, initializer: NodeIndex) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => Some("string".to_string()),
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some("boolean".to_string()),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
+            k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if self.is_negative_literal(init_node) {
+                    Some("number".to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Recursively collects all Identifier `NodeIndices` from a `BindingPattern`.
