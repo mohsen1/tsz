@@ -1843,6 +1843,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.experimental_decorators = true;
         options.printer.legacy_decorators = true;
     }
+    if args.emit_decorator_metadata {
+        options.printer.emit_decorator_metadata = true;
+    }
     if args.no_unused_locals {
         options.checker.no_unused_locals = true;
     }

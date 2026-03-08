@@ -3,9 +3,9 @@ use crate::transforms::private_fields_es5::{
     PrivateFieldInfo, collect_private_fields, get_private_field_name,
 };
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 use super::super::core::PropertyNameEmit;
@@ -44,6 +44,179 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
+    // =========================================================================
+    // Decorator Metadata
+    // =========================================================================
+
+    /// Serialize a type annotation node to its runtime metadata representation.
+    /// Returns a string like "String", "Number", "Function", "Object", "void 0", etc.
+    fn serialize_type_for_metadata(&self, type_idx: NodeIndex) -> String {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return "Object".to_string();
+        };
+
+        let kind = type_node.kind;
+        let sk = |s: SyntaxKind| s as u16;
+
+        match kind {
+            // Keyword types → wrapper constructors
+            k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
+            k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
+            k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
+            k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
+            k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+            k if k == sk(SyntaxKind::VoidKeyword) => "void 0".to_string(),
+            k if k == sk(SyntaxKind::UndefinedKeyword) => "void 0".to_string(),
+            k if k == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
+            k if k == sk(SyntaxKind::NeverKeyword) => "void 0".to_string(),
+            k if k == sk(SyntaxKind::AnyKeyword) => "Object".to_string(),
+            k if k == sk(SyntaxKind::UnknownKeyword) => "Object".to_string(),
+            k if k == sk(SyntaxKind::ObjectKeyword) => "Object".to_string(),
+
+            // Type reference → emit the type name (class/enum reference)
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.arena.get_type_ref(type_node) {
+                    let name = self.get_identifier_text_idx(type_ref.type_name);
+                    if !name.is_empty() {
+                        return name;
+                    }
+                }
+                "Object".to_string()
+            }
+
+            // Array types → Array
+            k if k == syntax_kind_ext::ARRAY_TYPE => "Array".to_string(),
+            k if k == syntax_kind_ext::TUPLE_TYPE => "Array".to_string(),
+
+            // Function/constructor types → Function
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                "Function".to_string()
+            }
+
+            // Union/intersection → Object
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                "Object".to_string()
+            }
+
+            // Parenthesized type → unwrap
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    return self.serialize_type_for_metadata(wrapped.type_node);
+                }
+                "Object".to_string()
+            }
+
+            // Literal types → infer from the literal kind
+            k if k == syntax_kind_ext::LITERAL_TYPE => {
+                if let Some(lit) = self.arena.get_literal_type(type_node)
+                    && let Some(lit_node) = self.arena.get(lit.literal)
+                {
+                    return match lit_node.kind {
+                        lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
+                        lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
+                        lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                        lk if lk == sk(SyntaxKind::TrueKeyword)
+                            || lk == sk(SyntaxKind::FalseKeyword) =>
+                        {
+                            "Boolean".to_string()
+                        }
+                        lk if lk == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
+                        _ => "Object".to_string(),
+                    };
+                }
+                "Object".to_string()
+            }
+
+            // This type → Object
+            k if k == syntax_kind_ext::THIS_TYPE => "Object".to_string(),
+
+            // Template literal type → String
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => "String".to_string(),
+
+            // Conditional, mapped, indexed access, type query, infer, import → Object
+            _ => "Object".to_string(),
+        }
+    }
+
+    /// Emit `__metadata("design:type", ...)` for a property.
+    /// Caller must have already emitted a trailing comma+newline after decorators.
+    fn emit_metadata_for_property(&mut self, type_annotation: NodeIndex) {
+        let serialized = if type_annotation.is_some() {
+            self.serialize_type_for_metadata(type_annotation)
+        } else {
+            "Object".to_string()
+        };
+        self.write("__metadata(\"design:type\", ");
+        self.write(&serialized);
+        self.write(")");
+    }
+
+    /// Emit metadata calls for a method: design:type, design:paramtypes, design:returntype.
+    /// Caller must have already emitted a trailing comma+newline after decorators.
+    fn emit_metadata_for_method(&mut self, parameters: &NodeList, return_type: NodeIndex) {
+        // design:type is always Function for methods
+        self.write("__metadata(\"design:type\", Function),");
+        self.write_line();
+
+        // design:paramtypes
+        self.write("__metadata(\"design:paramtypes\", [");
+        self.emit_serialized_param_types(parameters);
+        self.write("]),");
+        self.write_line();
+
+        // design:returntype
+        if return_type.is_some() {
+            let serialized = self.serialize_type_for_metadata(return_type);
+            self.write("__metadata(\"design:returntype\", ");
+            self.write(&serialized);
+            self.write(")");
+        } else {
+            self.write("__metadata(\"design:returntype\", void 0)");
+        }
+    }
+
+    /// Emit serialized parameter types as comma-separated values.
+    fn emit_serialized_param_types(&mut self, parameters: &NodeList) {
+        let mut first = true;
+        for &param_idx in &parameters.nodes {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                if param.type_annotation.is_some() {
+                    let serialized = self.serialize_type_for_metadata(param.type_annotation);
+                    self.write(&serialized);
+                } else {
+                    self.write("Object");
+                }
+            }
+        }
+    }
+
+    /// Emit metadata for constructor paramtypes (used with class-level decorators).
+    /// Caller must have already emitted a trailing comma+newline after decorators.
+    fn emit_metadata_for_constructor_params(&mut self, members: &[NodeIndex]) {
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.arena.get_constructor(member_node) else {
+                continue;
+            };
+
+            self.write("__metadata(\"design:paramtypes\", [");
+            self.emit_serialized_param_types(&ctor.parameters);
+            self.write("])");
+            return;
+        }
+    }
+
     pub(in crate::emitter) fn emit_legacy_class_decorator_assignment(
         &mut self,
         class_name: &str,
@@ -51,10 +224,13 @@ impl<'a> Printer<'a> {
         commonjs_exported: bool,
         commonjs_default: bool,
         emit_commonjs_pre_assignment: bool,
+        class_members: &[NodeIndex],
     ) {
         if class_name.is_empty() || decorators.is_empty() {
             return;
         }
+
+        let emit_metadata = self.ctx.options.emit_decorator_metadata;
 
         if commonjs_exported && !commonjs_default && emit_commonjs_pre_assignment {
             self.write("exports.");
@@ -79,16 +255,21 @@ impl<'a> Printer<'a> {
         self.write(" = __decorate([");
         self.write_line();
         self.increase_indent();
+        let has_metadata = emit_metadata && !class_members.is_empty();
         for (i, &dec_idx) in decorators.iter().enumerate() {
             if let Some(dec_node) = self.arena.get(dec_idx)
                 && let Some(dec) = self.arena.get_decorator(dec_node)
             {
                 self.emit(dec.expression);
-                if i + 1 != decorators.len() {
+                if i + 1 != decorators.len() || has_metadata {
                     self.write(",");
                 }
                 self.write_line();
             }
+        }
+        if has_metadata {
+            self.emit_metadata_for_constructor_params(class_members);
+            self.write_line();
         }
         self.decrease_indent();
         self.write("], ");
@@ -112,38 +293,63 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let emit_metadata = self.ctx.options.emit_decorator_metadata;
+
         // Track accessor names that have already been emitted so that
         // getter/setter pairs produce only one __decorate call (the first one).
         let mut emitted_accessor_names = std::collections::HashSet::<String>::new();
+
+        // Metadata info extracted per member
+        enum MemberMetadata {
+            Property {
+                type_annotation: NodeIndex,
+            },
+            Method {
+                parameters: NodeList,
+                return_type: NodeIndex,
+            },
+            Accessor,
+        }
 
         for &member_idx in members {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
 
-            let (modifiers, name_idx, is_property, is_accessor) = match member_node.kind {
+            let (modifiers, name_idx, is_property, is_accessor, metadata) = match member_node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     let Some(method) = self.arena.get_method_decl(member_node) else {
                         continue;
                     };
-                    (&method.modifiers, method.name, false, false)
+                    let meta = MemberMetadata::Method {
+                        parameters: method.parameters.clone(),
+                        return_type: method.type_annotation,
+                    };
+                    (&method.modifiers, method.name, false, false, meta)
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                     let Some(prop) = self.arena.get_property_decl(member_node) else {
                         continue;
                     };
-                    // Auto-accessor properties (with `accessor` keyword) are treated
-                    // like accessors, not properties, for __decorate purposes (emit null, not void 0).
                     let is_auto_accessor = self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    (&prop.modifiers, prop.name, !is_auto_accessor, false)
+                    let meta = MemberMetadata::Property {
+                        type_annotation: prop.type_annotation,
+                    };
+                    (&prop.modifiers, prop.name, !is_auto_accessor, false, meta)
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.arena.get_accessor(member_node) else {
                         continue;
                     };
-                    (&accessor.modifiers, accessor.name, false, true)
+                    (
+                        &accessor.modifiers,
+                        accessor.name,
+                        false,
+                        true,
+                        MemberMetadata::Accessor,
+                    )
                 }
                 _ => continue,
             };
@@ -173,17 +379,40 @@ impl<'a> Printer<'a> {
             self.write("__decorate([");
             self.write_line();
             self.increase_indent();
+
+            // Determine if metadata will follow the decorators
+            let will_emit_metadata = emit_metadata && !matches!(metadata, MemberMetadata::Accessor);
+
             for (i, &dec_idx) in decorators.iter().enumerate() {
                 if let Some(dec_node) = self.arena.get(dec_idx)
                     && let Some(dec) = self.arena.get_decorator(dec_node)
                 {
                     self.emit(dec.expression);
-                    if i + 1 != decorators.len() {
+                    if i + 1 != decorators.len() || will_emit_metadata {
                         self.write(",");
                     }
                     self.write_line();
                 }
             }
+
+            // Emit metadata calls after decorators
+            if will_emit_metadata {
+                match metadata {
+                    MemberMetadata::Property { type_annotation } => {
+                        self.emit_metadata_for_property(type_annotation);
+                        self.write_line();
+                    }
+                    MemberMetadata::Method {
+                        ref parameters,
+                        return_type,
+                    } => {
+                        self.emit_metadata_for_method(parameters, return_type);
+                        self.write_line();
+                    }
+                    MemberMetadata::Accessor => {}
+                }
+            }
+
             self.decrease_indent();
             self.write("], ");
             self.write(class_name);
@@ -348,6 +577,7 @@ impl<'a> Printer<'a> {
                 commonjs_exported,
                 commonjs_default,
                 false,
+                &class.members.nodes,
             );
 
             return;

@@ -356,6 +356,9 @@ impl<'a> LoweringPass<'a> {
                 }
                 if self.ctx.options.legacy_decorators {
                     self.transforms.helpers_mut().decorate = true;
+                    if self.ctx.options.emit_decorator_metadata {
+                        self.transforms.helpers_mut().metadata = true;
+                    }
                 }
             }
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
