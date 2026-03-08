@@ -1460,11 +1460,14 @@ impl<'a> Printer<'a> {
             }
 
             // ExpressionWithTypeArguments / instantiation expression:
-            // Strip type arguments and emit just the expression.
-            // tsc does not add extra parentheses here.
+            // Strip type arguments and wrap the expression in parentheses.
+            // tsc wraps the result in parens when erasing type arguments,
+            // e.g. `f<string>` becomes `(f)`.
             k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
                 if let Some(data) = self.arena.get_expr_type_args(node) {
+                    self.write("(");
                     self.emit(data.expression);
+                    self.write(")");
                 }
             }
 

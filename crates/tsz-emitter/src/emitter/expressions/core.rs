@@ -417,7 +417,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // If the inner expression is a type assertion/as/satisfies expression,
+        // If the inner expression is a type assertion/as/satisfies/instantiation expression,
         // the parens were only needed for the TS syntax (e.g., `(<Type>x).foo`).
         // In JS emit, the type assertion is stripped, making the parens unnecessary
         // UNLESS the underlying expression (after unwrapping type assertions) is:
@@ -426,7 +426,8 @@ impl<'a> Printer<'a> {
         if let Some(inner) = self.arena.get(paren.expression)
             && (inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
-                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
         {
             let unwrapped_kind = self.unwrap_type_assertion_kind(paren.expression);
             // Only strip parens if the unwrapped expression is a simple primary that
@@ -521,6 +522,13 @@ impl<'a> Printer<'a> {
                         return Some(node.kind);
                     }
                 }
+                k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                    if let Some(data) = self.arena.get_expr_type_args(node) {
+                        idx = data.expression;
+                    } else {
+                        return Some(node.kind);
+                    }
+                }
                 _ => return Some(node.kind),
             }
         }
@@ -543,6 +551,13 @@ impl<'a> Printer<'a> {
                 {
                     if let Some(ta) = self.arena.get_type_assertion(node) {
                         idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                    if let Some(data) = self.arena.get_expr_type_args(node) {
+                        idx = data.expression;
                     } else {
                         return false;
                     }
