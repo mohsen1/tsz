@@ -990,6 +990,45 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        // Check if we can use the simple `return _super.call(this, ...) || this;` form.
+        // This optimization applies when the constructor body has super() as its only statement
+        // and there's no additional work to do (no parameter properties, instance props,
+        // private fields, or arrow functions capturing `this`).
+        let has_param_props = params.nodes.iter().any(|&p| {
+            self.arena
+                .get(p)
+                .and_then(|n| self.arena.get_parameter(n))
+                .map(|param| has_parameter_property_modifier(self.arena, &param.modifiers))
+                .unwrap_or(false)
+        });
+        let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
+        let has_auto_accessors = self.auto_accessors.iter().any(|a| !a.is_static);
+        let has_private_accessors = self.private_accessors.iter().any(|a| !a.is_static);
+        let stmts_before_super = super_stmt_idx.map(|_| super_stmt_position).unwrap_or(0);
+        let stmts_after_super = super_stmt_idx
+            .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
+            .unwrap_or(0);
+        let needs_this_capture = self.constructor_needs_this_capture(body_idx);
+
+        let can_use_simple_return = super_stmt_idx.is_some()
+            && stmts_before_super == 0
+            && stmts_after_super == 0
+            && instance_props.is_empty()
+            && !has_param_props
+            && !has_private_fields
+            && !has_auto_accessors
+            && !has_private_accessors
+            && !needs_this_capture;
+
+        if can_use_simple_return {
+            // Simple form: return _super.call(this, args) || this;
+            if let Some(super_idx) = super_stmt_idx {
+                let super_return = self.emit_super_call_return_ir(super_idx);
+                body.push(super_return);
+            }
+            return;
+        }
+
         // Emit statements before super() unchanged
         let mut prev_stmt_end = body_node.pos;
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
@@ -1147,6 +1186,29 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::this(),
             )),
         )
+    }
+
+    /// Emit super(args) as return _super.call(this, args) || this;
+    /// Used when the constructor body only contains `super()` with no other work.
+    fn emit_super_call_return_ir(&self, stmt_idx: NodeIndex) -> IRNode {
+        let mut args = vec![IRNode::this()];
+
+        if let Some(stmt_node) = self.arena.get(stmt_idx)
+            && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
+            && let Some(call_node) = self.arena.get(expr_stmt.expression)
+            && let Some(call) = self.arena.get_call_expr(call_node)
+            && let Some(ref call_args) = call.arguments
+        {
+            for &arg_idx in &call_args.nodes {
+                args.push(self.convert_expression(arg_idx));
+            }
+        }
+
+        // return _super.call(this, args...) || this;
+        IRNode::ret(Some(IRNode::logical_or(
+            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), args),
+            IRNode::this(),
+        )))
     }
 
     /// Emit parameter properties (public/private/protected/readonly params)

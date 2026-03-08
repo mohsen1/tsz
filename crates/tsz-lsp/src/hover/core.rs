@@ -100,7 +100,7 @@ impl<'a> HoverProvider<'a> {
             Some(symbol_id) => symbol_id,
             None => {
                 if let Some(member_hover) =
-                    self.hover_for_property_access_member_name(node_idx, root, type_cache)
+                    self.hover_for_property_access_member_name(node_idx, type_cache)
                 {
                     return Some(member_hover);
                 }
@@ -163,17 +163,7 @@ impl<'a> HoverProvider<'a> {
                     | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
                 != 0
         {
-            // For parameter declarations, use get_type_of_symbol instead of
-            // get_type_of_node. PARAMETER nodes are not handled by the expression
-            // dispatch, so get_type_of_node returns ERROR. get_type_of_symbol
-            // correctly returns ANY for untyped parameters, and the contextual
-            // parameter hover overlay provides the actual contextual type when
-            // available (e.g., from a callback position or variable annotation).
-            if self.is_parameter_declaration(decl_node_idx) {
-                checker.get_type_of_symbol(symbol_id)
-            } else {
-                checker.get_type_of_node(decl_node_idx)
-            }
+            checker.get_type_of_node(decl_node_idx)
         } else {
             checker.get_type_of_symbol(symbol_id)
         };
@@ -251,7 +241,6 @@ impl<'a> HoverProvider<'a> {
     fn hover_for_property_access_member_name(
         &self,
         node_idx: NodeIndex,
-        root: NodeIndex,
         type_cache: &mut Option<tsz_checker::TypeCache>,
     ) -> Option<HoverInfo> {
         use tsz_parser::syntax_kind_ext;
@@ -339,13 +328,6 @@ impl<'a> HoverProvider<'a> {
         } else {
             format!("(property) {name}: {type_string}")
         };
-        // Extract JSDoc documentation from the member declaration in the container type.
-        let documentation = if is_simple_name {
-            self.find_member_jsdoc(root, &container_name, &name)
-        } else {
-            String::new()
-        };
-
         let start = self.line_map.offset_to_position(node.pos, self.source_text);
         let end = self.line_map.offset_to_position(node.end, self.source_text);
         Some(HoverInfo {
@@ -354,91 +336,9 @@ impl<'a> HoverProvider<'a> {
             display_string,
             kind: "property".to_string(),
             kind_modifiers: String::new(),
-            documentation,
+            documentation: String::new(),
             tags: Vec::new(),
         })
-    }
-
-    /// Find the JSDoc documentation for a member of a named container type (interface/class).
-    fn find_member_jsdoc(
-        &self,
-        root: NodeIndex,
-        container_name: &str,
-        member_name: &str,
-    ) -> String {
-        use tsz_parser::syntax_kind_ext;
-
-        // Look up the container type declaration via the binder.
-        let mut candidate_decls = Vec::new();
-        if let Some(sym_id) = self.binder.file_locals.get(container_name)
-            && let Some(symbol) = self.binder.symbols.get(sym_id)
-        {
-            candidate_decls.extend(symbol.declarations.iter().copied());
-        }
-
-        // Fallback: scan arena for interface/class nodes with the matching name.
-        if candidate_decls.is_empty() {
-            for (idx, node) in self.arena.nodes.iter().enumerate() {
-                if let Some(iface) = self.arena.get_interface(node)
-                    && self.arena.get_identifier_text(iface.name) == Some(container_name)
-                {
-                    candidate_decls.push(NodeIndex(idx as u32));
-                } else if let Some(class) = self.arena.get_class(node)
-                    && self.arena.get_identifier_text(class.name) == Some(container_name)
-                {
-                    candidate_decls.push(NodeIndex(idx as u32));
-                }
-            }
-        }
-
-        for decl_idx in candidate_decls {
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-
-            let members: &[NodeIndex] = if let Some(iface) = self.arena.get_interface(decl_node) {
-                &iface.members.nodes
-            } else if let Some(class) = self.arena.get_class(decl_node) {
-                &class.members.nodes
-            } else {
-                // If the declaration node is not the interface/class itself but a
-                // direct child (e.g. InterfaceDeclaration), check if parent has the
-                // interface/class data.
-                if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                    || decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                {
-                    continue;
-                }
-                &[]
-            };
-
-            for &member_idx in members {
-                let Some(member_node) = self.arena.get(member_idx) else {
-                    continue;
-                };
-                let name_matches = if let Some(sig) = self.arena.get_signature(member_node) {
-                    self.arena.get_identifier_text(sig.name) == Some(member_name)
-                } else if let Some(prop) = self.arena.get_property_decl(member_node) {
-                    self.arena.get_identifier_text(prop.name) == Some(member_name)
-                } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                    self.arena.get_identifier_text(method.name) == Some(member_name)
-                } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                    self.arena.get_identifier_text(accessor.name) == Some(member_name)
-                } else {
-                    false
-                };
-
-                if name_matches {
-                    let raw_doc = jsdoc_for_node(self.arena, root, member_idx, self.source_text);
-                    if !raw_doc.is_empty() {
-                        let parsed = parse_jsdoc(&raw_doc);
-                        return parsed.summary.unwrap_or_default();
-                    }
-                }
-            }
-        }
-
-        String::new()
     }
 
     fn hover_for_class_expression_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {

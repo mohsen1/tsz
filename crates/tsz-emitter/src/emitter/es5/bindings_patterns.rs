@@ -581,7 +581,7 @@ impl<'a> Printer<'a> {
                 self.write(" = [];");
                 self.write_line();
 
-                let iter_name = self.get_temp_var_name();
+                let iter_name = "_i".to_string();
                 self.write("for (var ");
                 self.write(&iter_name);
                 self.write(" = ");
@@ -590,15 +590,22 @@ impl<'a> Printer<'a> {
                 self.write(&iter_name);
                 self.write(" < arguments.length; ");
                 self.write(&iter_name);
-                self.write("++) ");
+                self.write("++) {");
+                self.write_line();
+                self.increase_indent();
                 self.write(&rest.name);
                 self.write("[");
                 self.write(&iter_name);
-                self.write(" - ");
-                self.write_usize(rest.index);
+                if rest.index > 0 {
+                    self.write(" - ");
+                    self.write_usize(rest.index);
+                }
                 self.write("] = arguments[");
                 self.write(&iter_name);
                 self.write("];");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
                 self.write_line();
             }
 
