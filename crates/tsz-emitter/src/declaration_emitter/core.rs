@@ -1926,7 +1926,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
         } else if is_getter && !is_private {
-            if let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name]) {
+            if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
+                self.write(": ");
+                self.write(&type_text);
+            } else if let Some(type_id) =
+                self.get_node_type_or_names(&[accessor_idx, accessor.name])
+            {
                 // If solver returned `any` but body clearly returns void, prefer void
                 if type_id == tsz_solver::types::TypeId::ANY
                     && accessor_body.is_some()
@@ -1956,6 +1961,73 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(accessor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    fn matching_setter_parameter_type_text(&mut self, accessor_idx: NodeIndex) -> Option<String> {
+        let accessor_name = {
+            let accessor_node = self.arena.get(accessor_idx)?;
+            let accessor = self.arena.get_accessor(accessor_node)?;
+            let name_node = self.arena.get(accessor.name)?;
+            self.get_source_slice(name_node.pos, name_node.end)?
+        };
+
+        let parent_idx = self.arena.get_extended(accessor_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        let class_decl = self.arena.get_class(parent_node)?;
+
+        for &member_idx in &class_decl.members.nodes {
+            if member_idx == accessor_idx {
+                continue;
+            }
+
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::SET_ACCESSOR {
+                continue;
+            }
+
+            let Some(setter) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let Some(setter_name_node) = self.arena.get(setter.name) else {
+                continue;
+            };
+            if self
+                .get_source_slice(setter_name_node.pos, setter_name_node.end)
+                .as_deref()
+                != Some(accessor_name.as_str())
+            {
+                continue;
+            }
+
+            let Some(&param_idx) = setter.parameters.nodes.first() else {
+                continue;
+            };
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            if param.type_annotation.is_some() {
+                let saved_comment_idx = self.comment_emit_idx;
+                let saved_pending_source_pos = self.pending_source_pos;
+                let saved_writer = std::mem::take(&mut self.writer);
+                self.emit_type(param.type_annotation);
+                let type_writer = std::mem::replace(&mut self.writer, saved_writer);
+                self.comment_emit_idx = saved_comment_idx;
+                self.pending_source_pos = saved_pending_source_pos;
+                return Some(type_writer.take_output());
+            }
+
+            if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name]) {
+                return Some(self.print_type_id(type_id));
+            }
+        }
+
+        None
     }
 
     fn emit_index_signature(&mut self, sig_idx: NodeIndex) {

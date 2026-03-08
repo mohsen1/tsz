@@ -268,6 +268,32 @@ declare class C {
 }
 
 #[test]
+fn test_get_accessor_uses_matching_setter_parameter_type_for_computed_name() {
+    let output = emit_dts(
+        r#"
+const enum G {
+    B = 2,
+}
+class C {
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](value: number) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("get [G.B](): number;"),
+        "Expected getter to reuse matching setter parameter type: {output}"
+    );
+    assert!(
+        !output.contains("get [G.B](): boolean;"),
+        "Did not expect getter body type to override matching setter parameter type: {output}"
+    );
+}
+
+#[test]
 fn test_declaration_file_exports_do_not_gain_duplicate_declare() {
     let source = r#"
 export class A {}
