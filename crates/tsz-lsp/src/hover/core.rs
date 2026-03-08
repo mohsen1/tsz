@@ -313,13 +313,21 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
-        // Build display string with container type name (e.g., "I.m" not just "m")
-        let display_string =
-            if !container_name.is_empty() && container_name != "error" && container_name != "any" {
-                format!("(property) {container_name}.{name}: {type_string}")
-            } else {
-                format!("(property) {name}: {type_string}")
-            };
+        // Build display string with container type name (e.g., "I.m" not just "m").
+        // Only use the container name if it's a simple named type (interface/class),
+        // not a structural/anonymous type like `{ prop: string }`.
+        let is_simple_name = !container_name.is_empty()
+            && container_name != "error"
+            && container_name != "any"
+            && !container_name.contains('{')
+            && !container_name.contains('(')
+            && !container_name.contains('|')
+            && !container_name.contains('&');
+        let display_string = if is_simple_name {
+            format!("(property) {container_name}.{name}: {type_string}")
+        } else {
+            format!("(property) {name}: {type_string}")
+        };
         let start = self.line_map.offset_to_position(node.pos, self.source_text);
         let end = self.line_map.offset_to_position(node.end, self.source_text);
         Some(HoverInfo {
