@@ -121,7 +121,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
                 println!("error TS6053: {rest}");
                 println!("  The file is in the program because:");
                 println!("    Root file specified for compilation\n");
-                std::process::exit(1);
+                std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
             }
             return Err(e);
         }
@@ -436,7 +436,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     for arg in expanded.iter().skip(1) {
         let s = arg.to_string_lossy();
         if s == "--" || s == "-" {
-            println!("error TS5023: Unknown compiler option '{s}'.\n");
+            println!("error TS5023: Unknown compiler option '{s}'.");
             std::process::exit(1);
         }
     }
@@ -625,48 +625,105 @@ fn build_flag_lookup() -> FxHashMap<String, String> {
 /// Set of known boolean flags (flags that accept no value or optional true/false).
 fn build_boolean_flag_set() -> rustc_hash::FxHashSet<&'static str> {
     [
-        "--all", "--build", "--init", "--listFilesOnly", "--showConfig",
-        "--ignoreConfig", "--libReplacement", "--watch", "--noLib",
-        "--useDefineForClassFields", "--experimentalDecorators",
-        "--emitDecoratorMetadata", "--resolveJsonModule",
-        "--resolvePackageJsonExports", "--resolvePackageJsonImports",
-        "--allowArbitraryExtensions", "--allowImportingTsExtensions",
-        "--rewriteRelativeImportExtensions", "--noResolve",
-        "--allowUmdGlobalAccess", "--noUncheckedSideEffectImports",
-        "--allowJs", "--checkJs", "--declaration", "--declarationMap",
-        "--emitDeclarationOnly", "--sourceMap", "--inlineSourceMap",
-        "--inlineSources", "--noEmit", "--noEmitOnError", "--noEmitHelpers",
-        "--importHelpers", "--downlevelIteration", "--removeComments",
-        "--preserveConstEnums", "--stripInternal", "--emitBOM",
-        "--esModuleInterop", "--allowSyntheticDefaultImports",
-        "--isolatedModules", "--isolatedDeclarations",
-        "--verbatimModuleSyntax", "--forceConsistentCasingInFileNames",
-        "--preserveSymlinks", "--erasableSyntaxOnly", "--strict",
-        "--noImplicitAny", "--strictNullChecks", "--strictFunctionTypes",
-        "--strictBindCallApply", "--strictPropertyInitialization",
-        "--strictBuiltinIteratorReturn", "--noImplicitThis",
-        "--useUnknownInCatchVariables", "--alwaysStrict",
-        "--noUnusedLocals", "--noUnusedParameters",
-        "--exactOptionalPropertyTypes", "--noImplicitReturns",
-        "--noFallthroughCasesInSwitch", "--sound",
-        "--noUncheckedIndexedAccess", "--noImplicitOverride",
+        "--all",
+        "--build",
+        "--init",
+        "--listFilesOnly",
+        "--showConfig",
+        "--ignoreConfig",
+        "--libReplacement",
+        "--watch",
+        "--noLib",
+        "--useDefineForClassFields",
+        "--experimentalDecorators",
+        "--emitDecoratorMetadata",
+        "--resolveJsonModule",
+        "--resolvePackageJsonExports",
+        "--resolvePackageJsonImports",
+        "--allowArbitraryExtensions",
+        "--allowImportingTsExtensions",
+        "--rewriteRelativeImportExtensions",
+        "--noResolve",
+        "--allowUmdGlobalAccess",
+        "--noUncheckedSideEffectImports",
+        "--allowJs",
+        "--checkJs",
+        "--declaration",
+        "--declarationMap",
+        "--emitDeclarationOnly",
+        "--sourceMap",
+        "--inlineSourceMap",
+        "--inlineSources",
+        "--noEmit",
+        "--noEmitOnError",
+        "--noEmitHelpers",
+        "--importHelpers",
+        "--downlevelIteration",
+        "--removeComments",
+        "--preserveConstEnums",
+        "--stripInternal",
+        "--emitBOM",
+        "--esModuleInterop",
+        "--allowSyntheticDefaultImports",
+        "--isolatedModules",
+        "--isolatedDeclarations",
+        "--verbatimModuleSyntax",
+        "--forceConsistentCasingInFileNames",
+        "--preserveSymlinks",
+        "--erasableSyntaxOnly",
+        "--strict",
+        "--noImplicitAny",
+        "--strictNullChecks",
+        "--strictFunctionTypes",
+        "--strictBindCallApply",
+        "--strictPropertyInitialization",
+        "--strictBuiltinIteratorReturn",
+        "--noImplicitThis",
+        "--useUnknownInCatchVariables",
+        "--alwaysStrict",
+        "--noUnusedLocals",
+        "--noUnusedParameters",
+        "--exactOptionalPropertyTypes",
+        "--noImplicitReturns",
+        "--noFallthroughCasesInSwitch",
+        "--sound",
+        "--noUncheckedIndexedAccess",
+        "--noImplicitOverride",
         "--noPropertyAccessFromIndexSignature",
-        "--allowUnreachableCode", "--allowUnusedLabels",
-        "--skipDefaultLibCheck", "--skipLibCheck", "--composite",
-        "--incremental", "--disableReferencedProjectLoad",
+        "--allowUnreachableCode",
+        "--allowUnusedLabels",
+        "--skipDefaultLibCheck",
+        "--skipLibCheck",
+        "--composite",
+        "--incremental",
+        "--disableReferencedProjectLoad",
         "--disableSolutionSearching",
         "--disableSourceOfProjectReferenceRedirect",
-        "--diagnostics", "--extendedDiagnostics", "--explainFiles",
-        "--listFiles", "--listEmittedFiles", "--traceResolution",
-        "--traceDependencies", "--noCheck", "--pretty",
-        "--noErrorTruncation", "--preserveWatchOutput",
-        "--synchronousWatchDirectory", "--build-verbose", "--dry",
-        "--force", "--clean", "--stopBuildOnErrors",
+        "--diagnostics",
+        "--extendedDiagnostics",
+        "--explainFiles",
+        "--listFiles",
+        "--listEmittedFiles",
+        "--traceResolution",
+        "--traceDependencies",
+        "--noCheck",
+        "--pretty",
+        "--noErrorTruncation",
+        "--preserveWatchOutput",
+        "--synchronousWatchDirectory",
+        "--build-verbose",
+        "--dry",
+        "--force",
+        "--clean",
+        "--stopBuildOnErrors",
         "--assumeChangesOnlyAffectDirectDependencies",
-        "--keyofStringsOnly", "--noImplicitUseStrict",
-        "--noStrictGenericChecks", "--preserveValueImports",
+        "--keyofStringsOnly",
+        "--noImplicitUseStrict",
+        "--noStrictGenericChecks",
+        "--preserveValueImports",
         "--suppressExcessPropertyErrors",
-        "--suppressImplicitAnyIndexErrors", "--disableSizeLimit",
+        "--suppressImplicitAnyIndexErrors",
+        "--disableSizeLimit",
         "--batch",
     ]
     .into_iter()
@@ -676,18 +733,46 @@ fn build_boolean_flag_set() -> rustc_hash::FxHashSet<&'static str> {
 /// Set of flags that take a mandatory value argument (not boolean flags).
 fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
     [
-        "--locale", "--project", "--target", "--module", "--lib",
-        "--jsx", "--jsxFactory", "--jsxFragmentFactory",
-        "--jsxImportSource", "--moduleDetection", "--moduleResolution",
-        "--baseUrl", "--typeRoots", "--types", "--rootDirs", "--paths",
-        "--plugins", "--moduleSuffixes", "--customConditions",
-        "--maxNodeModuleJsDepth", "--declarationDir", "--outDir",
-        "--rootDir", "--outFile", "--mapRoot", "--sourceRoot",
-        "--newLine", "--tsBuildInfoFile", "--generateTrace",
-        "--generateCpuProfile", "--watchFile", "--watchDirectory",
-        "--fallbackPolling", "--excludeDirectories", "--excludeFiles",
-        "--reactNamespace", "--charset", "--importsNotUsedAsValues",
-        "--out", "--typesVersions",
+        "--locale",
+        "--project",
+        "--target",
+        "--module",
+        "--lib",
+        "--jsx",
+        "--jsxFactory",
+        "--jsxFragmentFactory",
+        "--jsxImportSource",
+        "--moduleDetection",
+        "--moduleResolution",
+        "--baseUrl",
+        "--typeRoots",
+        "--types",
+        "--rootDirs",
+        "--paths",
+        "--plugins",
+        "--moduleSuffixes",
+        "--customConditions",
+        "--maxNodeModuleJsDepth",
+        "--declarationDir",
+        "--outDir",
+        "--rootDir",
+        "--outFile",
+        "--mapRoot",
+        "--sourceRoot",
+        "--newLine",
+        "--tsBuildInfoFile",
+        "--generateTrace",
+        "--generateCpuProfile",
+        "--watchFile",
+        "--watchDirectory",
+        "--fallbackPolling",
+        "--excludeDirectories",
+        "--excludeFiles",
+        "--reactNamespace",
+        "--charset",
+        "--importsNotUsedAsValues",
+        "--out",
+        "--typesVersions",
     ]
     .into_iter()
     .collect()
@@ -795,7 +880,7 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
             let unknown_flags = extract_all_unknown_flags(args);
             if unknown_flags.is_empty() {
                 // Fallback: just print TS5023 with whatever info we have
-                println!("error TS5023: Unknown compiler option.\n");
+                println!("error TS5023: Unknown compiler option.");
             } else {
                 for flag in &unknown_flags {
                     // Try to find a close match for TS5025
@@ -807,7 +892,6 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                         println!("error TS5023: Unknown compiler option '{flag}'.");
                     }
                 }
-                println!();
             }
             std::process::exit(1);
         }
@@ -1362,11 +1446,32 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .or_else(|| Some(cwd.join("tsconfig.json")))
     };
 
-    // Issue 4: When no tsconfig.json is found (and --ignoreConfig is not set), emit TS5081
+    // When no tsconfig.json is found (and --ignoreConfig is not set), emit the
+    // appropriate tsc error code depending on how the path was resolved:
+    //   TS5081 – no --project flag, default cwd/tsconfig.json missing
+    //   TS5057 – --project dir exists but has no tsconfig.json
+    //   TS5058 – --project path does not exist at all
     if let Some(ref path) = tsconfig_path {
         if !path.exists() {
-            let display = path.display();
-            println!("error TS5081: Cannot read file '{display}'.");
+            if args.project.is_none() {
+                println!(
+                    "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+                    cwd.display()
+                );
+            } else {
+                let project_val = args.project.as_ref().unwrap();
+                if project_val.is_dir() {
+                    println!(
+                        "error TS5057: Cannot find a tsconfig.json file at the specified directory: '{}'.",
+                        project_val.display()
+                    );
+                } else {
+                    println!(
+                        "error TS5058: The specified path does not exist: '{}'.",
+                        project_val.display()
+                    );
+                }
+            }
             std::process::exit(1);
         }
     }
@@ -1398,8 +1503,10 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if let Some(serde_json::Value::String(s)) = compiler_options_map.get(*path_key) {
             if !s.starts_with("./") && !s.starts_with("../") && !s.starts_with('/') {
                 let normalized = format!("./{s}");
-                compiler_options_map
-                    .insert((*path_key).to_string(), serde_json::Value::String(normalized));
+                compiler_options_map.insert(
+                    (*path_key).to_string(),
+                    serde_json::Value::String(normalized),
+                );
             }
         }
     }
@@ -1410,10 +1517,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // We need resolved options for file discovery (allow_js, out_dir).
     let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = raw_opts
-        .and_then(|o| o.allow_js)
-        .unwrap_or(false)
-        || args.allow_js;
+    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false) || args.allow_js;
     let out_dir = args
         .out_dir
         .clone()
@@ -1606,52 +1710,152 @@ fn show_config_compiler_options_to_json(
     let mut map = serde_json::Map::new();
     let Some(opts) = opts else { return map };
 
-    if let Some(ref v) = opts.target { map.insert("target".into(), Value::String(v.to_lowercase())); }
-    if let Some(ref v) = opts.module { map.insert("module".into(), Value::String(v.to_lowercase())); }
-    if let Some(ref v) = opts.module_resolution { map.insert("moduleResolution".into(), Value::String(v.to_lowercase())); }
-    if let Some(ref v) = opts.jsx { map.insert("jsx".into(), Value::String(v.to_lowercase())); }
-    if let Some(ref v) = opts.jsx_factory { map.insert("jsxFactory".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.jsx_fragment_factory { map.insert("jsxFragmentFactory".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.jsx_import_source { map.insert("jsxImportSource".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.react_namespace { map.insert("reactNamespace".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.base_url { map.insert("baseUrl".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.root_dir { map.insert("rootDir".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.out_dir { map.insert("outDir".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.out_file { map.insert("outFile".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.declaration_dir { map.insert("declarationDir".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.ts_build_info_file { map.insert("tsBuildInfoFile".into(), Value::String(v.clone())); }
-    if let Some(ref v) = opts.module_detection { map.insert("moduleDetection".into(), Value::String(v.to_lowercase())); }
+    if let Some(ref v) = opts.target {
+        map.insert("target".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(ref v) = opts.module {
+        map.insert("module".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(ref v) = opts.module_resolution {
+        map.insert("moduleResolution".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(ref v) = opts.jsx {
+        map.insert("jsx".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(ref v) = opts.jsx_factory {
+        map.insert("jsxFactory".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.jsx_fragment_factory {
+        map.insert("jsxFragmentFactory".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.jsx_import_source {
+        map.insert("jsxImportSource".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.react_namespace {
+        map.insert("reactNamespace".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.base_url {
+        map.insert("baseUrl".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.root_dir {
+        map.insert("rootDir".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.out_dir {
+        map.insert("outDir".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.out_file {
+        map.insert("outFile".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.declaration_dir {
+        map.insert("declarationDir".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.ts_build_info_file {
+        map.insert("tsBuildInfoFile".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = opts.module_detection {
+        map.insert("moduleDetection".into(), Value::String(v.to_lowercase()));
+    }
 
-    macro_rules! set_bool { ($f:ident, $k:expr) => { if let Some(v) = opts.$f { map.insert($k.into(), Value::Bool(v)); } }; }
-    set_bool!(strict, "strict"); set_bool!(no_emit, "noEmit"); set_bool!(no_emit_on_error, "noEmitOnError");
-    set_bool!(declaration, "declaration"); set_bool!(source_map, "sourceMap"); set_bool!(declaration_map, "declarationMap");
-    set_bool!(composite, "composite"); set_bool!(incremental, "incremental"); set_bool!(isolated_modules, "isolatedModules");
-    set_bool!(verbatim_module_syntax, "verbatimModuleSyntax"); set_bool!(es_module_interop, "esModuleInterop");
-    set_bool!(allow_synthetic_default_imports, "allowSyntheticDefaultImports"); set_bool!(allow_js, "allowJs");
-    set_bool!(check_js, "checkJs"); set_bool!(skip_lib_check, "skipLibCheck"); set_bool!(strip_internal, "stripInternal");
-    set_bool!(no_lib, "noLib"); set_bool!(import_helpers, "importHelpers"); set_bool!(no_implicit_any, "noImplicitAny");
-    set_bool!(no_implicit_returns, "noImplicitReturns"); set_bool!(strict_null_checks, "strictNullChecks");
-    set_bool!(strict_function_types, "strictFunctionTypes"); set_bool!(strict_property_initialization, "strictPropertyInitialization");
-    set_bool!(no_implicit_this, "noImplicitThis"); set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
-    set_bool!(strict_bind_call_apply, "strictBindCallApply"); set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
-    set_bool!(no_unused_locals, "noUnusedLocals"); set_bool!(no_unused_parameters, "noUnusedParameters");
-    set_bool!(allow_unreachable_code, "allowUnreachableCode"); set_bool!(no_resolve, "noResolve");
-    set_bool!(no_unchecked_side_effect_imports, "noUncheckedSideEffectImports"); set_bool!(no_implicit_override, "noImplicitOverride");
-    set_bool!(always_strict, "alwaysStrict"); set_bool!(use_define_for_class_fields, "useDefineForClassFields");
-    set_bool!(experimental_decorators, "experimentalDecorators"); set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
-    set_bool!(resolve_package_json_exports, "resolvePackageJsonExports"); set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
-    set_bool!(resolve_json_module, "resolveJsonModule"); set_bool!(allow_arbitrary_extensions, "allowArbitraryExtensions");
-    set_bool!(allow_importing_ts_extensions, "allowImportingTsExtensions"); set_bool!(rewrite_relative_import_extensions, "rewriteRelativeImportExtensions");
+    macro_rules! set_bool {
+        ($f:ident, $k:expr) => {
+            if let Some(v) = opts.$f {
+                map.insert($k.into(), Value::Bool(v));
+            }
+        };
+    }
+    set_bool!(strict, "strict");
+    set_bool!(no_emit, "noEmit");
+    set_bool!(no_emit_on_error, "noEmitOnError");
+    set_bool!(declaration, "declaration");
+    set_bool!(source_map, "sourceMap");
+    set_bool!(declaration_map, "declarationMap");
+    set_bool!(composite, "composite");
+    set_bool!(incremental, "incremental");
+    set_bool!(isolated_modules, "isolatedModules");
+    set_bool!(verbatim_module_syntax, "verbatimModuleSyntax");
+    set_bool!(es_module_interop, "esModuleInterop");
+    set_bool!(
+        allow_synthetic_default_imports,
+        "allowSyntheticDefaultImports"
+    );
+    set_bool!(allow_js, "allowJs");
+    set_bool!(check_js, "checkJs");
+    set_bool!(skip_lib_check, "skipLibCheck");
+    set_bool!(strip_internal, "stripInternal");
+    set_bool!(no_lib, "noLib");
+    set_bool!(import_helpers, "importHelpers");
+    set_bool!(no_implicit_any, "noImplicitAny");
+    set_bool!(no_implicit_returns, "noImplicitReturns");
+    set_bool!(strict_null_checks, "strictNullChecks");
+    set_bool!(strict_function_types, "strictFunctionTypes");
+    set_bool!(
+        strict_property_initialization,
+        "strictPropertyInitialization"
+    );
+    set_bool!(no_implicit_this, "noImplicitThis");
+    set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_bool!(no_unused_locals, "noUnusedLocals");
+    set_bool!(no_unused_parameters, "noUnusedParameters");
+    set_bool!(allow_unreachable_code, "allowUnreachableCode");
+    set_bool!(no_resolve, "noResolve");
+    set_bool!(
+        no_unchecked_side_effect_imports,
+        "noUncheckedSideEffectImports"
+    );
+    set_bool!(no_implicit_override, "noImplicitOverride");
+    set_bool!(always_strict, "alwaysStrict");
+    set_bool!(use_define_for_class_fields, "useDefineForClassFields");
+    set_bool!(experimental_decorators, "experimentalDecorators");
+    set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
+    set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
+    set_bool!(resolve_json_module, "resolveJsonModule");
+    set_bool!(allow_arbitrary_extensions, "allowArbitraryExtensions");
+    set_bool!(allow_importing_ts_extensions, "allowImportingTsExtensions");
+    set_bool!(
+        rewrite_relative_import_extensions,
+        "rewriteRelativeImportExtensions"
+    );
 
-    if let Some(ref v) = opts.lib { map.insert("lib".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = opts.types { map.insert("types".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = opts.type_roots { map.insert("typeRoots".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = opts.module_suffixes { map.insert("moduleSuffixes".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = opts.custom_conditions { map.insert("customConditions".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = opts.lib {
+        map.insert(
+            "lib".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = opts.types {
+        map.insert(
+            "types".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = opts.type_roots {
+        map.insert(
+            "typeRoots".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = opts.module_suffixes {
+        map.insert(
+            "moduleSuffixes".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = opts.custom_conditions {
+        map.insert(
+            "customConditions".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
     if let Some(ref paths) = opts.paths {
         let mut paths_obj = serde_json::Map::new();
         for (pattern, targets) in paths {
-            paths_obj.insert(pattern.clone(), Value::Array(targets.iter().map(|s| Value::String(s.clone())).collect()));
+            paths_obj.insert(
+                pattern.clone(),
+                Value::Array(targets.iter().map(|s| Value::String(s.clone())).collect()),
+            );
         }
         map.insert("paths".into(), Value::Object(paths_obj));
     }
@@ -1659,83 +1863,266 @@ fn show_config_compiler_options_to_json(
 }
 
 /// Merge CLI-provided flags into the compiler options JSON map for --showConfig output.
-fn show_config_apply_cli_overrides(map: &mut serde_json::Map<String, serde_json::Value>, args: &CliArgs) {
+fn show_config_apply_cli_overrides(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    args: &CliArgs,
+) {
     use serde_json::Value;
     if let Some(target) = args.target {
-        let s = match target { tsz_cli::args::Target::Es5 => "es5", tsz_cli::args::Target::Es2015 => "es2015", tsz_cli::args::Target::Es2016 => "es2016", tsz_cli::args::Target::Es2017 => "es2017", tsz_cli::args::Target::Es2018 => "es2018", tsz_cli::args::Target::Es2019 => "es2019", tsz_cli::args::Target::Es2020 => "es2020", tsz_cli::args::Target::Es2021 => "es2021", tsz_cli::args::Target::Es2022 => "es2022", tsz_cli::args::Target::Es2023 => "es2023", tsz_cli::args::Target::Es2024 => "es2024", tsz_cli::args::Target::Es2025 => "es2025", tsz_cli::args::Target::EsNext => "esnext" };
+        let s = match target {
+            tsz_cli::args::Target::Es5 => "es5",
+            tsz_cli::args::Target::Es2015 => "es2015",
+            tsz_cli::args::Target::Es2016 => "es2016",
+            tsz_cli::args::Target::Es2017 => "es2017",
+            tsz_cli::args::Target::Es2018 => "es2018",
+            tsz_cli::args::Target::Es2019 => "es2019",
+            tsz_cli::args::Target::Es2020 => "es2020",
+            tsz_cli::args::Target::Es2021 => "es2021",
+            tsz_cli::args::Target::Es2022 => "es2022",
+            tsz_cli::args::Target::Es2023 => "es2023",
+            tsz_cli::args::Target::Es2024 => "es2024",
+            tsz_cli::args::Target::Es2025 => "es2025",
+            tsz_cli::args::Target::EsNext => "esnext",
+        };
         map.insert("target".into(), Value::String(s.into()));
     }
     if let Some(module) = args.module {
-        let s = match module { tsz_cli::args::Module::None => "none", tsz_cli::args::Module::CommonJs => "commonjs", tsz_cli::args::Module::Amd => "amd", tsz_cli::args::Module::Umd => "umd", tsz_cli::args::Module::System => "system", tsz_cli::args::Module::Es2015 => "es2015", tsz_cli::args::Module::Es2020 => "es2020", tsz_cli::args::Module::Es2022 => "es2022", tsz_cli::args::Module::EsNext => "esnext", tsz_cli::args::Module::Node16 => "node16", tsz_cli::args::Module::Node18 => "node18", tsz_cli::args::Module::Node20 => "node20", tsz_cli::args::Module::NodeNext => "nodenext", tsz_cli::args::Module::Preserve => "preserve" };
+        let s = match module {
+            tsz_cli::args::Module::None => "none",
+            tsz_cli::args::Module::CommonJs => "commonjs",
+            tsz_cli::args::Module::Amd => "amd",
+            tsz_cli::args::Module::Umd => "umd",
+            tsz_cli::args::Module::System => "system",
+            tsz_cli::args::Module::Es2015 => "es2015",
+            tsz_cli::args::Module::Es2020 => "es2020",
+            tsz_cli::args::Module::Es2022 => "es2022",
+            tsz_cli::args::Module::EsNext => "esnext",
+            tsz_cli::args::Module::Node16 => "node16",
+            tsz_cli::args::Module::Node18 => "node18",
+            tsz_cli::args::Module::Node20 => "node20",
+            tsz_cli::args::Module::NodeNext => "nodenext",
+            tsz_cli::args::Module::Preserve => "preserve",
+        };
         map.insert("module".into(), Value::String(s.into()));
     }
     if let Some(mr) = args.module_resolution {
-        let s = match mr { tsz_cli::args::ModuleResolution::Classic => "classic", tsz_cli::args::ModuleResolution::Node10 => "node10", tsz_cli::args::ModuleResolution::Node16 => "node16", tsz_cli::args::ModuleResolution::NodeNext => "nodenext", tsz_cli::args::ModuleResolution::Bundler => "bundler" };
+        let s = match mr {
+            tsz_cli::args::ModuleResolution::Classic => "classic",
+            tsz_cli::args::ModuleResolution::Node10 => "node10",
+            tsz_cli::args::ModuleResolution::Node16 => "node16",
+            tsz_cli::args::ModuleResolution::NodeNext => "nodenext",
+            tsz_cli::args::ModuleResolution::Bundler => "bundler",
+        };
         map.insert("moduleResolution".into(), Value::String(s.into()));
     }
     if let Some(jsx) = args.jsx {
-        let s = match jsx { tsz_cli::args::JsxEmit::Preserve => "preserve", tsz_cli::args::JsxEmit::React => "react", tsz_cli::args::JsxEmit::ReactJsx => "react-jsx", tsz_cli::args::JsxEmit::ReactJsxDev => "react-jsxdev", tsz_cli::args::JsxEmit::ReactNative => "react-native" };
+        let s = match jsx {
+            tsz_cli::args::JsxEmit::Preserve => "preserve",
+            tsz_cli::args::JsxEmit::React => "react",
+            tsz_cli::args::JsxEmit::ReactJsx => "react-jsx",
+            tsz_cli::args::JsxEmit::ReactJsxDev => "react-jsxdev",
+            tsz_cli::args::JsxEmit::ReactNative => "react-native",
+        };
         map.insert("jsx".into(), Value::String(s.into()));
     }
-    if let Some(ref v) = args.jsx_factory { map.insert("jsxFactory".into(), Value::String(v.clone())); }
-    if let Some(ref v) = args.jsx_fragment_factory { map.insert("jsxFragmentFactory".into(), Value::String(v.clone())); }
-    if let Some(ref v) = args.jsx_import_source { map.insert("jsxImportSource".into(), Value::String(v.clone())); }
-    if let Some(ref v) = args.out_dir { map.insert("outDir".into(), Value::String(v.display().to_string())); }
-    if let Some(ref v) = args.out_file { map.insert("outFile".into(), Value::String(v.display().to_string())); }
-    if let Some(ref v) = args.root_dir { map.insert("rootDir".into(), Value::String(v.display().to_string())); }
-    if let Some(ref v) = args.declaration_dir { map.insert("declarationDir".into(), Value::String(v.display().to_string())); }
-    if let Some(ref v) = args.base_url { map.insert("baseUrl".into(), Value::String(v.display().to_string())); }
+    if let Some(ref v) = args.jsx_factory {
+        map.insert("jsxFactory".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = args.jsx_fragment_factory {
+        map.insert("jsxFragmentFactory".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = args.jsx_import_source {
+        map.insert("jsxImportSource".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = args.out_dir {
+        map.insert("outDir".into(), Value::String(v.display().to_string()));
+    }
+    if let Some(ref v) = args.out_file {
+        map.insert("outFile".into(), Value::String(v.display().to_string()));
+    }
+    if let Some(ref v) = args.root_dir {
+        map.insert("rootDir".into(), Value::String(v.display().to_string()));
+    }
+    if let Some(ref v) = args.declaration_dir {
+        map.insert(
+            "declarationDir".into(),
+            Value::String(v.display().to_string()),
+        );
+    }
+    if let Some(ref v) = args.base_url {
+        map.insert("baseUrl".into(), Value::String(v.display().to_string()));
+    }
 
-    macro_rules! set_if_true { ($f:ident, $k:expr) => { if args.$f { map.insert($k.into(), Value::Bool(true)); } }; }
-    set_if_true!(strict, "strict"); set_if_true!(no_emit, "noEmit"); set_if_true!(no_emit_on_error, "noEmitOnError");
-    set_if_true!(declaration, "declaration"); set_if_true!(source_map, "sourceMap"); set_if_true!(declaration_map, "declarationMap");
-    set_if_true!(composite, "composite"); set_if_true!(incremental, "incremental"); set_if_true!(isolated_modules, "isolatedModules");
-    set_if_true!(verbatim_module_syntax, "verbatimModuleSyntax"); set_if_true!(es_module_interop, "esModuleInterop");
-    set_if_true!(allow_js, "allowJs"); set_if_true!(check_js, "checkJs"); set_if_true!(skip_lib_check, "skipLibCheck");
-    set_if_true!(skip_default_lib_check, "skipDefaultLibCheck"); set_if_true!(strip_internal, "stripInternal");
-    set_if_true!(no_lib, "noLib"); set_if_true!(import_helpers, "importHelpers"); set_if_true!(no_emit_helpers, "noEmitHelpers");
-    set_if_true!(no_unused_locals, "noUnusedLocals"); set_if_true!(no_unused_parameters, "noUnusedParameters");
-    set_if_true!(no_implicit_returns, "noImplicitReturns"); set_if_true!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
-    set_if_true!(exact_optional_property_types, "exactOptionalPropertyTypes"); set_if_true!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
-    set_if_true!(no_implicit_override, "noImplicitOverride"); set_if_true!(no_property_access_from_index_signature, "noPropertyAccessFromIndexSignature");
-    set_if_true!(no_resolve, "noResolve"); set_if_true!(no_unchecked_side_effect_imports, "noUncheckedSideEffectImports");
-    set_if_true!(allow_umd_global_access, "allowUmdGlobalAccess"); set_if_true!(downlevel_iteration, "downlevelIteration");
-    set_if_true!(experimental_decorators, "experimentalDecorators"); set_if_true!(emit_decorator_metadata, "emitDecoratorMetadata");
-    set_if_true!(preserve_const_enums, "preserveConstEnums"); set_if_true!(remove_comments, "removeComments");
-    set_if_true!(emit_bom, "emitBOM"); set_if_true!(inline_source_map, "inlineSourceMap"); set_if_true!(inline_sources, "inlineSources");
-    set_if_true!(resolve_json_module, "resolveJsonModule"); set_if_true!(allow_arbitrary_extensions, "allowArbitraryExtensions");
-    set_if_true!(allow_importing_ts_extensions, "allowImportingTsExtensions"); set_if_true!(rewrite_relative_import_extensions, "rewriteRelativeImportExtensions");
-    set_if_true!(preserve_symlinks, "preserveSymlinks"); set_if_true!(isolated_declarations, "isolatedDeclarations");
+    macro_rules! set_if_true {
+        ($f:ident, $k:expr) => {
+            if args.$f {
+                map.insert($k.into(), Value::Bool(true));
+            }
+        };
+    }
+    set_if_true!(strict, "strict");
+    set_if_true!(no_emit, "noEmit");
+    set_if_true!(no_emit_on_error, "noEmitOnError");
+    set_if_true!(declaration, "declaration");
+    set_if_true!(source_map, "sourceMap");
+    set_if_true!(declaration_map, "declarationMap");
+    set_if_true!(composite, "composite");
+    set_if_true!(incremental, "incremental");
+    set_if_true!(isolated_modules, "isolatedModules");
+    set_if_true!(verbatim_module_syntax, "verbatimModuleSyntax");
+    set_if_true!(es_module_interop, "esModuleInterop");
+    set_if_true!(allow_js, "allowJs");
+    set_if_true!(check_js, "checkJs");
+    set_if_true!(skip_lib_check, "skipLibCheck");
+    set_if_true!(skip_default_lib_check, "skipDefaultLibCheck");
+    set_if_true!(strip_internal, "stripInternal");
+    set_if_true!(no_lib, "noLib");
+    set_if_true!(import_helpers, "importHelpers");
+    set_if_true!(no_emit_helpers, "noEmitHelpers");
+    set_if_true!(no_unused_locals, "noUnusedLocals");
+    set_if_true!(no_unused_parameters, "noUnusedParameters");
+    set_if_true!(no_implicit_returns, "noImplicitReturns");
+    set_if_true!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
+    set_if_true!(exact_optional_property_types, "exactOptionalPropertyTypes");
+    set_if_true!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_if_true!(no_implicit_override, "noImplicitOverride");
+    set_if_true!(
+        no_property_access_from_index_signature,
+        "noPropertyAccessFromIndexSignature"
+    );
+    set_if_true!(no_resolve, "noResolve");
+    set_if_true!(
+        no_unchecked_side_effect_imports,
+        "noUncheckedSideEffectImports"
+    );
+    set_if_true!(allow_umd_global_access, "allowUmdGlobalAccess");
+    set_if_true!(downlevel_iteration, "downlevelIteration");
+    set_if_true!(experimental_decorators, "experimentalDecorators");
+    set_if_true!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_if_true!(preserve_const_enums, "preserveConstEnums");
+    set_if_true!(remove_comments, "removeComments");
+    set_if_true!(emit_bom, "emitBOM");
+    set_if_true!(inline_source_map, "inlineSourceMap");
+    set_if_true!(inline_sources, "inlineSources");
+    set_if_true!(resolve_json_module, "resolveJsonModule");
+    set_if_true!(allow_arbitrary_extensions, "allowArbitraryExtensions");
+    set_if_true!(allow_importing_ts_extensions, "allowImportingTsExtensions");
+    set_if_true!(
+        rewrite_relative_import_extensions,
+        "rewriteRelativeImportExtensions"
+    );
+    set_if_true!(preserve_symlinks, "preserveSymlinks");
+    set_if_true!(isolated_declarations, "isolatedDeclarations");
     set_if_true!(erasable_syntax_only, "erasableSyntaxOnly");
 
-    macro_rules! set_opt_bool { ($f:ident, $k:expr) => { if let Some(v) = args.$f { map.insert($k.into(), Value::Bool(v)); } }; }
-    set_opt_bool!(no_implicit_any, "noImplicitAny"); set_opt_bool!(strict_null_checks, "strictNullChecks");
-    set_opt_bool!(strict_function_types, "strictFunctionTypes"); set_opt_bool!(strict_bind_call_apply, "strictBindCallApply");
-    set_opt_bool!(strict_property_initialization, "strictPropertyInitialization"); set_opt_bool!(strict_builtin_iterator_return, "strictBuiltinIteratorReturn");
-    set_opt_bool!(no_implicit_this, "noImplicitThis"); set_opt_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
-    set_opt_bool!(always_strict, "alwaysStrict"); set_opt_bool!(use_define_for_class_fields, "useDefineForClassFields");
-    set_opt_bool!(allow_unreachable_code, "allowUnreachableCode"); set_opt_bool!(allow_unused_labels, "allowUnusedLabels");
-    set_opt_bool!(allow_synthetic_default_imports, "allowSyntheticDefaultImports"); set_opt_bool!(force_consistent_casing_in_file_names, "forceConsistentCasingInFileNames");
-    set_opt_bool!(pretty, "pretty"); set_opt_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
+    macro_rules! set_opt_bool {
+        ($f:ident, $k:expr) => {
+            if let Some(v) = args.$f {
+                map.insert($k.into(), Value::Bool(v));
+            }
+        };
+    }
+    set_opt_bool!(no_implicit_any, "noImplicitAny");
+    set_opt_bool!(strict_null_checks, "strictNullChecks");
+    set_opt_bool!(strict_function_types, "strictFunctionTypes");
+    set_opt_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_opt_bool!(
+        strict_property_initialization,
+        "strictPropertyInitialization"
+    );
+    set_opt_bool!(
+        strict_builtin_iterator_return,
+        "strictBuiltinIteratorReturn"
+    );
+    set_opt_bool!(no_implicit_this, "noImplicitThis");
+    set_opt_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_opt_bool!(always_strict, "alwaysStrict");
+    set_opt_bool!(use_define_for_class_fields, "useDefineForClassFields");
+    set_opt_bool!(allow_unreachable_code, "allowUnreachableCode");
+    set_opt_bool!(allow_unused_labels, "allowUnusedLabels");
+    set_opt_bool!(
+        allow_synthetic_default_imports,
+        "allowSyntheticDefaultImports"
+    );
+    set_opt_bool!(
+        force_consistent_casing_in_file_names,
+        "forceConsistentCasingInFileNames"
+    );
+    set_opt_bool!(pretty, "pretty");
+    set_opt_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
     set_opt_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
 
-    if let Some(ref v) = args.lib { map.insert("lib".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = args.types { map.insert("types".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = args.type_roots { map.insert("typeRoots".into(), Value::Array(v.iter().map(|s| Value::String(s.display().to_string())).collect())); }
-    if let Some(ref v) = args.root_dirs { map.insert("rootDirs".into(), Value::Array(v.iter().map(|s| Value::String(s.display().to_string())).collect())); }
-    if let Some(ref v) = args.module_suffixes { map.insert("moduleSuffixes".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
-    if let Some(ref v) = args.custom_conditions { map.insert("customConditions".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = args.lib {
+        map.insert(
+            "lib".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = args.types {
+        map.insert(
+            "types".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = args.type_roots {
+        map.insert(
+            "typeRoots".into(),
+            Value::Array(
+                v.iter()
+                    .map(|s| Value::String(s.display().to_string()))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(ref v) = args.root_dirs {
+        map.insert(
+            "rootDirs".into(),
+            Value::Array(
+                v.iter()
+                    .map(|s| Value::String(s.display().to_string()))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(ref v) = args.module_suffixes {
+        map.insert(
+            "moduleSuffixes".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if let Some(ref v) = args.custom_conditions {
+        map.insert(
+            "customConditions".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
     if let Some(md) = args.module_detection {
-        let s = match md { tsz_cli::args::ModuleDetection::Auto => "auto", tsz_cli::args::ModuleDetection::Force => "force", tsz_cli::args::ModuleDetection::Legacy => "legacy" };
+        let s = match md {
+            tsz_cli::args::ModuleDetection::Auto => "auto",
+            tsz_cli::args::ModuleDetection::Force => "force",
+            tsz_cli::args::ModuleDetection::Legacy => "legacy",
+        };
         map.insert("moduleDetection".into(), Value::String(s.into()));
     }
     if let Some(nl) = args.new_line {
-        let s = match nl { tsz_cli::args::NewLine::Crlf => "crlf", tsz_cli::args::NewLine::Lf => "lf" };
+        let s = match nl {
+            tsz_cli::args::NewLine::Crlf => "crlf",
+            tsz_cli::args::NewLine::Lf => "lf",
+        };
         map.insert("newLine".into(), Value::String(s.into()));
     }
-    if let Some(ref v) = args.map_root { map.insert("mapRoot".into(), Value::String(v.clone())); }
-    if let Some(ref v) = args.source_root { map.insert("sourceRoot".into(), Value::String(v.clone())); }
-    if let Some(v) = args.max_node_module_js_depth { map.insert("maxNodeModuleJsDepth".into(), Value::Number(serde_json::Number::from(v))); }
+    if let Some(ref v) = args.map_root {
+        map.insert("mapRoot".into(), Value::String(v.clone()));
+    }
+    if let Some(ref v) = args.source_root {
+        map.insert("sourceRoot".into(), Value::String(v.clone()));
+    }
+    if let Some(v) = args.max_node_module_js_depth {
+        map.insert(
+            "maxNodeModuleJsDepth".into(),
+            Value::Number(serde_json::Number::from(v)),
+        );
+    }
 }
 
 /// Add implied options that tsc v6 shows in --showConfig output.
@@ -1750,24 +2137,40 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
 
     let effective_target = if let Some(Value::String(t)) = map.get("target") {
         match t.to_lowercase().as_str() {
-            "es3" => Some(ScriptTarget::ES3), "es5" => Some(ScriptTarget::ES5),
-            "es6" | "es2015" => Some(ScriptTarget::ES2015), "es2016" => Some(ScriptTarget::ES2016),
-            "es2017" => Some(ScriptTarget::ES2017), "es2018" => Some(ScriptTarget::ES2018),
-            "es2019" => Some(ScriptTarget::ES2019), "es2020" => Some(ScriptTarget::ES2020),
-            "es2021" => Some(ScriptTarget::ES2021), "es2022" => Some(ScriptTarget::ES2022),
-            "es2023" => Some(ScriptTarget::ES2023), "es2024" => Some(ScriptTarget::ES2024),
-            "es2025" => Some(ScriptTarget::ES2025), "esnext" => Some(ScriptTarget::ESNext),
+            "es3" => Some(ScriptTarget::ES3),
+            "es5" => Some(ScriptTarget::ES5),
+            "es6" | "es2015" => Some(ScriptTarget::ES2015),
+            "es2016" => Some(ScriptTarget::ES2016),
+            "es2017" => Some(ScriptTarget::ES2017),
+            "es2018" => Some(ScriptTarget::ES2018),
+            "es2019" => Some(ScriptTarget::ES2019),
+            "es2020" => Some(ScriptTarget::ES2020),
+            "es2021" => Some(ScriptTarget::ES2021),
+            "es2022" => Some(ScriptTarget::ES2022),
+            "es2023" => Some(ScriptTarget::ES2023),
+            "es2024" => Some(ScriptTarget::ES2024),
+            "es2025" => Some(ScriptTarget::ES2025),
+            "esnext" => Some(ScriptTarget::ESNext),
             _ => None,
         }
-    } else { None };
+    } else {
+        None
+    };
 
     if !module_explicitly_set && target_explicitly_set {
         if let Some(target) = effective_target {
             let implied = match target {
                 ScriptTarget::ES3 | ScriptTarget::ES5 => "commonjs",
-                ScriptTarget::ES2015 | ScriptTarget::ES2016 | ScriptTarget::ES2017 | ScriptTarget::ES2018 | ScriptTarget::ES2019 => "es2015",
+                ScriptTarget::ES2015
+                | ScriptTarget::ES2016
+                | ScriptTarget::ES2017
+                | ScriptTarget::ES2018
+                | ScriptTarget::ES2019 => "es2015",
                 ScriptTarget::ES2020 | ScriptTarget::ES2021 => "es2020",
-                ScriptTarget::ES2022 | ScriptTarget::ES2023 | ScriptTarget::ES2024 | ScriptTarget::ES2025 => "es2022",
+                ScriptTarget::ES2022
+                | ScriptTarget::ES2023
+                | ScriptTarget::ES2024
+                | ScriptTarget::ES2025 => "es2022",
                 ScriptTarget::ESNext => "esnext",
             };
             map.insert("module".into(), Value::String(implied.into()));
@@ -1777,14 +2180,21 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     if !module_explicitly_set && !target_explicitly_set && module_resolution_explicitly_set {
         if let Some(Value::String(mr)) = map.get("moduleResolution").cloned() {
             match mr.to_lowercase().as_str() {
-                "node16" => { map.insert("module".into(), Value::String("node16".into())); }
-                "nodenext" => { map.insert("module".into(), Value::String("nodenext".into())); }
+                "node16" => {
+                    map.insert("module".into(), Value::String("node16".into()));
+                }
+                "nodenext" => {
+                    map.insert("module".into(), Value::String("nodenext".into()));
+                }
                 _ => {}
             }
         }
     }
 
-    let effective_module = map.get("module").and_then(|v| v.as_str()).map(|s| s.to_lowercase());
+    let effective_module = map
+        .get("module")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_lowercase());
     if !module_resolution_explicitly_set {
         if let Some(ref module_str) = effective_module {
             let implied = match module_str.as_str() {
@@ -1793,7 +2203,9 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
                 "node16" | "node18" | "node20" => Some("node16"),
                 _ => Some("bundler"),
             };
-            if let Some(mr) = implied { map.insert("moduleResolution".into(), Value::String(mr.into())); }
+            if let Some(mr) = implied {
+                map.insert("moduleResolution".into(), Value::String(mr.into()));
+            }
         }
     }
 
