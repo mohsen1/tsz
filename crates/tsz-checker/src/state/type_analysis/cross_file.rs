@@ -251,18 +251,31 @@ impl<'a> CheckerState<'a> {
 
             // Re-fetch the arena reference after mutable operations above.
             // For cross-file symbols, use the target file's arena and binder.
-            let (symbol_arena, delegate_binder) = if let Some(file_idx) = cross_file_idx {
-                let arena = self.ctx.get_arena_for_file(file_idx as u32);
-                let binder = self
-                    .ctx
-                    .get_binder_for_file(file_idx)
-                    .unwrap_or(self.ctx.binder);
-                (arena, binder)
-            } else {
-                // Non-cross-file delegation: use the already-computed arena.
-                let arena = delegate_arena.unwrap_or(self.ctx.arena);
-                (arena, self.ctx.binder)
-            };
+            let (symbol_arena, delegate_binder, delegate_file_idx) =
+                if let Some(file_idx) = cross_file_idx {
+                    let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    let binder = self
+                        .ctx
+                        .get_binder_for_file(file_idx)
+                        .unwrap_or(self.ctx.binder);
+                    (arena, binder, Some(file_idx))
+                } else {
+                    // Non-cross-file delegation: use the already-computed arena.
+                    let arena = delegate_arena.unwrap_or(self.ctx.arena);
+                    let binder = if std::ptr::eq(arena, self.ctx.arena) {
+                        self.ctx.binder
+                    } else {
+                        self.ctx
+                            .get_binder_for_arena(arena)
+                            .unwrap_or(self.ctx.binder)
+                    };
+                    let file_idx = if std::ptr::eq(arena, self.ctx.arena) {
+                        Some(self.ctx.current_file_idx)
+                    } else {
+                        self.ctx.get_file_idx_for_arena(arena)
+                    };
+                    (arena, binder, file_idx)
+                };
 
             // Use the target file's name so that file-type-sensitive checks
             // (e.g. is_js_file() for optional JS parameters) use the declaring
@@ -297,7 +310,7 @@ impl<'a> CheckerState<'a> {
             checker.ctx.all_binders = self.ctx.all_binders.clone();
             checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
             checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
-            checker.ctx.current_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
+            checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will
             // add it again during get_type_of_symbol

@@ -215,6 +215,8 @@ export class CliTranspiler {
       sourceFiles?: SourceInputFile[];
       expectedJsFileName?: string;
       expectedDtsFileName?: string;
+      expectedJsContent?: string | null;
+      expectedDtsContent?: string | null;
     } = {}
   ): Promise<TranspileResult> {
     const {
@@ -248,6 +250,8 @@ export class CliTranspiler {
       sourceFiles,
       expectedJsFileName,
       expectedDtsFileName,
+      expectedJsContent,
+      expectedDtsContent,
     } = options;
     const testName = `test_${this.counter++}`;
     const testDir = path.join(this.tempDir, testName);
@@ -372,20 +376,27 @@ export class CliTranspiler {
         await runWithArgs(args);
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e);
+        const hasJsOutput =
+          (expectedJsFileName ? fs.existsSync(path.join(testDir, expectedJsFileName)) : false) ||
+          expectedOutputs.some(o => o.jsCandidates.some(candidate => fs.existsSync(candidate)));
+        const hasDtsOutput =
+          (expectedDtsFileName ? fs.existsSync(path.join(testDir, expectedDtsFileName)) : false) ||
+          expectedOutputs.some(o => o.dtsCandidates.some(candidate => fs.existsSync(candidate)));
         // Declaration mode can fail on unresolved imports in isolated baseline snippets.
         // Retry with noCheck/noLib to still exercise declaration printer paths.
         const shouldRetryDeclarationFastPath =
           declaration &&
           (errorMsg.includes('TS2307') || errorMsg.includes('TS2304'));
-        if (!shouldRetryDeclarationFastPath) {
+        if (declaration && hasDtsOutput) {
+          // Keep the checked declaration output when the compile already emitted it.
+          // Retrying with --noCheck discards semantic type information and can turn
+          // otherwise-correct `.d.ts` output into `any`.
+          //
+          // This still matches tsc behavior: diagnostics do not suppress declaration
+          // emit by default unless --noEmitOnError is set.
+        } else if (!shouldRetryDeclarationFastPath) {
           // Match tsc behavior: diagnostics can still produce outputs (exit code 2).
           // For JS-only emit mode, continue if JS output was generated.
-          const hasJsOutput =
-            (expectedJsFileName ? fs.existsSync(path.join(testDir, expectedJsFileName)) : false) ||
-            expectedOutputs.some(o => o.jsCandidates.some(candidate => fs.existsSync(candidate)));
-          const hasDtsOutput =
-            (expectedDtsFileName ? fs.existsSync(path.join(testDir, expectedDtsFileName)) : false) ||
-            expectedOutputs.some(o => o.dtsCandidates.some(candidate => fs.existsSync(candidate)));
           if (!declaration && hasJsOutput) {
             // continue
           } else if (declaration && hasDtsOutput) {
@@ -431,12 +442,77 @@ export class CliTranspiler {
       let js = '';
       let dts: string | null = null;
 
-      const readNamedOutput = (name: string | undefined, dtsMode: boolean): string | null => {
+      const normalizeOutputRelPath = (filePath: string): string => {
+        return path.relative(testDir, filePath).split(path.sep).join('/');
+      };
+
+      const normalizeRequestedOutputName = (name: string): string => {
+        return name.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+      };
+
+      const normalizeComparableOutput = (content: string): string => {
+        return content.replace(/\r\n/g, '\n').trim();
+      };
+
+      const collectExistingOutputPaths = (dtsMode: boolean): string[] => {
+        const seen = new Set<string>();
+        const existing: string[] = [];
+        for (const out of expectedOutputs) {
+          const candidates = dtsMode ? out.dtsCandidates : out.jsCandidates;
+          for (const candidate of candidates) {
+            if (!fs.existsSync(candidate)) continue;
+            const relPath = normalizeOutputRelPath(candidate);
+            if (!seen.has(relPath)) {
+              seen.add(relPath);
+              existing.push(candidate);
+            }
+            break;
+          }
+        }
+        return existing.sort((a, b) => normalizeOutputRelPath(a).localeCompare(normalizeOutputRelPath(b)));
+      };
+
+      const resolveNamedOutputPath = (
+        name: string | undefined,
+        dtsMode: boolean,
+        expectedContent?: string | null,
+      ): string | null => {
         if (!name) return null;
-        const outPath = path.join(testDir, name);
-        if (!fs.existsSync(outPath)) return null;
-        const content = fs.readFileSync(outPath, 'utf-8');
-        return dtsMode ? content : content;
+        const normalizedName = normalizeRequestedOutputName(name);
+        const existingOutputs = collectExistingOutputPaths(dtsMode);
+        if (normalizedName.includes('/')) {
+          const exactMatch = existingOutputs.find(candidate => normalizeOutputRelPath(candidate) === normalizedName);
+          if (exactMatch) return exactMatch;
+        }
+        const basename = path.posix.basename(normalizedName);
+        const basenameMatches = existingOutputs.filter(candidate => {
+          return path.posix.basename(normalizeOutputRelPath(candidate)) === basename;
+        });
+        if (basenameMatches.length > 0) {
+          if (expectedContent != null) {
+            const normalizedExpected = normalizeComparableOutput(expectedContent);
+            for (const candidate of basenameMatches) {
+              const candidateContent = fs.readFileSync(candidate, 'utf-8');
+              if (normalizeComparableOutput(candidateContent) === normalizedExpected) {
+                return candidate;
+              }
+            }
+          }
+          return basenameMatches[basenameMatches.length - 1];
+        }
+        const directPath = path.join(testDir, normalizedName);
+        if (fs.existsSync(directPath)) return directPath;
+        return null;
+      };
+
+      const readNamedOutput = (
+        name: string | undefined,
+        dtsMode: boolean,
+        expectedContent?: string | null,
+      ): string | null => {
+        const outPath = resolveNamedOutputPath(name, dtsMode, expectedContent);
+        if (!outPath) return null;
+        return fs.readFileSync(outPath, 'utf-8');
       };
 
       const readFirstExisting = (candidates: string[]): string | null => {
@@ -448,13 +524,15 @@ export class CliTranspiler {
         return null;
       };
 
-      const namedJs = readNamedOutput(expectedJsFileName, false);
+      const namedJs = readNamedOutput(expectedJsFileName, false, expectedJsContent);
       if (namedJs !== null) {
         js = namedJs;
       } else {
         const chunks: string[] = [];
         let sawUseStrict = false;
-        for (const out of expectedOutputs) {
+        for (const out of [...expectedOutputs].sort((a, b) => {
+          return normalizeOutputRelPath(a.jsPath).localeCompare(normalizeOutputRelPath(b.jsPath));
+        })) {
           const chunkContent = readFirstExisting(out.jsCandidates);
           if (chunkContent !== null) {
             let chunk = chunkContent;
@@ -482,12 +560,14 @@ export class CliTranspiler {
       }
 
       if (declaration) {
-        const namedDts = readNamedOutput(expectedDtsFileName, true);
+        const namedDts = readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
         if (namedDts !== null) {
           dts = namedDts;
         } else {
           const dtsChunks: string[] = [];
-          for (const out of expectedOutputs) {
+          for (const out of [...expectedOutputs].sort((a, b) => {
+            return normalizeOutputRelPath(a.dtsPath).localeCompare(normalizeOutputRelPath(b.dtsPath));
+          })) {
             const dtsChunk = readFirstExisting(out.dtsCandidates);
             if (dtsChunk !== null) {
               dtsChunks.push(dtsChunk);

@@ -480,6 +480,15 @@ impl<'a> DeclarationEmitter<'a> {
         if clause.named_bindings.is_some()
             && let Some(bindings) = arena.get_named_imports_at(clause.named_bindings)
         {
+            if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                if let Some(&sym_id) = binder.node_symbols.get(&bindings.name.0)
+                    && let Some(symbol) = binder.symbols.get(sym_id)
+                {
+                    symbols.push((symbol.escaped_name.clone(), sym_id));
+                }
+                return symbols;
+            }
+
             // Process each specifier
             for &spec_idx in &bindings.elements.nodes {
                 if let Some(spec) = arena.get_specifier_at(spec_idx) {

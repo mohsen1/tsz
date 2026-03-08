@@ -278,7 +278,9 @@ impl<'a> CheckerState<'a> {
         exports_table: &tsz_binder::SymbolTable,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some(sym_id) = exports_table.get(export_name) {
+        if let Some(sym_id) = exports_table.get(export_name)
+            && binder.get_symbol(sym_id).is_some()
+        {
             return Some(sym_id);
         }
 
@@ -287,12 +289,14 @@ impl<'a> CheckerState<'a> {
 
         if let Some(exports) = export_equals_symbol.exports.as_ref()
             && let Some(sym_id) = exports.get(export_name)
+            && binder.get_symbol(sym_id).is_some()
         {
             return Some(sym_id);
         }
 
         if let Some(members) = export_equals_symbol.members.as_ref()
             && let Some(sym_id) = members.get(export_name)
+            && binder.get_symbol(sym_id).is_some()
         {
             return Some(sym_id);
         }
@@ -316,11 +320,13 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(exports) = candidate_symbol.exports.as_ref()
                 && let Some(sym_id) = exports.get(export_name)
+                && binder.get_symbol(sym_id).is_some()
             {
                 return Some(sym_id);
             }
             if let Some(members) = candidate_symbol.members.as_ref()
                 && let Some(sym_id) = members.get(export_name)
+                && binder.get_symbol(sym_id).is_some()
             {
                 return Some(sym_id);
             }

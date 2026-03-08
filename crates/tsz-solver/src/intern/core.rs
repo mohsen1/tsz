@@ -1770,6 +1770,11 @@ impl TypeInterner {
         self.intern(TypeData::TypeQuery(symbol))
     }
 
+    /// Intern a module namespace type.
+    pub fn module_namespace(&self, symbol: SymbolRef) -> TypeId {
+        self.intern(TypeData::ModuleNamespace(symbol))
+    }
+
     /// Intern a generic type application
     pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         let app_id = self.intern_application(TypeApplication { base, args });

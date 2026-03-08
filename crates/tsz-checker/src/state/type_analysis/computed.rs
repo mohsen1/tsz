@@ -370,7 +370,6 @@ impl<'a> CheckerState<'a> {
         file = self.ctx.file_name.as_str(),
         "compute_type_of_symbol: resolved symbol"
         );
-
         // Export-value wrapper symbols should delegate to their wrapped declaration symbol.
         // This preserves the actual value type for `export var` / `export function` members
         // instead of falling back to implicit `any`.
@@ -1566,13 +1565,18 @@ impl<'a> CheckerState<'a> {
 
                 // First, try local binder's module_exports
                 let export_sym_id = self
-                    .ctx
-                    .binder
-                    .module_exports
-                    .get(module_name)
-                    .and_then(|exports_table| exports_table.get(export_name))
-                    // Fall back to cross-file resolution if local lookup fails
-                    .or_else(|| self.resolve_cross_file_export(module_name, export_name))
+                    // Prefer canonical cross-file resolution first. Driver-copied
+                    // `module_exports` tables can contain foreign SymbolIds for
+                    // re-exported declarations, and those ids may not be owned by
+                    // the current binder even when the table lookup succeeds.
+                    .resolve_cross_file_export(module_name, export_name)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .module_exports
+                            .get(module_name)
+                            .and_then(|exports_table| exports_table.get(export_name))
+                    })
                     .or_else(|| {
                         self.resolve_named_export_via_export_equals(module_name, export_name)
                     })

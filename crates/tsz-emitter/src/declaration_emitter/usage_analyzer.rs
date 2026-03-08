@@ -748,7 +748,20 @@ impl<'a> UsageAnalyzer<'a> {
         if decl.type_annotation.is_some() {
             self.analyze_type_node(decl.type_annotation);
         } else {
-            self.walk_inferred_type(decl_idx);
+            self.walk_inferred_type_or_related(&[decl_idx, decl.name]);
+        }
+
+        if decl.initializer.is_some()
+            && self.initializer_preserves_value_reference(decl.initializer)
+        {
+            let old = self.in_value_pos;
+            self.in_value_pos = true;
+            self.analyze_entity_name(decl.initializer);
+            self.analyze_local_import_equals_dependency(decl.initializer);
+            self.in_value_pos = false;
+            self.analyze_entity_name(decl.initializer);
+            self.analyze_local_import_equals_dependency(decl.initializer);
+            self.in_value_pos = old;
         }
     }
 
@@ -801,7 +814,7 @@ impl<'a> UsageAnalyzer<'a> {
         if param.type_annotation.is_some() {
             self.analyze_type_node(param.type_annotation);
         } else {
-            self.walk_inferred_type(param_idx);
+            self.walk_inferred_type_or_related(&[param_idx, param.name, param.initializer]);
         }
     }
 
@@ -1086,6 +1099,88 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
+    fn initializer_preserves_value_reference(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .value_reference_symbol(expr_idx)
+                .is_some_and(|sym_id| self.symbol_needs_typeof(sym_id)),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let Some(access) = self.arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+                self.value_reference_symbol(access.name_or_argument)
+                    .is_some_and(|sym_id| self.symbol_needs_typeof(sym_id))
+                    || self
+                        .value_reference_symbol(expr_idx)
+                        .is_some_and(|sym_id| self.symbol_needs_typeof(sym_id))
+            }
+            _ => false,
+        }
+    }
+
+    fn symbol_needs_typeof(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        (symbol.has_any_flags(
+            tsz_binder::symbol_flags::FUNCTION
+                | tsz_binder::symbol_flags::CLASS
+                | tsz_binder::symbol_flags::ENUM
+                | tsz_binder::symbol_flags::VALUE_MODULE
+                | tsz_binder::symbol_flags::METHOD,
+        ) || self.is_namespace_import_alias_symbol(sym_id))
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
+    }
+
+    fn is_namespace_import_alias_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && symbol.import_module.is_some()
+            && symbol.import_name.is_none()
+    }
+
+    fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let expr_node = self.arena.get(expr_idx)?;
+
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(&sym_id) = self.binder.node_symbols.get(&expr_idx.0) {
+                return Some(sym_id);
+            }
+
+            let ident = self.arena.get_identifier(expr_node)?;
+            return self
+                .import_name_map
+                .get(&ident.escaped_text)
+                .copied()
+                .or_else(|| self.binder.file_locals.get(&ident.escaped_text));
+        }
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(expr_node)?;
+            return self
+                .binder
+                .node_symbols
+                .get(&expr_idx.0)
+                .copied()
+                .or_else(|| {
+                    self.binder
+                        .node_symbols
+                        .get(&access.name_or_argument.0)
+                        .copied()
+                });
+        }
+
+        self.binder.node_symbols.get(&expr_idx.0).copied()
+    }
+
     /// Walk an inferred type from the type cache.
     ///
     /// This is the semantic walk over inferred `TypeId`s.
@@ -1100,6 +1195,95 @@ impl<'a> UsageAnalyzer<'a> {
                 "[DEBUG] walk_inferred_type: NO TYPE FOUND for node_idx={:?}",
                 node_idx
             );
+        }
+    }
+
+    fn walk_inferred_type_if_present(&mut self, node_idx: NodeIndex) -> bool {
+        if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
+            self.walk_type_id(type_id);
+            return true;
+        }
+        false
+    }
+
+    fn walk_inferred_type_or_related(&mut self, node_ids: &[NodeIndex]) {
+        for &node_idx in node_ids {
+            if !node_idx.is_some() {
+                continue;
+            }
+
+            if self.walk_inferred_type_if_present(node_idx) {
+                return;
+            }
+
+            let Some(node) = self.arena.get(node_idx) else {
+                continue;
+            };
+
+            for related_idx in self.get_node_type_related_nodes(node) {
+                if related_idx.is_some() && self.walk_inferred_type_if_present(related_idx) {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn get_node_type_related_nodes(&self, node: &tsz_parser::parser::node::Node) -> Vec<NodeIndex> {
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(decl) = self.arena.get_variable_declaration(node) {
+                    let mut related = Vec::with_capacity(2);
+                    if decl.initializer.is_some() {
+                        related.push(decl.initializer);
+                    }
+                    if decl.type_annotation.is_some() {
+                        related.push(decl.type_annotation);
+                    }
+                    related
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                if let Some(decl) = self.arena.get_property_decl(node) {
+                    let mut related = Vec::with_capacity(2);
+                    if decl.initializer.is_some() {
+                        related.push(decl.initializer);
+                    }
+                    if decl.type_annotation.is_some() {
+                        related.push(decl.type_annotation);
+                    }
+                    related
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                if let Some(param) = self.arena.get_parameter(node) {
+                    if param.initializer.is_some() {
+                        vec![param.initializer]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access_expr) = self.arena.get_access_expr(node) {
+                    vec![access_expr.expression, access_expr.name_or_argument]
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                if let Some(query) = self.arena.get_type_query(node) {
+                    vec![query.expr_name]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
         }
     }
 
