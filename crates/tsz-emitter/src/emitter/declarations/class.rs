@@ -166,10 +166,9 @@ impl<'a> Printer<'a> {
 
             // For getter/setter pairs, tsc emits only one __decorate call
             // for the first accessor that has decorators. Skip the second.
-            if is_accessor
-                && !emitted_accessor_names.insert(member_name.clone()) {
-                    continue;
-                }
+            if is_accessor && !emitted_accessor_names.insert(member_name.clone()) {
+                continue;
+            }
 
             self.write("__decorate([");
             self.write_line();
