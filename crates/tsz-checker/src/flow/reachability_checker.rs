@@ -12,17 +12,6 @@ use tsz_solver::{NarrowingContext, TypeId};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn cached_or_computed_type(&mut self, expr: NodeIndex) -> TypeId {
-        self.literal_type_from_initializer(expr)
-            .unwrap_or_else(|| self.get_type_of_node(expr))
-    }
-
-    fn cached_type_only(&self, expr: NodeIndex) -> TypeId {
-        self.literal_type_from_initializer(expr)
-            .or_else(|| self.ctx.node_types.get(&expr.0).copied())
-            .unwrap_or(TypeId::ERROR)
-    }
-
     fn nullish_coalescing_switch_type(&mut self, switch_expr: NodeIndex) -> Option<TypeId> {
         let switch_expr = self.ctx.arena.skip_parenthesized(switch_expr);
         let node = self.ctx.arena.get(switch_expr)?;
@@ -34,36 +23,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let left_type = self.cached_or_computed_type(bin.left);
-        let right_type = self.cached_or_computed_type(bin.right);
-        if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
-            return None;
-        }
-
-        // `a ?? b` excludes nullish from `a` before combining with `b`.
-        let left_non_nullish = tsz_solver::remove_nullish(self.ctx.types, left_type);
-        if left_non_nullish == TypeId::ERROR {
-            return None;
-        }
-        if left_non_nullish == TypeId::NEVER {
-            return Some(right_type);
-        }
-        Some(self.ctx.types.union(vec![left_non_nullish, right_type]))
-    }
-
-    fn nullish_coalescing_switch_type_cached(&self, switch_expr: NodeIndex) -> Option<TypeId> {
-        let switch_expr = self.ctx.arena.skip_parenthesized(switch_expr);
-        let node = self.ctx.arena.get(switch_expr)?;
-        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return None;
-        }
-        let bin = self.ctx.arena.get_binary_expr(node)?;
-        if bin.operator_token != SyntaxKind::QuestionQuestionToken as u16 {
-            return None;
-        }
-
-        let left_type = self.cached_type_only(bin.left);
-        let right_type = self.cached_type_only(bin.right);
+        let left_type = self
+            .literal_type_from_initializer(bin.left)
+            .unwrap_or_else(|| self.get_type_of_node(bin.left));
+        let right_type = self
+            .literal_type_from_initializer(bin.right)
+            .unwrap_or_else(|| self.get_type_of_node(bin.right));
         if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
             return None;
         }
@@ -78,32 +43,16 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.union(vec![left_non_nullish, right_type]))
     }
 
-    fn switch_expression_type_cached(&self, switch_expr: NodeIndex) -> TypeId {
-        if let Some(typeof_operand) = self.typeof_switch_operand(switch_expr) {
-            let operand_type = self.cached_type_only(typeof_operand);
-            return self
-                .typeof_switch_domain_from_operand_type(operand_type)
-                .unwrap_or(TypeId::ERROR);
+    fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {
+        if let Some(members) = query::union_members_for_type(self.ctx.types, type_id) {
+            let normalized: Vec<TypeId> = members
+                .into_iter()
+                .map(|member| query::enum_member_domain(self.ctx.types, member))
+                .collect();
+            query::union_types(self.ctx.types, normalized)
+        } else {
+            query::enum_member_domain(self.ctx.types, type_id)
         }
-        if let Some(coalesced_type) = self.nullish_coalescing_switch_type_cached(switch_expr) {
-            return coalesced_type;
-        }
-
-        self.cached_type_only(switch_expr)
-    }
-
-    fn switch_expression_type(&mut self, switch_expr: NodeIndex) -> TypeId {
-        if let Some(typeof_operand) = self.typeof_switch_operand(switch_expr) {
-            let operand_type = self.cached_or_computed_type(typeof_operand);
-            return self
-                .typeof_switch_domain_from_operand_type(operand_type)
-                .unwrap_or(TypeId::ERROR);
-        }
-        if let Some(coalesced_type) = self.nullish_coalescing_switch_type(switch_expr) {
-            return coalesced_type;
-        }
-
-        self.cached_or_computed_type(switch_expr)
     }
 
     fn typeof_switch_operand(&self, switch_expr: NodeIndex) -> Option<NodeIndex> {
@@ -153,12 +102,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
-        let switch_type = self.normalize_exhaustive_domain_type(switch_type);
-        let case_types: Vec<TypeId> = case_types
-            .iter()
-            .copied()
-            .map(|ty| self.normalize_exhaustive_domain_type(ty))
-            .collect();
+        let switch_type = query::enum_member_domain(self.ctx.types, switch_type);
         if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
             || case_types.is_empty()
         {
@@ -173,33 +117,7 @@ impl<'a> CheckerState<'a> {
 
         let env = self.ctx.type_environment.borrow();
         let narrowing = NarrowingContext::new(self.ctx.types).with_resolver(&*env);
-        let narrowed = narrowing.narrow_excluding_types(switch_type, &case_types);
-        if narrowed == TypeId::NEVER {
-            return true;
-        }
-
-        // Fallback: when enum wrappers are not fully expanded by domain normalization,
-        // allow an assignability-based subset check against the covered case union.
-        let cases_union = query::union_types(self.ctx.types, case_types);
-        query::is_assignable_with_env(
-            self.ctx.types,
-            &env,
-            switch_type,
-            cases_union,
-            self.ctx.strict_null_checks(),
-        )
-    }
-
-    fn normalize_exhaustive_domain_type(&self, type_id: TypeId) -> TypeId {
-        if let Some(members) = query::union_members_for_type(self.ctx.types, type_id) {
-            let flattened: Vec<TypeId> = members
-                .into_iter()
-                .map(|member| query::enum_member_domain(self.ctx.types, member))
-                .collect();
-            query::union_types(self.ctx.types, flattened)
-        } else {
-            query::enum_member_domain(self.ctx.types, type_id)
-        }
+        narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
     }
 
     /// Cache-backed exhaustiveness probe used from immutable analysis paths.
@@ -207,7 +125,19 @@ impl<'a> CheckerState<'a> {
         &self,
         switch_data: &tsz_parser::parser::node::SwitchData,
     ) -> bool {
-        let switch_type = self.switch_expression_type_cached(switch_data.expression);
+        let switch_type =
+            if let Some(typeof_operand) = self.typeof_switch_operand(switch_data.expression) {
+                let operand_type = self
+                    .literal_type_from_initializer(typeof_operand)
+                    .or_else(|| self.ctx.node_types.get(&typeof_operand.0).copied())
+                    .unwrap_or(TypeId::ERROR);
+                self.typeof_switch_domain_from_operand_type(operand_type)
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                self.literal_type_from_initializer(switch_data.expression)
+                    .or_else(|| self.ctx.node_types.get(&switch_data.expression.0).copied())
+                    .unwrap_or(TypeId::ERROR)
+            };
 
         let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
             return false;
@@ -245,7 +175,21 @@ impl<'a> CheckerState<'a> {
         &mut self,
         switch_data: &tsz_parser::parser::node::SwitchData,
     ) -> bool {
-        let switch_type = self.switch_expression_type(switch_data.expression);
+        let switch_type = if let Some(typeof_operand) =
+            self.typeof_switch_operand(switch_data.expression)
+        {
+            let operand_type = self
+                .literal_type_from_initializer(typeof_operand)
+                .unwrap_or_else(|| self.get_type_of_node(typeof_operand));
+            self.typeof_switch_domain_from_operand_type(operand_type)
+                .unwrap_or(TypeId::ERROR)
+        } else if let Some(coalesced) = self.nullish_coalescing_switch_type(switch_data.expression)
+        {
+            coalesced
+        } else {
+            self.literal_type_from_initializer(switch_data.expression)
+                .unwrap_or_else(|| self.get_type_of_node(switch_data.expression))
+        };
 
         let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
             return false;
@@ -271,7 +215,25 @@ impl<'a> CheckerState<'a> {
             case_types.push(case_type);
         }
 
-        self.switch_exhaustive_with_types(switch_type, &case_types)
+        if self.switch_exhaustive_with_types(switch_type, &case_types) {
+            return true;
+        }
+
+        let normalized_switch = self.normalize_enum_union_members(switch_type);
+        let normalized_cases: Vec<TypeId> = case_types
+            .iter()
+            .copied()
+            .map(|ty| self.normalize_enum_union_members(ty))
+            .collect();
+        let cases_union = query::union_types(self.ctx.types, normalized_cases);
+        let env = self.ctx.type_environment.borrow();
+        query::is_assignable_with_env(
+            self.ctx.types,
+            &env,
+            normalized_switch,
+            cases_union,
+            self.ctx.strict_null_checks(),
+        )
     }
 
     // =========================================================================
@@ -422,8 +384,7 @@ impl<'a> CheckerState<'a> {
 
         // Without a default clause, unmatched discriminants can skip the switch
         // body unless case coverage is exhaustive.
-        let exhaustive = self.switch_has_exhaustive_coverage(switch_data);
-        if !has_default && !exhaustive {
+        if !has_default && !self.switch_has_exhaustive_coverage(switch_data) {
             return true;
         }
 
