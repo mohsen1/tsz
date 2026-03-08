@@ -1198,7 +1198,15 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         member_name: &str,
     ) -> Option<String> {
-        let class_idx = self.get_class_decl_from_type(object_type)?;
+        // Try primary path: get class declaration from object type's brand/instance map
+        let class_idx = self.get_class_decl_from_type(object_type).or_else(|| {
+            // Fallback: resolve Lazy(DefId) -> SymbolId -> class declaration.
+            // This handles cases where the class instance type hasn't been registered
+            // in class_instance_type_to_decl (e.g., type annotation references).
+            let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
+            let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+            self.get_class_declaration_from_symbol(sym_id)
+        })?;
         let mut current = class_idx;
         let mut visited = rustc_hash::FxHashSet::default();
 
