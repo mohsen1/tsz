@@ -11,7 +11,7 @@ use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
+    GuardSense, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     type_queries::{
         PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
         stringify_literal_type,
@@ -486,14 +486,14 @@ impl<'a> FlowAnalyzer<'a> {
                 type_id: Some(predicate_type),
                 asserts: predicate.asserts,
             };
-            return narrowing.narrow_type(type_id, &guard, is_true_branch);
+            return narrowing.narrow_type(type_id, &guard, GuardSense::from(is_true_branch));
         }
 
         // Assertion guards without type predicate (asserts x) narrow to truthy
         // This is the CRITICAL fix: use TypeGuard::Truthy instead of just excluding null/undefined
         if is_true_branch {
             // Delegate to narrow_type with TypeGuard::Truthy for comprehensive narrowing
-            return narrowing.narrow_type(type_id, &TypeGuard::Truthy, true);
+            return narrowing.narrow_type(type_id, &TypeGuard::Truthy, GuardSense::Positive);
         }
 
         // Use Solver's narrow_to_falsy for correct NaN handling
@@ -546,7 +546,7 @@ impl<'a> FlowAnalyzer<'a> {
         narrowing.narrow_type(
             type_id,
             &TypeGuard::Instanceof(instance_type),
-            is_true_branch,
+            GuardSense::from(is_true_branch),
         )
     }
 
@@ -704,7 +704,11 @@ impl<'a> FlowAnalyzer<'a> {
             NarrowingContext::new(self.interner)
         };
 
-        narrowing.narrow_type(type_id, &TypeGuard::InProperty(prop_name), is_true_branch)
+        narrowing.narrow_type(
+            type_id,
+            &TypeGuard::InProperty(prop_name),
+            GuardSense::from(is_true_branch),
+        )
     }
 
     pub(crate) fn in_property_name(&self, idx: NodeIndex) -> Option<(Atom, bool)> {

@@ -1551,6 +1551,6 @@ impl<'a> CheckerState<'a> {
     pub fn format_type(&self, type_id: TypeId) -> String {
         // Use full formatter with DefId context for proper type name display
         let mut formatter = self.ctx.create_type_formatter();
-        formatter.format(type_id)
+        formatter.format(type_id).into_owned()
     }
 }

@@ -14,6 +14,7 @@
 //! All functions take `TypeId` as input and return structured results,
 //! making them pure logic that can be unit tested independently.
 
+use crate::narrowing::NullishFilter;
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
 use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
@@ -805,8 +806,8 @@ impl<'a> BinaryOpEvaluator<'a> {
             }
         } else {
             // left ?? right
-            let non_nullish_left = ctx.narrow_by_nullishness(left, false);
-            let nullish_left = ctx.narrow_by_nullishness(left, true);
+            let non_nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::ExcludeNullish);
+            let nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::KeepNullish);
 
             if nullish_left == TypeId::NEVER {
                 left

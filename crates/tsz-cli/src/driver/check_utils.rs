@@ -458,7 +458,8 @@ pub(super) fn compute_export_hash(
 ) -> u64 {
     let mut formatter = TypeFormatter::with_symbols(&program.type_interner, &program.symbols);
     let mut hasher = FxHasher::default();
-    let mut type_str_cache: FxHashMap<TypeId, String> = FxHashMap::default();
+    let mut type_str_cache: FxHashMap<TypeId, std::borrow::Cow<'static, str>> =
+        FxHashMap::default();
 
     if let Some(file_locals) = program.file_locals.get(file_idx) {
         let mut exports: Vec<(&String, SymbolId)> = file_locals

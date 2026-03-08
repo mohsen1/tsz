@@ -13,6 +13,26 @@ use std::cell::RefCell;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
+/// Describes whether a type guard should be applied in its positive (truthy)
+/// or negative (falsy) sense.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardSense {
+    /// The guard condition is true (e.g., `typeof x === "string"`).
+    Positive,
+    /// The guard condition is false (e.g., `typeof x !== "string"`).
+    Negative,
+}
+
+impl From<bool> for GuardSense {
+    fn from(value: bool) -> Self {
+        if value {
+            GuardSense::Positive
+        } else {
+            GuardSense::Negative
+        }
+    }
+}
+
 type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
 
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
@@ -1295,15 +1315,16 @@ impl<'a> NarrowingContext<'a> {
     /// ```ignore
     /// // typeof x === "string"
     /// let guard = TypeGuard::Typeof(TypeofKind::String);
-    /// let narrowed = narrowing.narrow_type(string_or_number, &guard, true);
+    /// let narrowed = narrowing.narrow_type(string_or_number, &guard, GuardSense::Positive);
     /// assert_eq!(narrowed, TypeId::STRING);
     ///
     /// // x !== null (negated sense)
     /// let guard = TypeGuard::NullishEquality;
-    /// let narrowed = narrowing.narrow_type(string_or_null, &guard, false);
+    /// let narrowed = narrowing.narrow_type(string_or_null, &guard, GuardSense::Negative);
     /// // Result should exclude null and undefined
     /// ```
-    pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
+    pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
+        let sense = matches!(sense, GuardSense::Positive);
         // Resolve IndexAccess types (e.g., `A[K]`) to their concrete form before
         // narrowing, so that opaque generic index access types can be decomposed
         // for guard-based narrowing (e.g., excluding null from `number | null`).

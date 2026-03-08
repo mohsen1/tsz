@@ -41,10 +41,14 @@ pub use utils::{
     type_contains_undefined,
 };
 
+// Re-export public items from compound narrowing
+pub use self::compound::NullishFilter;
+
 // Re-export all public items from core implementation
 pub(crate) use self::core::union_or_single_preserve;
 pub use self::core::{
-    DiscriminantInfo, NarrowingCache, NarrowingContext, NarrowingResult, TypeGuard, TypeofKind,
+    DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext, NarrowingResult, TypeGuard,
+    TypeofKind,
 };
 
 #[cfg(test)]

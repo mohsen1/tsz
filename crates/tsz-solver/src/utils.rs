@@ -3,6 +3,8 @@
 //! This module contains common utilities used across multiple solver components
 //! to avoid code duplication.
 
+use std::borrow::Cow;
+
 use crate::caches::db::TypeDatabase;
 use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeId};
 use crate::visitor::{array_element_type, tuple_list_id};
@@ -59,25 +61,28 @@ pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
     if !value.is_finite() && !value.is_nan() {
         return None;
     }
-    Some(js_number_to_string(value))
+    Some(js_number_to_string(value).into_owned())
 }
 
 /// Converts a JavaScript number to its string representation.
 ///
 /// This matches JavaScript's `Number.prototype.toString()` behavior for proper
 /// numeric literal name checking.
-fn js_number_to_string(value: f64) -> String {
+///
+/// Returns `Cow::Borrowed` for static special cases (NaN, 0, Infinity) and
+/// `Cow::Owned` for dynamically formatted numbers.
+fn js_number_to_string(value: f64) -> Cow<'static, str> {
     if value.is_nan() {
-        return "NaN".to_string();
+        return Cow::Borrowed("NaN");
     }
     if value == 0.0 {
-        return "0".to_string();
+        return Cow::Borrowed("0");
     }
     if value.is_infinite() {
         return if value.is_sign_negative() {
-            "-Infinity".to_string()
+            Cow::Borrowed("-Infinity")
         } else {
-            "Infinity".to_string()
+            Cow::Borrowed("Infinity")
         };
     }
 
@@ -96,14 +101,14 @@ fn js_number_to_string(value: f64) -> String {
             let digits = if trimmed.is_empty() { "0" } else { trimmed };
             formatted = format!("{mantissa}e{sign}{digits}");
         }
-        return formatted;
+        return Cow::Owned(formatted);
     }
 
     let formatted = value.to_string();
     if formatted == "-0" {
-        "0".to_string()
+        Cow::Borrowed("0")
     } else {
-        formatted
+        Cow::Owned(formatted)
     }
 }
 
