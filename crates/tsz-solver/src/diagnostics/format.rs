@@ -66,8 +66,8 @@ impl<'a> TypeFormatter<'a> {
             def_store: None,
             module_specifiers: None,
             current_file_id: None,
-            max_depth: 5,
-            max_union_members: 5,
+            max_depth: 8,
+            max_union_members: 10,
             current_depth: 0,
             atom_cache: FxHashMap::default(),
         }
@@ -84,8 +84,8 @@ impl<'a> TypeFormatter<'a> {
             def_store: None,
             module_specifiers: None,
             current_file_id: None,
-            max_depth: 5,
-            max_union_members: 5,
+            max_depth: 8,
+            max_union_members: 10,
             current_depth: 0,
             atom_cache: FxHashMap::default(),
         }
@@ -490,13 +490,16 @@ impl<'a> TypeFormatter<'a> {
                 (Err(_), Err(_)) => std::cmp::Ordering::Equal,
             }
         });
-        if display_props.len() > 3 {
-            let first_three: Vec<String> = display_props
+        // tsc does not truncate object properties in error messages — it uses
+        // NoTruncation for diagnostics.  Only truncate when displaying extremely
+        // large objects (>= 10 props) to prevent pathological output.
+        if display_props.len() >= 10 {
+            let first: Vec<String> = display_props
                 .iter()
-                .take(3)
+                .take(8)
                 .map(|p| self.format_property(p))
                 .collect();
-            return format!("{{ {}; ...; }}", first_three.join("; "));
+            return format!("{{ {}; ...; }}", first.join("; "));
         }
         let formatted: Vec<String> = display_props
             .iter()
@@ -1393,8 +1396,8 @@ mod tests {
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
-        // Create a union with more members than max_union_members (default: 5)
-        let members: Vec<TypeId> = (0..10).map(|i| db.literal_number(i as f64)).collect();
+        // Create a union with more members than max_union_members (default: 10)
+        let members: Vec<TypeId> = (0..15).map(|i| db.literal_number(i as f64)).collect();
         let union = db.union_preserve_members(members);
         let result = fmt.format(union);
         // Should truncate with "..."
@@ -1491,17 +1494,15 @@ mod tests {
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
-        // More than 3 properties triggers truncation
-        let obj = db.object(vec![
-            PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
-            PropertyInfo::new(db.intern_string("b"), TypeId::STRING),
-            PropertyInfo::new(db.intern_string("c"), TypeId::BOOLEAN),
-            PropertyInfo::new(db.intern_string("d"), TypeId::NULL),
-        ]);
+        // 10+ properties triggers truncation
+        let props: Vec<PropertyInfo> = (0..12)
+            .map(|i| PropertyInfo::new(db.intern_string(&format!("p{i}")), TypeId::NUMBER))
+            .collect();
+        let obj = db.object(props);
         let result = fmt.format(obj);
         assert!(
             result.contains("..."),
-            "Object with >3 properties should truncate, got: {result}"
+            "Object with >=10 properties should truncate, got: {result}"
         );
     }
 
