@@ -346,9 +346,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Skip this check if the return type is ERROR or the annotation looks like Promise
             // Note: Async generators (async function*) return AsyncGenerator, not Promise
             if func.is_async && !func.asterisk_token && has_type_annotation {
-                let should_emit_ts2705 = !self.is_promise_type(return_type)
-                    && return_type != TypeId::ERROR
-                    && !self.return_type_annotation_looks_like_promise(func.type_annotation);
+                let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
+                    false
+                } else if self.is_non_promise_application_type(return_type) {
+                    true
+                } else {
+                    return_type != TypeId::ERROR
+                        && !self.return_type_annotation_looks_like_promise(func.type_annotation)
+                };
 
                 if should_emit_ts2705 {
                     use crate::context::ScriptTarget;
@@ -360,8 +365,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         ScriptTarget::ES3 | ScriptTarget::ES5
                     );
 
-                    let type_name = self.format_type(return_type);
                     if is_es5_or_lower {
+                        let type_name = self.format_type(return_type);
                         self.error_at_node_msg(
                             func.type_annotation,
                             diagnostic_codes::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
@@ -369,6 +374,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         );
                     } else {
                         // TS1064: For ES6+ targets, the return type must be Promise<T>
+                        // TSC uses getAwaitedTypeNoAlias(returnType) || voidType for the message.
+                        let inner_type = self
+                            .promise_like_return_type_argument(return_type)
+                            .unwrap_or(TypeId::VOID);
+                        let type_name = self.format_type(inner_type);
                         self.error_at_node_msg(
                             func.type_annotation,
                             diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,

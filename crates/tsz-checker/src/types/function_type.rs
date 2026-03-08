@@ -878,11 +878,18 @@ impl<'a> CheckerState<'a> {
                 if is_async && !is_generator {
                     use tsz_scanner::SyntaxKind;
 
-                    let should_emit_ts2705 = if self.is_promise_type(return_type) {
-                        // Return type is Promise - OK
+                    let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
+                        // Return type is exactly the global Promise<T> - OK
                         false
+                    } else if self.is_non_promise_application_type(return_type) {
+                        // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
+                        // TSC requires exactly Promise<T>, not subclasses.
+                        true
                     } else if return_type != TypeId::ERROR {
-                        // Return type resolved successfully but is not Promise - emit error
+                        // Return type evaluated to a non-Application form (e.g., Object).
+                        // Fall back to syntactic check on the annotation text. This handles
+                        // type aliases like `type PromiseAlias<T> = Promise<T>` which resolve
+                        // to the same Object type as Promise<T>.
                         !self.return_type_annotation_looks_like_promise(type_annotation)
                     } else {
                         // Return type is ERROR - use syntactic fallback
@@ -932,7 +939,12 @@ impl<'a> CheckerState<'a> {
                             );
                         } else {
                             // TS1064: For ES6+ targets, the return type must be Promise<T>
-                            let type_name = self.format_type(return_type);
+                            // TSC uses getAwaitedTypeNoAlias(returnType) || voidType for the message.
+                            // Extract the promise type argument (e.g., void from MyPromise<void>).
+                            let inner_type = self
+                                .promise_like_return_type_argument(return_type)
+                                .unwrap_or(TypeId::VOID);
+                            let type_name = self.format_type(inner_type);
                             self.error_at_node(
                                 type_annotation,
                                 &format_message(
