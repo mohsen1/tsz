@@ -25,6 +25,66 @@ impl<'a> CheckerState<'a> {
         matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
     }
 
+    /// Check if a name refers to exactly the global Promise type (not subclasses).
+    ///
+    /// TSC's `checkAsyncFunctionReturnType` uses `isReferenceToType(returnType, globalPromiseType)`,
+    /// which only accepts the global `Promise` itself — not `PromiseLike`, not subclasses like
+    /// `MyPromise extends Promise<T>`, not types merely containing "Promise" in their name.
+    fn is_exactly_promise_name(name: &str) -> bool {
+        name == "Promise"
+    }
+
+    /// Strict check: is this type exactly the global `Promise<T>` type?
+    ///
+    /// Unlike `is_promise_type` (which broadly matches Promise-like names), this only
+    /// returns true for the global `Promise` type itself. Used for TS1064 emission where
+    /// TSC requires exactly `Promise<T>`, not subclasses or similarly-named types.
+    pub fn is_global_promise_type(&self, type_id: TypeId) -> bool {
+        match query::classify_promise_type(self.ctx.types, type_id) {
+            query::PromiseTypeKind::Application { base, .. } => {
+                match query::classify_promise_type(self.ctx.types, base) {
+                    query::PromiseTypeKind::Lazy(def_id) => {
+                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        {
+                            return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                        }
+                        false
+                    }
+                    query::PromiseTypeKind::TypeQuery(sym_ref) => {
+                        let sym_id = SymbolId(sym_ref.0);
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                        }
+                        false
+                    }
+                    query::PromiseTypeKind::Application {
+                        base: inner_base, ..
+                    } => self.is_global_promise_type(inner_base),
+                    _ => false,
+                }
+            }
+            query::PromiseTypeKind::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                }
+                false
+            }
+            query::PromiseTypeKind::TypeQuery(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                }
+                false
+            }
+            query::PromiseTypeKind::Object(_)
+            | query::PromiseTypeKind::Union(_)
+            | query::PromiseTypeKind::NotPromise => false,
+        }
+    }
+
     /// Check if a type reference is a Promise or Promise-like type.
     ///
     /// This handles:
@@ -604,6 +664,68 @@ impl<'a> CheckerState<'a> {
                     && let Some(ident) = self.ctx.arena.get_identifier(right_node)
                 {
                     return self.is_promise_like_name(&ident.escaped_text);
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a type is an Application (generic instantiation) whose base is definitively
+    /// NOT the global Promise type.
+    ///
+    /// Used for TS1064: if the return type is `MyPromise<void>` (Application with base class
+    /// "MyPromise"), we know it's not the global Promise and should emit TS1064.
+    ///
+    /// Returns false (uncertain) when:
+    /// - The type is not an Application
+    /// - The base is a type alias (aliases like `type P<T> = Promise<T>` resolve to Promise)
+    /// - The base cannot be resolved to a symbol
+    pub fn is_non_promise_application_type(&self, type_id: TypeId) -> bool {
+        if let query::PromiseTypeKind::Application { base, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        {
+            if self.is_global_promise_type(type_id) {
+                return false;
+            }
+            // Check if the base is a type alias — aliases may resolve to Promise
+            // (e.g., `type PromiseAlias<T> = Promise<T>`). In that case, we can't
+            // definitively say it's not Promise, so return false to let the syntactic
+            // check handle it.
+            match query::classify_promise_type(self.ctx.types, base) {
+                query::PromiseTypeKind::Lazy(def_id) => {
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                            return false; // Type alias — uncertain, use syntactic fallback
+                        }
+                        return true; // Class/interface — definitively not Promise
+                    }
+                    false // Can't resolve — uncertain
+                }
+                _ => true, // Non-Lazy base — definitively not global Promise
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Strict syntactic check: is the return type annotation exactly `Promise<...>`?
+    ///
+    /// Unlike `return_type_annotation_looks_like_promise` (which matches any Promise-like name),
+    /// this only matches exactly `Promise` — not `MyPromise`, not `X.MyPromise`.
+    /// Used as a fallback for TS1064 emission when the resolved type loses its Application wrapper.
+    pub fn return_type_annotation_is_exactly_promise(&self, type_annotation: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                // Only match simple identifier "Promise" — not qualified names
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    return ident.escaped_text.as_str() == "Promise";
                 }
             }
         }

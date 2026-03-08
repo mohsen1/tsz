@@ -95,6 +95,34 @@ impl<'a> CheckerState<'a> {
     /// - TS1202 when import assignment is used in ES modules
     /// - TS2307 when the module cannot be found
     /// - TS2440 when import conflicts with a local declaration
+    /// Check if the target of an import-equals alias includes a type meaning.
+    ///
+    /// For `import string = ns.Foo`, this resolves `ns.Foo` and checks if the
+    /// target symbol has TYPE flags (interface, type alias, class, enum).
+    fn import_alias_target_has_type(&self, target_node: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(node) = self.ctx.arena.get(target_node) else {
+            return false;
+        };
+
+        let target_sym_id = if node.kind == SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol(target_node)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            self.resolve_qualified_symbol(target_node)
+        } else {
+            None
+        };
+
+        if let Some(sym_id) = target_sym_id {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // TYPE includes: Interface, TypeLiteral, TypeParameter, TypeAlias, Class, Enum, EnumMember
+                return (symbol.flags & symbol_flags::TYPE) != 0;
+            }
+        }
+        false
+    }
+
     pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
@@ -111,6 +139,40 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        // TS2438: Import name cannot be a reserved type name (string, number, etc.).
+        // TSC checks this for namespace alias imports like `import string = ns.Foo`
+        // but ONLY when the target includes a type meaning (interface, type alias, class, etc.).
+        // A pure namespace import (no type) is allowed since it doesn't clobber the type name.
+        if let Some(name_node) = self.ctx.arena.get(import.import_clause)
+            && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = name_ident.escaped_text.as_str();
+            if matches!(
+                name,
+                "string"
+                    | "number"
+                    | "boolean"
+                    | "symbol"
+                    | "void"
+                    | "any"
+                    | "never"
+                    | "unknown"
+                    | "undefined"
+                    | "bigint"
+                    | "object"
+            ) {
+                // Resolve the import target to check if it includes a type meaning
+                let target_has_type = self.import_alias_target_has_type(import.module_specifier);
+                if target_has_type {
+                    self.error_at_node(
+                        import.import_clause,
+                        &format_message(diagnostic_messages::IMPORT_NAME_CANNOT_BE, &[name]),
+                        diagnostic_codes::IMPORT_NAME_CANNOT_BE,
+                    );
+                }
+            }
+        }
 
         // TS1147/TS2439/TS2303 checks for import = require("...") forms.
         // Use get_require_module_specifier so both StringLiteral and recovered require-call
