@@ -228,6 +228,199 @@ declare class C {
 }
 
 #[test]
+fn test_declaration_file_exports_do_not_gain_duplicate_declare() {
+    let source = r#"
+export class A {}
+export function f(): void;
+export const x: number;
+"#;
+    let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export class A"),
+        "Expected exported class to preserve declaration-file form: {output}"
+    );
+    assert!(
+        output.contains("export function f(): void;"),
+        "Expected exported function to preserve declaration-file form: {output}"
+    );
+    assert!(
+        output.contains("export const x: number;"),
+        "Expected exported variable to preserve declaration-file form: {output}"
+    );
+    assert!(
+        !output.contains("export declare class A"),
+        "Did not expect duplicate declare on exported class: {output}"
+    );
+    assert!(
+        !output.contains("export declare function f"),
+        "Did not expect duplicate declare on exported function: {output}"
+    );
+    assert!(
+        !output.contains("export declare const x"),
+        "Did not expect duplicate declare on exported variable: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_and_class_do_not_emit_declare() {
+    let source = r#"
+export function main() {}
+export class Z {}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function main(): void;"),
+        "Expected JS export function declaration form: {output}"
+    );
+    assert!(
+        output.contains("export class Z"),
+        "Expected JS export class declaration form: {output}"
+    );
+    assert!(
+        !output.contains("export declare function main"),
+        "Did not expect declare on JS exported function: {output}"
+    );
+    assert!(
+        !output.contains("export declare class Z"),
+        "Did not expect declare on JS exported class: {output}"
+    );
+}
+
+#[test]
+fn test_js_const_literal_uses_type_annotation() {
+    let source = "export const x = 1;";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected JS const literal to emit a literal type annotation: {output}"
+    );
+    assert!(
+        !output.contains("export const x = 1;"),
+        "Did not expect JS const literal to stay as an initializer: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_exports_fold_into_declarations() {
+    let source = r#"
+const x = 1;
+function f() {}
+export { x, f };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected named-exported const to fold into an exported declaration: {output}"
+    );
+    assert!(
+        output.contains("export function f(): void;"),
+        "Expected named-exported function to fold into an exported declaration: {output}"
+    );
+    assert!(
+        !output.contains("export { x, f };"),
+        "Did not expect a redundant named export clause after folding: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_import_equals_drops_export_keyword() {
+    let source = "export import fs2 = require(\"fs\");";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("import fs2 = require(\"fs\");"),
+        "Expected JS export import= to emit as plain import=: {output}"
+    );
+    assert!(
+        !output.contains("export import fs2"),
+        "Did not expect JS export import= to keep the export keyword: {output}"
+    );
+}
+
+#[test]
+fn test_js_import_meta_url_infers_string() {
+    let source = r#"
+const x = import.meta.url;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: string;"),
+        "Expected import.meta.url to emit as string in JS declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_top_level_await_literal_preserves_literal_type() {
+    let source = r#"
+const x = await 1;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected top-level await of a literal to preserve the literal type: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_emits_before_target_declaration() {
+    let source = r#"
+const a = {};
+export = a;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = a;\ndeclare const a: {};"),
+        "Expected JS export= to emit before its target declaration: {output}"
+    );
+    assert_eq!(
+        output.matches("export = a;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
 fn test_method_declaration_emits_inferred_return_type() {
     let source = r#"
 class C {

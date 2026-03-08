@@ -430,14 +430,27 @@ fn declaration_file_name(file_name: &str) -> Option<String> {
     if file_name.ends_with(".mts") {
         return Some(file_name.trim_end_matches(".mts").to_string() + ".d.mts");
     }
+    if file_name.ends_with(".mjs") {
+        return Some(file_name.trim_end_matches(".mjs").to_string() + ".d.mts");
+    }
     if file_name.ends_with(".cts") {
         return Some(file_name.trim_end_matches(".cts").to_string() + ".d.cts");
+    }
+    if file_name.ends_with(".cjs") {
+        return Some(file_name.trim_end_matches(".cjs").to_string() + ".d.cts");
     }
     if file_name.ends_with(".tsx") {
         return Some(file_name.trim_end_matches(".tsx").to_string() + ".d.ts");
     }
-    if file_name.ends_with(".ts") {
-        return Some(file_name.trim_end_matches(".ts").to_string() + ".d.ts");
+    if file_name.ends_with(".ts") || file_name.ends_with(".jsx") || file_name.ends_with(".js") {
+        let suffix = if file_name.ends_with(".ts") {
+            ".ts"
+        } else if file_name.ends_with(".jsx") {
+            ".jsx"
+        } else {
+            ".js"
+        };
+        return Some(file_name.trim_end_matches(suffix).to_string() + ".d.ts");
     }
 
     None

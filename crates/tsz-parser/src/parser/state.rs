@@ -266,6 +266,14 @@ impl ParserState {
             })
     }
 
+    /// Check if we're in a declaration file (.d.ts/.d.mts/.d.cts).
+    pub(crate) fn is_declaration_file(&self) -> bool {
+        let file_name = self.file_name.to_ascii_lowercase();
+        file_name.ends_with(".d.ts")
+            || file_name.ends_with(".d.mts")
+            || file_name.ends_with(".d.cts")
+    }
+
     /// Get current token
     #[inline]
     pub(crate) const fn token(&self) -> SyntaxKind {
