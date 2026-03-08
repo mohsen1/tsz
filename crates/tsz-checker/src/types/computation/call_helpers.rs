@@ -97,7 +97,17 @@ impl<'a> CheckerState<'a> {
                 // Check if the variable's declared type is `any`/`unknown`/contains
                 // undefined — tsc suppresses the companion TS2454 in these cases.
                 let declared_type = self.get_type_of_symbol(sym_id);
-                if !self.skip_definite_assignment_for_type(declared_type) {
+                let should_skip = if self.skip_definite_assignment_for_type(declared_type) {
+                    // For TDZ variables, get_type_of_symbol may return `any` because
+                    // type inference hasn't completed yet (e.g., destructured bindings
+                    // like `let {a} = {a: ''}` where the initializer type isn't resolved).
+                    // Only suppress TS2454 if the `any` comes from an explicit type
+                    // annotation, not from failed inference.
+                    self.symbol_has_explicit_any_or_undefined_annotation(sym_id)
+                } else {
+                    false
+                };
+                if !should_skip {
                     let key = (usage_node.pos, sym_id);
                     if self.ctx.emitted_ts2454_errors.insert(key) {
                         self.error_variable_used_before_assigned_at(name, idx);
@@ -163,6 +173,78 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         false
+    }
+
+    /// Check if a symbol's declaration has an explicit type annotation that
+    /// resolves to `any`, `unknown`, or includes `undefined`/`void`.
+    ///
+    /// Used by the TDZ companion TS2454 logic: `get_type_of_symbol` may return
+    /// `any` for binding elements in destructuring patterns when the variable
+    /// is used before its declaration (TDZ). In that case, we must distinguish
+    /// "explicitly annotated as any" from "inference failed, defaulted to any".
+    fn symbol_has_explicit_any_or_undefined_annotation(&self, sym_id: SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return false;
+        }
+
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Walk from the symbol's declaration to the enclosing variable declaration
+        // to find the type annotation. For binding elements in destructuring patterns,
+        // the type annotation is on the variable declaration, not the binding element.
+        let var_decl_node = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            Some(decl_node)
+        } else if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT
+            || decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+        {
+            // Walk up to find the enclosing variable declaration
+            let mut current = decl_idx;
+            let mut found = None;
+            for _ in 0..10 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                {
+                    found = Some(parent_node);
+                    break;
+                }
+                current = ext.parent;
+            }
+            found
+        } else {
+            None
+        };
+
+        let Some(var_node) = var_decl_node else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_node) else {
+            return false;
+        };
+
+        // If there's no type annotation, the type is inferred — any `any` result
+        // from get_type_of_symbol is from failed inference, not explicit annotation.
+        if var_decl.type_annotation.is_none() {
+            return false;
+        }
+
+        // There IS an explicit type annotation. The `any`/`unknown`/undefined result
+        // from get_type_of_symbol is genuine — suppress TS2454.
+        true
     }
 
     /// Resolve the value-side type from a symbol's value declaration node.
