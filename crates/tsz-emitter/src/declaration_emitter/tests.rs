@@ -793,6 +793,50 @@ declare namespace foo {
 }
 
 #[test]
+fn test_js_commonjs_prototype_and_static_assignments_emit_synthetic_declarations() {
+    let source = r#"
+module.exports = MyClass;
+
+function MyClass() {}
+MyClass.staticMethod = function() {}
+MyClass.prototype.method = function() {}
+MyClass.staticProperty = 123;
+
+/**
+ * Callback to be invoked when test execution is complete.
+ *
+ * @callback DoneCB
+ * @param {number} failures - Number of failures that occurred.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = MyClass;
+declare function MyClass(): void;
+declare class MyClass {
+    method(): void;
+}
+declare namespace MyClass {
+    export { staticMethod, staticProperty, DoneCB };
+}
+declare function staticMethod(): void;
+declare var staticProperty: number;
+/**
+ * Callback to be invoked when test execution is complete.
+ */
+type DoneCB = (failures: number) => any;"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS static/prototype assignments to emit synthetic declarations: {output}"
+    );
+}
+
+#[test]
 fn test_js_reexports_from_same_module_are_grouped() {
     let source = r#"
 export { default } from "fs";

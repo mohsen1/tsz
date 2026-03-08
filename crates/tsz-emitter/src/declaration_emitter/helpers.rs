@@ -23,6 +23,21 @@ type JsFoldedNamedExports = (
 );
 type JsNamespaceExportAliases = FxHashMap<String, Vec<(String, String)>>;
 
+#[derive(Clone, Copy)]
+enum JsCommonjsExpandoDeclKind {
+    Function,
+    Value,
+    PrototypeMethod,
+}
+
+#[derive(Default)]
+pub(crate) struct JsCommonjsExpandoDeclarations {
+    pub(crate) function_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
+    pub(crate) value_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
+    pub(crate) prototype_methods: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    pub(crate) namespace_aliases: JsNamespaceExportAliases,
+}
+
 struct JsdocTypeAliasDecl {
     name: String,
     type_params: Vec<String>,
@@ -849,7 +864,7 @@ impl<'a> DeclarationEmitter<'a> {
         Vec::new()
     }
 
-    fn function_like_jsdoc_for_node(&self, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn function_like_jsdoc_for_node(&self, idx: NodeIndex) -> Option<String> {
         let chain = self.leading_jsdoc_comment_chain_for_node_or_ancestors(idx);
         if chain.is_empty() {
             None
@@ -947,7 +962,7 @@ impl<'a> DeclarationEmitter<'a> {
         params.into_iter().nth(position)
     }
 
-    fn parse_jsdoc_return_type_text(jsdoc: &str) -> Option<String> {
+    pub(crate) fn parse_jsdoc_return_type_text(jsdoc: &str) -> Option<String> {
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
             let Some(rest) = line
@@ -1198,7 +1213,7 @@ impl<'a> DeclarationEmitter<'a> {
         Some((name, format!("({}) => {return_type}", params.join(", "))))
     }
 
-    fn parse_jsdoc_template_params(jsdoc: &str) -> Vec<String> {
+    pub(crate) fn parse_jsdoc_template_params(jsdoc: &str) -> Vec<String> {
         let mut params = Vec::new();
         let mut seen = FxHashSet::default();
 
@@ -1619,6 +1634,82 @@ impl<'a> DeclarationEmitter<'a> {
         aliases
     }
 
+    pub(crate) fn collect_js_commonjs_expando_declarations(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> JsCommonjsExpandoDeclarations {
+        let mut declarations = JsCommonjsExpandoDeclarations::default();
+        if !self.source_file_is_js(source_file) || js_export_equals_names.is_empty() {
+            return declarations;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, member_name, initializer, kind)) =
+                self.js_commonjs_expando_decl_for_statement(stmt_idx, js_export_equals_names)
+            else {
+                continue;
+            };
+
+            match kind {
+                JsCommonjsExpandoDeclKind::Function => {
+                    let Some(member_text) = self.get_identifier_text(member_name) else {
+                        continue;
+                    };
+                    Self::push_js_namespace_export_alias(
+                        &mut declarations.namespace_aliases,
+                        &root_name,
+                        member_text.clone(),
+                        member_text,
+                    );
+                    declarations
+                        .function_statements
+                        .insert(stmt_idx, (member_name, initializer));
+                }
+                JsCommonjsExpandoDeclKind::Value => {
+                    let Some(member_text) = self.get_identifier_text(member_name) else {
+                        continue;
+                    };
+                    Self::push_js_namespace_export_alias(
+                        &mut declarations.namespace_aliases,
+                        &root_name,
+                        member_text.clone(),
+                        member_text,
+                    );
+                    declarations
+                        .value_statements
+                        .insert(stmt_idx, (member_name, initializer));
+                }
+                JsCommonjsExpandoDeclKind::PrototypeMethod => {
+                    let entry = declarations
+                        .prototype_methods
+                        .entry(root_name)
+                        .or_insert_with(Vec::new);
+                    if !entry.iter().any(|(existing_name, existing_initializer)| {
+                        *existing_name == member_name && *existing_initializer == initializer
+                    }) {
+                        entry.push((member_name, initializer));
+                    }
+                }
+            }
+        }
+
+        if js_export_equals_names.len() == 1
+            && let Some(root_name) = js_export_equals_names.iter().next()
+        {
+            for alias_name in self.collect_top_level_jsdoc_alias_names(source_file) {
+                Self::push_js_namespace_export_alias(
+                    &mut declarations.namespace_aliases,
+                    root_name,
+                    alias_name.clone(),
+                    alias_name,
+                );
+            }
+        }
+
+        declarations
+    }
+
     pub(crate) fn collect_js_grouped_reexports(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -1920,7 +2011,30 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        let mut plain_exports = Vec::new();
+        let mut renamed_exports = Vec::new();
         for (export_name, local_name) in aliases {
+            if export_name == local_name {
+                plain_exports.push(local_name);
+            } else {
+                renamed_exports.push((export_name, local_name));
+            }
+        }
+
+        if !plain_exports.is_empty() {
+            self.write_indent();
+            self.write("export { ");
+            for (idx, local_name) in plain_exports.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(local_name);
+            }
+            self.write(" };");
+            self.write_line();
+        }
+
+        for (export_name, local_name) in renamed_exports {
             self.write_indent();
             self.write("export { ");
             self.write(&local_name);
@@ -1992,6 +2106,86 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
+    fn js_commonjs_expando_decl_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> Option<(String, NodeIndex, NodeIndex, JsCommonjsExpandoDeclKind)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        self
+            .get_identifier_text(lhs_access.name_or_argument)?;
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let rhs_node = self.arena.get(rhs)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let (root_name, is_prototype) =
+            self.js_commonjs_expando_receiver(receiver, js_export_equals_names)?;
+
+        if is_prototype {
+            if rhs_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return Some((
+                    root_name,
+                    lhs_access.name_or_argument,
+                    rhs,
+                    JsCommonjsExpandoDeclKind::PrototypeMethod,
+                ));
+            }
+            return None;
+        }
+
+        if rhs_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return Some((
+                root_name,
+                lhs_access.name_or_argument,
+                rhs,
+                JsCommonjsExpandoDeclKind::Function,
+            ));
+        }
+
+        if self.js_namespace_object_member_initializer_supported(rhs) {
+            return Some((
+                root_name,
+                lhs_access.name_or_argument,
+                rhs,
+                JsCommonjsExpandoDeclKind::Value,
+            ));
+        }
+
+        None
+    }
+
     fn js_namespace_export_alias_for_statement(
         &self,
         stmt_idx: NodeIndex,
@@ -2055,6 +2249,42 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn js_commonjs_expando_receiver(
+        &self,
+        receiver_idx: NodeIndex,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> Option<(String, bool)> {
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_idx);
+
+        if let Some(root_name) = self.get_identifier_text(receiver_idx)
+            && js_export_equals_names.contains(&root_name)
+        {
+            return Some((root_name, false));
+        }
+
+        let receiver_node = self.arena.get(receiver_idx)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+        if self
+            .get_identifier_text(receiver_access.name_or_argument)
+            .as_deref()
+            != Some("prototype")
+        {
+            return None;
+        }
+
+        let root_name = self.get_identifier_text(receiver_access.expression)?;
+        if !js_export_equals_names.contains(&root_name) {
+            return None;
+        }
+
+        Some((root_name, true))
+    }
+
     fn is_module_exports_reference(&self, idx: NodeIndex) -> bool {
         let idx = self.arena.skip_parenthesized_and_assertions_and_comma(idx);
         let Some(node) = self.arena.get(idx) else {
@@ -2069,6 +2299,59 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.get_identifier_text(access.expression).as_deref() == Some("module")
             && self.get_identifier_text(access.name_or_argument).as_deref() == Some("exports")
+    }
+
+    pub(crate) fn collect_top_level_jsdoc_alias_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut seen = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
+                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
+                    && seen.insert(decl.name.clone())
+                {
+                    names.push(decl.name);
+                }
+            }
+        }
+
+        let Ok(eof_pos) = u32::try_from(source_file.text.len()) else {
+            return names;
+        };
+        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
+            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
+                && seen.insert(decl.name.clone())
+            {
+                names.push(decl.name);
+            }
+        }
+
+        names
+    }
+
+    fn push_js_namespace_export_alias(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+    ) {
+        let entry = aliases
+            .entry(root_name.to_string())
+            .or_default();
+        if !entry.iter().any(|(existing_export, existing_local)| {
+            existing_export == &export_name && existing_local == &local_name
+        }) {
+            entry.push((export_name, local_name));
+        }
     }
 
     pub(crate) fn statement_has_effective_export(&self, stmt_idx: NodeIndex) -> bool {
@@ -3821,7 +4104,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Get the text of an identifier node.
-    fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(idx)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;

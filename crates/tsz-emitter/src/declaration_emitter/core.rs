@@ -113,6 +113,16 @@ pub struct DeclarationEmitter<'a> {
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<(String, String)>>,
+    /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
+    /// top-level synthetic `declare function prop()` declarations.
+    pub(super) js_deferred_function_export_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
+    /// Deferred JS CommonJS `Root.prop = value` statements re-emitted as
+    /// top-level synthetic `declare var prop: T` declarations.
+    pub(super) js_deferred_value_export_statements: FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>,
+    /// Deferred JS CommonJS `Root.prototype.method = function(){}` statements
+    /// re-emitted as a synthetic `declare class Root { method(): ... }`.
+    pub(super) js_deferred_prototype_method_statements:
+        FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Consecutive JS re-export declarations that should be merged at the first statement.
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
@@ -194,6 +204,9 @@ impl<'a> DeclarationEmitter<'a> {
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_namespace_export_aliases: FxHashMap::default(),
+            js_deferred_function_export_statements: FxHashMap::default(),
+            js_deferred_value_export_statements: FxHashMap::default(),
+            js_deferred_prototype_method_statements: FxHashMap::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -254,6 +267,9 @@ impl<'a> DeclarationEmitter<'a> {
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
             js_namespace_export_aliases: FxHashMap::default(),
+            js_deferred_function_export_statements: FxHashMap::default(),
+            js_deferred_value_export_statements: FxHashMap::default(),
+            js_deferred_prototype_method_statements: FxHashMap::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -546,6 +562,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
         self.emit_public_api_only = self.has_public_api_exports(source_file);
+        self.all_comments = source_file.comments.clone();
+        self.comment_emit_idx = 0;
         let (js_named_export_names, folded_named_exports, deferred_named_exports) =
             self.collect_js_folded_named_exports(source_file);
         self.js_named_export_names = js_named_export_names;
@@ -553,17 +571,35 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
-        self.js_namespace_export_aliases =
+        let mut js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
+        let js_commonjs_expando_declarations = self
+            .collect_js_commonjs_expando_declarations(source_file, &self.js_export_equals_names);
+        for (root_name, aliases) in js_commonjs_expando_declarations.namespace_aliases {
+            let entry = js_namespace_export_aliases
+                .entry(root_name)
+                .or_default();
+            for (export_name, local_name) in aliases {
+                if !entry.iter().any(|(existing_export, existing_local)| {
+                    existing_export == &export_name && existing_local == &local_name
+                }) {
+                    entry.push((export_name, local_name));
+                }
+            }
+        }
+        self.js_namespace_export_aliases = js_namespace_export_aliases;
+        self.js_deferred_function_export_statements =
+            js_commonjs_expando_declarations.function_statements;
+        self.js_deferred_value_export_statements =
+            js_commonjs_expando_declarations.value_statements;
+        self.js_deferred_prototype_method_statements =
+            js_commonjs_expando_declarations.prototype_methods;
         let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
         self.js_grouped_reexports = grouped_reexports;
         self.js_skipped_reexports = skipped_reexports;
         self.emitted_jsdoc_type_aliases.clear();
         let deferred_js_namespace_objects =
             self.collect_js_namespace_object_statements(source_file);
-
-        self.all_comments = source_file.comments.clone();
-        self.comment_emit_idx = 0;
 
         debug!(
             "[DEBUG] source_file has {} comments",
@@ -728,6 +764,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         // For non-declaration statements (expression statements, assignments, etc.),
         // skip their comments entirely rather than emitting them as leading JSDoc.
+        let has_synthetic_js_expression_declaration = kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && self.has_synthetic_js_expression_declaration(stmt_idx);
         let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
@@ -739,7 +777,8 @@ impl<'a> DeclarationEmitter<'a> {
             || kind == syntax_kind_ext::IMPORT_DECLARATION
             || kind == syntax_kind_ext::MODULE_DECLARATION
             || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+            || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+            || has_synthetic_js_expression_declaration;
 
         if !is_declaration_kind {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
@@ -806,6 +845,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 self.emit_namespace_export_declaration(stmt_idx);
+            }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                self.emit_js_synthetic_expression_statement(stmt_idx);
             }
             _ => unreachable!(),
         }
@@ -1011,6 +1053,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(func.name);
 
         // Skip comments within the function body to prevent them from
@@ -2521,6 +2564,270 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         true
+    }
+
+    fn has_synthetic_js_expression_declaration(&self, stmt_idx: NodeIndex) -> bool {
+        self.js_deferred_function_export_statements
+            .contains_key(&stmt_idx)
+            || self
+                .js_deferred_value_export_statements
+                .contains_key(&stmt_idx)
+    }
+
+    fn emit_js_synthetic_expression_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        if let Some((name_idx, initializer)) = self
+            .js_deferred_function_export_statements
+            .get(&stmt_idx)
+            .copied()
+        {
+            self.emit_js_synthetic_function_declaration(name_idx, initializer);
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
+        if let Some((name_idx, initializer)) = self
+            .js_deferred_value_export_statements
+            .get(&stmt_idx)
+            .copied()
+        {
+            self.emit_js_synthetic_value_declaration(name_idx, initializer);
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+        }
+    }
+
+    fn emit_js_synthetic_function_declaration(
+        &mut self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return;
+        };
+
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("function ");
+        self.emit_node(name_idx);
+
+        let jsdoc_template_params = if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
+        {
+            jsdoc
+                .as_deref()
+                .map(Self::parse_jsdoc_template_params)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        }
+
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(")");
+
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            let func_type_id = cache
+                .node_types
+                .get(&initializer.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[name_idx, initializer]));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+            {
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func.body.is_some()
+                    && self.body_returns_void(func.body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
+            } else if func.body.is_some() && self.body_returns_void(func.body) {
+                self.write(": void");
+            }
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        }
+
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_js_synthetic_value_declaration(&mut self, name_idx: NodeIndex, initializer: NodeIndex) {
+        let Some(type_text) = self.js_namespace_value_member_type_text(initializer) else {
+            return;
+        };
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("var ");
+        self.emit_node(name_idx);
+        self.write(": ");
+        self.write(&type_text);
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_js_synthetic_prototype_class_if_needed(
+        &mut self,
+        name_idx: NodeIndex,
+        is_exported: bool,
+    ) {
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return;
+        };
+        let Some(methods) = self
+            .js_deferred_prototype_method_statements
+            .get(&name)
+            .cloned()
+        else {
+            return;
+        };
+        if methods.is_empty() {
+            return;
+        }
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(is_exported) {
+            self.write("declare ");
+        }
+        self.write("class ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for (method_name, initializer) in methods {
+            self.emit_js_synthetic_class_method(method_name, initializer);
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+    }
+
+    fn emit_js_synthetic_class_method(&mut self, name_idx: NodeIndex, initializer: NodeIndex) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return;
+        };
+
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+
+        self.write_indent();
+        self.emit_node(name_idx);
+
+        let jsdoc_template_params = if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
+        {
+            jsdoc
+                .as_deref()
+                .map(Self::parse_jsdoc_template_params)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        }
+
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(")");
+
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            let func_type_id = cache
+                .node_types
+                .get(&initializer.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[name_idx, initializer]));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+            {
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func.body.is_some()
+                    && self.body_returns_void(func.body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
+            } else if func.body.is_some() && self.body_returns_void(func.body) {
+                self.write(": void");
+            }
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        }
+
+        self.write(";");
+        self.write_line();
     }
 
     fn emit_js_namespace_function_member(
