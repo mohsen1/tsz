@@ -32,6 +32,14 @@ pub(crate) struct EmitOutputsContext<'a> {
 pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<OutputFile>> {
     let mut outputs = Vec::new();
     let new_line = new_line_str(context.options.printer.new_line);
+    let declaration_bundle_path = context.options.out_file.as_ref().and_then(|out_file| {
+        declaration_bundle_output_path(
+            context.base_dir,
+            context.declaration_dir.or(context.out_dir),
+            out_file,
+        )
+    });
+    let mut declaration_bundle_chunks = Vec::new();
 
     // Build mapping from arena address to file path for module resolution
     let arena_to_path: rustc_hash::FxHashMap<usize, String> = context
@@ -254,7 +262,8 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter
                 };
-                let map_info = if context.options.declaration_map {
+                let map_info = if declaration_bundle_path.is_none() && context.options.declaration_map
+                {
                     map_output_info(&dts_path)
                 } else {
                     None
@@ -320,15 +329,29 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     });
                 }
 
-                outputs.push(OutputFile {
-                    path: dts_path,
-                    contents,
-                });
-                if let Some(map_output) = map_output {
-                    outputs.push(map_output);
+                if declaration_bundle_path.is_some() {
+                    declaration_bundle_chunks
+                        .push(bundle_declaration_output(&contents, context.options.printer.module));
+                } else {
+                    outputs.push(OutputFile {
+                        path: dts_path,
+                        contents,
+                    });
+                    if let Some(map_output) = map_output {
+                        outputs.push(map_output);
+                    }
                 }
             }
         }
+    }
+
+    if let Some(bundle_path) = declaration_bundle_path
+        && !declaration_bundle_chunks.is_empty()
+    {
+        outputs.push(OutputFile {
+            path: bundle_path,
+            contents: join_declaration_bundle_chunks(&declaration_bundle_chunks, new_line),
+        });
     }
 
     Ok(outputs)
@@ -411,6 +434,121 @@ fn declaration_output_path(
     };
     output.set_file_name(new_name);
     Some(output)
+}
+
+fn declaration_bundle_output_path(
+    base_dir: &Path,
+    out_dir: Option<&Path>,
+    out_file: &Path,
+) -> Option<PathBuf> {
+    let relative = if out_file.is_absolute() {
+        PathBuf::from(out_file.file_name()?)
+    } else {
+        out_file.to_path_buf()
+    };
+
+    let mut output = match out_dir {
+        Some(out_dir) => out_dir.join(&relative),
+        None if out_file.is_absolute() => out_file.to_path_buf(),
+        None => base_dir.join(&relative),
+    };
+    let file_name = output.file_name()?.to_str()?;
+    let new_name = declaration_file_name(file_name)?;
+    output.set_file_name(new_name);
+    Some(output)
+}
+
+fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
+    let mut bundled = String::new();
+    for chunk in chunks {
+        if !bundled.is_empty() && !bundled.ends_with(new_line) {
+            bundled.push_str(new_line);
+        }
+        bundled.push_str(chunk.trim_end_matches(['\r', '\n']));
+        bundled.push_str(new_line);
+    }
+    if bundled.ends_with(new_line) {
+        bundled.truncate(bundled.len() - new_line.len());
+    }
+    bundled
+}
+
+fn bundle_declaration_output(contents: &str, module_kind: ModuleKind) -> String {
+    if !matches!(module_kind, ModuleKind::AMD) {
+        return contents.to_string();
+    }
+
+    wrap_amd_declaration_output(contents).unwrap_or_else(|| contents.to_string())
+}
+
+fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
+    let mut directive_lines = Vec::new();
+    let mut body_lines = Vec::new();
+    let mut in_header = true;
+    let mut amd_module_name = None;
+
+    for line in contents.lines() {
+        if in_header && line.trim_start().starts_with("///") {
+            directive_lines.push(line.to_string());
+            if amd_module_name.is_none() {
+                amd_module_name = extract_amd_module_name(line);
+            }
+            continue;
+        }
+        in_header = false;
+        body_lines.push(line.to_string());
+    }
+
+    let amd_module_name = amd_module_name?;
+    let mut wrapped = String::new();
+    for directive in directive_lines {
+        wrapped.push_str(&directive);
+        wrapped.push('\n');
+    }
+    wrapped.push_str("declare module \"");
+    wrapped.push_str(&amd_module_name);
+    wrapped.push_str("\" {\n");
+
+    for line in body_lines {
+        let rewritten = rewrite_ambient_module_member_line(&line);
+        if rewritten.is_empty() {
+            wrapped.push('\n');
+            continue;
+        }
+        wrapped.push_str("    ");
+        wrapped.push_str(&rewritten);
+        wrapped.push('\n');
+    }
+
+    wrapped.push('}');
+    Some(wrapped)
+}
+
+fn extract_amd_module_name(line: &str) -> Option<String> {
+    let needle = "name=";
+    let pos = line.find(needle)?;
+    let after = &line[pos + needle.len()..];
+    let quote = after.as_bytes().first().copied()?;
+    if !matches!(quote, b'\'' | b'"') {
+        return None;
+    }
+    let quote = quote as char;
+    let end = after[1..].find(quote)?;
+    Some(after[1..1 + end].to_string())
+}
+
+fn rewrite_ambient_module_member_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+
+    if let Some(rest) = trimmed.strip_prefix("export declare ") {
+        return format!("{indent}export {rest}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("declare ") {
+        return format!("{indent}{rest}");
+    }
+
+    line.to_string()
 }
 
 fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &Path) -> PathBuf {
