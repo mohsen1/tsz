@@ -1554,9 +1554,7 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
-    /// Format a pair of types with import-qualification when they have the same name
-    /// but come from different files. This matches tsc's disambiguation behavior for
-    /// diagnostics like TS2367 that display two types side by side.
+    /// Format a pair of types for diagnostics that display two types side by side.
     pub fn format_type_pair(&self, type_a: TypeId, type_b: TypeId) -> (String, String) {
         let mut formatter = self.ctx.create_type_formatter();
         (
