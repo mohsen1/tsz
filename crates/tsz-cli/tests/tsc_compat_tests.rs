@@ -106,6 +106,55 @@ fn run_tsz_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
     Some((code, normalize_output(&combined)))
 }
 
+/// Run tsc and return (exit_code, combined_output).
+fn run_tsc_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
+    let output = Command::new("tsc")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    let code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut combined = String::new();
+    if !stderr.is_empty() {
+        combined.push_str(&stderr);
+    }
+    if !stdout.is_empty() {
+        combined.push_str(&stdout);
+    }
+    Some((code, normalize_output(&combined)))
+}
+
+/// Run both tsc and tsz and assert their outputs match exactly.
+/// Returns the common output on success.
+fn assert_tsc_tsz_match(cwd: &Path, args: &[&str], label: &str) -> String {
+    let tsc_out = run_tsc(cwd, args).expect("tsc failed to run");
+    let tsz_out = run_tsz(cwd, args).expect("tsz failed to run");
+    if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
+        panic!(
+            "{label}: tsz output does not match tsc.\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
+        );
+    }
+    tsc_out
+}
+
+/// Run both tsc and tsz and assert their outputs AND exit codes match.
+fn assert_tsc_tsz_match_with_exit_code(cwd: &Path, args: &[&str], label: &str) {
+    let (tsc_code, tsc_out) = run_tsc_with_exit_code(cwd, args).expect("tsc failed to run");
+    let (tsz_code, tsz_out) = run_tsz_with_exit_code(cwd, args).expect("tsz failed to run");
+    assert_eq!(
+        tsc_code, tsz_code,
+        "{label}: exit code mismatch: tsc={tsc_code}, tsz={tsz_code}\ntsc output:\n{tsc_out}\ntsz output:\n{tsz_out}"
+    );
+    let tsc_norm = normalize_output(&tsc_out);
+    let tsz_norm = normalize_output(&tsz_out);
+    if let Some(diff) = diff_outputs(&tsc_norm, &tsz_norm) {
+        panic!("{label}: output mismatch.\n{diff}\n\ntsc:\n{tsc_norm}\n\ntsz:\n{tsz_norm}");
+    }
+}
+
 /// Find the tsz binary in the target directory.
 fn find_tsz_binary() -> Option<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -742,8 +791,7 @@ fn unknown_flag_ts5025_suggestion_format() {
         "Expected exit code 1 for unknown flag with suggestion, got {code}"
     );
     assert!(
-        output
-            .contains("error TS5025: Unknown compiler option '--strct'. Did you mean '--strict'?"),
+        output.contains("error TS5025: Unknown compiler option '--strct'. Did you mean 'strict'?"),
         "Expected TS5025 diagnostic with suggestion, got:\n{output}"
     );
 }
@@ -833,18 +881,714 @@ fn build_first_is_ok() {
 }
 
 #[test]
-fn build_short_b_not_first_ts6369() {
+fn build_short_b_not_first_ts5023() {
     let temp = TempDir::new("build_short_not_first").expect("temp dir");
-    // -b (short for --build) must also be first
+    // -b not first: tsc v6 treats this as an unknown flag (TS5023), not TS6369.
+    // Only the long form --build triggers TS6369.
     let (code, output) =
         run_tsz_with_exit_code(&temp.path, &["--noEmit", "-b"]).expect("tsz binary not found");
 
+    assert_eq!(code, 1, "Expected exit code 1 for unknown -b, got {code}");
+    assert!(
+        output.contains("error TS5023"),
+        "Expected TS5023 for -b not first (matching tsc v6), got:\n{output}"
+    );
+}
+
+// ===========================================================================
+// End-to-end parity tests: tsz vs tsc (pinned TypeScript version)
+//
+// These tests run both compilers on identical inputs and assert that outputs
+// and exit codes match exactly. They use the tsc version installed globally,
+// which must match the pinned version in scripts/package.json.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// TS6046: Valid values for enum options
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts6046_target() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6046_target").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--target", "badValue", "test.ts"],
+        "TS6046 --target",
+    );
+}
+
+#[test]
+fn tsc_parity_ts6046_module() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6046_module").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--module", "badValue", "test.ts"],
+        "TS6046 --module",
+    );
+}
+
+#[test]
+fn tsc_parity_ts6046_jsx() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6046_jsx").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--jsx", "badValue", "test.ts"],
+        "TS6046 --jsx",
+    );
+}
+
+#[test]
+fn tsc_parity_ts6046_module_resolution() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6046_modres").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--moduleResolution", "badValue", "test.ts"],
+        "TS6046 --moduleResolution",
+    );
+}
+
+#[test]
+fn tsc_parity_ts6046_module_detection() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6046_moddet").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--moduleDetection", "badValue", "test.ts"],
+        "TS6046 --moduleDetection",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Exit codes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_exit_code_clean() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("exit_clean").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const x: number = 42;\n");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "exit code: clean compile",
+    );
+}
+
+#[test]
+fn tsc_parity_exit_code_errors_no_emit() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("exit_noEmit").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
+    // --noEmit + errors => exit code 2 (errors present, no outputs to skip)
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "exit code: --noEmit + errors",
+    );
+}
+
+#[test]
+fn tsc_parity_exit_code_unknown_flag() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("exit_unknown").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--totallyBogusFlag"],
+        "exit code: unknown flag",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TS5023 / TS5025: Unknown compiler option
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts5023_unknown_flag() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts5023").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--badFlag"], "TS5023 unknown flag");
+}
+
+#[test]
+fn tsc_parity_ts5025_did_you_mean() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts5025").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--strct"], "TS5025 did you mean");
+}
+
+#[test]
+fn tsc_parity_ts5025_targett() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts5025_target").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--targett"],
+        "TS5025 --targett did you mean --target",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TS6369: --build not first
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts6369_build_not_first() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6369").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--build"],
+        "TS6369 --build not first",
+    );
+}
+
+#[test]
+fn tsc_parity_ts6369_short_b_not_first() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts6369_short").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--noEmit", "-b"], "TS6369 -b not first");
+}
+
+// ---------------------------------------------------------------------------
+// --version / --help
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_version() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("version").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--version"], "--version output");
+}
+
+#[test]
+fn tsc_parity_version_short() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("version_short").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["-v"], "-v output");
+}
+
+#[test]
+fn tsc_parity_help() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("help").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--help"], "--help output");
+}
+
+#[test]
+fn tsc_parity_help_all() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("help_all").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--help", "--all"], "--help --all output");
+}
+
+#[test]
+fn tsc_parity_no_input() {
+    if !tsc_available() {
+        return;
+    }
+    // No tsconfig.json, no files => print version + help, exit 1
+    let temp = TempDir::new("no_input").expect("temp dir");
+    assert_tsc_tsz_match_with_exit_code(&temp.path, &[], "no input (no tsconfig, no files)");
+}
+
+// ---------------------------------------------------------------------------
+// --init
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_init() {
+    if !tsc_available() {
+        return;
+    }
+    // Run --init in separate temp dirs and compare generated tsconfig.json
+    let temp_tsc = TempDir::new("init_tsc").expect("temp dir");
+    let temp_tsz = TempDir::new("init_tsz").expect("temp dir");
+
+    let tsc_out = run_tsc(&temp_tsc.path, &["--init"]).expect("tsc --init failed");
+    let tsz_out = run_tsz(&temp_tsz.path, &["--init"]).expect("tsz --init failed");
+
+    // Console output should match
+    if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
+        panic!("--init console output mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}");
+    }
+
+    // Generated tsconfig.json should match
+    let tsc_config =
+        std::fs::read_to_string(temp_tsc.path.join("tsconfig.json")).expect("tsc tsconfig.json");
+    let tsz_config =
+        std::fs::read_to_string(temp_tsz.path.join("tsconfig.json")).expect("tsz tsconfig.json");
     assert_eq!(
-        code, 1,
-        "Expected exit code 1 for TS6369 (-b not first), got {code}"
+        tsc_config, tsz_config,
+        "--init: generated tsconfig.json files differ"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic output: plain mode exact match
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_plain_single_ts2304() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("plain_ts2304").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "plain single TS2304",
+    );
+}
+
+#[test]
+fn tsc_parity_plain_multiple_ts2304() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("plain_multi_ts2304").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "const a = foo;\nconst b = bar;\nconst c = baz;\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "plain multiple TS2304",
+    );
+}
+
+#[test]
+fn tsc_parity_plain_multi_file() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("plain_multi_file").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const a = foo;\n");
+    write_file(&temp.path.join("b.ts"), "const b = bar;\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "a.ts", "b.ts"],
+        "plain multi-file",
+    );
+}
+
+#[test]
+fn tsc_parity_plain_no_errors() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("plain_clean").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "const x: number = 42;\nconst y: string = \"hello\";\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "plain no errors",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic output: pretty mode exact match
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_pretty_single_ts2304() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("pretty_ts2304").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "pretty single TS2304",
+    );
+}
+
+#[test]
+fn tsc_parity_pretty_multiple_ts2304() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("pretty_multi_ts2304").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "const a = foo;\nconst b = bar;\nconst c = baz;\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "pretty multiple TS2304",
+    );
+}
+
+#[test]
+fn tsc_parity_pretty_multi_file_summary() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("pretty_multi_file_summary").expect("temp dir");
+    write_file(
+        &temp.path.join("a.ts"),
+        "const a1 = foo;\nconst a2 = bar;\n",
+    );
+    write_file(&temp.path.join("b.ts"), "const b1 = baz;\n");
+    let tsc_out = run_tsc(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "a.ts", "b.ts"],
+    )
+    .expect("tsc failed");
+    let tsz_out = run_tsz(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "a.ts", "b.ts"],
+    )
+    .expect("tsz failed");
+
+    // Check the summary table structure matches
+    if let Some(diff) = compare_output_structure(&tsc_out, &tsz_out) {
+        panic!(
+            "pretty multi-file summary structure mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
+        );
+    }
+
+    // Verify "Found N errors in M files" summary text
+    let tsc_summary: Vec<&str> = tsc_out
+        .lines()
+        .filter(|l| l.starts_with("Found "))
+        .collect();
+    let tsz_summary: Vec<&str> = tsz_out
+        .lines()
+        .filter(|l| l.starts_with("Found "))
+        .collect();
+    assert_eq!(
+        tsc_summary, tsz_summary,
+        "Found summary mismatch:\ntsc: {tsc_summary:?}\ntsz: {tsz_summary:?}"
+    );
+
+    // Verify "Errors  Files" table exists in both
+    assert!(
+        tsc_out.contains("Errors  Files"),
+        "tsc missing 'Errors  Files' table"
     );
     assert!(
-        output.contains("error TS6369"),
-        "Expected TS6369 diagnostic for -b not first, got:\n{output}"
+        tsz_out.contains("Errors  Files"),
+        "tsz missing 'Errors  Files' table"
+    );
+}
+
+#[test]
+fn tsc_parity_pretty_double_digit_line() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("pretty_double_digit").expect("temp dir");
+    let mut source = String::new();
+    for i in 1..=9 {
+        source.push_str(&format!("const a{i} = {i};\n"));
+    }
+    source.push_str("const a10 = unknownVar;\n");
+    write_file(&temp.path.join("test.ts"), &source);
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "pretty double-digit line number",
+    );
+}
+
+#[test]
+fn tsc_parity_pretty_triple_digit_line() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("pretty_triple_digit").expect("temp dir");
+    let mut source = String::new();
+    for i in 1..=99 {
+        source.push_str(&format!("const v{i} = {i};\n"));
+    }
+    source.push_str("const v100 = unknownVar;\n");
+    write_file(&temp.path.join("test.ts"), &source);
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "pretty triple-digit line number",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TS2304 with various identifier patterns
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts2304_unicode_identifier() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2304_unicode").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const x = café;\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "TS2304 unicode identifier (plain)",
+    );
+}
+
+#[test]
+fn tsc_parity_ts2304_long_identifier() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2304_long_id").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "const x = thisIsAVeryLongIdentifierNameThatDoesNotExistAnywhere;\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "TS2304 long identifier (plain)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TS2322: type mismatch (plain mode - exact match for error text)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts2322_plain() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2322_plain").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "let x: number = \"hello\";\nlet y: string = 42;\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "TS2322 type mismatch (plain)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TS1005: Syntax errors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts1005_missing_semicolon_plain() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts1005_semi").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const x = 1\nconst y = 2\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "TS1005 missing semicolon (plain)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// --build mode: TS5083 missing tsconfig
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_build_missing_tsconfig() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("build_no_tsconfig").expect("temp dir");
+    // --build with a path that doesn't exist
+    let (tsc_code, tsc_out) =
+        run_tsc_with_exit_code(&temp.path, &["--build", "nonexistent/tsconfig.json"])
+            .expect("tsc failed");
+    let (tsz_code, tsz_out) =
+        run_tsz_with_exit_code(&temp.path, &["--build", "nonexistent/tsconfig.json"])
+            .expect("tsz failed");
+
+    assert_eq!(
+        tsc_code, tsz_code,
+        "build missing tsconfig exit code: tsc={tsc_code}, tsz={tsz_code}"
+    );
+    // Both should mention TS5083
+    assert!(
+        tsc_out.contains("TS5083") || tsc_out.contains("Cannot read file"),
+        "tsc should report missing file: {tsc_out}"
+    );
+    assert!(
+        tsz_out.contains("TS5083") || tsz_out.contains("Cannot read file"),
+        "tsz should report missing file: {tsz_out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Line endings: Windows-style source
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_windows_line_endings() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("windows_crlf").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\r\n");
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "Windows CRLF line endings",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Multiple error codes in same file
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_mixed_error_codes_plain() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("mixed_codes").expect("temp dir");
+    // TS2304 (undefined name) + TS2322 (type mismatch) in same file
+    write_file(
+        &temp.path.join("test.ts"),
+        "const a = unknownName;\nlet b: number = \"hello\";\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "test.ts"],
+        "mixed error codes (plain)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Summary: "Found 1 error" vs "Found N errors"
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_found_1_error_pretty() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("found_1_error").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
+    let output = assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "Found 1 error summary",
+    );
+    assert!(
+        output.contains("Found 1 error"),
+        "Should contain 'Found 1 error': {output}"
+    );
+}
+
+#[test]
+fn tsc_parity_found_n_errors_same_file_pretty() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("found_n_errors_same").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "const a = foo;\nconst b = bar;\n",
+    );
+    let output = assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--pretty", "true", "test.ts"],
+        "Found N errors same file summary",
+    );
+    assert!(
+        output.contains("Found 2 errors in the same file"),
+        "Should contain 'Found 2 errors in the same file': {output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated option values: should still be accepted as input
+// ---------------------------------------------------------------------------
+
+// NOTE: tsc v6 emits TS5107 deprecation warnings for deprecated values like
+// --target es5, --module amd, etc. tsz does not yet implement TS5107.
+// These tests verify that deprecated values are at least accepted (not rejected)
+// by tsz, matching tsc's behavior of still compiling them.
+
+#[test]
+fn deprecated_target_es5_accepted() {
+    let temp = TempDir::new("deprecated_es5").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const x = 1;\n");
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--pretty", "false", "--target", "es5", "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        !output.contains("TS6046"),
+        "Deprecated --target es5 should not produce TS6046: {output}"
+    );
+}
+
+#[test]
+fn deprecated_module_amd_accepted() {
+    let temp = TempDir::new("deprecated_amd").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export const x = 1;\n");
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--pretty", "false", "--module", "amd", "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        !output.contains("TS6046"),
+        "Deprecated --module amd should not produce TS6046: {output}"
     );
 }
