@@ -265,9 +265,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return_types.push(ret);
                 }
                 CallResult::NotCallable { .. } => {
-                    return CallResult::NotCallable {
-                        type_id: union_type,
-                    };
+                    // Skip non-constructable union members. tsc filters union
+                    // members to those with construct signatures rather than
+                    // failing the entire `new` expression when any member lacks one.
+                    // e.g. `new x` where `x: { a: string } | (new (a: string) => void)`
+                    // should succeed using the constructable member.
                 }
                 err => {
                     failures.push(err);
