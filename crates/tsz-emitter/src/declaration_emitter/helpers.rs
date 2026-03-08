@@ -1953,24 +1953,59 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn js_commonjs_named_export_value_initializer_supported(&self, initializer: NodeIndex) -> bool {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return false;
-        };
+        self.js_synthetic_export_value_type_text(initializer)
+            .is_some()
+    }
 
-        match init_node.kind {
-            k if k == SyntaxKind::StringLiteral as u16 => true,
-            k if k == SyntaxKind::NumericLiteral as u16 => true,
-            k if k == SyntaxKind::BigIntLiteral as u16 => true,
-            k if k == SyntaxKind::TrueKeyword as u16 => true,
-            k if k == SyntaxKind::FalseKeyword as u16 => true,
-            k if k == SyntaxKind::NullKeyword as u16 => true,
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => true,
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                self.is_negative_literal(init_node)
+    pub(crate) fn js_assigned_initializer_for_value_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let target_text = self.nameable_constructor_expression_text(expr_idx)?;
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
             }
-            _ => false,
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            if self.nameable_constructor_expression_text(lhs).as_deref() != Some(&target_text) {
+                continue;
+            }
+
+            return Some(
+                self.arena
+                    .skip_parenthesized_and_assertions_and_comma(binary.right),
+            );
         }
+
+        None
     }
 
     pub(crate) fn collect_js_class_static_method_augmentations(
@@ -4643,7 +4678,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.nameable_constructor_expression_text(new_expr.expression)
     }
 
-    fn nameable_constructor_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn nameable_constructor_expression_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         match expr_node.kind {
             k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
