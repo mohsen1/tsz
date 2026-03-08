@@ -725,14 +725,15 @@ impl<'a> EnumES5Transformer<'a> {
         };
         if node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.arena.get_literal(node)
-                && let Some(val) = Self::parse_numeric_literal_text(&lit.text) {
-                    // If the value is an exact integer, emit as integer
-                    if val == val.floor() && val.is_finite() && val.abs() < (i64::MAX as f64) {
-                        return IRNode::NumericLiteral((val as i64).to_string().into());
-                    }
-                    // Otherwise emit as float
-                    return IRNode::NumericLiteral(format!("{val}").into());
-                }
+            && let Some(val) = Self::parse_numeric_literal_text(&lit.text)
+        {
+            // If the value is an exact integer, emit as integer
+            if val == val.floor() && val.is_finite() && val.abs() < (i64::MAX as f64) {
+                return IRNode::NumericLiteral((val as i64).to_string().into());
+            }
+            // Otherwise emit as float
+            return IRNode::NumericLiteral(format!("{val}").into());
+        }
         if node.kind == SyntaxKind::BigIntLiteral as u16 {
             // BigInt literal names like `0n` are emitted as-is (no quotes)
             return IRNode::NumericLiteral(member_name.to_string().into());
