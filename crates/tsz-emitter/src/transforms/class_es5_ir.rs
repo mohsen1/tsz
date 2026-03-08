@@ -116,6 +116,8 @@ pub struct ES5ClassTransformer<'a> {
     class_decorators: Vec<NodeIndex>,
     /// Whether to emit member decorator __decorate calls inside the IIFE
     legacy_decorators: bool,
+    /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
+    indent_base: u32,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -131,7 +133,13 @@ impl<'a> ES5ClassTransformer<'a> {
             source_text: None,
             class_decorators: Vec::new(),
             legacy_decorators: false,
+            indent_base: 0,
         }
+    }
+
+    /// Set the base indent level for nested contexts (e.g., 1 for class inside namespace)
+    pub const fn set_indent_base(&mut self, level: u32) {
+        self.indent_base = level;
     }
 
     /// Set class-level decorators to emit inside the IIFE
@@ -517,15 +525,21 @@ impl<'a> ES5ClassTransformer<'a> {
             // __decorate([\n        dec1,\n        dec2\n    ], target, "name", desc)
             // Note: first line indent is handled by the body emitter's write_indent().
             // Continuation lines after \n need absolute indentation from column 0.
+            // The indent_base accounts for nesting (e.g., namespace IIFE body).
+            let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
+            let outer_indent = "    ".repeat((self.indent_base + 1) as usize);
             let mut raw = String::from("__decorate([");
             for (i, dec_str) in dec_strs.iter().enumerate() {
-                raw.push_str("\n        ");
+                raw.push('\n');
+                raw.push_str(&inner_indent);
                 raw.push_str(dec_str);
                 if i + 1 < dec_strs.len() {
                     raw.push(',');
                 }
             }
-            raw.push_str("\n    ], ");
+            raw.push('\n');
+            raw.push_str(&outer_indent);
+            raw.push_str("], ");
             raw.push_str(&target_str);
             raw.push_str(", \"");
             raw.push_str(&member_name);
@@ -546,17 +560,22 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Format matching tsc:
         // ClassName = __decorate([\n        dec1,\n        dec2\n    ], ClassName)
+        let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
+        let outer_indent = "    ".repeat((self.indent_base + 1) as usize);
         let mut raw = String::new();
         raw.push_str(&self.class_name);
         raw.push_str(" = __decorate([");
         for (i, dec_str) in dec_strs.iter().enumerate() {
-            raw.push_str("\n        ");
+            raw.push('\n');
+            raw.push_str(&inner_indent);
             raw.push_str(dec_str);
             if i + 1 < dec_strs.len() {
                 raw.push(',');
             }
         }
-        raw.push_str("\n    ], ");
+        raw.push('\n');
+        raw.push_str(&outer_indent);
+        raw.push_str("], ");
         raw.push_str(&self.class_name);
         raw.push(')');
 

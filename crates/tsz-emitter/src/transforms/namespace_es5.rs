@@ -108,6 +108,11 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.remove_comments = remove;
     }
 
+    /// Set whether legacy decorators are enabled (experimentalDecorators)
+    pub const fn set_legacy_decorators(&mut self, enabled: bool) {
+        self.transformer.set_legacy_decorators(enabled);
+    }
+
     /// Set exported variable names from prior blocks of the same namespace.
     pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
         self.transformer.set_prior_exported_vars(vars);
