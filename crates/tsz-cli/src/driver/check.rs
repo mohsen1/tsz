@@ -2,11 +2,12 @@
 
 use super::check_utils::*;
 use super::*;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD: Duration = Duration::from_millis(500);
 const EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT: usize = 4;
+const EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT: usize = 2;
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -559,7 +560,6 @@ pub(super) fn collect_diagnostics(
         let lib_ctx_for_parallel = lib_contexts.to_vec();
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
-        let traced_parallel_file = Arc::new(AtomicBool::new(false));
         let started_parallel_source_files = Arc::new(AtomicUsize::new(0));
 
         // Check all files in parallel — each file gets its own CheckerState.
@@ -574,18 +574,37 @@ pub(super) fn collect_diagnostics(
                     .iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
-                        if !is_declaration_file(&file.file_name) {
+                        let source_file_rank = if !is_declaration_file(&file.file_name) {
                             let start_rank =
                                 started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
                             report_parallel_file_start(start_rank, &file.file_name);
-                        }
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
+                        let trace_parallel_file_rank = source_file_rank.filter(|rank| {
+                            *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT
+                        });
                         let file_total_start = Instant::now();
-                        let trace_first_prepare_binder = extended_progress_enabled
-                            && !(skip_lib_check && is_declaration_file(&file.file_name))
-                            && !traced_parallel_file.swap(true, Ordering::Relaxed);
                         let prepare_binder_start = Instant::now();
-                        let prepared = if trace_first_prepare_binder {
-                            report_progress_start("prepare_binders::first_file::create_binder");
+                        let prepared = if let Some(rank) = trace_parallel_file_rank {
+                            let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "create_binder",
+                            );
+                            let collect_module_specifiers_phase =
+                                format_extended_diagnostics_ranked_phase(
+                                    "prepare_binders",
+                                    rank,
+                                    "collect_module_specifiers",
+                                );
+                            let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "bridge_modules",
+                            );
+                            report_progress_start(&create_binder_phase);
                             let (prepared, stats) = prepare_binder_for_check_with_stats(
                                 file,
                                 program,
@@ -593,22 +612,14 @@ pub(super) fn collect_diagnostics(
                                 &binder_shared_data,
                                 &resolved_module_paths,
                             );
+                            report_elapsed(&create_binder_phase, stats.create_binder);
+                            report_progress_start(&collect_module_specifiers_phase);
                             report_elapsed(
-                                "prepare_binders::first_file::create_binder",
-                                stats.create_binder,
-                            );
-                            report_progress_start(
-                                "prepare_binders::first_file::collect_module_specifiers",
-                            );
-                            report_elapsed(
-                                "prepare_binders::first_file::collect_module_specifiers",
+                                &collect_module_specifiers_phase,
                                 stats.collect_module_specifiers,
                             );
-                            report_progress_start("prepare_binders::first_file::bridge_modules");
-                            report_elapsed(
-                                "prepare_binders::first_file::bridge_modules",
-                                stats.bridge_modules,
-                            );
+                            report_progress_start(&bridge_modules_phase);
+                            report_elapsed(&bridge_modules_phase, stats.bridge_modules);
                             prepared
                         } else {
                             prepare_binder_for_check(
@@ -624,7 +635,7 @@ pub(super) fn collect_diagnostics(
                             file_idx,
                             binder: prepared.binder,
                             module_specifiers: prepared.module_specifiers,
-                            trace_first_file_progress: trace_first_prepare_binder,
+                            trace_parallel_file_rank,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -658,18 +669,37 @@ pub(super) fn collect_diagnostics(
                     .par_iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
-                        if !is_declaration_file(&file.file_name) {
+                        let source_file_rank = if !is_declaration_file(&file.file_name) {
                             let start_rank =
                                 started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
                             report_parallel_file_start(start_rank, &file.file_name);
-                        }
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
+                        let trace_parallel_file_rank = source_file_rank.filter(|rank| {
+                            *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT
+                        });
                         let file_total_start = Instant::now();
-                        let trace_first_prepare_binder = extended_progress_enabled
-                            && !(skip_lib_check && is_declaration_file(&file.file_name))
-                            && !traced_parallel_file.swap(true, Ordering::Relaxed);
                         let prepare_binder_start = Instant::now();
-                        let prepared = if trace_first_prepare_binder {
-                            report_progress_start("prepare_binders::first_file::create_binder");
+                        let prepared = if let Some(rank) = trace_parallel_file_rank {
+                            let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "create_binder",
+                            );
+                            let collect_module_specifiers_phase =
+                                format_extended_diagnostics_ranked_phase(
+                                    "prepare_binders",
+                                    rank,
+                                    "collect_module_specifiers",
+                                );
+                            let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "bridge_modules",
+                            );
+                            report_progress_start(&create_binder_phase);
                             let (prepared, stats) = prepare_binder_for_check_with_stats(
                                 file,
                                 program,
@@ -677,22 +707,14 @@ pub(super) fn collect_diagnostics(
                                 &binder_shared_data,
                                 &resolved_module_paths,
                             );
+                            report_elapsed(&create_binder_phase, stats.create_binder);
+                            report_progress_start(&collect_module_specifiers_phase);
                             report_elapsed(
-                                "prepare_binders::first_file::create_binder",
-                                stats.create_binder,
-                            );
-                            report_progress_start(
-                                "prepare_binders::first_file::collect_module_specifiers",
-                            );
-                            report_elapsed(
-                                "prepare_binders::first_file::collect_module_specifiers",
+                                &collect_module_specifiers_phase,
                                 stats.collect_module_specifiers,
                             );
-                            report_progress_start("prepare_binders::first_file::bridge_modules");
-                            report_elapsed(
-                                "prepare_binders::first_file::bridge_modules",
-                                stats.bridge_modules,
-                            );
+                            report_progress_start(&bridge_modules_phase);
+                            report_elapsed(&bridge_modules_phase, stats.bridge_modules);
                             prepared
                         } else {
                             prepare_binder_for_check(
@@ -708,7 +730,7 @@ pub(super) fn collect_diagnostics(
                             file_idx,
                             binder: prepared.binder,
                             module_specifiers: prepared.module_specifiers,
-                            trace_first_file_progress: trace_first_prepare_binder,
+                            trace_parallel_file_rank,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -748,18 +770,36 @@ pub(super) fn collect_diagnostics(
                 .iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
-                    if !is_declaration_file(&file.file_name) {
+                    let source_file_rank = if !is_declaration_file(&file.file_name) {
                         let start_rank =
                             started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
                         report_parallel_file_start(start_rank, &file.file_name);
-                    }
+                        Some(start_rank)
+                    } else {
+                        None
+                    };
+                    let trace_parallel_file_rank = source_file_rank
+                        .filter(|rank| *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT);
                     let file_total_start = Instant::now();
-                    let trace_first_prepare_binder = extended_progress_enabled
-                        && !(skip_lib_check && is_declaration_file(&file.file_name))
-                        && !traced_parallel_file.swap(true, Ordering::Relaxed);
                     let prepare_binder_start = Instant::now();
-                    let prepared = if trace_first_prepare_binder {
-                        report_progress_start("prepare_binders::first_file::create_binder");
+                    let prepared = if let Some(rank) = trace_parallel_file_rank {
+                        let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                            "prepare_binders",
+                            rank,
+                            "create_binder",
+                        );
+                        let collect_module_specifiers_phase =
+                            format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "collect_module_specifiers",
+                            );
+                        let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                            "prepare_binders",
+                            rank,
+                            "bridge_modules",
+                        );
+                        report_progress_start(&create_binder_phase);
                         let (prepared, stats) = prepare_binder_for_check_with_stats(
                             file,
                             program,
@@ -767,22 +807,14 @@ pub(super) fn collect_diagnostics(
                             &binder_shared_data,
                             &resolved_module_paths,
                         );
+                        report_elapsed(&create_binder_phase, stats.create_binder);
+                        report_progress_start(&collect_module_specifiers_phase);
                         report_elapsed(
-                            "prepare_binders::first_file::create_binder",
-                            stats.create_binder,
-                        );
-                        report_progress_start(
-                            "prepare_binders::first_file::collect_module_specifiers",
-                        );
-                        report_elapsed(
-                            "prepare_binders::first_file::collect_module_specifiers",
+                            &collect_module_specifiers_phase,
                             stats.collect_module_specifiers,
                         );
-                        report_progress_start("prepare_binders::first_file::bridge_modules");
-                        report_elapsed(
-                            "prepare_binders::first_file::bridge_modules",
-                            stats.bridge_modules,
-                        );
+                        report_progress_start(&bridge_modules_phase);
+                        report_elapsed(&bridge_modules_phase, stats.bridge_modules);
                         prepared
                     } else {
                         prepare_binder_for_check(
@@ -798,7 +830,7 @@ pub(super) fn collect_diagnostics(
                         file_idx,
                         binder: prepared.binder,
                         module_specifiers: prepared.module_specifiers,
-                        trace_first_file_progress: trace_first_prepare_binder,
+                        trace_parallel_file_rank,
                         program,
                         query_cache: &query_cache,
                         compiler_options: &compiler_options,
@@ -1175,6 +1207,10 @@ fn format_extended_diagnostics_collect_progress(phase: &str, elapsed: Duration) 
     )
 }
 
+fn format_extended_diagnostics_ranked_phase(group: &str, rank: usize, phase: &str) -> String {
+    format!("{group}::source_file_{rank}::{phase}")
+}
+
 fn format_extended_diagnostics_parallel_file_timing(
     file_name: &str,
     prepare_binder: Duration,
@@ -1277,6 +1313,13 @@ fn report_check_source_file_stats(
         }
         let phase_name = format!("{base_phase}::{phase}");
         report(&phase_name, elapsed);
+    }
+    for statement_timing in &stats.traced_top_level_statement_timings {
+        let phase_name = format!(
+            "{base_phase}::statement_{}::kind_{}",
+            statement_timing.position, statement_timing.kind
+        );
+        report(&phase_name, statement_timing.elapsed);
     }
 }
 
@@ -1393,7 +1436,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
     module_specifiers: Vec<CollectedModuleSpecifier>,
-    trace_first_file_progress: bool,
+    trace_parallel_file_rank: Option<usize>,
     program: &'a MergedProgram,
     query_cache: &'a QueryCache<'a>,
     compiler_options: &'a tsz_common::CheckerOptions,
@@ -1430,7 +1473,7 @@ pub(super) fn check_file_for_parallel<'a>(
         file_idx,
         binder,
         module_specifiers,
-        trace_first_file_progress,
+        trace_parallel_file_rank,
         program,
         query_cache,
         compiler_options,
@@ -1456,23 +1499,30 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
+    let parallel_trace_prefix =
+        trace_parallel_file_rank.map(|rank| format!("parallel_check_files::source_file_{rank}"));
     let report_parallel_start = |phase: &str| {
-        if trace_first_file_progress {
-            eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
+        if let Some(prefix) = parallel_trace_prefix.as_deref() {
+            let phase_name = format!("{prefix}::{phase}");
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_phase_start(&phase_name)
+            );
         }
     };
     let report_parallel_elapsed = |phase: &str, elapsed: Duration| {
-        if trace_first_file_progress {
+        if let Some(prefix) = parallel_trace_prefix.as_deref() {
+            let phase_name = format!("{prefix}::{phase}");
             eprintln!(
                 "{}",
-                format_extended_diagnostics_collect_progress(phase, elapsed)
+                format_extended_diagnostics_collect_progress(&phase_name, elapsed)
             );
         }
     };
 
     // Build resolved_modules from the pre-computed resolved module maps
     let resolved_modules_start = Instant::now();
-    report_parallel_start("parallel_check_files::first_file::build_resolved_modules");
+    report_parallel_start("build_resolved_modules");
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
         .filter(|(specifier, _, _)| {
@@ -1481,13 +1531,10 @@ pub(super) fn check_file_for_parallel<'a>(
         })
         .map(|(specifier, _, _)| specifier.clone())
         .collect();
-    report_parallel_elapsed(
-        "parallel_check_files::first_file::build_resolved_modules",
-        resolved_modules_start.elapsed(),
-    );
+    report_parallel_elapsed("build_resolved_modules", resolved_modules_start.elapsed());
 
     let create_checker_start = Instant::now();
-    report_parallel_start("parallel_check_files::first_file::create_checker");
+    report_parallel_start("create_checker");
     let mut checker = CheckerState::with_options(
         &file.arena,
         &binder,
@@ -1495,13 +1542,10 @@ pub(super) fn check_file_for_parallel<'a>(
         file.file_name.clone(),
         compiler_options,
     );
-    report_parallel_elapsed(
-        "parallel_check_files::first_file::create_checker",
-        create_checker_start.elapsed(),
-    );
+    report_parallel_elapsed("create_checker", create_checker_start.elapsed());
 
     let configure_context_start = Instant::now();
-    report_parallel_start("parallel_check_files::first_file::configure_context");
+    report_parallel_start("configure_context");
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
     checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
@@ -1548,10 +1592,7 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| is_real_syntax_error(d.code))
         .map(|d| d.start)
         .collect();
-    report_parallel_elapsed(
-        "parallel_check_files::first_file::configure_context",
-        configure_context_start.elapsed(),
-    );
+    report_parallel_elapsed("configure_context", configure_context_start.elapsed());
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
@@ -1564,25 +1605,26 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
-        report_parallel_start("parallel_check_files::first_file::check_source_file");
-        if trace_first_file_progress {
+        report_parallel_start("check_source_file");
+        if parallel_trace_prefix.is_some() {
             let source_file_stats =
                 checker.check_source_file_with_progress(file.source_file, |phase| {
                     if let Some(phase) = phase.strip_suffix(":start") {
-                        let phase_name =
-                            format!("parallel_check_files::first_file::check_source_file::{phase}");
+                        let phase_name = format!("check_source_file::{phase}");
                         report_parallel_start(&phase_name);
                     }
                 });
-            report_parallel_elapsed(
-                "parallel_check_files::first_file::check_source_file",
-                source_file_stats.total,
-            );
-            report_check_source_file_stats(
-                "parallel_check_files::first_file::check_source_file",
-                &source_file_stats,
-                |phase, elapsed| report_parallel_elapsed(phase, elapsed),
-            );
+            report_parallel_elapsed("check_source_file", source_file_stats.total);
+            let base_phase = parallel_trace_prefix
+                .as_ref()
+                .map(|prefix| format!("{prefix}::check_source_file"))
+                .expect("checked above");
+            report_check_source_file_stats(&base_phase, &source_file_stats, |phase, elapsed| {
+                eprintln!(
+                    "{}",
+                    format_extended_diagnostics_collect_progress(phase, elapsed)
+                );
+            });
         } else {
             checker.check_source_file(file.source_file);
         }
@@ -1651,12 +1693,9 @@ pub(super) fn check_file_for_parallel<'a>(
     }
 
     let extract_cache_start = Instant::now();
-    report_parallel_start("parallel_check_files::first_file::extract_cache");
+    report_parallel_start("extract_cache");
     let type_cache = checker.extract_cache();
-    report_parallel_elapsed(
-        "parallel_check_files::first_file::extract_cache",
-        extract_cache_start.elapsed(),
-    );
+    report_parallel_elapsed("extract_cache", extract_cache_start.elapsed());
     (file_diagnostics, Some(type_cache))
 }
 
@@ -1776,6 +1815,19 @@ let __: B = new B();"#
         assert_eq!(
             line,
             "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file total=875.00ms prepare_binder=125.00ms check_file=750.00ms file=/tmp/index.ts"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_ranked_phase() {
+        let line = format_extended_diagnostics_ranked_phase(
+            "parallel_check_files",
+            2,
+            "check_source_file",
+        );
+        assert_eq!(
+            line,
+            "parallel_check_files::source_file_2::check_source_file"
         );
     }
 

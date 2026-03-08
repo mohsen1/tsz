@@ -1,7 +1,7 @@
 //! Core declaration and statement checking implementation.
 
 use crate::context::is_declaration_file_name;
-use crate::state::{CheckSourceFileStats, CheckerState};
+use crate::state::{CheckSourceFileStats, CheckerState, TracedTopLevelStatementTiming};
 use crate::statements::StatementChecker;
 use tracing::{Level, span};
 use tsz_binder::symbol_flags;
@@ -314,6 +314,7 @@ impl<'a> CheckerState<'a> {
                     report(&format!("{statement_phase}:start"));
                     Some((stmt_node.kind, statement_phase))
                 });
+                let statement_start = Instant::now();
                 if is_dts {
                     self.check_dts_statement_in_ambient_context(stmt_idx);
                 }
@@ -337,6 +338,13 @@ impl<'a> CheckerState<'a> {
                         }
                         _ => self.check_statement(stmt_idx),
                     }
+                    stats
+                        .traced_top_level_statement_timings
+                        .push(TracedTopLevelStatementTiming {
+                            position: stmt_position,
+                            kind: stmt_kind,
+                            elapsed: statement_start.elapsed(),
+                        });
                 } else {
                     self.check_statement(stmt_idx);
                 }
@@ -1647,6 +1655,7 @@ function pick(flag: boolean) {
         );
         assert!(stats.total >= stats.check_top_level_statements);
         assert!(stats.total >= stats.build_type_environment);
+        assert_eq!(stats.traced_top_level_statement_timings.len(), 2);
     }
 
     #[test]

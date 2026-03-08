@@ -128,6 +128,13 @@ pub struct CheckerState<'a> {
 /// These counters are intentionally phase-oriented rather than exhaustive.
 /// They exist to make large-repo bottlenecks visible without changing checker
 /// semantics or introducing a new execution model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TracedTopLevelStatementTiming {
+    pub position: usize,
+    pub kind: u16,
+    pub elapsed: Duration,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CheckSourceFileStats {
     pub total: Duration,
@@ -149,6 +156,7 @@ pub struct CheckSourceFileStats {
     pub check_amd_module_names: Duration,
     pub check_unused_declarations: Duration,
     pub check_js_grammar_statements: Duration,
+    pub traced_top_level_statement_timings: Vec<TracedTopLevelStatementTiming>,
 }
 
 // Re-export from centralized limits — do NOT redefine these here.
