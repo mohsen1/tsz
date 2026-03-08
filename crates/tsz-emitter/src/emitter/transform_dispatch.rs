@@ -857,6 +857,9 @@ impl<'a> Printer<'a> {
 
         let mut emitter = TC39DecoratorEmitter::new(self.arena);
         emitter.set_indent_level(self.writer.indent_level() as usize);
+        // At ES2022+, use `static { }` blocks for decorator application.
+        // At ES2015, use IIFE pattern with comma expressions.
+        emitter.set_use_static_blocks(!self.ctx.needs_es2022_lowering);
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
