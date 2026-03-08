@@ -147,6 +147,10 @@ pub enum JsxMode {
     ReactNative,
 }
 
+#[cfg(test)]
+#[path = "../tests/checker_options_tests.rs"]
+mod tests;
+
 impl Default for CheckerOptions {
     fn default() -> Self {
         Self {

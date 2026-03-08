@@ -255,6 +255,10 @@ pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
     }
 }
 
+#[cfg(test)]
+#[path = "../tests/comments_tests.rs"]
+mod tests;
+
 /// Get leading comments from cached comment ranges.
 ///
 /// This is an optimized version that uses pre-computed comment ranges

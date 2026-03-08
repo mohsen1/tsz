@@ -56,3 +56,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/concurrent_tests.rs"]
 mod concurrent_tests;
+
+#[cfg(test)]
+#[path = "../../tests/intern_normalize_tests.rs"]
+mod intern_normalize_tests;
