@@ -188,7 +188,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let temp_name = format!("{}_default", self.get_temp_var_name());
+        let temp_name = "default_1".to_string();
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_indent_level(self.writer.indent_level());
         // Pass transform directives to the ClassES5Emitter

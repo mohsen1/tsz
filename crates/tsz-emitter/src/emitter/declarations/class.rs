@@ -793,7 +793,7 @@ impl<'a> Printer<'a> {
                     class_decorators: legacy_class_decorators,
                     has_member_decorators: has_legacy_member_decorators,
                 });
-                let output = es5_emitter.emit_class(idx);
+                let output = es5_emitter.emit_class_with_name(idx, &class_name);
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
