@@ -1402,6 +1402,16 @@ impl<'a> CheckerState<'a> {
                 actual,
             } => {
                 if !self.ctx.has_parse_errors {
+                    // tsc suppresses TS2554/TS2555 for IIFEs (immediately invoked
+                    // function expressions) when too few arguments are provided.
+                    // Missing arguments just become `undefined` at runtime.
+                    if actual < expected_min {
+                        let is_iife = self.is_callee_function_expression(callee_expr);
+                        if is_iife {
+                            return TypeId::ERROR;
+                        }
+                    }
+
                     // Suppress arity errors when the call contains non-tuple spread
                     // arguments. The spread could provide any number of values at
                     // runtime, so the actual argument count is indeterminate.
@@ -1617,6 +1627,26 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    /// Check if the callee expression is a function expression (IIFE pattern).
+    ///
+    /// Unwraps through parenthesized expressions to find the actual callee.
+    fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => true,
+            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.is_callee_function_expression(paren.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Build an expanded args list for TS2554 error location.
