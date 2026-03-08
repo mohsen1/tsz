@@ -830,6 +830,7 @@ impl<'a> CheckerState<'a> {
                 && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node)
             {
+                let mut call_trace = None;
                 if let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) {
                     report(&format!(
                         "{statement_phase}::expression_kind_{}",
@@ -838,6 +839,36 @@ impl<'a> CheckerState<'a> {
                     if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
                         && let Some(call) = self.ctx.arena.get_call_expr(expr_node)
                     {
+                        let callee_idx = call.expression;
+                        let callee_receiver_idx = self
+                            .ctx
+                            .arena
+                            .get(callee_idx)
+                            .and_then(|node| self.ctx.arena.get_access_expr(node))
+                            .map(|access| access.expression);
+                        let callee_receiver_kind = callee_receiver_idx
+                            .and_then(|idx| self.ctx.arena.get(idx).map(|node| node.kind));
+                        let callee_property_name = self
+                            .ctx
+                            .arena
+                            .get(callee_idx)
+                            .and_then(|node| self.ctx.arena.get_access_expr(node))
+                            .and_then(|access| {
+                                self.ctx
+                                    .arena
+                                    .get_identifier_at(access.name_or_argument)
+                                    .map(|ident| ident.escaped_text.clone())
+                            });
+                        let arg_indices = call
+                            .arguments
+                            .as_ref()
+                            .map(|args| args.nodes.clone())
+                            .unwrap_or_default();
+                        let arg_kinds = arg_indices
+                            .iter()
+                            .map(|&arg_idx| self.ctx.arena.get(arg_idx).map(|node| node.kind))
+                            .collect::<Vec<_>>();
+
                         if let Some(callee_node) = self.ctx.arena.get(call.expression) {
                             report(&format!(
                                 "{statement_phase}::call_callee_kind_{}",
@@ -846,10 +877,68 @@ impl<'a> CheckerState<'a> {
                         }
                         let arg_count = call.arguments.as_ref().map_or(0, |args| args.nodes.len());
                         report(&format!("{statement_phase}::call_arg_count_{arg_count}"));
+                        call_trace = Some((
+                            callee_idx,
+                            callee_receiver_idx,
+                            callee_receiver_kind,
+                            callee_property_name,
+                            arg_indices,
+                            arg_kinds,
+                        ));
                     }
                 }
                 report(&format!("{statement_phase}::check_await_expression"));
                 self.check_await_expression(expr_stmt.expression);
+                if let Some((
+                    callee_idx,
+                    callee_receiver_idx,
+                    callee_receiver_kind,
+                    callee_property_name,
+                    arg_indices,
+                    arg_kinds,
+                )) = call_trace
+                {
+                    if let Some(receiver_kind) = callee_receiver_kind {
+                        report(&format!(
+                            "{statement_phase}::call_callee_receiver_kind_{receiver_kind}"
+                        ));
+                    }
+                    if let Some(receiver_idx) = callee_receiver_idx {
+                        report(&format!(
+                            "{statement_phase}::call_callee_receiver_get_type_of_node"
+                        ));
+                        let receiver_type = self.get_type_of_node(receiver_idx);
+                        if let Some(property_name) = callee_property_name.as_deref() {
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_evaluate_application_type"
+                            ));
+                            let evaluated_receiver = self.evaluate_application_type(receiver_type);
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_type_for_property_access"
+                            ));
+                            let resolved_receiver =
+                                self.resolve_type_for_property_access(evaluated_receiver);
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env"
+                            ));
+                            let _ = self
+                                .resolve_property_access_with_env(resolved_receiver, property_name);
+                        }
+                    }
+                    report(&format!("{statement_phase}::call_callee_get_type_of_node"));
+                    self.get_type_of_node(callee_idx);
+                    for (arg_position, arg_idx) in arg_indices.iter().copied().enumerate() {
+                        if let Some(arg_kind) = arg_kinds.get(arg_position).and_then(|kind| *kind) {
+                            report(&format!(
+                                "{statement_phase}::call_arg_{arg_position}::kind_{arg_kind}"
+                            ));
+                        }
+                        report(&format!(
+                            "{statement_phase}::call_arg_{arg_position}::get_type_of_node"
+                        ));
+                        self.get_type_of_node(arg_idx);
+                    }
+                }
                 report(&format!("{statement_phase}::get_type_of_node"));
                 self.get_type_of_node(expr_stmt.expression);
             } else {
