@@ -571,23 +571,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
-        let mut js_namespace_export_aliases =
+        self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
         let js_commonjs_expando_declarations = self
             .collect_js_commonjs_expando_declarations(source_file, &self.js_export_equals_names);
-        for (root_name, aliases) in js_commonjs_expando_declarations.namespace_aliases {
-            let entry = js_namespace_export_aliases
-                .entry(root_name)
-                .or_default();
-            for (export_name, local_name) in aliases {
-                if !entry.iter().any(|(existing_export, existing_local)| {
-                    existing_export == &export_name && existing_local == &local_name
-                }) {
-                    entry.push((export_name, local_name));
-                }
-            }
-        }
-        self.js_namespace_export_aliases = js_namespace_export_aliases;
         self.js_deferred_function_export_statements =
             js_commonjs_expando_declarations.function_statements;
         self.js_deferred_value_export_statements =

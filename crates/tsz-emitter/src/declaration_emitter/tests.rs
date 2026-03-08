@@ -837,6 +837,64 @@ type DoneCB = (failures: number) => any;"#;
 }
 
 #[test]
+fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
+    let source = r#"
+class Handler {
+    static get OPTIONS() {
+        return 1;
+    }
+
+    process() {
+    }
+}
+Handler.statische = function() { }
+const Strings = {
+    a: "A",
+    b: "B"
+};
+
+module.exports = Handler;
+module.exports.Strings = Strings;
+
+/**
+ * @typedef {Object} HandlerOptions
+ * @property {String} name
+ * Should be able to export a type alias at the same time.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = Handler;
+declare class Handler {
+    static get OPTIONS(): any;
+    process(): void;
+}
+declare namespace Handler {
+    export { statische, Strings, HandlerOptions };
+}
+declare function statische(): void;
+declare namespace Strings {
+    let a: string;
+    let b: string;
+}
+type HandlerOptions = {
+    /**
+     * Should be able to export a type alias at the same time.
+     */
+    name: string;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS class static assignments and typedefs to emit in source order: {output}"
+    );
+}
+
+#[test]
 fn test_js_reexports_from_same_module_are_grouped() {
     let source = r#"
 export { default } from "fs";
