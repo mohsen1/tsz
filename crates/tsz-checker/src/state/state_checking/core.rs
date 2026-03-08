@@ -1748,6 +1748,52 @@ export class Box {
     }
 
     #[test]
+    fn check_source_file_with_progress_traces_method_body_subphases() {
+        let source = r#"
+export class Box {
+    save(value: string): void {
+        value.trim();
+    }
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.check_source_file_with_progress(root, |phase| phases.push(phase.to_string()));
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains("check_class_members::member_0::kind_")
+                    && phase.ends_with("body::statement_count_1:start")
+            }),
+            "expected method body statement count marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains("check_class_members::member_0::kind_")
+                    && phase.contains("body::statement_0::")
+                    && phase.ends_with("get_type_of_node:start")
+            }),
+            "expected method body expression typing marker, got {phases:?}"
+        );
+    }
+
+    #[test]
     fn check_source_file_resolves_deferred_type_only_symbols() {
         let source = r#"
 interface Box<T = string> {

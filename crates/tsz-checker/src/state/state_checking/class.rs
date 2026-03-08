@@ -366,13 +366,20 @@ impl<'a> CheckerState<'a> {
         // Check each class member
         report("check_class_members");
         for (member_position, &member_idx) in class.members.nodes.iter().enumerate() {
+            let mut member_phase = None;
             if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                report(&format!(
+                member_phase = Some(format!(
                     "check_class_members::member_{member_position}::kind_{}",
                     member_node.kind
                 ));
             }
-            self.check_class_member(member_idx);
+            if let Some(member_phase) = member_phase {
+                report(&member_phase);
+                let mut member_report = |phase: &str| report(&format!("{member_phase}::{phase}"));
+                self.check_class_member_with_progress(member_idx, &mut member_report);
+            } else {
+                self.check_class_member(member_idx);
+            }
         }
 
         self.ctx.async_depth = saved_async_depth;
