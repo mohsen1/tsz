@@ -45,9 +45,9 @@ pub struct TypeFormatter<'a> {
     symbol_arena: Option<&'a tsz_binder::SymbolArena>,
     /// Definition store for looking up `DefId` names (optional)
     def_store: Option<&'a DefinitionStore>,
-    /// Maps `file_id` -> module specifier for import-qualified type display.
+    /// Optional mapping from file IDs to import specifiers for disambiguated diagnostics.
     module_specifiers: Option<&'a FxHashMap<u32, String>>,
-    /// The `file_id` of the file currently being checked.
+    /// Optional current file ID so local types stay unqualified in diagnostics.
     current_file_id: Option<u32>,
     /// Maximum depth for nested type printing
     max_depth: u32,
@@ -97,7 +97,7 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Add module specifier map for import-qualified type display.
+    /// Add module specifiers for import-qualified disambiguation.
     pub const fn with_module_specifiers(
         mut self,
         module_specifiers: &'a FxHashMap<u32, String>,
@@ -106,20 +106,11 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Set the `file_id` of the currently-checked file.
-    pub const fn with_current_file_id(mut self, file_id: u32) -> Self {
-        self.current_file_id = Some(file_id);
+    /// Record the current file so local types stay unqualified in diagnostics.
+    pub const fn with_current_file_id(mut self, current_file_id: u32) -> Self {
+        self.current_file_id = Some(current_file_id);
         self
     }
-
-    /// Format a pair of types, disambiguating with import paths when names collide.
-    pub fn format_disambiguated(&mut self, type_a: TypeId, type_b: TypeId) -> (String, String) {
-        (
-            self.format(type_a).into_owned(),
-            self.format(type_b).into_owned(),
-        )
-    }
-
     fn atom(&mut self, atom: Atom) -> Arc<str> {
         if let Some(value) = self.atom_cache.get(&atom) {
             return std::sync::Arc::clone(value);
@@ -270,6 +261,28 @@ impl<'a> TypeFormatter<'a> {
         let result = self.format_key(&key);
         self.current_depth -= 1;
         result
+    }
+
+    /// Format two types, qualifying identical names from different files via `import("...").Name`.
+    pub fn format_disambiguated(&mut self, type_a: TypeId, type_b: TypeId) -> (String, String) {
+        let left = self.format(type_a).into_owned();
+        let right = self.format(type_b).into_owned();
+        if left != right {
+            return (left, right);
+        }
+
+        let qualified_left = self
+            .format_import_qualified(type_a)
+            .unwrap_or_else(|| left.clone());
+        let qualified_right = self
+            .format_import_qualified(type_b)
+            .unwrap_or_else(|| right.clone());
+
+        if qualified_left != qualified_right {
+            (qualified_left, qualified_right)
+        } else {
+            (left, right)
+        }
     }
 
     fn format_key(&mut self, key: &TypeData) -> Cow<'static, str> {
@@ -1065,6 +1078,60 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.atom(def.name).to_string()
+    }
+
+    fn format_import_qualified(&mut self, type_id: TypeId) -> Option<String> {
+        let key = self.interner.lookup(type_id)?;
+        match key {
+            TypeData::Lazy(def_id) => self.format_import_qualified_def(def_id),
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                let qualified_base = self.format_import_qualified(app.base)?;
+                let args: Vec<String> = app
+                    .args
+                    .iter()
+                    .map(|arg| self.format(*arg).into_owned())
+                    .collect();
+                Some(format!("{qualified_base}<{}>", args.join(", ")))
+            }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                self.format_import_qualified_shape(&self.interner.object_shape(shape_id))
+            }
+            _ => None,
+        }
+    }
+
+    fn format_import_qualified_shape(&mut self, shape: &ObjectShape) -> Option<String> {
+        if let Some(sym_id) = shape.symbol {
+            let arena = self.symbol_arena?;
+            let sym = arena.get(sym_id)?;
+            let name = self.format_symbol_name(sym_id)?;
+            return Some(self.qualify_name_for_file(name, sym.decl_file_idx));
+        }
+
+        let def_store = self.def_store?;
+        let def_id = def_store.find_def_by_shape(shape)?;
+        self.format_import_qualified_def(def_id)
+    }
+
+    fn format_import_qualified_def(&mut self, def_id: crate::def::DefId) -> Option<String> {
+        let def_store = self.def_store?;
+        let def = def_store.get(def_id)?;
+        let name = self.format_def_name(&def);
+        Some(self.qualify_name_for_file(name, def.file_id?))
+    }
+
+    fn qualify_name_for_file(&self, name: String, file_id: u32) -> String {
+        let Some(module_specifiers) = self.module_specifiers else {
+            return name;
+        };
+        if self.current_file_id == Some(file_id) {
+            return name;
+        }
+        let Some(specifier) = module_specifiers.get(&file_id) else {
+            return name;
+        };
+        format!("import(\"{specifier}\").{name}")
     }
 }
 
@@ -2531,5 +2598,34 @@ mod tests {
             result.contains("const T"),
             "Expected 'const T' in type params, got: {result}"
         );
+    }
+
+    #[test]
+    fn format_disambiguated_qualifies_same_named_lazy_types_from_different_files() {
+        let db = TypeInterner::new();
+        let def_store = crate::def::DefinitionStore::new();
+        let name = db.intern_string("Shared");
+
+        let mut first = crate::def::DefinitionInfo::type_alias(name, vec![], TypeId::STRING);
+        first.file_id = Some(1);
+        let first_def = def_store.register(first);
+
+        let mut second = crate::def::DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+        second.file_id = Some(2);
+        let second_def = def_store.register(second);
+
+        let mut module_specifiers = FxHashMap::default();
+        module_specifiers.insert(1, "a".to_string());
+        module_specifiers.insert(2, "b".to_string());
+
+        let mut fmt = TypeFormatter::new(&db)
+            .with_def_store(&def_store)
+            .with_module_specifiers(&module_specifiers)
+            .with_current_file_id(0);
+
+        let (left, right) = fmt.format_disambiguated(db.lazy(first_def), db.lazy(second_def));
+
+        assert_eq!(left, "import(\"a\").Shared");
+        assert_eq!(right, "import(\"b\").Shared");
     }
 }
