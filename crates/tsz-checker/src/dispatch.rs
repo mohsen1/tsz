@@ -756,6 +756,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
                             diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
                         );
+                        // TSC always emits TS2683 as a companion to TS2331 in
+                        // namespace bodies — `this` is inherently untyped here,
+                        // regardless of noImplicitThis.
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                            diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        );
                         return TypeId::ANY;
                     }
                     // TS17009: 'super' must be called before accessing 'this'
