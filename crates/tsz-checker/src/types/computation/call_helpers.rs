@@ -98,12 +98,11 @@ impl<'a> CheckerState<'a> {
                 // undefined — tsc suppresses the companion TS2454 in these cases.
                 let declared_type = self.get_type_of_symbol(sym_id);
                 let should_skip = if self.skip_definite_assignment_for_type(declared_type) {
-                    // For TDZ variables, get_type_of_symbol may return `any` because
-                    // type inference hasn't completed yet (e.g., destructured bindings
-                    // like `let {a} = {a: ''}` where the initializer type isn't resolved).
-                    // Only suppress TS2454 if the `any` comes from an explicit type
-                    // annotation, not from failed inference.
-                    self.symbol_has_explicit_any_or_undefined_annotation(sym_id)
+                    // For destructured bindings in TDZ, get_type_of_symbol may return
+                    // `any` because the initializer hasn't been processed yet (e.g.,
+                    // `let {a} = {a: ''}` where `a` is `string` but inference yields `any`).
+                    // Only emit TS2454 for these binding-element cases.
+                    !self.symbol_is_destructured_binding_element(sym_id)
                 } else {
                     false
                 };
@@ -175,14 +174,13 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a symbol's declaration has an explicit type annotation that
-    /// resolves to `any`, `unknown`, or includes `undefined`/`void`.
+    /// Check if a symbol's declaration is a binding element inside a destructuring
+    /// pattern (e.g., `let {a} = expr` or `let [x, y] = expr`).
     ///
-    /// Used by the TDZ companion TS2454 logic: `get_type_of_symbol` may return
-    /// `any` for binding elements in destructuring patterns when the variable
-    /// is used before its declaration (TDZ). In that case, we must distinguish
-    /// "explicitly annotated as any" from "inference failed, defaulted to any".
-    fn symbol_has_explicit_any_or_undefined_annotation(&self, sym_id: SymbolId) -> bool {
+    /// For destructured bindings in TDZ, `get_type_of_symbol` returns `any` because
+    /// the initializer hasn't been processed yet. The real type would NOT be `any`
+    /// once inference completes, so TS2454 should still be emitted despite the `any`.
+    fn symbol_is_destructured_binding_element(&self, sym_id: SymbolId) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -198,53 +196,22 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Walk from the symbol's declaration to the enclosing variable declaration
-        // to find the type annotation. For binding elements in destructuring patterns,
-        // the type annotation is on the variable declaration, not the binding element.
-        let var_decl_node = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            Some(decl_node)
-        } else if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT
-            || decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-        {
-            // Walk up to find the enclosing variable declaration
-            let mut current = decl_idx;
-            let mut found = None;
-            for _ in 0..10 {
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                if ext.parent.is_none() {
-                    break;
-                }
-                if let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                {
-                    found = Some(parent_node);
-                    break;
-                }
-                current = ext.parent;
-            }
-            found
-        } else {
-            None
-        };
-
-        let Some(var_node) = var_decl_node else {
-            return false;
-        };
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_node) else {
-            return false;
-        };
-
-        // If there's no type annotation, the type is inferred — any `any` result
-        // from get_type_of_symbol is from failed inference, not explicit annotation.
-        if var_decl.type_annotation.is_none() {
-            return false;
+        // Direct binding elements are always destructured
+        if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+            return true;
         }
 
-        // There IS an explicit type annotation. The `any`/`unknown`/undefined result
-        // from get_type_of_symbol is genuine — suppress TS2454.
-        true
+        // An identifier whose parent is a binding element
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+            {
+                return true;
+            }
+
+        false
     }
 
     /// Resolve the value-side type from a symbol's value declaration node.

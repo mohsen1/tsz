@@ -210,10 +210,11 @@ impl<'a> CheckerState<'a> {
                         self.resolve_type_for_property_access_inner(body, visited)
                     }
                 } else {
-                    // Definition not found in store - try to resolve via symbol lookup
-                    // This handles cases where the definition hasn't been registered yet
-                    // (e.g., in test setup that doesn't go through full lowering)
-                    let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+                    // Definition not found in store - try to resolve via symbol lookup.
+                    // Use def_to_symbol_id_with_fallback to handle cross-context DefIds
+                    // (e.g., Lazy types created in lib-file child checkers whose
+                    // def_to_symbol mappings aren't in the main context).
+                    let sym_id_opt = self.ctx.def_to_symbol_id_with_fallback(def_id);
                     if let Some(sym_id) = sym_id_opt {
                         // Enums in value position behave like objects (runtime enum object).
                         // For numeric enums, this includes a number index signature for reverse mapping.
