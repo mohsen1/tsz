@@ -2,7 +2,10 @@ use super::*;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{FunctionShape, ObjectFlags, ObjectShape, TypeId, TypeInterner};
+use tsz_solver::{
+    CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
+    TypeId, TypeInterner,
+};
 
 // =============================================================================
 // Helper
@@ -1589,6 +1592,104 @@ const lambdaFoo = (/** left */ left: number, /** right */ right: number): number
             "declare const lambdaFoo: (/** left */ left: number, /** right */ right: number) => number;"
         ),
         "Expected arrow function parameter comments to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_prefers_returned_callable_object_type() {
+    let source = r#"
+function test(fn) {
+    const composed = function (...args) { };
+    return composed;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let func_idx = source_file.statements.nodes[0];
+    let func_node = parser.arena.get(func_idx).expect("missing function node");
+    let func = parser
+        .arena
+        .get_function(func_node)
+        .expect("missing function data");
+    let body_node = parser.arena.get(func.body).expect("missing body node");
+    let body = parser
+        .arena
+        .get_block(body_node)
+        .expect("missing function body");
+    let composed_stmt_idx = body.statements.nodes[0];
+    let composed_decl = parser
+        .arena
+        .get(composed_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing composed declaration");
+    let return_stmt_idx = body.statements.nodes[1];
+    let return_stmt_node = parser
+        .arena
+        .get(return_stmt_idx)
+        .expect("missing return node");
+    let return_stmt = parser
+        .arena
+        .get_return_statement(return_stmt_node)
+        .expect("missing return statement");
+
+    let interner = TypeInterner::new();
+    let fn_atom = interner.intern_string("fn");
+    let args_atom = interner.intern_string("args");
+    let name_atom = interner.intern_string("name");
+    let any_array = interner.array(TypeId::ANY);
+    let plain_return_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::rest(args_atom, any_array)],
+        TypeId::VOID,
+    ));
+    let callable_return_type = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::rest(args_atom, any_array)],
+            TypeId::VOID,
+        )],
+        properties: vec![PropertyInfo::readonly(name_atom, TypeId::STRING)],
+        ..Default::default()
+    });
+    let test_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(fn_atom, TypeId::ANY)],
+        plain_return_type,
+    ));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(func_idx.0, test_type);
+    type_cache.node_types.insert(func.name.0, test_type);
+    type_cache
+        .node_types
+        .insert(composed_decl.name.0, callable_return_type);
+    type_cache
+        .node_types
+        .insert(return_stmt.expression.0, callable_return_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function test(fn: any): {"),
+        "Expected JS function signature: {output}"
+    );
+    assert!(
+        output.contains("(...args: any[]): void;"),
+        "Expected callable return signature to be preserved: {output}"
+    );
+    assert!(
+        output.contains("readonly name: string;"),
+        "Expected returned callable property to be preserved: {output}"
     );
 }
 

@@ -76,6 +76,12 @@ struct JsdocTypeAliasDecl {
     render_verbatim: bool,
 }
 
+struct JsDefinedPropertyDecl {
+    name: String,
+    type_text: String,
+    readonly: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct JsdocParamDecl {
     pub(crate) name: String,
@@ -3887,6 +3893,20 @@ impl<'a> DeclarationEmitter<'a> {
         cache.symbol_types.get(&symbol_id).copied()
     }
 
+    pub(crate) fn get_type_via_symbol(
+        &self,
+        node_id: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let binder = self.binder?;
+        let symbol_id = binder.get_node_symbol(node_id)?;
+        let symbol = binder.symbols.get(symbol_id)?;
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .find_map(|decl_idx| self.get_node_type_or_names(&[decl_idx]))
+    }
+
     pub(crate) fn infer_fallback_type_text(&self, node_id: NodeIndex) -> Option<String> {
         self.infer_fallback_type_text_at(node_id, self.indent_level)
     }
@@ -4768,6 +4788,31 @@ impl<'a> DeclarationEmitter<'a> {
         self.function_body_returns_identifier(func.body, &name)
     }
 
+    pub(super) fn refine_invokable_return_type_from_identifier(
+        &self,
+        body_idx: NodeIndex,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        if !tsz_solver::type_queries::is_invokable_type(interner, inferred_return_type)
+            || self.type_has_visible_declaration_members(inferred_return_type)
+        {
+            return None;
+        }
+
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let returned_identifier_type = self
+            .get_node_type_or_names(&[returned_identifier])
+            .or_else(|| self.get_type_via_symbol(returned_identifier))?;
+        if tsz_solver::type_queries::is_invokable_type(interner, returned_identifier_type)
+            && self.type_has_visible_declaration_members(returned_identifier_type)
+        {
+            return Some(returned_identifier_type);
+        }
+
+        None
+    }
+
     pub(super) fn function_body_returns_identifier(&self, body_idx: NodeIndex, name: &str) -> bool {
         let Some(body_node) = self.arena.get(body_idx) else {
             return false;
@@ -4781,6 +4826,428 @@ impl<'a> DeclarationEmitter<'a> {
             .iter()
             .copied()
             .any(|stmt_idx| self.statement_returns_identifier(stmt_idx, name))
+    }
+
+    pub(super) fn emit_js_returned_define_property_function_type(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> bool {
+        let Some((initializer, properties)) =
+            self.js_returned_define_property_function_info(body_idx)
+        else {
+            return false;
+        };
+
+        self.write(": ");
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        if !self.emit_function_initializer_call_signature(initializer) {
+            self.decrease_indent();
+            return false;
+        }
+        self.write(";");
+        self.write_line();
+
+        for property in properties {
+            self.write_indent();
+            if property.readonly {
+                self.write("readonly ");
+            }
+            self.write(&self.declaration_property_name_text(&property.name));
+            self.write(": ");
+            self.write(&property.type_text);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        true
+    }
+
+    fn function_body_unique_return_identifier(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut returned_identifier = None;
+        if self.collect_unique_return_identifier_from_block(
+            &block.statements,
+            &mut returned_identifier,
+        ) {
+            returned_identifier
+        } else {
+            None
+        }
+    }
+
+    fn collect_unique_return_identifier_from_block(
+        &self,
+        statements: &NodeList,
+        returned_identifier: &mut Option<NodeIndex>,
+    ) -> bool {
+        statements.nodes.iter().copied().all(|stmt_idx| {
+            self.collect_unique_return_identifier_from_statement(stmt_idx, returned_identifier)
+        })
+    }
+
+    fn collect_unique_return_identifier_from_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        returned_identifier: &mut Option<NodeIndex>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                    return false;
+                };
+                let Some(identifier_idx) = self.return_expression_identifier(ret.expression) else {
+                    return false;
+                };
+
+                if let Some(existing_idx) = *returned_identifier {
+                    return self
+                        .get_identifier_text(existing_idx)
+                        .zip(self.get_identifier_text(identifier_idx))
+                        .is_some_and(|(existing, current)| existing == current);
+                }
+
+                *returned_identifier = Some(identifier_idx);
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    self.collect_unique_return_identifier_from_block(
+                        &block.statements,
+                        returned_identifier,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => self
+                .arena
+                .get_if_statement(stmt_node)
+                .is_some_and(|if_data| {
+                    self.collect_unique_return_identifier_from_statement(
+                        if_data.then_statement,
+                        returned_identifier,
+                    ) && !if_data.else_statement.is_none()
+                        && self.collect_unique_return_identifier_from_statement(
+                            if_data.else_statement,
+                            returned_identifier,
+                        )
+                }),
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.arena.get_try(stmt_node).is_some_and(|try_data| {
+                    self.collect_unique_return_identifier_from_statement(
+                        try_data.try_block,
+                        returned_identifier,
+                    ) && !try_data.catch_clause.is_none()
+                        && self.collect_unique_return_identifier_from_statement(
+                            try_data.catch_clause,
+                            returned_identifier,
+                        )
+                        && !try_data.finally_block.is_none()
+                        && self.collect_unique_return_identifier_from_statement(
+                            try_data.finally_block,
+                            returned_identifier,
+                        )
+                })
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => self
+                .arena
+                .get_catch_clause(stmt_node)
+                .is_some_and(|catch_data| {
+                    self.collect_unique_return_identifier_from_statement(
+                        catch_data.block,
+                        returned_identifier,
+                    )
+                }),
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => self
+                .arena
+                .get_case_clause(stmt_node)
+                .is_some_and(|case_data| {
+                    self.collect_unique_return_identifier_from_block(
+                        &case_data.statements,
+                        returned_identifier,
+                    )
+                }),
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_unique_return_identifier_from_block(
+                                &block.statements,
+                                returned_identifier,
+                            )
+                        })
+                })
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                self.arena.get_loop(stmt_node).is_some_and(|loop_data| {
+                    self.collect_unique_return_identifier_from_statement(
+                        loop_data.statement,
+                        returned_identifier,
+                    )
+                })
+            }
+            _ => true,
+        }
+    }
+
+    fn js_returned_define_property_function_info(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<(NodeIndex, Vec<JsDefinedPropertyDecl>)> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let returned_name = self.get_identifier_text(returned_identifier)?;
+
+        let mut initializer = None;
+        let mut properties = Vec::new();
+
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            if initializer.is_none() {
+                initializer = self.js_function_initializer_for_statement(stmt_idx, &returned_name);
+            }
+            if let Some(property) =
+                self.js_define_property_decl_for_statement(stmt_idx, &returned_name)
+            {
+                properties.push(property);
+            }
+        }
+
+        initializer
+            .filter(|_| !properties.is_empty())
+            .map(|init| (init, properties))
+    }
+
+    fn js_function_initializer_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        returned_name: &str,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let variable = self.arena.get_variable(stmt_node)?;
+        let decl_list_node = self.arena.get(variable.declarations.nodes[0])?;
+        let decl_list = self.arena.get_variable(decl_list_node)?;
+
+        decl_list
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if self.get_identifier_text(decl.name).as_deref() != Some(returned_name) {
+                    return None;
+                }
+                let init_node = self.arena.get(decl.initializer)?;
+                if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                {
+                    Some(decl.initializer)
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn js_define_property_decl_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        returned_name: &str,
+    ) -> Option<JsDefinedPropertyDecl> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.arena.get(expr_stmt.expression)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        if !self.is_object_define_property_call(call.expression) {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() != 3 {
+            return None;
+        }
+        if self.get_identifier_text(args.nodes[0]).as_deref() != Some(returned_name) {
+            return None;
+        }
+
+        let name = self.js_define_property_name(args.nodes[1])?;
+        let (mut type_text, readonly) = self.js_define_property_descriptor(args.nodes[2])?;
+        if name == "name" && type_text == "any" {
+            type_text = "string".to_string();
+        }
+        Some(JsDefinedPropertyDecl {
+            name,
+            type_text,
+            readonly,
+        })
+    }
+
+    fn is_object_define_property_call(&self, expr_idx: NodeIndex) -> bool {
+        let expr_node = match self.arena.get(expr_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let access = match self.arena.get_access_expr(expr_node) {
+            Some(access) => access,
+            None => return false,
+        };
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("defineProperty") {
+            return false;
+        }
+        self.get_identifier_text(access.expression).as_deref() == Some("Object")
+    }
+
+    fn js_define_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if let Some(identifier) = self.arena.get_identifier(expr_node) {
+            return Some(identifier.escaped_text.clone());
+        }
+        self.arena
+            .get_literal(expr_node)
+            .map(|literal| literal.text.clone())
+    }
+
+    fn js_define_property_descriptor(&self, expr_idx: NodeIndex) -> Option<(String, bool)> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let object = self.arena.get_literal_expr(expr_node)?;
+        let mut value_expr = None;
+        let mut writable = false;
+
+        for member_idx in object.elements.nodes.iter().copied() {
+            let member_node = self.arena.get(member_idx)?;
+            let assignment = self.arena.get_property_assignment(member_node)?;
+            let name = self.js_define_property_name(assignment.name)?;
+            match name.as_str() {
+                "value" => value_expr = Some(assignment.initializer),
+                "writable" => {
+                    writable = self
+                        .arena
+                        .get(assignment.initializer)
+                        .is_some_and(|init_node| init_node.kind == SyntaxKind::TrueKeyword as u16);
+                }
+                _ => {}
+            }
+        }
+
+        let value_expr = value_expr?;
+        let type_text = self
+            .get_node_type_or_names(&[value_expr])
+            .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+            .map(|type_id| self.print_type_id(type_id))
+            .or_else(|| self.js_string_concatenation_type_text(value_expr))
+            .or_else(|| self.infer_fallback_type_text(value_expr))
+            .unwrap_or_else(|| "any".to_string());
+        Some((type_text, !writable))
+    }
+
+    fn js_string_concatenation_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::PlusToken as u16 {
+            return None;
+        }
+        if self.js_expression_is_string_like(binary.left)
+            || self.js_expression_is_string_like(binary.right)
+        {
+            Some("string".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn js_expression_is_string_like(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || expr_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+        {
+            return true;
+        }
+        self.js_string_concatenation_type_text(expr_idx).is_some()
+    }
+
+    fn emit_function_initializer_call_signature(&mut self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write("): ");
+
+        if func.type_annotation.is_some() {
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(initializer) {
+            self.write(&return_type_text);
+        } else if let Some(interner) = self.type_interner
+            && let Some(type_id) = self.get_node_type_or_names(&[initializer])
+            && let Some(return_type_id) =
+                tsz_solver::type_queries::get_return_type(interner, type_id)
+        {
+            self.write(&self.print_type_id(return_type_id));
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write("void");
+        } else {
+            self.write("any");
+        }
+
+        true
+    }
+
+    fn declaration_property_name_text(&self, name: &str) -> String {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return "\"\"".to_string();
+        };
+        let needs_quotes = !(first == '_' || first == '$' || first.is_ascii_alphabetic())
+            || chars.any(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+        if needs_quotes {
+            format!("\"{name}\"")
+        } else {
+            name.to_string()
+        }
     }
 
     fn statement_returns_identifier(&self, stmt_idx: NodeIndex, name: &str) -> bool {
@@ -4841,6 +5308,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn return_expression_identifier(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return Some(expr_idx);
+        }
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return self
+                .arena
+                .get_parenthesized(expr_node)
+                .and_then(|paren| self.return_expression_identifier(paren.expression));
+        }
+        None
+    }
+
     fn return_expression_is_identifier(&self, expr_idx: NodeIndex, name: &str) -> Option<bool> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == SyntaxKind::Identifier as u16 {
@@ -4856,6 +5337,50 @@ impl<'a> DeclarationEmitter<'a> {
                 .and_then(|paren| self.return_expression_is_identifier(paren.expression, name));
         }
         Some(false)
+    }
+
+    fn type_has_visible_declaration_members(&self, type_id: tsz_solver::types::TypeId) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+
+        if let Some(shape_id) = tsz_solver::visitor::object_shape_id(interner, type_id)
+            .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(shape_id);
+            return shape.string_index.is_some()
+                || shape.number_index.is_some()
+                || shape.properties.iter().any(|property| {
+                    let name = interner.resolve_atom(property.name);
+                    name != "prototype" && !name.starts_with("__private_brand_")
+                });
+        }
+
+        if let Some(shape_id) = tsz_solver::visitor::callable_shape_id(interner, type_id) {
+            let shape = interner.callable_shape(shape_id);
+            return shape.string_index.is_some()
+                || shape.number_index.is_some()
+                || shape.properties.iter().any(|property| {
+                    let name = interner.resolve_atom(property.name);
+                    name != "prototype" && !name.starts_with("__private_brand_")
+                });
+        }
+
+        if let Some(list_id) = tsz_solver::visitor::intersection_list_id(interner, type_id) {
+            return interner
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| self.type_has_visible_declaration_members(member));
+        }
+
+        if let Some(inner) = tsz_solver::visitor::readonly_inner_type(interner, type_id)
+            .or_else(|| tsz_solver::visitor::no_infer_inner_type(interner, type_id))
+        {
+            return self.type_has_visible_declaration_members(inner);
+        }
+
+        false
     }
 
     fn parameter_has_leading_inline_block_comment(&self, param_pos: u32) -> bool {

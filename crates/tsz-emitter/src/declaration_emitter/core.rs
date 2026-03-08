@@ -1065,6 +1065,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()
+            && self.emit_js_returned_define_property_function_type(func_body)
+        {
+        } else if func_body.is_some()
             && self
                 .get_identifier_text(func.name)
                 .is_some_and(|name| self.function_body_returns_identifier(func_body, &name))
@@ -1083,14 +1086,20 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
+                let effective_return_type_id = if func_body.is_some() {
+                    self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
+                        .unwrap_or(return_type_id)
+                } else {
+                    return_type_id
+                };
                 // If solver returned `any` but the function body clearly returns void,
                 // prefer void (the solver's `any` is a fallback, not an actual inference)
-                if return_type_id == tsz_solver::types::TypeId::ANY
+                if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if return_type_id == tsz_solver::types::TypeId::ANY
+                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self
                         .get_identifier_text(func.name)
@@ -1100,7 +1109,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_node(func.name);
                 } else {
                     self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
+                    self.write(&self.print_type_id(effective_return_type_id));
                 }
             } else if func_body.is_some() && self.body_returns_void(func_body) {
                 self.write(": void");
