@@ -895,6 +895,36 @@ type HandlerOptions = {
 }
 
 #[test]
+fn test_js_class_static_method_augmentation_emits_namespace_merge() {
+    let source = r#"
+export class Clazz {
+    static method() { }
+}
+
+Clazz.method.prop = 5;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export class Clazz {
+}
+export namespace Clazz {
+    function method(): void;
+    namespace method {
+        let prop: number;
+    }
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected JS static method augmentations to emit as a merged namespace: {output}"
+    );
+}
+
+#[test]
 fn test_js_reexports_from_same_module_are_grouped() {
     let source = r#"
 export { default } from "fs";
