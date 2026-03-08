@@ -2352,6 +2352,24 @@ fn test_const_enum() {
 }
 
 #[test]
+fn test_invalid_const_enum_object_index_access_emits_any() {
+    let output = emit_dts_with_binding(
+        r#"
+const enum G {
+    A = 1,
+    B = 2,
+}
+let z1 = G[G.A];
+"#,
+    );
+
+    assert!(
+        output.contains("declare let z1: any;"),
+        "Expected invalid const enum object index access to emit any: {output}"
+    );
+}
+
+#[test]
 fn test_string_enum() {
     let output = emit_dts(
         r#"

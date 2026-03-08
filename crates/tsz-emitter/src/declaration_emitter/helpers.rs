@@ -4285,6 +4285,66 @@ impl<'a> DeclarationEmitter<'a> {
         self.simple_enum_access_member_text(assertion.expression)
     }
 
+    fn invalid_const_enum_object_access(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        let Some(base_name) = self.get_identifier_text(access.expression) else {
+            return false;
+        };
+
+        let is_const_enum = if let Some(binder) = self.binder
+            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
+            && let Some(symbol) = binder.symbols.get(symbol_id)
+        {
+            symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
+        } else if let Some(source_file_idx) = self.current_source_file_idx
+            && let Some(source_file_node) = self.arena.get(source_file_idx)
+            && let Some(source_file) = self.arena.get_source_file(source_file_node)
+        {
+            source_file
+                .statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt_idx| {
+                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                        return false;
+                    };
+                    if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                        return false;
+                    }
+                    let Some(enum_data) = self.arena.get_enum(stmt_node) else {
+                        return false;
+                    };
+                    self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
+                        && self
+                            .arena
+                            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+                })
+        } else {
+            false
+        };
+        if !is_const_enum {
+            return false;
+        }
+
+        let argument_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
+        self.arena
+            .get(argument_idx)
+            .is_some_and(|arg| arg.kind != SyntaxKind::StringLiteral as u16)
+    }
+
     fn object_literal_prefers_syntax_type_text(&self, initializer: NodeIndex) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
@@ -4862,6 +4922,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&enum_member_text);
             } else if is_const_null_or_undefined
+                || (has_initializer && self.invalid_const_enum_object_access(initializer))
                 || (has_initializer
                     && self.initializer_uses_inaccessible_class_constructor(initializer))
             {
