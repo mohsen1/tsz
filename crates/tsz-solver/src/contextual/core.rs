@@ -159,15 +159,14 @@ impl<'a> ContextualTypeContext<'a> {
             if !has_callable_member || param_types.is_empty() {
                 return None;
             }
-            // Per TS spec §3.4: union call signatures must be identical (ignoring
-            // return types) for contextual parameter typing to apply. When callable
-            // members disagree on a parameter type at the same index, no contextual
-            // type is provided — this triggers TS7006 under noImplicitAny.
+            // When all callable union members agree on the parameter type, return it directly.
+            // When they disagree, tsc creates a union of the parameter types (e.g., `string | number`)
+            // rather than giving up. This prevents false TS7006 for overloaded/union callbacks.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
                 return Some(first);
             }
-            return None;
+            return Some(crate::utils::union_or_single(self.interner, param_types));
         }
 
         // Handle Application explicitly.
