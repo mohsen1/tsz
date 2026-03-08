@@ -664,7 +664,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write(", ");
                             }
                             first = false;
-                            self.emit_node(arg_idx);
+                            self.emit_import_type_argument(arg_idx);
                         }
                     }
                     self.write(")");
@@ -685,5 +685,59 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get(func.type_annotation)
             .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_TYPE)
+    }
+
+    fn emit_import_type_argument(&mut self, arg_idx: NodeIndex) {
+        let Some(arg_node) = self.arena.get(arg_idx) else {
+            return;
+        };
+
+        if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            self.emit_node(arg_idx);
+            return;
+        }
+
+        let Some(obj) = self.arena.get_literal_expr(arg_node) else {
+            self.emit_node(arg_idx);
+            return;
+        };
+
+        if obj.elements.nodes.is_empty() {
+            self.write("{}");
+            return;
+        }
+
+        self.write("{ ");
+        for (i, &elem_idx) in obj.elements.nodes.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit_import_type_object_literal_member(elem_idx);
+        }
+        self.write(" }");
+    }
+
+    fn emit_import_type_object_literal_member(&mut self, elem_idx: NodeIndex) {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return;
+        };
+
+        if let Some(prop) = self.arena.get_property_assignment(elem_node) {
+            self.emit_node(prop.name);
+            self.write(": ");
+            self.emit_import_type_argument(prop.initializer);
+            return;
+        }
+
+        if let Some(shorthand) = self.arena.get_shorthand_property(elem_node) {
+            self.emit_node(shorthand.name);
+            if shorthand.equals_token {
+                self.write(" = ");
+                self.emit_import_type_argument(shorthand.object_assignment_initializer);
+            }
+            return;
+        }
+
+        self.emit_node(elem_idx);
     }
 }
