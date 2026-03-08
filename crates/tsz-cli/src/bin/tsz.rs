@@ -293,6 +293,7 @@ fn run_batch_mode() -> Result<()> {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
                     let mut reporter = Reporter::new(false);
+                    reporter.set_cwd(project_path);
                     let output = reporter.render(&result.diagnostics);
                     if !output.is_empty() {
                         write!(stdout, "{output}")?;

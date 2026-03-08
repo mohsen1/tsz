@@ -33,6 +33,11 @@ impl Reporter {
         self.pretty = pretty;
     }
 
+    /// Override the working directory used for computing relative paths.
+    pub fn set_cwd(&mut self, cwd: &Path) {
+        self.cwd = Some(cwd.to_string_lossy().into_owned());
+    }
+
     /// Force color output regardless of TTY detection.
     /// Call this when `--pretty true` is explicitly passed so that ANSI codes
     /// are emitted even when piped (matching tsc v6 behavior).
