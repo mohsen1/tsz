@@ -178,7 +178,15 @@ impl<'a> HoverProvider<'a> {
             } else if let Some(initializer_type) =
                 self.variable_initializer_display_type(&mut checker, decl_node_idx)
             {
-                type_string = initializer_type;
+                // For const declarations, the checker preserves literal types
+                // (e.g., `const c = 0` → type is `0`, not `number`).
+                // Don't override with the initializer expression type which may be widened.
+                if self.get_variable_keyword(decl_node_idx) != "const"
+                    || type_string == "error"
+                    || type_string.is_empty()
+                {
+                    type_string = initializer_type;
+                }
             }
         }
 
@@ -293,14 +301,25 @@ impl<'a> HoverProvider<'a> {
             .filter(|s| !s.is_empty())?;
 
         let expr_type_id = checker.get_type_of_node(access.expression);
-        let type_id = self.contextual_property_type_from_type(expr_type_id, &name)?;
+        // Resolve Lazy(DefId) → concrete type so contextual_property_type_from_type
+        // can inspect the object shape (e.g., interface I { m: () => void })
+        let resolved_expr_type = checker.resolve_lazy_type(expr_type_id);
+        let type_id = self.contextual_property_type_from_type(resolved_expr_type, &name)?;
         let type_string = checker.format_type(type_id);
+        // Get the container type name before extracting the cache (which moves checker)
+        let container_name = checker.format_type(expr_type_id);
         *type_cache = Some(checker.extract_cache());
         if type_string.is_empty() || type_string == "error" {
             return None;
         }
 
-        let display_string = format!("(property) {name}: {type_string}");
+        // Build display string with container type name (e.g., "I.m" not just "m")
+        let display_string =
+            if !container_name.is_empty() && container_name != "error" && container_name != "any" {
+                format!("(property) {container_name}.{name}: {type_string}")
+            } else {
+                format!("(property) {name}: {type_string}")
+            };
         let start = self.line_map.offset_to_position(node.pos, self.source_text);
         let end = self.line_map.offset_to_position(node.end, self.source_text);
         Some(HoverInfo {
