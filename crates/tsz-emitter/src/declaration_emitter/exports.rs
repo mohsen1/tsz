@@ -26,7 +26,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if self.should_fold_js_named_export_clause(export_idx) {
+        if let Some(statements) = self
+            .js_folded_named_export_statements
+            .get(&export_idx)
+            .cloned()
+        {
+            for stmt_idx in statements {
+                self.emit_deferred_js_named_export_statement(stmt_idx);
+            }
             return;
         }
 
