@@ -61,27 +61,31 @@ impl<'a> Printer<'a> {
             return String::new();
         };
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            && let Some(cp) = self.arena.get_computed_property(name_node) {
-                let expr_idx = cp.expression;
-                if let Some(expr_node) = self.arena.get(expr_idx) {
-                    // String literal: ["method"] → "method"
-                    if expr_node.kind == SyntaxKind::StringLiteral as u16
-                        && let Some(text) = self.arena.get_literal_text(expr_idx) {
-                            return text.to_string();
-                        }
-                    // Numeric literal: [1] → "1"
-                    if expr_node.kind == SyntaxKind::NumericLiteral as u16
-                        && let Some(text) = self.arena.get_literal_text(expr_idx) {
-                            return text.to_string();
-                        }
+            && let Some(cp) = self.arena.get_computed_property(name_node)
+        {
+            let expr_idx = cp.expression;
+            if let Some(expr_node) = self.arena.get(expr_idx) {
+                // String literal: ["method"] → "method"
+                if expr_node.kind == SyntaxKind::StringLiteral as u16
+                    && let Some(text) = self.arena.get_literal_text(expr_idx)
+                {
+                    return text.to_string();
+                }
+                // Numeric literal: [1] → "1"
+                if expr_node.kind == SyntaxKind::NumericLiteral as u16
+                    && let Some(text) = self.arena.get_literal_text(expr_idx)
+                {
+                    return text.to_string();
                 }
             }
+        }
         // String/numeric literal directly as property name
         if (name_node.kind == SyntaxKind::StringLiteral as u16
             || name_node.kind == SyntaxKind::NumericLiteral as u16)
-            && let Some(text) = self.arena.get_literal_text(name_idx) {
-                return text.to_string();
-            }
+            && let Some(text) = self.arena.get_literal_text(name_idx)
+        {
+            return text.to_string();
+        }
         String::new()
     }
 
