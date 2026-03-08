@@ -5,6 +5,7 @@
 //! and performing two-pass generic inference when needed.
 
 use super::complex::is_contextually_sensitive;
+use crate::query_boundaries::assignability::contains_type_parameters;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -124,6 +125,15 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && tagged.type_arguments.is_none();
 
+        // Determine whether to check argument assignability (TS2345).
+        // For overloaded functions, tsc performs full overload resolution and reports
+        // TS2769 ("No overload matches this call") instead of TS2345 per argument.
+        // We only check arguments when the tag has a single call signature.
+        let is_overloaded =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_tag_type)
+                .is_some_and(|callable| callable.call_signatures.len() > 1);
+        let should_check_args = !is_overloaded;
+
         // Apply explicit type arguments to the tag type (e.g., tag<Stuff>`...`).
         // This instantiates type parameters in the function signature so that
         // contextual typing of substitution expressions and the return type
@@ -234,6 +244,7 @@ impl<'a> CheckerState<'a> {
 
                 // === Round 2: Type-check all substitutions with contextual types ===
                 let total_args = 1 + substitution_exprs.len();
+                let mut reported_arg_error = false;
                 for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
                     let ctx_type = ctx_helper
                         .get_parameter_type_for_call(i + 1, total_args)
@@ -245,8 +256,31 @@ impl<'a> CheckerState<'a> {
                     if is_contextually_sensitive(self, expr_idx) {
                         self.ctx.contextual_type = ctx_type;
                     }
-                    self.get_type_of_node(expr_idx);
+                    let actual_type = self.get_type_of_node(expr_idx);
                     self.ctx.contextual_type = prev_context;
+
+                    // Check argument assignability against expected parameter type (TS2345).
+                    // tsc reports only the first argument mismatch per tagged template call.
+                    // Skip for overloaded functions (handled via overload resolution / TS2769).
+                    // Skip when expected type still contains unresolved type parameters
+                    // (generic inference may not have fully instantiated the signature).
+                    if should_check_args
+                        && !reported_arg_error
+                        && let Some(expected) = ctx_type
+                        && actual_type != TypeId::ERROR
+                        && actual_type != TypeId::UNKNOWN
+                        && expected != TypeId::ERROR
+                        && expected != TypeId::UNKNOWN
+                        && !contains_type_parameters(self.ctx.types, expected)
+                        && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
+                        && !self.check_argument_assignable_or_report(
+                            actual_type,
+                            expected,
+                            expr_idx,
+                        )
+                    {
+                        reported_arg_error = true;
+                    }
                 }
 
                 // Return instantiated return type
@@ -258,12 +292,33 @@ impl<'a> CheckerState<'a> {
 
         // Single-pass: type-check substitutions with contextual types from tag signature
         let total_args = 1 + substitution_exprs.len();
+        let mut reported_arg_error = false;
         for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
             let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
             let prev_context = self.ctx.contextual_type;
             self.ctx.contextual_type = ctx_type;
-            self.get_type_of_node(expr_idx);
+            let actual_type = self.get_type_of_node(expr_idx);
             self.ctx.contextual_type = prev_context;
+
+            // Check argument assignability against expected parameter type (TS2345).
+            // tsc reports only the first argument mismatch per tagged template call,
+            // so stop checking after the first error.
+            // Skip for overloaded functions (handled via overload resolution / TS2769).
+            // Skip when expected type still contains unresolved type parameters
+            // (generic inference may not have fully instantiated the signature).
+            if should_check_args
+                && !reported_arg_error
+                && let Some(expected) = ctx_type
+                && actual_type != TypeId::ERROR
+                && actual_type != TypeId::UNKNOWN
+                && expected != TypeId::ERROR
+                && expected != TypeId::UNKNOWN
+                && !contains_type_parameters(self.ctx.types, expected)
+                && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
+                && !self.check_argument_assignable_or_report(actual_type, expected, expr_idx)
+            {
+                reported_arg_error = true;
+            }
         }
 
         // Get the return type from the tag function's call signature.

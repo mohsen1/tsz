@@ -1612,7 +1612,11 @@ impl<'a> CheckerState<'a> {
         ident.escaped_text == "toLocaleString"
     }
 
-    fn should_defer_contextual_argument_mismatch(&self, actual: TypeId, expected: TypeId) -> bool {
+    pub(crate) fn should_defer_contextual_argument_mismatch(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
         // During generic contextual inference, expected parameter types can transiently
         // include placeholder `any` slots before all nested callbacks are fully typed.
         // Emitting TS2345 in this state creates false positives in conformance tests.

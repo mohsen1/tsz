@@ -286,7 +286,7 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref())
             }
             TypeData::TypeParameter(info) => self.atom(info.name).to_string(),
-            TypeData::Lazy(def_id) => self.format_def_id(*def_id, "Lazy"),
+            TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy"),
             TypeData::Recursive(idx) => {
                 format!("Recursive({idx})")
             }
@@ -920,6 +920,34 @@ impl<'a> TypeFormatter<'a> {
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
+    /// Format a `DefId` with type parameters appended when the definition is generic.
+    ///
+    /// tsc displays uninstantiated generic types with their type parameter names:
+    /// e.g., `B<T>` instead of just `B`. This matches that behavior for
+    /// `TypeData::Lazy(DefId)` nodes that represent generic types without
+    /// an `Application` wrapper.
+    fn format_def_id_with_type_params(
+        &mut self,
+        def_id: crate::def::DefId,
+        fallback_prefix: &str,
+    ) -> String {
+        if let Some(def_store) = self.def_store
+            && let Some(def) = def_store.get(def_id)
+        {
+            let name = self.format_def_name(&def);
+            if def.type_params.is_empty() {
+                return name;
+            }
+            let params: Vec<String> = def
+                .type_params
+                .iter()
+                .map(|tp| self.atom(tp.name).to_string())
+                .collect();
+            return format!("{}<{}>", name, params.join(", "));
+        }
+        format!("{}({})", fallback_prefix, def_id.0)
+    }
+
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
     fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
         if let Some(sym_id) = shape.symbol
@@ -961,29 +989,24 @@ impl<'a> TypeFormatter<'a> {
         let mut qualified_name = sym.escaped_name.to_string();
         let mut current_parent = sym.parent;
 
+        // tsc uses the shortest name for diagnostics: it only qualifies
+        // enum members with their parent enum name (e.g. `E.Member`).
+        // Namespace and module parents are NOT prepended — tsc prints
+        // `Foo`, not `Ns.Foo`. When disambiguation is needed (same name
+        // in multiple scopes), tsc resolves that through source-level
+        // qualification which is not available to the type formatter.
+        use tsz_binder::symbol_flags;
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                // Don't prepend for source files and blocks
-                if !parent_sym.escaped_name.starts_with('"')
-                    && !parent_sym.escaped_name.starts_with("__")
-                {
-                    // tsc doesn't qualify members of the JSX global namespace
-                    // with 'JSX.' in type assignability messages. The JSX namespace
-                    // is a well-known ambient global namespace in TypeScript whose
-                    // members (IntrinsicAttributes, IntrinsicClassAttributes, etc.)
-                    // are displayed unqualified. Only skip for namespace parents
-                    // whose own parent is global scope (starts with '__' or '"').
-                    let is_jsx_global_ns = parent_sym.escaped_name == "JSX"
-                        && (parent_sym.parent == SymbolId::NONE
-                            || arena.get(parent_sym.parent).is_none_or(|gp| {
-                                gp.escaped_name.starts_with('"')
-                                    || gp.escaped_name.starts_with("__")
-                            }));
-                    if !is_jsx_global_ns {
-                        qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
-                    }
+                // Only qualify with parent if it is an enum (enum members need
+                // `EnumName.MemberName`). Stop walking for all other parents
+                // (namespaces, modules, source files, blocks).
+                if parent_sym.has_any_flags(symbol_flags::ENUM) {
+                    qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                    current_parent = parent_sym.parent;
+                } else {
+                    break;
                 }
-                current_parent = parent_sym.parent;
             } else {
                 break;
             }
