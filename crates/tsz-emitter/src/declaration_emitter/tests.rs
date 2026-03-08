@@ -3226,6 +3226,44 @@ fn test_export_equals_import_equals_keeps_namespace_dependency() {
     );
 }
 
+#[test]
+fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace m {
+        export namespace c {
+            export class c {
+            }
+        }
+    }
+
+    import a = m.c;
+    import b = a;
+    export = b;
+    "#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace m")
+        .expect("Expected namespace dependency to be preserved");
+    let first_import_pos = output
+        .find("import a = m.c;")
+        .expect("Expected first import equals alias to be emitted");
+    let second_import_pos = output
+        .find("import b = a;")
+        .expect("Expected chained import equals alias to be emitted");
+    let export_pos = output
+        .find("export = b;")
+        .expect("Expected export assignment to be emitted");
+
+    assert!(
+        namespace_pos < first_import_pos
+            && first_import_pos < second_import_pos
+            && second_import_pos < export_pos,
+        "Expected namespace, import chain, and export assignment to preserve source order: {output}"
+    );
+}
+
 // =============================================================================
 // 29. Namespace export as
 // =============================================================================
