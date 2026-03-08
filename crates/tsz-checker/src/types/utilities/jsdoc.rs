@@ -1952,14 +1952,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check if any statement contains this comment
-            let is_attached = statements.iter().any(|&stmt_idx| {
-                self.ctx
-                    .arena
-                    .get(stmt_idx)
-                    .is_some_and(|n| n.pos <= comment.pos && n.end >= comment.end)
+            // Check if this comment is the direct leading JSDoc of any statement.
+            // We cannot use positional containment (n.pos <= comment.pos) because
+            // node.pos includes leading trivia — a dangling comment between two
+            // statements would fall inside the next statement's trivia range.
+            // Instead, check if try_leading_jsdoc for any statement returns
+            // content from THIS comment.
+            let is_leading_of_any_stmt = statements.iter().any(|&stmt_idx| {
+                if let Some(n) = self.ctx.arena.get(stmt_idx)
+                    && let Some((_, leading_pos)) =
+                        self.try_leading_jsdoc_with_pos(comments, n.pos, source_text)
+                    {
+                        return leading_pos == comment.pos;
+                    }
+                false
             });
-            if is_attached {
+            if is_leading_of_any_stmt {
                 continue;
             }
 

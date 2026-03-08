@@ -86,6 +86,105 @@ function b() {}
     );
 }
 
+/// Dangling @extends between two classes → TS8022
+#[test]
+fn test_jsdoc_dangling_extends_between_classes_emits_ts8022() {
+    // The @extends comment is NOT the leading comment of class B
+    // (because @constructor is), so it's dangling
+    let source = r#"
+class A {
+    constructor() {}
+}
+
+/** @extends {A} */
+
+/** @constructor */
+class B extends A {
+    constructor() { super(); }
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
+    assert!(
+        ts8022 >= 1,
+        "Expected TS8022 for dangling @extends, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Dangling @extends at end of file → TS8022
+#[test]
+fn test_jsdoc_dangling_extends_at_eof_emits_ts8022() {
+    let source = r#"
+class A {
+    constructor() {}
+}
+
+/** @extends {A} */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
+    assert!(
+        ts8022 >= 1,
+        "Expected TS8022 for dangling @extends at EOF, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// @typedef without type or @property → TS8021
+#[test]
+fn test_jsdoc_typedef_missing_type_emits_ts8021() {
+    let source = r#"
+/** @typedef T */
+const t = 0;
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
+    assert!(
+        ts8021 >= 1,
+        "Expected TS8021 for @typedef without type, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// @typedef with type → no TS8021
+#[test]
+fn test_jsdoc_typedef_with_type_no_ts8021() {
+    let source = r#"
+/** @typedef {Object} Foo */
+const t = 0;
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
+    assert_eq!(
+        ts8021,
+        0,
+        "Expected no TS8021 for @typedef with type, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// @typedef with @property → no TS8021
+#[test]
+fn test_jsdoc_typedef_with_property_no_ts8021() {
+    let source = r#"
+/**
+ * @typedef Person
+ * @property {string} name
+ */
+/** @type Person */
+const person = { name: "" };
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
+    assert_eq!(
+        ts8021,
+        0,
+        "Expected no TS8021 for @typedef with @property, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// @extends on a class declaration → no TS8022
 #[test]
 fn test_jsdoc_extends_on_class_no_ts8022() {

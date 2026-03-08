@@ -335,6 +335,9 @@ impl<'a> CheckerState<'a> {
                 // TS8033: Check for @typedef comments with multiple @type tags
                 self.check_typedef_duplicate_type_tags();
 
+                // TS8021: Check for @typedef without type or @property tags
+                self.check_typedef_missing_type();
+
                 // TS2304: Check for @typedef base types that can't be resolved
                 self.check_jsdoc_typedef_base_types();
             }
