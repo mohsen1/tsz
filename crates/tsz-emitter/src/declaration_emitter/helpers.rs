@@ -433,6 +433,74 @@ impl<'a> DeclarationEmitter<'a> {
         names
     }
 
+    pub(crate) fn collect_js_grouped_reexports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (FxHashMap<NodeIndex, Vec<NodeIndex>>, FxHashSet<NodeIndex>) {
+        let mut groups = FxHashMap::default();
+        let mut skipped = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (groups, skipped);
+        }
+
+        let statements = &source_file.statements.nodes;
+        let mut i = 0;
+        while i < statements.len() {
+            let stmt_idx = statements[i];
+            let Some((module_specifier, is_type_only)) = self.groupable_js_reexport_info(stmt_idx)
+            else {
+                i += 1;
+                continue;
+            };
+            if is_type_only {
+                i += 1;
+                continue;
+            }
+
+            let mut group = vec![stmt_idx];
+            let mut j = i + 1;
+            while j < statements.len() {
+                let candidate_idx = statements[j];
+                let Some((candidate_module, candidate_type_only)) =
+                    self.groupable_js_reexport_info(candidate_idx)
+                else {
+                    break;
+                };
+                if candidate_type_only || candidate_module != module_specifier {
+                    break;
+                }
+                group.push(candidate_idx);
+                j += 1;
+            }
+
+            if group.len() > 1 {
+                for &member in group.iter().skip(1) {
+                    skipped.insert(member);
+                }
+                groups.insert(stmt_idx, group);
+            }
+
+            i = j.max(i + 1);
+        }
+
+        (groups, skipped)
+    }
+
+    fn groupable_js_reexport_info(&self, export_idx: NodeIndex) -> Option<(String, bool)> {
+        let export_node = self.arena.get(export_idx)?;
+        if export_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return None;
+        }
+        let export = self.arena.get_export_decl(export_node)?;
+        let clause_node = self.arena.get(export.export_clause)?;
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS || export.module_specifier.is_none() {
+            return None;
+        }
+        let module_node = self.arena.get(export.module_specifier)?;
+        let module_specifier = self.arena.get_literal(module_node)?.text.clone();
+        Some((module_specifier, export.is_type_only))
+    }
+
     pub(crate) fn is_js_named_exported_name(&self, name_idx: NodeIndex) -> bool {
         if !self.source_is_js_file || self.js_named_export_names.is_empty() {
             return false;
