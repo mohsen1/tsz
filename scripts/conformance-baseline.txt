@@ -1563,13 +1563,11 @@ FAIL TypeScript/tests/cases/conformance/es6/variableDeclarations/VariableDeclara
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorInAmbientContext2.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads1.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads2.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck25.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck6.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck62.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck63.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck64.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck7.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck8.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression11_es6.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression18_es6.ts
@@ -9345,6 +9343,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck1
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck18.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck19.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck2.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck21.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck22.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck23.ts
@@ -9388,6 +9387,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck5
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck59.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck60.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck61.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck7.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck9.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression1_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression10_es6.ts
