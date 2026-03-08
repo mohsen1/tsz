@@ -1,7 +1,7 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{FunctionShape, TypeId, TypeInterner};
+use tsz_solver::{FunctionShape, ObjectFlags, ObjectShape, TypeId, TypeInterner};
 
 // =============================================================================
 // Helper
@@ -1037,6 +1037,148 @@ export var basePrototype = {
     assert!(
         output.contains("export declare var basePrototype: {\n    readonly primaryPath: any;\n};"),
         "Expected multi-line object literal accessor inference: {output}"
+    );
+}
+
+#[test]
+fn test_inaccessible_constructor_new_initializer_emits_any() {
+    let source = r#"
+class C {
+    constructor(public x: number) {}
+}
+
+class D {
+    private constructor(public x: number) {}
+}
+
+class E {
+    protected constructor(public x: number) {}
+}
+
+var c = new C(1);
+var d = new D(1);
+var e = new E(1);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+
+    let class_c_idx = source_file.statements.nodes[0];
+    let class_d_idx = source_file.statements.nodes[1];
+    let class_e_idx = source_file.statements.nodes[2];
+    let var_c_stmt_idx = source_file.statements.nodes[3];
+    let var_d_stmt_idx = source_file.statements.nodes[4];
+    let var_e_stmt_idx = source_file.statements.nodes[5];
+
+    let class_c = parser
+        .arena
+        .get(class_c_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class C");
+    let class_d = parser
+        .arena
+        .get(class_d_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class D");
+    let class_e = parser
+        .arena
+        .get(class_e_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class E");
+
+    let var_c_decl = parser
+        .arena
+        .get(var_c_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var c declaration");
+    let var_d_decl = parser
+        .arena
+        .get(var_d_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var d declaration");
+    let var_e_decl = parser
+        .arena
+        .get(var_e_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var e declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let c_sym = binder
+        .get_node_symbol(class_c.name)
+        .or_else(|| binder.get_node_symbol(class_c_idx))
+        .expect("missing symbol for C");
+    let d_sym = binder
+        .get_node_symbol(class_d.name)
+        .or_else(|| binder.get_node_symbol(class_d_idx))
+        .expect("missing symbol for D");
+    let e_sym = binder
+        .get_node_symbol(class_e.name)
+        .or_else(|| binder.get_node_symbol(class_e_idx))
+        .expect("missing symbol for E");
+
+    let interner = TypeInterner::new();
+    let c_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(c_sym),
+    });
+    let d_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(d_sym),
+    });
+    let e_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(e_sym),
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(var_c_decl.name.0, c_type);
+    type_cache.node_types.insert(var_d_decl.name.0, d_type);
+    type_cache.node_types.insert(var_e_decl.name.0, e_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var c: C;"),
+        "Expected C type: {output}"
+    );
+    assert!(
+        output.contains("declare var d: any;"),
+        "Expected d to degrade to any: {output}"
+    );
+    assert!(
+        output.contains("declare var e: any;"),
+        "Expected e to degrade to any: {output}"
     );
 }
 
