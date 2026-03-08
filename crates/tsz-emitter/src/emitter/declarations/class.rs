@@ -78,6 +78,8 @@ impl<'a> Printer<'a> {
 
             // Type reference → emit the type name (class/enum reference).
             // If the referenced name is a type parameter, emit "Object" instead.
+            // If it's a built-in keyword type name (string, number, etc.) used as
+            // a type reference, map to the wrapper constructor.
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
                     let name = self.get_identifier_text_idx(type_ref.type_name);
@@ -85,7 +87,17 @@ impl<'a> Printer<'a> {
                         if type_param_names.iter().any(|tp| tp == &name) {
                             return "Object".to_string();
                         }
-                        return name;
+                        // Map keyword type names to their wrapper constructors
+                        match name.as_str() {
+                            "string" => return "String".to_string(),
+                            "number" => return "Number".to_string(),
+                            "boolean" => return "Boolean".to_string(),
+                            "symbol" => return "Symbol".to_string(),
+                            "bigint" => return "BigInt".to_string(),
+                            "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
+                            "any" | "unknown" | "object" => return "Object".to_string(),
+                            _ => return name,
+                        }
                     }
                 }
                 "Object".to_string()
@@ -128,6 +140,10 @@ impl<'a> Printer<'a> {
                             "Boolean".to_string()
                         }
                         lk if lk == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
+                        // Negative numeric literal: `-1` → PrefixUnaryExpression → Number
+                        lk if lk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                            "Number".to_string()
+                        }
                         _ => "Object".to_string(),
                     };
                 }
@@ -139,6 +155,25 @@ impl<'a> Printer<'a> {
 
             // Template literal type → String
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => "String".to_string(),
+
+            // Type operator (readonly, keyof, unique) → unwrap and serialize inner type
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                if let Some(type_op) = self.arena.get_type_operator(type_node) {
+                    return self.serialize_type_for_metadata(type_op.type_node);
+                }
+                "Object".to_string()
+            }
+
+            // Optional type (T?) → unwrap inner type
+            k if k == syntax_kind_ext::OPTIONAL_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    return self.serialize_type_for_metadata(wrapped.type_node);
+                }
+                "Object".to_string()
+            }
+
+            // Rest type (...T) → Object (used in tuples)
+            k if k == syntax_kind_ext::REST_TYPE => "Object".to_string(),
 
             // Conditional, mapped, indexed access, type query, infer, import → Object
             _ => "Object".to_string(),
