@@ -1214,11 +1214,8 @@ impl<'a> CheckerState<'a> {
                     // to { length: unknown } because the Application can't be expanded).
                     if structural_type != TypeId::ERROR && structural_type != TypeId::ANY {
                         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                        self.ctx.register_query_resolved_def(
-                            def_id,
-                            structural_type,
-                            type_params,
-                        );
+                        self.ctx
+                            .register_query_resolved_def(def_id, structural_type, type_params);
                     }
 
                     if structural_type != TypeId::ERROR

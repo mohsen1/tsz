@@ -2,8 +2,11 @@
 
 use super::check_utils::*;
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+const EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD: Duration = Duration::from_millis(500);
+const EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT: usize = 4;
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -78,6 +81,24 @@ pub(super) fn collect_diagnostics(
     let report_progress_start = |phase: &str| {
         if extended_progress_enabled {
             eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
+        }
+    };
+    let report_parallel_file_timing = |file_name: &str,
+                                       prepare_binder: Duration,
+                                       total: Duration| {
+        if extended_progress_enabled && total >= EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_parallel_file_timing(file_name, prepare_binder, total,)
+            );
+        }
+    };
+    let report_parallel_file_start = |rank: usize, file_name: &str| {
+        if extended_progress_enabled && rank <= EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_parallel_file_start(rank, file_name)
+            );
         }
     };
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
@@ -539,6 +560,7 @@ pub(super) fn collect_diagnostics(
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
         let traced_parallel_file = Arc::new(AtomicBool::new(false));
+        let started_parallel_source_files = Arc::new(AtomicUsize::new(0));
 
         // Check all files in parallel — each file gets its own CheckerState.
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
@@ -552,9 +574,16 @@ pub(super) fn collect_diagnostics(
                     .iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
+                        if !is_declaration_file(&file.file_name) {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                        }
+                        let file_total_start = Instant::now();
                         let trace_first_prepare_binder = extended_progress_enabled
                             && !(skip_lib_check && is_declaration_file(&file.file_name))
                             && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                        let prepare_binder_start = Instant::now();
                         let prepared = if trace_first_prepare_binder {
                             report_progress_start("prepare_binders::first_file::create_binder");
                             let (prepared, stats) = prepare_binder_for_check_with_stats(
@@ -590,6 +619,7 @@ pub(super) fn collect_diagnostics(
                                 &resolved_module_paths,
                             )
                         };
+                        let prepare_binder_elapsed = prepare_binder_start.elapsed();
                         let context = CheckFileForParallelContext {
                             file_idx,
                             binder: prepared.binder,
@@ -613,7 +643,13 @@ pub(super) fn collect_diagnostics(
                             skip_lib_check,
                             has_deprecation_diagnostics,
                         };
-                        check_file_for_parallel(context)
+                        let result = check_file_for_parallel(context);
+                        report_parallel_file_timing(
+                            &file.file_name,
+                            prepare_binder_elapsed,
+                            file_total_start.elapsed(),
+                        );
+                        result
                     })
                     .collect()
             } else {
@@ -622,9 +658,16 @@ pub(super) fn collect_diagnostics(
                     .par_iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
+                        if !is_declaration_file(&file.file_name) {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                        }
+                        let file_total_start = Instant::now();
                         let trace_first_prepare_binder = extended_progress_enabled
                             && !(skip_lib_check && is_declaration_file(&file.file_name))
                             && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                        let prepare_binder_start = Instant::now();
                         let prepared = if trace_first_prepare_binder {
                             report_progress_start("prepare_binders::first_file::create_binder");
                             let (prepared, stats) = prepare_binder_for_check_with_stats(
@@ -660,6 +703,7 @@ pub(super) fn collect_diagnostics(
                                 &resolved_module_paths,
                             )
                         };
+                        let prepare_binder_elapsed = prepare_binder_start.elapsed();
                         let context = CheckFileForParallelContext {
                             file_idx,
                             binder: prepared.binder,
@@ -683,7 +727,13 @@ pub(super) fn collect_diagnostics(
                             skip_lib_check,
                             has_deprecation_diagnostics,
                         };
-                        check_file_for_parallel(context)
+                        let result = check_file_for_parallel(context);
+                        report_parallel_file_timing(
+                            &file.file_name,
+                            prepare_binder_elapsed,
+                            file_total_start.elapsed(),
+                        );
+                        result
                     })
                     .collect()
             };
@@ -698,9 +748,16 @@ pub(super) fn collect_diagnostics(
                 .iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
+                    if !is_declaration_file(&file.file_name) {
+                        let start_rank =
+                            started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                        report_parallel_file_start(start_rank, &file.file_name);
+                    }
+                    let file_total_start = Instant::now();
                     let trace_first_prepare_binder = extended_progress_enabled
                         && !(skip_lib_check && is_declaration_file(&file.file_name))
                         && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                    let prepare_binder_start = Instant::now();
                     let prepared = if trace_first_prepare_binder {
                         report_progress_start("prepare_binders::first_file::create_binder");
                         let (prepared, stats) = prepare_binder_for_check_with_stats(
@@ -736,6 +793,7 @@ pub(super) fn collect_diagnostics(
                             &resolved_module_paths,
                         )
                     };
+                    let prepare_binder_elapsed = prepare_binder_start.elapsed();
                     let context = CheckFileForParallelContext {
                         file_idx,
                         binder: prepared.binder,
@@ -759,7 +817,13 @@ pub(super) fn collect_diagnostics(
                         skip_lib_check,
                         has_deprecation_diagnostics,
                     };
-                    check_file_for_parallel(context)
+                    let result = check_file_for_parallel(context);
+                    report_parallel_file_timing(
+                        &file.file_name,
+                        prepare_binder_elapsed,
+                        file_total_start.elapsed(),
+                    );
+                    result
                 })
                 .collect();
             report_progress("parallel_check_files", phase_start);
@@ -1108,6 +1172,25 @@ fn format_extended_diagnostics_collect_progress(phase: &str, elapsed: Duration) 
     format!(
         "[extendedDiagnostics] collect_diagnostics::{phase}: {:.2}ms",
         elapsed.as_secs_f64() * 1000.0
+    )
+}
+
+fn format_extended_diagnostics_parallel_file_timing(
+    file_name: &str,
+    prepare_binder: Duration,
+    total: Duration,
+) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file total={:.2}ms prepare_binder={:.2}ms check_file={:.2}ms file={file_name}",
+        total.as_secs_f64() * 1000.0,
+        prepare_binder.as_secs_f64() * 1000.0,
+        total.saturating_sub(prepare_binder).as_secs_f64() * 1000.0,
+    )
+}
+
+fn format_extended_diagnostics_parallel_file_start(rank: usize, file_name: &str) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file_start rank={rank} file={file_name}"
     )
 }
 
@@ -1680,6 +1763,28 @@ let __: B = new B();"#
         assert_eq!(
             line,
             "[extendedDiagnostics] collect_diagnostics::build_resolved_module_maps: 875.00ms"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_parallel_file_timing() {
+        let line = format_extended_diagnostics_parallel_file_timing(
+            "/tmp/index.ts",
+            Duration::from_millis(125),
+            Duration::from_millis(875),
+        );
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file total=875.00ms prepare_binder=125.00ms check_file=750.00ms file=/tmp/index.ts"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_parallel_file_start() {
+        let line = format_extended_diagnostics_parallel_file_start(2, "/tmp/index.ts");
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file_start rank=2 file=/tmp/index.ts"
         );
     }
 
