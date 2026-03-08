@@ -292,18 +292,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if source is a subtype of both branches of a conditional type.
     ///
-    /// When checking `source <: (T extends U ? X : Y)`, we need to verify that:
-    /// - Source is a subtype of both the true branch (X) and false branch (Y)
+    /// When checking `source <: (T extends U ? X : Y)`, we verify that source
+    /// is a subtype of both the true branch (X) and false branch (Y).
     ///
-    /// This is used when the target is a conditional type and we need to check
-    /// if the source can be assigned to it regardless of which branch is selected.
-    /// tsc is very strict here — even `X | Y` (union of both branches) cannot be
-    /// assigned to a deferred conditional. Only identical conditional types or
-    /// `never` can satisfy this check.
-    ///
-    /// ## Logic:
-    /// - `source <: X` AND `source <: Y` => True
-    /// - Otherwise => False
+    /// This handles cases where a concrete type needs to be assigned to a
+    /// deferred conditional — e.g., `{ a: number } <: Foo<K>` where
+    /// `type Foo<K> = K extends unknown ? { a: number } : unknown`.
     pub(crate) fn subtype_of_conditional_target(
         &mut self,
         source: TypeId,

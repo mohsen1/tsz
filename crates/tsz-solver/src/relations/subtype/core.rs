@@ -401,7 +401,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
                 // Conditional-to-conditional structural check failed (e.g., different extends types).
-                // Fall through to conditional_branches_subtype which uses constraint decomposition.
+                // Fall through to conditional_branches_subtype which uses constraint decomposition
+                // and branch-by-branch checking (e.g., A <: One when A's true branch IS One).
             }
 
             // Before decomposing the conditional into branches, check if the target
