@@ -1012,6 +1012,33 @@ impl<'a> CheckerState<'a> {
         catch.variable_declaration == var_decl_idx
     }
 
+    /// Check if a variable declaration is in a `for...in` statement.
+    /// For-in loop variables are always typed as `string`.
+    ///
+    /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement`
+    pub(crate) fn is_for_in_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
+        // VariableDeclaration → parent (VariableDeclarationList)
+        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let vdl_idx = ext.parent;
+        if vdl_idx.is_none() {
+            return false;
+        }
+        // VariableDeclarationList → parent (ForInStatement?)
+        let Some(vdl_ext) = self.ctx.arena.get_extended(vdl_idx) else {
+            return false;
+        };
+        let for_in_idx = vdl_ext.parent;
+        if for_in_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(for_in_idx) else {
+            return false;
+        };
+        parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+    }
+
     // Section 48: Type Predicate Utilities
     // -------------------------------------
 
