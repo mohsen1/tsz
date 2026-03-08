@@ -24,7 +24,7 @@ fn main() -> Result<()> {
 
     // Check for TS6369: --build must be the first argument
     if let Some(msg) = check_build_position(&preprocessed) {
-        eprintln!("{msg}");
+        println!("{msg}");
         std::process::exit(1);
     }
 
@@ -201,12 +201,12 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     if !result.diagnostics.is_empty() {
         let pretty = args
             .pretty
-            .unwrap_or_else(|| std::io::stderr().is_terminal());
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            // Diagnostics go to stderr (matching tsc behavior)
-            eprint!("{output}");
+            // tsc writes all diagnostics to stdout
+            print!("{output}");
         }
     }
 
@@ -506,15 +506,15 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
             if let Some(flag) = extract_unknown_flag_from_args(args) {
                 // Try to find a close match for TS5025
                 if let Some(suggestion) = find_closest_option(&flag) {
-                    eprintln!(
+                    println!(
                         "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion}'?\n"
                     );
                 } else {
-                    eprintln!("error TS5023: Unknown compiler option '{flag}'.\n");
+                    println!("error TS5023: Unknown compiler option '{flag}'.\n");
                 }
             } else {
                 // Fallback: just print TS5023 with whatever info we have
-                eprintln!("error TS5023: Unknown compiler option.\n");
+                println!("error TS5023: Unknown compiler option.\n");
             }
             std::process::exit(1);
         }
@@ -533,7 +533,7 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
                 .next()
                 .unwrap_or(&msg)
                 .trim_start_matches("error: ");
-            eprintln!("error TS5023: {msg}\n");
+            println!("error TS5023: {msg}\n");
             std::process::exit(1);
         }
     }
@@ -876,10 +876,10 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let tsconfig_path = cwd.join("tsconfig.json");
     if tsconfig_path.exists() {
         println!(
-            "A tsconfig.json file is already defined at: {}",
+            "error TS5054: A 'tsconfig.json' file is already defined at: '{}'.",
             tsconfig_path.display()
         );
-        std::process::exit(1);
+        std::process::exit(0);
     }
 
     // Build the tsconfig.json content matching tsc 5.x --init output format
@@ -937,7 +937,7 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         )
     })?;
 
-    println!("Created a new tsconfig.json\n\nYou can learn more at https://aka.ms/tsconfig");
+    println!("\nCreated a new tsconfig.json\n\nYou can learn more at https://aka.ms/tsconfig");
 
     Ok(())
 }
@@ -1034,9 +1034,9 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     let discovered_files = discover_ts_files(&discovery).unwrap_or_default();
 
-    // If no input files found, emit TS18003 error to stderr and exit 1
+    // If no input files found, emit TS18003 error and exit 1
     if discovered_files.is_empty() && config.is_some() {
-        eprintln!(
+        println!(
             "error TS18003: No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
             tsconfig_path
                 .as_ref()
@@ -1326,9 +1326,9 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     if !ref_diagnostics.is_empty() {
         let _pretty = args
             .pretty
-            .unwrap_or_else(|| std::io::stderr().is_terminal());
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
         for diag in &ref_diagnostics {
-            eprintln!("error TS{}: {}", diag.code, diag.message);
+            println!("error TS{}: {}", diag.code, diag.message);
         }
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
@@ -1342,7 +1342,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let build_order: Vec<tsz_cli::project_refs::ProjectId> = match graph.build_order() {
         Ok(order) => order,
         Err(e) => {
-            eprintln!("Error: {e}");
+            println!("Error: {e}");
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
         }
     };
@@ -1367,7 +1367,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let mut skipped_count = 0;
     let pretty = args
         .pretty
-        .unwrap_or_else(|| std::io::stderr().is_terminal());
+        .unwrap_or_else(|| std::io::stdout().is_terminal());
     let mut reporter = Reporter::new(pretty);
 
     if args.build_verbose {
@@ -1410,13 +1410,13 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             if !result.diagnostics.is_empty() {
                 let output = reporter.render(&result.diagnostics);
                 if !output.is_empty() {
-                    eprint!("{output}");
+                    print!("{output}");
                 }
             }
 
             // Stop on first error if --stopBuildOnErrors is set
             if args.stop_build_on_errors {
-                eprintln!(
+                println!(
                     "\nBuild stopped due to errors in {}",
                     project.config_path.display()
                 );
@@ -1521,11 +1521,11 @@ fn handle_build_single_project(
     if !result.diagnostics.is_empty() {
         let pretty = args
             .pretty
-            .unwrap_or_else(|| std::io::stderr().is_terminal());
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            eprint!("{output}");
+            print!("{output}");
         }
     }
 
