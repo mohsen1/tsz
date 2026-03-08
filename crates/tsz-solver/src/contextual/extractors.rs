@@ -628,6 +628,34 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         None
     }
 
+    fn visit_array(&mut self, elem_type: TypeId) -> Self::Output {
+        // For numeric property names (e.g., "0", "1"), the contextual type for
+        // array elements applies. This matches tsc's behavior where `{ 0: expr }`
+        // with contextual type `T[]` gets contextual element type `T`.
+        if self.is_numeric_name {
+            Some(elem_type)
+        } else {
+            None
+        }
+    }
+
+    fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
+        // For numeric property names, extract the specific tuple element type.
+        // E.g., `{ 1: expr }` with contextual type `[string, boolean]` gets `boolean`.
+        if self.is_numeric_name {
+            let name_str = self.db.resolve_atom(self.name_atom);
+            let index: usize = name_str.parse().ok()?;
+            let elements = self.db.tuple_list(crate::types::TupleListId(list_id));
+            if let Some(elem) = elements.get(index) {
+                return Some(elem.type_id);
+            }
+            // Index out of bounds for the tuple — no contextual type
+            None
+        } else {
+            None
+        }
+    }
+
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
         let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
         if resolved != TypeId(def_id) {
