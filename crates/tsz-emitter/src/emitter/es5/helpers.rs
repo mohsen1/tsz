@@ -304,17 +304,10 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        // tsc preserves the original source formatting: if the object literal was
-        // written on a single line, the comma expression is single-line; if multi-line
-        // in source, the output is multi-line. We check by looking at whether the
-        // source range spans multiple lines.
-        let use_multiline = source_range
-            .and_then(|(start, end)| {
-                let source = self.source_text?;
-                let slice = source.get(start as usize..end as usize)?;
-                Some(slice.contains('\n'))
-            })
-            .unwrap_or(true);
+        // tsc formats the lowered computed-property comma expression as multi-line
+        // regardless of whether the original object literal was single-line.
+        let _ = source_range;
+        let use_multiline = true;
 
         self.write("(");
         if use_multiline {
