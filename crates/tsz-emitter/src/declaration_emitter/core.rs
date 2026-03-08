@@ -1336,6 +1336,16 @@ impl<'a> DeclarationEmitter<'a> {
         let is_readonly = self
             .arena
             .has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword);
+        let const_asserted_enum_member = prop
+            .initializer
+            .is_some()
+            .then(|| self.const_asserted_enum_access_member_text(prop.initializer))
+            .flatten();
+        let widened_enum_type = prop
+            .initializer
+            .is_some()
+            .then(|| self.simple_enum_access_base_name_text(prop.initializer))
+            .flatten();
 
         // Type - use explicit annotation if present, otherwise use inferred type
         // SPECIAL CASE: For private properties, TypeScript omits type annotations in .d.ts
@@ -1350,13 +1360,22 @@ impl<'a> DeclarationEmitter<'a> {
                 && !prop.question_token
                 && prop.initializer.is_some()
                 && self
-                    .arena
-                    .get(prop.initializer)
-                    .is_some_and(|n| self.is_simple_enum_access(n));
+                    .simple_enum_access_member_text(prop.initializer)
+                    .is_some();
 
             if use_enum_initializer {
                 self.write(" = ");
                 self.emit_expression(prop.initializer);
+            } else if let Some(enum_member_text) = const_asserted_enum_member {
+                self.write(": ");
+                self.write(&enum_member_text);
+            } else if !is_readonly
+                && !is_abstract
+                && !prop.question_token
+                && let Some(enum_type_text) = widened_enum_type
+            {
+                self.write(": ");
+                self.write(&enum_type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // For readonly properties with literal types, use `= value` form
                 // (same as const declarations in tsc)

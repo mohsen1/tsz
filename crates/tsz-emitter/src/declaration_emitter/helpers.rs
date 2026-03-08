@@ -4175,6 +4175,116 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_source_slice(node.pos, node.end)
     }
 
+    fn skip_parenthesized_non_null_and_comma(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.arena.get_parenthesized(node)
+            {
+                idx = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr_ex(node)
+            {
+                idx = unary.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::CommaToken as u16
+            {
+                idx = binary.right;
+                continue;
+            }
+            return idx;
+        }
+        idx
+    }
+
+    fn semantic_simple_enum_access(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if !self.is_simple_enum_access(expr_node) {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(expr_node)?;
+        let base_name = self.get_identifier_text(access.expression)?;
+
+        if let Some(binder) = self.binder
+            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
+            && let Some(symbol) = binder.symbols.get(symbol_id)
+            && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
+            && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
+        {
+            return Some(expr_idx);
+        }
+
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                continue;
+            }
+            if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                && self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
+            {
+                return Some(expr_idx);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn simple_enum_access_member_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        let base_name = self.get_identifier_text(access.expression)?;
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let member_name = self.get_identifier_text(access.name_or_argument)?;
+            return Some(format!("{base_name}.{member_name}"));
+        }
+
+        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let member_node = self.arena.get(access.name_or_argument)?;
+            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
+            return Some(format!("{base_name}[{member_text}]"));
+        }
+
+        None
+    }
+
+    pub(crate) fn simple_enum_access_base_name_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        let base_node = self.arena.get(access.expression)?;
+        self.get_source_slice(base_node.pos, base_node.end)
+    }
+
+    pub(crate) fn const_asserted_enum_access_member_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        let type_node = self.arena.get(assertion.type_node)?;
+        let type_text = self.get_source_slice(type_node.pos, type_node.end)?;
+        if type_text != "const" {
+            return None;
+        }
+
+        self.simple_enum_access_member_text(assertion.expression)
+    }
+
     fn object_literal_prefers_syntax_type_text(&self, initializer: NodeIndex) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
@@ -4697,6 +4807,12 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let has_type_annotation = type_annotation.is_some();
         let has_initializer = initializer.is_some();
+        let const_asserted_enum_member = has_initializer
+            .then(|| self.const_asserted_enum_access_member_text(initializer))
+            .flatten();
+        let widened_enum_type = (has_initializer && keyword != "const")
+            .then(|| self.simple_enum_access_base_name_text(initializer))
+            .flatten();
 
         // Determine if we should emit a literal initializer for const
         let use_literal_initializer =
@@ -4713,11 +4829,7 @@ impl<'a> DeclarationEmitter<'a> {
                         // Handle negative numeric/bigint literals: PrefixUnaryExpression(-X)
                         || (k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                             && self.is_negative_literal(init_node))
-                        // Handle simple enum member accesses: E.A, E["key"]
-                        // Only allow when left-hand side is a simple identifier (not deep chains)
-                        || ((k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                            && self.is_simple_enum_access(init_node))
+                        || self.simple_enum_access_member_text(initializer).is_some()
                 } else {
                     false
                 }
@@ -4746,11 +4858,17 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_type(type_annotation);
             } else if is_unique_symbol {
                 self.write(": unique symbol");
+            } else if let Some(enum_member_text) = const_asserted_enum_member {
+                self.write(": ");
+                self.write(&enum_member_text);
             } else if is_const_null_or_undefined
                 || (has_initializer
                     && self.initializer_uses_inaccessible_class_constructor(initializer))
             {
                 self.write(": any");
+            } else if let Some(enum_type_text) = widened_enum_type {
+                self.write(": ");
+                self.write(&enum_type_text);
             } else if self.source_is_js_file
                 && let Some(type_text) = self
                     .jsdoc_name_like_type_expr_for_pos(stmt_pos)
