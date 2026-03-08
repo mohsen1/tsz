@@ -51,12 +51,20 @@ pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
 type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
+type EffectiveModuleExportsCache =
+    FxHashMap<(Option<usize>, String), Option<EffectiveModuleExportsCacheEntry>>;
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
 pub struct ResolutionError {
     pub code: u32,
     pub message: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EffectiveModuleExportsCacheEntry {
+    pub(crate) exports: tsz_binder::SymbolTable,
+    pub(crate) cross_file_target_idx: Option<usize>,
 }
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
@@ -605,6 +613,12 @@ pub struct CheckerContext<'a> {
     /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
     pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
 
+    /// Cache of resolved module export surfaces for the current file check.
+    /// Keyed by `(source_file_idx, module_specifier)` so relative lookups from
+    /// different files remain distinct while repeated import checks reuse the
+    /// same merged export table.
+    pub(crate) effective_module_exports_cache: RefCell<EffectiveModuleExportsCache>,
+
     /// All arenas for cross-file resolution (indexed by `file_idx` from `Symbol.decl_file_idx`).
     /// Set during multi-file type checking to allow resolving declarations across files.
     pub all_arenas: Option<Arc<Vec<Arc<NodeArena>>>>,
@@ -647,6 +661,12 @@ pub struct CheckerContext<'a> {
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.
     pub import_resolution_stack: Vec<String>,
+
+    /// Cache whether any binder declares a matching ambient module pattern.
+    pub(crate) ambient_module_declared_cache: RefCell<FxHashMap<String, bool>>,
+
+    /// Cache exact module-name lookups across all binders' declared/shorthand sets.
+    pub(crate) declared_or_shorthand_module_cache: RefCell<FxHashMap<String, bool>>,
 
     /// Set of import specifier nodes that should be elided from JavaScript output.
     /// These are imports that reference type-only declarations (interfaces, type aliases).

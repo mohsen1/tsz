@@ -371,7 +371,11 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS2307 for unresolved module specifiers
     /// - Validates re-exported members exist in source module
     /// - Checks for circular re-export chains
-    pub(crate) fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
+    pub(crate) fn check_export_module_specifier<F: FnMut(&str)>(
+        &mut self,
+        stmt_idx: NodeIndex,
+        report: &mut F,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
@@ -398,6 +402,7 @@ impl<'a> CheckerState<'a> {
         let module_name = &literal.text;
 
         // Check for circular re-exports
+        report("cycle_check");
         if self.would_create_cycle(module_name) {
             let cycle_path: Vec<&str> = self
                 .ctx
@@ -426,9 +431,11 @@ impl<'a> CheckerState<'a> {
         self.ctx.import_resolution_stack.push(module_name.clone());
 
         // Check if the module was resolved by the CLI driver (multi-file mode)
+        report("resolved_module_lookup");
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
+            report("check_export_target_is_module");
             self.check_export_target_is_module(export_decl.module_specifier, module_name);
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
@@ -438,6 +445,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
+            report("validate_reexported_members");
             self.validate_reexported_members(export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
@@ -445,6 +453,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
+            report("check_export_target_is_module");
             self.check_export_target_is_module(export_decl.module_specifier, module_name);
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
@@ -454,6 +463,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
+            report("validate_reexported_members");
             self.validate_reexported_members(export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;

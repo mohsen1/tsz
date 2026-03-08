@@ -15,6 +15,16 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     /// Check a class declaration.
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
+        const fn noop(_: &str) {}
+        let mut noop = noop;
+        self.check_class_declaration_with_progress(stmt_idx, &mut noop);
+    }
+
+    pub(crate) fn check_class_declaration_with_progress<F: FnMut(&str)>(
+        &mut self,
+        stmt_idx: NodeIndex,
+        report: &mut F,
+    ) {
         use crate::class_inheritance::ClassInheritanceChecker;
         use crate::diagnostics::diagnostic_codes;
 
@@ -49,6 +59,7 @@ impl<'a> CheckerState<'a> {
         // checks (TS2454) and other diagnostics. tsc evaluates decorator expressions
         // even if the class has other errors.
         if let Some(ref modifiers) = class.modifiers {
+            report("class_decorators");
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
                     && mod_node.kind == syntax_kind_ext::DECORATOR
@@ -75,6 +86,7 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Check for circular inheritance using InheritanceGraph
         // This prevents stack overflow from infinite recursion in get_class_instance_type
         // Must be done BEFORE any type checking to catch cycles early
+        report("inheritance_cycle_check");
         let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
         let _has_inheritance_cycle = checker.check_class_inheritance_cycle(stmt_idx, class);
 
@@ -175,6 +187,7 @@ impl<'a> CheckerState<'a> {
 
         // Check heritage clauses for unresolved names (TS2304)
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
+        report("heritage_clause_name_resolution");
         self.check_heritage_clauses_for_unresolved_names(
             &class.heritage_clauses,
             true,
@@ -184,6 +197,7 @@ impl<'a> CheckerState<'a> {
         // Check for abstract members in non-abstract class (error 1253),
         // private identifiers in ambient classes (error 2819),
         // and private identifiers when targeting ES5 or lower (error 18028)
+        report("precheck_members");
         for &member_idx in &class.members.nodes {
             if let Some(member_node) = self.ctx.arena.get(member_idx) {
                 // Get member name for private identifier checks
@@ -350,18 +364,27 @@ impl<'a> CheckerState<'a> {
         self.ctx.async_depth = 0;
 
         // Check each class member
-        for &member_idx in &class.members.nodes {
+        report("check_class_members");
+        for (member_position, &member_idx) in class.members.nodes.iter().enumerate() {
+            if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                report(&format!(
+                    "check_class_members::member_{member_position}::kind_{}",
+                    member_node.kind
+                ));
+            }
             self.check_class_member(member_idx);
         }
 
         self.ctx.async_depth = saved_async_depth;
 
         // Check for duplicate member names (TS2300, TS2393)
+        report("duplicate_member_checks");
         self.check_duplicate_class_members(&class.members.nodes);
 
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         // Skip for declared classes (ambient declarations don't need implementations)
         if !is_declared {
+            report("member_implementation_checks");
             self.check_class_member_implementations(&class.members.nodes);
 
             // Check static/instance consistency for method overloads (TS2387, TS2388)
@@ -385,6 +408,7 @@ impl<'a> CheckerState<'a> {
         self.check_accessor_type_compatibility(&class.members.nodes);
 
         // Check strict property initialization (TS2564)
+        report("property_initialization");
         self.check_property_initialization(stmt_idx, class, is_declared, is_abstract_class);
 
         // TS2417 (classExtendsNull2): a class that extends `null` and merges with an
@@ -409,6 +433,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for property type compatibility with base class (error 2416)
         // Property type in derived class must be assignable to same property in base class
+        report("property_inheritance_compatibility");
         self.check_property_inheritance_compatibility(stmt_idx, class);
 
         // TS2797: A mixin class that extends from a type variable containing an
@@ -418,9 +443,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check that non-abstract class implements all abstract members from base class (error 2654)
+        report("abstract_member_implementations");
         self.check_abstract_member_implementations(stmt_idx, class);
 
         // Check that class properly implements all interfaces from implements clauses (error 2420)
+        report("implements_clause_checks");
         self.check_implements_clauses(stmt_idx, class);
 
         // Check JSDoc @implements tags (JS files only)
@@ -431,7 +458,9 @@ impl<'a> CheckerState<'a> {
 
         // Check that class properties are compatible with index signatures (TS2411)
         // Get the class instance type (not constructor type) to access instance index signatures
+        report("class_instance_type");
         let class_instance_type = self.get_class_instance_type(stmt_idx, class);
+        report("index_signature_compatibility");
         self.check_index_signature_compatibility(
             &class.members.nodes,
             class_instance_type,
@@ -442,8 +471,7 @@ impl<'a> CheckerState<'a> {
             self.check_index_signature_parameter_type(member_idx);
         }
 
-        self.check_class_declaration(stmt_idx);
-
+        report("inherited_index_signature_compatibility");
         self.check_inherited_properties_against_index_signatures(
             class_instance_type,
             &class.members.nodes,

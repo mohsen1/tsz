@@ -3,6 +3,7 @@
 //! Constructor type operations have been extracted to
 //! `type_resolution/constructors.rs`.
 
+use crate::context::EffectiveModuleExportsCacheEntry;
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -165,6 +166,16 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn record_effective_module_exports_targets(&self, entry: &EffectiveModuleExportsCacheEntry) {
+        let Some(target_file_idx) = entry.cross_file_target_idx else {
+            return;
+        };
+        let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
+        for (_, &sym_id) in entry.exports.iter() {
+            targets.insert(sym_id, target_file_idx);
+        }
     }
 
     /// Resolve an export from another file using cross-file resolution.
@@ -428,22 +439,26 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        let entry = self.resolve_cross_file_namespace_exports_entry(module_specifier)?;
+        self.record_effective_module_exports_targets(&entry);
+        Some(entry.exports)
+    }
+
+    fn resolve_cross_file_namespace_exports_entry(
+        &self,
+        module_specifier: &str,
+    ) -> Option<EffectiveModuleExportsCacheEntry> {
         if let Some(exports) = self.resolve_ambient_module_namespace_exports(module_specifier) {
-            return Some(exports);
+            return Some(EffectiveModuleExportsCacheEntry {
+                exports,
+                cross_file_target_idx: None,
+            });
         }
 
         let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
-
-        // Helper: record cross-file origin for all symbols in a table.
-        let record_symbols = |table: &tsz_binder::SymbolTable| {
-            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
-            for (_, &sym_id) in table.iter() {
-                targets.insert(sym_id, target_file_idx);
-            }
-        };
 
         // Try to find exports in the target binder's module_exports.
         // Prefer canonical file key first, then module specifier fallback.
@@ -457,8 +472,10 @@ impl<'a> CheckerState<'a> {
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            record_symbols(&combined);
-            return Some(combined);
+            return Some(EffectiveModuleExportsCacheEntry {
+                exports: combined,
+                cross_file_target_idx: Some(target_file_idx),
+            });
         }
 
         // No direct exports found, but the module may still re-export symbols
@@ -472,35 +489,26 @@ impl<'a> CheckerState<'a> {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            if !combined.is_empty() {
-                record_symbols(&combined);
-            }
             // Return the table even if empty — the module exists but may have only
             // type-only exports (e.g., `export type * from '...'`). An empty namespace
             // object type is correct and will produce TS2339 for value access, instead
             // of falling through to "module not found" → TypeId::ANY.
-            return Some(combined);
+            return Some(EffectiveModuleExportsCacheEntry {
+                exports: combined,
+                cross_file_target_idx: Some(target_file_idx),
+            });
         }
 
         None
     }
 
-    /// Like `resolve_cross_file_namespace_exports` but with a pre-resolved target file index.
-    /// Used when the module specifier was already resolved from a different source file.
-    fn resolve_cross_file_namespace_exports_for_file(
+    fn resolve_cross_file_namespace_exports_for_file_entry(
         &self,
         target_file_idx: usize,
-    ) -> Option<tsz_binder::SymbolTable> {
+    ) -> Option<EffectiveModuleExportsCacheEntry> {
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
-
-        let record_symbols = |table: &tsz_binder::SymbolTable| {
-            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
-            for (_, &sym_id) in table.iter() {
-                targets.insert(sym_id, target_file_idx);
-            }
-        };
 
         let direct_exports = target_binder.module_exports.get(&target_file_name);
 
@@ -509,8 +517,10 @@ impl<'a> CheckerState<'a> {
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            record_symbols(&combined);
-            return Some(combined);
+            return Some(EffectiveModuleExportsCacheEntry {
+                exports: combined,
+                cross_file_target_idx: Some(target_file_idx),
+            });
         }
 
         let has_reexports = target_binder
@@ -521,10 +531,10 @@ impl<'a> CheckerState<'a> {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            if !combined.is_empty() {
-                record_symbols(&combined);
-            }
-            return Some(combined);
+            return Some(EffectiveModuleExportsCacheEntry {
+                exports: combined,
+                cross_file_target_idx: Some(target_file_idx),
+            });
         }
 
         None
@@ -551,15 +561,53 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolTable> {
+        let cache_key = (source_file_idx, module_specifier.to_string());
+        if let Some(cached) = self
+            .ctx
+            .effective_module_exports_cache
+            .borrow()
+            .get(&cache_key)
+            .cloned()
+        {
+            if let Some(entry) = cached {
+                self.record_effective_module_exports_targets(&entry);
+                return Some(entry.exports);
+            }
+            return None;
+        }
+
+        let resolved = self
+            .resolve_effective_module_exports_from_file_uncached(module_specifier, source_file_idx);
+        self.ctx
+            .effective_module_exports_cache
+            .borrow_mut()
+            .insert(cache_key, resolved.clone());
+
+        if let Some(entry) = resolved {
+            self.record_effective_module_exports_targets(&entry);
+            return Some(entry.exports);
+        }
+
+        None
+    }
+
+    fn resolve_effective_module_exports_from_file_uncached(
+        &self,
+        module_specifier: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<EffectiveModuleExportsCacheEntry> {
         for candidate in module_specifier_candidates(module_specifier) {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
                 let mut combined = exports.clone();
                 self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);
-                return Some(combined);
+                return Some(EffectiveModuleExportsCacheEntry {
+                    exports: combined,
+                    cross_file_target_idx: None,
+                });
             }
 
-            if let Some(exports) = self.resolve_cross_file_namespace_exports(&candidate) {
-                return Some(exports);
+            if let Some(entry) = self.resolve_cross_file_namespace_exports_entry(&candidate) {
+                return Some(entry);
             }
 
             // When resolving from a specific source file (cross-file symbol),
@@ -568,10 +616,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(target_idx) = self
                     .ctx
                     .resolve_import_target_from_file(source_idx, &candidate)
-                && let Some(exports) =
-                    self.resolve_cross_file_namespace_exports_for_file(target_idx)
+                && let Some(entry) =
+                    self.resolve_cross_file_namespace_exports_for_file_entry(target_idx)
             {
-                return Some(exports);
+                return Some(entry);
             }
         }
 
@@ -1342,5 +1390,119 @@ impl<'a> CheckerState<'a> {
         }
         // Could add additional cross-file resolution checks here in the future
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn parse_and_bind(
+        file_name: &str,
+        source: &str,
+    ) -> (
+        Arc<tsz_parser::parser::node::NodeArena>,
+        BinderState,
+        NodeIndex,
+    ) {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse diagnostics in {file_name}: {:?}",
+            parser.get_diagnostics()
+        );
+        let arena = Arc::new(parser.into_arena());
+        let mut binder = BinderState::new();
+        binder.set_debug_file(file_name);
+        binder.bind_source_file(arena.as_ref(), root);
+        (arena, binder, root)
+    }
+
+    #[test]
+    fn resolve_effective_module_exports_cache_preserves_cross_file_targets() {
+        let (utils_arena, mut utils_binder, _) =
+            parse_and_bind("utils.ts", "export const value = 1;");
+        let (main_arena, main_binder, _) =
+            parse_and_bind("main.ts", "import { value } from \"./barrel\";\nvalue;");
+        let (barrel_arena, barrel_binder, _) =
+            parse_and_bind("barrel.ts", "export * from \"./utils\";");
+        let types = TypeInterner::new();
+
+        let value_sym = utils_binder
+            .file_locals
+            .get("value")
+            .expect("utils export should be bound");
+        let mut utils_exports = tsz_binder::SymbolTable::new();
+        utils_exports.set("value".to_string(), value_sym);
+        utils_binder
+            .module_exports
+            .insert("utils.ts".to_string(), utils_exports);
+
+        let utils_binder = Arc::new(utils_binder);
+        let main_binder = Arc::new(main_binder);
+        let barrel_binder = Arc::new(barrel_binder);
+
+        let mut checker = CheckerState::new(
+            main_arena.as_ref(),
+            main_binder.as_ref(),
+            &types,
+            "main.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.all_arenas = Some(Arc::new(vec![
+            Arc::clone(&utils_arena),
+            Arc::clone(&main_arena),
+            Arc::clone(&barrel_arena),
+        ]));
+        checker.ctx.all_binders = Some(Arc::new(vec![
+            Arc::clone(&utils_binder),
+            Arc::clone(&main_binder),
+            Arc::clone(&barrel_binder),
+        ]));
+        checker.ctx.current_file_idx = 1;
+
+        let mut resolved_paths = FxHashMap::default();
+        resolved_paths.insert((1, "./barrel".to_string()), 2);
+        resolved_paths.insert((2, "./utils".to_string()), 0);
+        checker.ctx.resolved_module_paths = Some(Arc::new(resolved_paths));
+
+        let exports = checker
+            .resolve_effective_module_exports("./barrel")
+            .expect("barrel exports should resolve");
+        let value_export_sym = exports
+            .get("value")
+            .expect("re-exported symbol should be present");
+        assert_eq!(
+            checker.ctx.effective_module_exports_cache.borrow().len(),
+            1,
+            "first lookup should populate the per-checker effective exports cache"
+        );
+
+        checker.ctx.cross_file_symbol_targets.borrow_mut().clear();
+
+        let cached_exports = checker
+            .resolve_effective_module_exports("./barrel")
+            .expect("cached barrel exports should resolve");
+        assert_eq!(
+            cached_exports.get("value"),
+            Some(value_export_sym),
+            "cached export lookup should preserve the export surface"
+        );
+        assert_eq!(
+            checker
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&value_export_sym),
+            Some(&2),
+            "cached export lookup should still restore cross-file symbol ownership"
+        );
     }
 }

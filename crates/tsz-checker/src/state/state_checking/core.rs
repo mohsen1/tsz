@@ -290,23 +290,56 @@ impl<'a> CheckerState<'a> {
             }
 
             report("check_top_level_statements:start");
+            report(&format!(
+                "check_top_level_statements::file::{}:start",
+                sf.file_name
+            ));
+            report(&format!(
+                "check_top_level_statements::statement_count_{}:start",
+                sf.statements.nodes.len()
+            ));
             let phase_start = Instant::now();
             let prev_unreachable = self.ctx.is_unreachable;
             let prev_reported = self.ctx.has_reported_unreachable;
             for (stmt_position, &stmt_idx) in sf.statements.nodes.iter().enumerate() {
-                if (stmt_position < 5 || stmt_position % 25 == 0)
-                    && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                {
+                let traced_stmt_kind = self.ctx.arena.get(stmt_idx).and_then(|stmt_node| {
+                    let should_trace = stmt_position < 10 || stmt_position % 10 == 0;
+                    if !should_trace {
+                        return None;
+                    }
                     let statement_phase = format!(
                         "check_top_level_statements::statement_{stmt_position}::kind_{}",
                         stmt_node.kind
                     );
                     report(&format!("{statement_phase}:start"));
-                }
+                    Some((stmt_node.kind, statement_phase))
+                });
                 if is_dts {
                     self.check_dts_statement_in_ambient_context(stmt_idx);
                 }
-                self.check_statement(stmt_idx);
+                if let Some((stmt_kind, statement_phase)) = traced_stmt_kind {
+                    match stmt_kind {
+                        syntax_kind_ext::IMPORT_DECLARATION => {
+                            let mut statement_report =
+                                |phase: &str| report(&format!("{statement_phase}::{phase}:start"));
+                            self.check_import_declaration_with_progress(
+                                stmt_idx,
+                                &mut statement_report,
+                            );
+                        }
+                        syntax_kind_ext::EXPORT_DECLARATION => {
+                            let mut statement_report =
+                                |phase: &str| report(&format!("{statement_phase}::{phase}:start"));
+                            self.check_export_declaration_with_progress(
+                                stmt_idx,
+                                &mut statement_report,
+                            );
+                        }
+                        _ => self.check_statement(stmt_idx),
+                    }
+                } else {
+                    self.check_statement(stmt_idx);
+                }
                 if !self.statement_falls_through(stmt_idx) {
                     self.ctx.is_unreachable = true;
                 }
@@ -1614,5 +1647,155 @@ function pick(flag: boolean) {
         );
         assert!(stats.total >= stats.check_top_level_statements);
         assert!(stats.total >= stats.build_type_environment);
+    }
+
+    #[test]
+    fn check_source_file_with_progress_traces_import_and_export_subphases() {
+        let source = r#"
+import { value } from "./dep";
+export { value } from "./dep";
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.ctx.report_unresolved_imports = true;
+        checker.ctx.resolved_modules = Some(
+            ["./dep".to_string()]
+                .into_iter()
+                .collect::<rustc_hash::FxHashSet<_>>(),
+        );
+
+        let mut phases = Vec::new();
+        checker.check_source_file_with_progress(root, |phase| phases.push(phase.to_string()));
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase
+                    == "check_top_level_statements::statement_0::kind_273::check_imported_members:start"
+            }),
+            "expected import subphase marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase
+                    == "check_top_level_statements::statement_1::kind_279::check_export_module_specifier:start"
+            }),
+            "expected export subphase marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase
+                    == "check_top_level_statements::statement_1::kind_279::validate_reexported_members:start"
+            }),
+            "expected nested export validation marker, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_file_with_progress_traces_exported_class_subphases() {
+        let source = r#"
+export class Box {
+    value = 1;
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.check_source_file_with_progress(root, |phase| phases.push(phase.to_string()));
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase
+                    == "check_top_level_statements::statement_0::kind_279::check_export_clause_statement::class::check_class_members:start"
+            }),
+            "expected class member progress marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase
+                    == "check_top_level_statements::statement_0::kind_279::check_export_clause_statement::class::implements_clause_checks:start"
+            }),
+            "expected implements-clause progress marker, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_file_resolves_deferred_type_only_symbols() {
+        let source = r#"
+interface Box<T = string> {
+    value: T;
+}
+
+type Alias<T = string> = Box<T>;
+
+const okBox: Box = { value: "ok" };
+const badBox: Box = { value: 1 };
+const okAlias: Alias = { value: "ok" };
+const badAlias: Alias = { value: 1 };
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let assignability_codes: Vec<u32> = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            })
+            .map(|diag| diag.code)
+            .collect();
+        assert_eq!(
+            assignability_codes,
+            vec![
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ],
+            "unexpected diagnostics when resolving deferred type-only symbols: {:?}",
+            checker.ctx.diagnostics
+        );
     }
 }
