@@ -110,10 +110,10 @@ impl<'a> Printer<'a> {
                 && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 && decl.initializer.is_some()
                 && let Some(name_node) = self.arena.get(decl.name)
-                    && name_node.kind == SyntaxKind::Identifier as u16
-                {
-                    hoisted_names.push(self.get_identifier_text_idx(decl.name));
-                }
+                && name_node.kind == SyntaxKind::Identifier as u16
+            {
+                hoisted_names.push(self.get_identifier_text_idx(decl.name));
+            }
         }
         if !hoisted_names.is_empty() {
             self.write("var ");
