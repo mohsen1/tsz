@@ -6,16 +6,16 @@ use crate::transforms::ir_printer::IRPrinter;
 #[test]
 fn test_ir_enum_numeric() {
     let enum_ir = IRNode::EnumIIFE {
-        name: "E".to_string(),
+        name: "E".into(),
         members: vec![
             EnumMember {
-                name: "A".to_string(),
+                name: "A".into(),
                 value: EnumMemberValue::Auto(0),
                 leading_comment: None,
                 trailing_comment: None,
             },
             EnumMember {
-                name: "B".to_string(),
+                name: "B".into(),
                 value: EnumMemberValue::Auto(1),
                 leading_comment: None,
                 trailing_comment: None,
@@ -34,17 +34,17 @@ fn test_ir_enum_numeric() {
 #[test]
 fn test_ir_enum_string() {
     let enum_ir = IRNode::EnumIIFE {
-        name: "S".to_string(),
+        name: "S".into(),
         members: vec![
             EnumMember {
-                name: "A".to_string(),
-                value: EnumMemberValue::String("alpha".to_string()),
+                name: "A".into(),
+                value: EnumMemberValue::String("alpha".into()),
                 leading_comment: None,
                 trailing_comment: None,
             },
             EnumMember {
-                name: "B".to_string(),
-                value: EnumMemberValue::String("beta".to_string()),
+                name: "B".into(),
+                value: EnumMemberValue::String("beta".into()),
                 leading_comment: None,
                 trailing_comment: None,
             },
@@ -63,13 +63,13 @@ fn test_ir_enum_string() {
 #[test]
 fn test_ir_namespace_iife() {
     let namespace_ir = IRNode::NamespaceIIFE {
-        name: "MyNamespace".to_string(),
-        name_parts: vec!["MyNamespace".to_string()],
+        name: "MyNamespace".into(),
+        name_parts: vec!["MyNamespace".into()],
         body: vec![
             IRNode::func_decl("foo", vec![], vec![IRNode::ret(Some(IRNode::number("42")))]),
             IRNode::NamespaceExport {
-                namespace: "MyNamespace".to_string(),
-                name: "foo".to_string(),
+                namespace: "MyNamespace".into(),
+                name: "foo".into(),
                 value: Box::new(IRNode::id("foo")),
             },
         ],
@@ -91,8 +91,8 @@ fn test_ir_namespace_iife() {
 #[test]
 fn test_ir_namespace_qualified() {
     let namespace_ir = IRNode::NamespaceIIFE {
-        name: "A".to_string(),
-        name_parts: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+        name: "A".into(),
+        name_parts: vec!["A".into(), "B".into(), "C".into()],
         body: vec![],
         is_exported: false,
         attach_to_exports: false,
@@ -125,8 +125,8 @@ fn test_ir_commonjs_preamble() {
 #[test]
 fn test_ir_require_statement() {
     let require = IRNode::RequireStatement {
-        var_name: "module_1".to_string(),
-        module_spec: "./myModule".to_string(),
+        var_name: "module_1".into(),
+        module_spec: "./myModule".into(),
     };
 
     let output = IRPrinter::emit_to_string(&require);
@@ -137,25 +137,25 @@ fn test_ir_require_statement() {
 fn test_ir_import_statements() {
     // Default import
     let default_import = IRNode::DefaultImport {
-        var_name: "myDefault".to_string(),
-        module_var: "module_1".to_string(),
+        var_name: "myDefault".into(),
+        module_var: "module_1".into(),
     };
     let output = IRPrinter::emit_to_string(&default_import);
     assert!(output.contains("var myDefault = module_1.default;"));
 
     // Named import
     let named_import = IRNode::NamedImport {
-        var_name: "foo".to_string(),
-        module_var: "module_1".to_string(),
-        import_name: "foo".to_string(),
+        var_name: "foo".into(),
+        module_var: "module_1".into(),
+        import_name: "foo".into(),
     };
     let output = IRPrinter::emit_to_string(&named_import);
     assert!(output.contains("var foo = module_1.foo;"));
 
     // Namespace import
     let namespace_import = IRNode::NamespaceImport {
-        var_name: "ns".to_string(),
-        module_var: "module_1".to_string(),
+        var_name: "ns".into(),
+        module_var: "module_1".into(),
     };
     let output = IRPrinter::emit_to_string(&namespace_import);
     assert!(output.contains("var ns = __importStar(module_1);"));
@@ -164,7 +164,7 @@ fn test_ir_import_statements() {
 #[test]
 fn test_ir_export_assignment() {
     let export = IRNode::ExportAssignment {
-        name: "myFunction".to_string(),
+        name: "myFunction".into(),
     };
 
     let output = IRPrinter::emit_to_string(&export);
@@ -174,9 +174,9 @@ fn test_ir_export_assignment() {
 #[test]
 fn test_ir_reexport_property() {
     let reexport = IRNode::ReExportProperty {
-        export_name: "foo".to_string(),
-        module_var: "module_1".to_string(),
-        import_name: "bar".to_string(),
+        export_name: "foo".into(),
+        module_var: "module_1".into(),
+        import_name: "bar".into(),
     };
 
     let output = IRPrinter::emit_to_string(&reexport);
@@ -187,9 +187,9 @@ fn test_ir_reexport_property() {
 #[test]
 fn test_ir_namespace_export() {
     let export = IRNode::NamespaceExport {
-        namespace: "MyNamespace".to_string(),
-        name: "myFunction".to_string(),
-        value: Box::new(IRNode::Identifier("myFunction".to_string())),
+        namespace: "MyNamespace".into(),
+        name: "myFunction".into(),
+        value: Box::new(IRNode::Identifier("myFunction".into())),
     };
 
     let output = IRPrinter::emit_to_string(&export);

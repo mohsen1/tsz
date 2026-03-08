@@ -98,7 +98,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // ClassName.prototype.methodName = function () { body };
                 body.push(IRNode::PrototypeMethod {
-                    class_name: self.class_name.clone(),
+                    class_name: self.class_name.clone().into(),
                     method_name,
                     function: Box::new(IRNode::FunctionExpr {
                         name: None,
@@ -154,7 +154,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::prop(
-                                IRNode::id(&self.class_name),
+                                IRNode::id(self.class_name.clone()),
                                 "prototype",
                             )),
                             property_name: self.get_method_name_ir(accessor_data.name),
@@ -224,7 +224,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 let property_name = self.get_method_name_ir(prop_data.name);
                 let leading_comment = self.extract_leading_comment(member_node);
                 body.push(IRNode::DefineProperty {
-                    target: Box::new(IRNode::prop(IRNode::id(&self.class_name), "prototype")),
+                    target: Box::new(IRNode::prop(
+                        IRNode::id(self.class_name.clone()),
+                        "prototype",
+                    )),
                     property_name,
                     descriptor: IRPropertyDescriptor {
                         get: Some(Box::new(
@@ -374,9 +377,9 @@ impl<'a> ES5ClassTransformer<'a> {
         ));
 
         let collect_rest = IRNode::ForStatement {
-            initializer: Some(Box::new(IRNode::Raw(format!(
-                "var {loop_var} = {start_index}"
-            )))),
+            initializer: Some(Box::new(IRNode::Raw(
+                format!("var {loop_var} = {start_index}").into(),
+            ))),
             condition: Some(Box::new(IRNode::binary(
                 IRNode::id(loop_var),
                 "<",
@@ -384,7 +387,7 @@ impl<'a> ES5ClassTransformer<'a> {
             ))),
             incrementor: Some(Box::new(IRNode::PostfixUnaryExpr {
                 operand: Box::new(IRNode::id(loop_var)),
-                operator: "++".to_string(),
+                operator: "++".to_string().into(),
             })),
             body: Box::new(IRNode::block(vec![assignment])),
         };
@@ -515,7 +518,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
-                    class_name: self.class_name.clone(),
+                    class_name: self.class_name.clone().into(),
                     method_name,
                     function: Box::new(IRNode::FunctionExpr {
                         name: None,
@@ -576,16 +579,18 @@ impl<'a> ES5ClassTransformer<'a> {
                 if let Some(prop_name) = self.get_property_name_ir(prop_data.name) {
                     let target = match &prop_name {
                         PropertyNameIR::Identifier(n) => {
-                            IRNode::prop(IRNode::id(&self.class_name), n)
+                            IRNode::prop(IRNode::id(self.class_name.clone()), n.clone())
                         }
-                        PropertyNameIR::StringLiteral(s) => {
-                            IRNode::elem(IRNode::id(&self.class_name), IRNode::string(s))
-                        }
-                        PropertyNameIR::NumericLiteral(n) => {
-                            IRNode::elem(IRNode::id(&self.class_name), IRNode::number(n))
-                        }
+                        PropertyNameIR::StringLiteral(s) => IRNode::elem(
+                            IRNode::id(self.class_name.clone()),
+                            IRNode::string(s.clone()),
+                        ),
+                        PropertyNameIR::NumericLiteral(n) => IRNode::elem(
+                            IRNode::id(self.class_name.clone()),
+                            IRNode::number(n.clone()),
+                        ),
                         PropertyNameIR::Computed(expr_idx) => IRNode::elem(
-                            IRNode::id(&self.class_name),
+                            IRNode::id(self.class_name.clone()),
                             self.convert_expression(*expr_idx),
                         ),
                     };
@@ -659,7 +664,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         let leading_comment = self.extract_leading_comment(member_node);
 
                         body.push(IRNode::DefineProperty {
-                            target: Box::new(IRNode::id(&self.class_name)),
+                            target: Box::new(IRNode::id(self.class_name.clone())),
                             property_name: self.get_method_name_ir(accessor_data.name),
                             descriptor: IRPropertyDescriptor {
                                 get: get_fn.map(Box::new),
@@ -683,7 +688,7 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Get method name as IR representation
     pub(super) fn get_method_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
         let Some(name_node) = self.arena.get(name_idx) else {
-            return IRMethodName::Identifier(String::new());
+            return IRMethodName::Identifier(String::new().into());
         };
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -694,18 +699,18 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return IRMethodName::Identifier(ident.escaped_text.clone());
+                return IRMethodName::Identifier(ident.escaped_text.clone().into());
             }
         } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(name_node) {
-                return IRMethodName::StringLiteral(lit.text.clone());
+                return IRMethodName::StringLiteral(lit.text.clone().into());
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.arena.get_literal(name_node)
         {
-            return IRMethodName::NumericLiteral(lit.text.clone());
+            return IRMethodName::NumericLiteral(lit.text.clone().into());
         }
 
-        IRMethodName::Identifier(String::new())
+        IRMethodName::Identifier(String::new().into())
     }
 }

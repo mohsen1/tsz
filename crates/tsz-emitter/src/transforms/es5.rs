@@ -95,7 +95,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Add __extends if has base class
         if has_extends {
             body.push(IRNode::ExtendsHelper {
-                class_name: class_name.clone(),
+                class_name: class_name.clone().into(),
             });
         }
 
@@ -112,7 +112,7 @@ impl<'a> ES5ClassTransformer<'a> {
         body.extend(statics);
 
         // Add return statement
-        body.push(IRNode::ret(Some(IRNode::id(&class_name))));
+        body.push(IRNode::ret(Some(IRNode::id(class_name.clone()))));
 
         // Collect WeakMap names
         let weakmap_decls: Vec<String> = private_fields
@@ -152,7 +152,7 @@ impl<'a> ES5ClassTransformer<'a> {
             .collect();
 
         Some(IRNode::ES5ClassIIFE {
-            name: class_name,
+            name: class_name.into(),
             base_class: base_class.map(Box::new),
             body,
             weakmap_decls,
@@ -217,7 +217,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     has_extends,
                 );
 
-                return IRNode::func_decl(class_name, params, body);
+                return IRNode::func_decl(class_name.to_string(), params, body);
             }
         }
 
@@ -228,7 +228,7 @@ impl<'a> ES5ClassTransformer<'a> {
         );
         let body =
             self.build_default_constructor_body(&instance_props, has_extends && !extends_null);
-        IRNode::func_decl(class_name, vec![], body)
+        IRNode::func_decl(class_name.to_string(), vec![], body)
     }
 
     /// Extract arguments from the `super()` call in a constructor body.
@@ -439,7 +439,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop_data.name);
-        let target = IRNode::prop(receiver, &prop_name);
+        let target = IRNode::prop(receiver, prop_name);
         let value = self.transform_expression(prop_data.initializer)?;
 
         Some(IRNode::expr_stmt(IRNode::assign(target, value)))
@@ -478,7 +478,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 let func = IRNode::func_expr(None, params, body);
 
                 nodes.push(IRNode::PrototypeMethod {
-                    class_name: class_name.to_string(),
+                    class_name: class_name.to_string().into(),
                     method_name,
                     function: Box::new(func),
                     leading_comment: None,
@@ -523,7 +523,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 let func = IRNode::func_expr(None, params, body);
 
                 nodes.push(IRNode::StaticMethod {
-                    class_name: class_name.to_string(),
+                    class_name: class_name.to_string().into(),
                     method_name,
                     function: Box::new(func),
                     leading_comment: None,
@@ -547,7 +547,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     prop_data.name,
                 );
                 if let Some(value) = self.transform_expression(prop_data.initializer) {
-                    let target = IRNode::prop(IRNode::id(class_name), &prop_name);
+                    let target =
+                        IRNode::prop(IRNode::id(class_name.to_string()), prop_name.clone());
                     nodes.push(IRNode::expr_stmt(IRNode::assign(target, value)));
                 }
             }
@@ -577,9 +578,9 @@ impl<'a> ES5ClassTransformer<'a> {
             }
 
             let mut param = if param_data.dot_dot_dot_token {
-                IRParam::rest(&name)
+                IRParam::rest(name.clone())
             } else {
-                IRParam::new(&name)
+                IRParam::new(name.clone())
             };
 
             if param_data.initializer.is_some()
@@ -713,7 +714,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             self.transform_expression(var_decl.initializer)
                         };
                         declarations.push(IRNode::VarDecl {
-                            name,
+                            name: name.into(),
                             initializer: initializer.map(Box::new),
                         });
                     }
@@ -766,15 +767,15 @@ impl<'a> ES5ClassTransformer<'a> {
         match expr_node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(expr_node)?;
-                Some(IRNode::number(&lit.text))
+                Some(IRNode::number(lit.clone().text))
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let lit = self.arena.get_literal(expr_node)?;
-                Some(IRNode::string(&lit.text))
+                Some(IRNode::string(lit.text.to_string()))
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let ident = self.arena.get_identifier(expr_node)?;
-                Some(IRNode::id(&ident.escaped_text))
+                Some(IRNode::id(ident.escaped_text.to_string()))
             }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
@@ -811,7 +812,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     self.arena,
                     access.name_or_argument,
                 );
-                Some(IRNode::prop(object, &property))
+                Some(IRNode::prop(object, property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(expr_node)?;
@@ -842,7 +843,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
     fn get_method_name(&self, name_idx: NodeIndex) -> IRMethodName {
         let Some(name_node) = self.arena.get(name_idx) else {
-            return IRMethodName::Identifier(String::new());
+            return IRMethodName::Identifier(String::new().into());
         };
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -853,19 +854,19 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return IRMethodName::Identifier(ident.escaped_text.clone());
+                return IRMethodName::Identifier(ident.escaped_text.clone().into());
             }
         } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(name_node) {
-                return IRMethodName::StringLiteral(lit.text.clone());
+                return IRMethodName::StringLiteral(lit.text.clone().into());
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.arena.get_literal(name_node)
         {
-            return IRMethodName::NumericLiteral(lit.text.clone());
+            return IRMethodName::NumericLiteral(lit.text.clone().into());
         }
 
-        IRMethodName::Identifier(String::new())
+        IRMethodName::Identifier(String::new().into())
     }
 
     fn get_operator_string(&self, op: u16) -> String {
@@ -956,7 +957,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                         opcode: 2,
                         value: None,
-                        comment: Some("return".to_string()),
+                        comment: Some("return".to_string().into()),
                     }))],
                 }],
             };
@@ -973,7 +974,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                         statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                             opcode: 2,
                             value: None,
-                            comment: Some("return".to_string()),
+                            comment: Some("return".to_string().into()),
                         }))],
                     }],
                 };
@@ -998,7 +999,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                             statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                                 opcode: 2,
                                 value: value.map(Box::new),
-                                comment: Some("return".to_string()),
+                                comment: Some("return".to_string().into()),
                             }))],
                         }],
                     };
@@ -1012,7 +1013,7 @@ impl<'a> ES5AsyncTransformer<'a> {
         final_stmts.push(IRNode::ret(Some(IRNode::GeneratorOp {
             opcode: 2,
             value: None,
-            comment: Some("return".to_string()),
+            comment: Some("return".to_string().into()),
         })));
 
         IRNode::GeneratorBody {
@@ -1044,7 +1045,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     current_stmts.push(IRNode::ret(Some(IRNode::GeneratorOp {
                         opcode: 4,
                         value: Some(Box::new(operand)),
-                        comment: Some("yield".to_string()),
+                        comment: Some("yield".to_string().into()),
                     })));
 
                     // Save current case
@@ -1062,7 +1063,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     current_stmts.push(IRNode::ret(Some(IRNode::GeneratorOp {
                         opcode: 4,
                         value: Some(Box::new(operand)),
-                        comment: Some("yield".to_string()),
+                        comment: Some("yield".to_string().into()),
                     })));
 
                     // Save current case
@@ -1078,7 +1079,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                         statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                             opcode: 2,
                             value: Some(Box::new(IRNode::GeneratorSent)),
-                            comment: Some("return".to_string()),
+                            comment: Some("return".to_string().into()),
                         }))],
                     });
 
@@ -1089,7 +1090,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     current_stmts.push(IRNode::ret(Some(IRNode::GeneratorOp {
                         opcode: 2,
                         value: value.map(Box::new),
-                        comment: Some("return".to_string()),
+                        comment: Some("return".to_string().into()),
                     })));
                 }
             }
@@ -1100,7 +1101,7 @@ impl<'a> ES5AsyncTransformer<'a> {
             current_stmts.push(IRNode::ret(Some(IRNode::GeneratorOp {
                 opcode: 2,
                 value: None,
-                comment: Some("return".to_string()),
+                comment: Some("return".to_string().into()),
             })));
             cases.push(IRGeneratorCase {
                 label: self.label_counter,
@@ -1197,7 +1198,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                 return vec![IRNode::ret(Some(IRNode::GeneratorOp {
                     opcode: 2,
                     value: Some(Box::new(expr)),
-                    comment: Some("return".to_string()),
+                    comment: Some("return".to_string().into()),
                 }))];
             }
             return vec![];
@@ -1248,15 +1249,15 @@ impl<'a> ES5AsyncTransformer<'a> {
         match expr_node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(expr_node)?;
-                Some(IRNode::number(&lit.text))
+                Some(IRNode::number(lit.clone().text))
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let lit = self.arena.get_literal(expr_node)?;
-                Some(IRNode::string(&lit.text))
+                Some(IRNode::string(lit.text.to_string()))
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let ident = self.arena.get_identifier(expr_node)?;
-                Some(IRNode::id(&ident.escaped_text))
+                Some(IRNode::id(ident.escaped_text.to_string()))
             }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
@@ -1286,7 +1287,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     self.arena,
                     access.name_or_argument,
                 );
-                Some(IRNode::prop(object, &property))
+                Some(IRNode::prop(object, property))
             }
             _ => Some(IRNode::ASTRef(expr_idx)),
         }

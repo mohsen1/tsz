@@ -307,10 +307,13 @@ impl<'a> ES5SpreadTransformer<'a> {
 
         // Build: (_a = obj, _a.method.apply(_a, args))
         Some(IRNode::CommaExpr(vec![
-            IRNode::assign(IRNode::id(&temp_var), object_expr),
+            IRNode::assign(IRNode::id(temp_var.clone()), object_expr),
             IRNode::call(
-                IRNode::prop(IRNode::prop(IRNode::id(&temp_var), &method_name), "apply"),
-                vec![IRNode::id(&temp_var), args_array],
+                IRNode::prop(
+                    IRNode::prop(IRNode::id(temp_var.clone()), method_name),
+                    "apply",
+                ),
+                vec![IRNode::id(temp_var), args_array],
             ),
         ]))
     }
@@ -493,8 +496,8 @@ impl<'a> ES5SpreadTransformer<'a> {
                 let name =
                     crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
                 Some(IRProperty {
-                    key: IRPropertyKey::Identifier(name.clone()),
-                    value: IRNode::id(&name),
+                    key: IRPropertyKey::Identifier(name.clone().into()),
+                    value: IRNode::id(name),
                     kind: IRPropertyKind::Init,
                 })
             }
@@ -535,9 +538,9 @@ impl<'a> ES5SpreadTransformer<'a> {
             );
             if !name.is_empty() {
                 result.push(if param_data.dot_dot_dot_token {
-                    IRParam::rest(&name)
+                    IRParam::rest(name.clone())
                 } else {
-                    IRParam::new(&name)
+                    IRParam::new(name.clone())
                 });
             }
         }
@@ -570,15 +573,15 @@ impl<'a> ES5SpreadTransformer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                Some(IRNode::number(&lit.text))
+                Some(IRNode::number(lit.clone().text))
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                Some(IRNode::string(&lit.text))
+                Some(IRNode::string(lit.text.to_string()))
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let ident = self.arena.get_identifier(node)?;
-                Some(IRNode::id(&ident.escaped_text))
+                Some(IRNode::id(ident.escaped_text.to_string()))
             }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
@@ -591,7 +594,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                     self.arena,
                     access.name_or_argument,
                 );
-                Some(IRNode::prop(object, &property))
+                Some(IRNode::prop(object, property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;

@@ -220,9 +220,9 @@ impl<'a> AsyncES5Transformer<'a> {
 
             if let Some(func_name) = name {
                 return IRNode::FunctionDecl {
-                    name: func_name,
+                    name: func_name.into(),
                     parameters: Vec::new(),
-                    body: vec![IRNode::Raw(generated)],
+                    body: vec![IRNode::Raw(generated.into())],
                     body_source_range: None,
                     leading_comment: None,
                 };
@@ -230,7 +230,7 @@ impl<'a> AsyncES5Transformer<'a> {
             return IRNode::FunctionExpr {
                 name: None,
                 parameters: Vec::new(),
-                body: vec![IRNode::Raw(generated)],
+                body: vec![IRNode::Raw(generated.into())],
                 is_expression_body: false,
                 body_source_range: None,
             };
@@ -251,7 +251,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     continue;
                 }
                 if let Some(comment) = self.extract_preceding_line_comment(stmt_node.pos) {
-                    hoisted_decls.push(IRNode::Raw(comment));
+                    hoisted_decls.push(IRNode::Raw(comment.into()));
                 }
                 skipped_statements.push(stmt_idx);
                 if let Some(func) = self.arena.get_function(stmt_node) {
@@ -283,13 +283,13 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Build the function declaration/expression wrapper
-        let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.as_str())).collect();
+        let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
 
         if let Some(func_name) = name {
             let mut body = hoisted_decls;
             body.push(awaiter_call);
             IRNode::FunctionDecl {
-                name: func_name,
+                name: func_name.into(),
                 parameters: ir_params,
                 body,
                 body_source_range: None,
@@ -364,7 +364,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     IRNode::GeneratorOp {
                         opcode: opcodes::RETURN,
                         value: None,
-                        comment: Some("return".to_string()),
+                        comment: Some("return".to_string().into()),
                     },
                 ))));
             }
@@ -380,7 +380,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     IRNode::GeneratorOp {
                         opcode: opcodes::RETURN,
                         value: None,
-                        comment: Some("return".to_string()),
+                        comment: Some("return".to_string().into()),
                     },
                 )))],
             });
@@ -429,7 +429,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 IRNode::GeneratorOp {
                     opcode: opcodes::RETURN,
                     value: Some(Box::new(IRNode::GeneratorSent)),
-                    comment: Some("return".to_string()),
+                    comment: Some("return".to_string().into()),
                 },
             ))));
         } else {
@@ -439,7 +439,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 IRNode::GeneratorOp {
                     opcode: opcodes::RETURN,
                     value: Some(Box::new(value)),
-                    comment: Some("return".to_string()),
+                    comment: Some("return".to_string().into()),
                 },
             ))));
         }
@@ -475,7 +475,7 @@ impl<'a> AsyncES5Transformer<'a> {
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
                                 value: None,
-                                comment: Some("return".to_string()),
+                                comment: Some("return".to_string().into()),
                             },
                         ))));
                     } else if super::emit_utils::is_await_expression(self.arena, ret.expression) {
@@ -492,7 +492,7 @@ impl<'a> AsyncES5Transformer<'a> {
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
                                 value: Some(Box::new(IRNode::GeneratorSent)),
-                                comment: Some("return".to_string()),
+                                comment: Some("return".to_string().into()),
                             },
                         ))));
                     } else {
@@ -501,7 +501,7 @@ impl<'a> AsyncES5Transformer<'a> {
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
                                 value: Some(Box::new(value)),
-                                comment: Some("return".to_string()),
+                                comment: Some("return".to_string().into()),
                             },
                         ))));
                     }
@@ -594,7 +594,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 IRNode::GeneratorOp {
                     opcode: opcodes::YIELD,
                     value: Some(Box::new(operand)),
-                    comment: Some("yield".to_string()),
+                    comment: Some("yield".to_string().into()),
                 },
             ))));
 
@@ -630,7 +630,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
-                    name: name.clone(),
+                    name: name.clone().into(),
                     initializer: None,
                 });
 
@@ -644,8 +644,8 @@ impl<'a> AsyncES5Transformer<'a> {
                 // Assign the sent value to the variable
                 current_statements.push(IRNode::ExpressionStatement(Box::new(
                     IRNode::BinaryExpr {
-                        left: Box::new(IRNode::Identifier(name)),
-                        operator: "=".to_string(),
+                        left: Box::new(IRNode::Identifier(name.into())),
+                        operator: "=".to_string().into(),
                         right: Box::new(IRNode::GeneratorSent),
                     },
                 )));
@@ -655,7 +655,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 // (e.g., var x = (await foo()) + 1;)
                 // Declare variable first, then process
                 current_statements.push(IRNode::VarDecl {
-                    name: name.clone(),
+                    name: name.clone().into(),
                     initializer: None,
                 });
 
@@ -663,8 +663,8 @@ impl<'a> AsyncES5Transformer<'a> {
                 let init = self.expression_to_ir(decl.initializer);
                 current_statements.push(IRNode::ExpressionStatement(Box::new(
                     IRNode::BinaryExpr {
-                        left: Box::new(IRNode::Identifier(name)),
-                        operator: "=".to_string(),
+                        left: Box::new(IRNode::Identifier(name.into())),
+                        operator: "=".to_string().into(),
                         right: Box::new(init),
                     },
                 )));
@@ -677,7 +677,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 };
 
                 current_statements.push(IRNode::VarDecl {
-                    name,
+                    name: name.into(),
                     initializer: init,
                 });
             }
@@ -1125,18 +1125,18 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let IRNode::VarDecl { name, initializer } = &case.statements[i] {
                     if initializer.is_none() {
                         // Pure declaration with no initializer -- hoist and remove
-                        hoisted.push(name.clone());
+                        hoisted.push(name.to_string());
                         case.statements.remove(i);
                         continue;
                     } else {
                         // Has initializer -- hoist the name but keep as assignment
                         let var_name = name.clone();
-                        hoisted.push(var_name.clone());
+                        hoisted.push(var_name.to_string());
                         let init = initializer.clone().unwrap();
                         case.statements[i] =
                             IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
                                 left: Box::new(IRNode::Identifier(var_name)),
-                                operator: "=".to_string(),
+                                operator: "=".to_string().into(),
                                 right: init,
                             }));
                     }

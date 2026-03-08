@@ -115,7 +115,7 @@ pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) 
             let default_value = (param.initializer.is_some())
                 .then(|| Box::new(AstToIr::new(arena).convert_expression(param.initializer)));
             Some(IRParam {
-                name,
+                name: name.into(),
                 rest,
                 default_value,
             })
@@ -303,8 +303,8 @@ pub(super) fn convert_exported_variable_declarations(
     if assignment_targets.len() == 1 {
         let (name, value) = assignment_targets.remove(0);
         return vec![IRNode::NamespaceExport {
-            namespace: ns_name.to_string(),
-            name,
+            namespace: ns_name.to_string().into(),
+            name: name.into(),
             value: Box::new(value),
         }];
     }
@@ -313,7 +313,7 @@ pub(super) fn convert_exported_variable_declarations(
         .into_iter()
         .map(|(name, value)| format!("{}.{name} = {}", ns_name, IRPrinter::emit_to_string(&value)))
         .collect();
-    result.push(IRNode::Raw(format!("{};", parts.join(", "))));
+    result.push(IRNode::Raw(format!("{};", parts.join(", ")).into()));
 
     result
 }
@@ -347,7 +347,10 @@ pub(super) fn convert_variable_declarations(
                         Box::new(AstToIr::new(arena).convert_expression(decl.initializer))
                     });
 
-                    result.push(IRNode::VarDecl { name, initializer });
+                    result.push(IRNode::VarDecl {
+                        name: name.into(),
+                        initializer,
+                    });
                     emitted_any = true;
                 }
             }
@@ -355,9 +358,9 @@ pub(super) fn convert_variable_declarations(
             if !emitted_any && decl_list.declarations.nodes.is_empty() {
                 // Preserve declaration-shape recovery output such as `var ;` / `let;`.
                 if keyword == "var" {
-                    result.push(IRNode::Raw("var ;".to_string()));
+                    result.push(IRNode::Raw("var ;".to_string().into()));
                 } else {
-                    result.push(IRNode::Raw(format!("{keyword};")));
+                    result.push(IRNode::Raw(format!("{keyword};").into()));
                 }
             }
         }
@@ -419,7 +422,7 @@ pub(super) fn collect_member_names_from_node(
         | IRNode::FunctionDecl { name, .. }
         | IRNode::VarDecl { name, .. }
         | IRNode::EnumIIFE { name, .. } => {
-            names.insert(name.clone());
+            names.insert(name.to_string());
         }
         IRNode::Sequence(items) => {
             for item in items {
@@ -460,14 +463,14 @@ pub(super) fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, n
     match node {
         IRNode::NamespaceExport { namespace, .. } => {
             if namespace == old_name {
-                *namespace = new_name.to_string();
+                *namespace = new_name.to_string().into();
             }
         }
         IRNode::NamespaceIIFE { parent_name, .. } => {
             if let Some(parent) = parent_name
                 && parent == old_name
             {
-                *parent = new_name.to_string();
+                *parent = new_name.to_string().into();
             }
         }
         IRNode::Sequence(items) => {
@@ -497,10 +500,10 @@ pub(super) fn rewrite_exported_var_refs(
 ) {
     match node {
         IRNode::Identifier(name) => {
-            if names.contains(name) {
+            if names.contains(&**name) {
                 let property = name.clone();
                 *node = IRNode::PropertyAccess {
-                    object: Box::new(IRNode::Identifier(ns_name.to_string())),
+                    object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
                     property,
                 };
             }

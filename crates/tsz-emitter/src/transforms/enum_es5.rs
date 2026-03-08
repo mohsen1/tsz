@@ -122,7 +122,7 @@ impl<'a> EnumES5Transformer<'a> {
 
         // var E;
         statements.push(IRNode::VarDecl {
-            name: name.clone(),
+            name: name.clone().into(),
             initializer: None,
         });
 
@@ -131,10 +131,10 @@ impl<'a> EnumES5Transformer<'a> {
 
         // Build IIFE argument: E || (E = {})
         let iife_arg = IRNode::LogicalOr {
-            left: Box::new(IRNode::Identifier(name.clone())),
+            left: Box::new(IRNode::Identifier(name.clone().into())),
             right: Box::new(IRNode::BinaryExpr {
-                left: Box::new(IRNode::Identifier(name.clone())),
-                operator: "=".to_string(),
+                left: Box::new(IRNode::Identifier(name.clone().into())),
+                operator: "=".to_string().into(),
                 right: Box::new(IRNode::empty_object()),
             }),
         };
@@ -143,7 +143,7 @@ impl<'a> EnumES5Transformer<'a> {
         let iife = IRNode::CallExpr {
             callee: Box::new(IRNode::FunctionExpr {
                 name: None, // IIFEs are anonymous functions
-                parameters: vec![IRParam::new(&name)],
+                parameters: vec![IRParam::new(name.clone())],
                 body,
                 is_expression_body: false,
                 body_source_range: None,
@@ -292,24 +292,24 @@ impl<'a> EnumES5Transformer<'a> {
                 } else {
                     let next_val = self.last_value.map_or(0, |v| v + 1);
                     self.last_value = Some(next_val);
-                    IRNode::NumericLiteral(next_val.to_string())
+                    IRNode::NumericLiteral(next_val.to_string().into())
                 };
                 self.last_value = None; // Can't auto-increment after computed
                 self.last_float_value = None;
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
                         index: Box::new(key_expr.clone()),
                     }),
-                    operator: "=".to_string(),
+                    operator: "=".to_string().into(),
                     right: Box::new(value),
                 };
                 let outer_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
                         index: Box::new(inner_assign),
                     }),
-                    operator: "=".to_string(),
+                    operator: "=".to_string().into(),
                     right: Box::new(key_expr),
                 };
                 IRNode::ExpressionStatement(Box::new(outer_assign))
@@ -329,16 +329,16 @@ impl<'a> EnumES5Transformer<'a> {
                     let value_ir = if self.is_string_member_reference(member_data.initializer) {
                         self.transform_expression(member_data.initializer)
                     } else if let Some(folded) = folded_string {
-                        IRNode::StringLiteral(folded)
+                        IRNode::StringLiteral(folded.into())
                     } else {
                         self.transform_expression(member_data.initializer)
                     };
                     let assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
-                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
-                            index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                            object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+                            index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                         }),
-                        operator: "=".to_string(),
+                        operator: "=".to_string().into(),
                         right: Box::new(value_ir),
                     };
                     self.last_value = None; // Reset auto-increment
@@ -374,19 +374,19 @@ impl<'a> EnumES5Transformer<'a> {
                     };
                     let inner_assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
-                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
-                            index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                            object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+                            index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                         }),
-                        operator: "=".to_string(),
+                        operator: "=".to_string().into(),
                         right: Box::new(inner_value),
                     };
                     let outer_assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
-                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                            object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
                             index: Box::new(inner_assign),
                         }),
-                        operator: "=".to_string(),
-                        right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                        operator: "=".to_string().into(),
+                        right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                     };
                     IRNode::ExpressionStatement(Box::new(outer_assign))
                 }
@@ -410,19 +410,19 @@ impl<'a> EnumES5Transformer<'a> {
                 };
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
-                        index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+                        index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                     }),
-                    operator: "=".to_string(),
+                    operator: "=".to_string().into(),
                     right: Box::new(value_node),
                 };
                 let outer_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
                         index: Box::new(inner_assign),
                     }),
-                    operator: "=".to_string(),
-                    right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                    operator: "=".to_string().into(),
+                    right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                 };
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             } else {
@@ -432,7 +432,7 @@ impl<'a> EnumES5Transformer<'a> {
                 let value_node = if let Some(v) = self.last_value {
                     let next_val = v + 1;
                     self.last_value = Some(next_val);
-                    IRNode::NumericLiteral(next_val.to_string())
+                    IRNode::NumericLiteral(next_val.to_string().into())
                 } else {
                     // Can't auto-increment: emit void 0
                     IRNode::Undefined
@@ -440,19 +440,19 @@ impl<'a> EnumES5Transformer<'a> {
 
                 let inner_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
-                        index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+                        index: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                     }),
-                    operator: "=".to_string(),
+                    operator: "=".to_string().into(),
                     right: Box::new(value_node),
                 };
                 let outer_assign = IRNode::BinaryExpr {
                     left: Box::new(IRNode::ElementAccess {
-                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        object: Box::new(IRNode::Identifier(enum_name.to_string().into())),
                         index: Box::new(inner_assign),
                     }),
-                    operator: "=".to_string(),
-                    right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                    operator: "=".to_string().into(),
+                    right: Box::new(IRNode::StringLiteral(member_name.clone().into())),
                 };
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
@@ -504,7 +504,7 @@ impl<'a> EnumES5Transformer<'a> {
                     text
                 };
                 statements.push(IRNode::Comment {
-                    text: inner,
+                    text: inner.into(),
                     is_block,
                 });
             }
@@ -518,7 +518,7 @@ impl<'a> EnumES5Transformer<'a> {
 
             // Insert trailing comment after the member statement (same line)
             if let Some(text) = trailing_comment {
-                statements.push(IRNode::TrailingComment(text));
+                statements.push(IRNode::TrailingComment(text.into()));
             }
         }
 
@@ -528,7 +528,7 @@ impl<'a> EnumES5Transformer<'a> {
     /// Transform an expression node to IR
     fn transform_expression(&self, idx: NodeIndex) -> IRNode {
         let Some(node) = self.arena.get(idx) else {
-            return IRNode::NumericLiteral("0".to_string());
+            return IRNode::NumericLiteral("0".to_string().into());
         };
 
         match node.kind {
@@ -540,18 +540,18 @@ impl<'a> EnumES5Transformer<'a> {
                         && let Ok(val) = lit.text.parse::<f64>()
                         && val.is_infinite()
                     {
-                        return IRNode::NumericLiteral("Infinity".to_string());
+                        return IRNode::NumericLiteral("Infinity".to_string().into());
                     }
-                    IRNode::NumericLiteral(lit.text.clone())
+                    IRNode::NumericLiteral(lit.text.clone().into())
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    IRNode::StringLiteral(lit.text.clone())
+                    IRNode::StringLiteral(lit.text.clone().into())
                 } else {
-                    IRNode::StringLiteral(String::new())
+                    IRNode::StringLiteral(String::new().into())
                 }
             }
             k if k == SyntaxKind::Identifier as u16 => {
@@ -562,42 +562,44 @@ impl<'a> EnumES5Transformer<'a> {
                         && self.member_names.contains(id.escaped_text.as_str())
                     {
                         IRNode::PropertyAccess {
-                            object: Box::new(IRNode::Identifier(self.current_enum_name.clone())),
-                            property: id.escaped_text.clone(),
+                            object: Box::new(IRNode::Identifier(
+                                self.current_enum_name.clone().into(),
+                            )),
+                            property: id.escaped_text.clone().into(),
                         }
                     } else {
-                        IRNode::Identifier(id.escaped_text.clone())
+                        IRNode::Identifier(id.escaped_text.clone().into())
                     }
                 } else {
-                    IRNode::Identifier("unknown".to_string())
+                    IRNode::Identifier("unknown".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.arena.get_binary_expr(node) {
                     IRNode::BinaryExpr {
                         left: Box::new(self.transform_expression(bin.left)),
-                        operator: self.emit_operator(bin.operator_token),
+                        operator: self.emit_operator(bin.operator_token).into(),
                         right: Box::new(self.transform_expression(bin.right)),
                     }
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.arena.get_unary_expr(node) {
                     IRNode::PrefixUnaryExpr {
-                        operator: self.emit_operator(unary.operator),
+                        operator: self.emit_operator(unary.operator).into(),
                         operand: Box::new(self.transform_expression(unary.operand)),
                     }
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.arena.get_parenthesized(node) {
                     IRNode::Parenthesized(Box::new(self.transform_expression(paren.expression)))
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
@@ -617,10 +619,10 @@ impl<'a> EnumES5Transformer<'a> {
                     };
                     IRNode::PropertyAccess {
                         object: Box::new(obj),
-                        property: prop,
+                        property: prop.into(),
                     }
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
@@ -630,7 +632,7 @@ impl<'a> EnumES5Transformer<'a> {
                         index: Box::new(self.transform_expression(access.name_or_argument)),
                     }
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
             // `this` keyword
@@ -652,7 +654,7 @@ impl<'a> EnumES5Transformer<'a> {
                         arguments: args,
                     }
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
 
@@ -676,11 +678,11 @@ impl<'a> EnumES5Transformer<'a> {
                         // the node's span)
                         let raw = raw.trim_end_matches(',').trim_end();
                         if !raw.is_empty() {
-                            return IRNode::Raw(raw.to_string());
+                            return IRNode::Raw(raw.to_string().into());
                         }
                     }
                 }
-                IRNode::NumericLiteral("0".to_string())
+                IRNode::NumericLiteral("0".to_string().into())
             }
 
             _ => {
@@ -693,11 +695,11 @@ impl<'a> EnumES5Transformer<'a> {
                         let raw = text[start..end].trim();
                         let raw = raw.trim_end_matches(',').trim_end();
                         if !raw.is_empty() {
-                            return IRNode::Raw(raw.to_string());
+                            return IRNode::Raw(raw.to_string().into());
                         }
                     }
                 }
-                IRNode::NumericLiteral("0".to_string())
+                IRNode::NumericLiteral("0".to_string().into())
             }
         }
     }
@@ -708,27 +710,27 @@ impl<'a> EnumES5Transformer<'a> {
 
     /// Format an i64 value as an `IRNode` numeric literal, matching tsc's output format.
     fn format_numeric_literal(val: i64) -> IRNode {
-        IRNode::NumericLiteral(val.to_string())
+        IRNode::NumericLiteral(val.to_string().into())
     }
 
     /// Format a float value as an IR node.
     /// Handles special values: Infinity, -Infinity, NaN.
     fn format_float_literal(val: f64) -> IRNode {
         if val.is_nan() {
-            IRNode::Identifier("NaN".to_string())
+            IRNode::Identifier("NaN".to_string().into())
         } else if val.is_infinite() {
             if val.is_sign_positive() {
-                IRNode::Identifier("Infinity".to_string())
+                IRNode::Identifier("Infinity".to_string().into())
             } else {
                 IRNode::PrefixUnaryExpr {
-                    operator: "-".to_string(),
-                    operand: Box::new(IRNode::Identifier("Infinity".to_string())),
+                    operator: "-".to_string().into(),
+                    operand: Box::new(IRNode::Identifier("Infinity".to_string().into())),
                 }
             }
         } else {
             // Format with enough precision to round-trip
             let s = format!("{val}");
-            IRNode::NumericLiteral(s)
+            IRNode::NumericLiteral(s.into())
         }
     }
 

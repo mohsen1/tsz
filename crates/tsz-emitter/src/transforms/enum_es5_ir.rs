@@ -60,7 +60,7 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
     let members = transform_enum_members(arena, &enum_data.members, &name);
 
     Some(IRNode::EnumIIFE {
-        name,
+        name: name.into(),
         members,
         namespace_export: None,
     })
@@ -97,7 +97,7 @@ fn transform_enum_members(
             // String enum
             last_value = None; // Reset - can't continue after string
             if let Some(lit) = arena.get_literal_at(member_data.initializer) {
-                EnumMemberValue::String(lit.text.clone())
+                EnumMemberValue::String(lit.text.clone().into())
             } else {
                 EnumMemberValue::Auto(0)
             }
@@ -109,7 +109,7 @@ fn transform_enum_members(
         };
 
         result.push(EnumMember {
-            name: member_name,
+            name: member_name.into(),
             value,
             leading_comment: None,
             trailing_comment: None,
@@ -136,7 +136,7 @@ fn extract_enum_value(arena: &NodeArena, idx: NodeIndex) -> EnumMemberValue {
         }
         k if k == SyntaxKind::StringLiteral as u16 => {
             if let Some(lit) = arena.get_literal(node) {
-                EnumMemberValue::String(lit.text.clone())
+                EnumMemberValue::String(lit.text.clone().into())
             } else {
                 EnumMemberValue::Auto(0)
             }

@@ -40,19 +40,19 @@ pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
 
     // Build the namespace-qualified property access: NS.E
     let ns_prop = || IRNode::PropertyAccess {
-        object: Box::new(IRNode::Identifier(ns_name.to_string())),
-        property: enum_name.to_string(),
+        object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
+        property: enum_name.to_string().into(),
     };
 
     // Replace the IIFE argument: E || (E = {}) → E = NS.E || (NS.E = {})
     arguments[0] = IRNode::BinaryExpr {
-        left: Box::new(IRNode::Identifier(enum_name.to_string())),
-        operator: "=".to_string(),
+        left: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+        operator: "=".to_string().into(),
         right: Box::new(IRNode::LogicalOr {
             left: Box::new(ns_prop()),
             right: Box::new(IRNode::BinaryExpr {
                 left: Box::new(ns_prop()),
-                operator: "=".to_string(),
+                operator: "=".to_string().into(),
                 right: Box::new(IRNode::empty_object()),
             }),
         }),

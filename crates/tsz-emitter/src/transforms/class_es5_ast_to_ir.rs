@@ -86,9 +86,9 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => self.convert_continue_statement(idx),
             k if k == syntax_kind_ext::LABELED_STATEMENT => self.convert_labeled_statement(idx),
             k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
-            k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
-                IRNode::ExpressionStatement(Box::new(IRNode::Identifier("debugger".to_string())))
-            }
+            k if k == syntax_kind_ext::DEBUGGER_STATEMENT => IRNode::ExpressionStatement(Box::new(
+                IRNode::Identifier("debugger".to_string().into()),
+            )),
             k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::FOR_OF_STATEMENT =>
             {
@@ -116,7 +116,7 @@ impl<'a> AstToIr<'a> {
                 // If we have a class_alias set (static method context), use it instead of `this`
                 if let Some(alias) = self.current_class_alias.take() {
                     self.current_class_alias.set(Some(alias.clone()));
-                    IRNode::Identifier(alias)
+                    IRNode::Identifier(alias.into())
                 } else {
                     IRNode::This {
                         captured: self.this_captured.get(),
@@ -148,7 +148,7 @@ impl<'a> AstToIr<'a> {
                     };
                     let name = get_identifier_text(self.arena, access.name_or_argument)
                         .unwrap_or_default();
-                    IRNode::Raw(format!("{keyword}.{name}"))
+                    IRNode::Raw(format!("{keyword}.{name}").into())
                 } else {
                     IRNode::ASTRef(idx)
                 }
@@ -187,7 +187,8 @@ impl<'a> AstToIr<'a> {
                             .arena
                             .get(qn.right)
                             .and_then(|n| self.arena.get_identifier(n))
-                            .map_or_else(String::new, |id| id.escaped_text.clone()),
+                            .map_or_else(String::new, |id| id.escaped_text.clone())
+                            .into(),
                     }
                 } else {
                     IRNode::ASTRef(idx)
@@ -332,7 +333,10 @@ impl<'a> AstToIr<'a> {
         } else {
             Some(Box::new(self.convert_expression(var_decl.initializer)))
         };
-        Some(IRNode::VarDecl { name, initializer })
+        Some(IRNode::VarDecl {
+            name: name.into(),
+            initializer,
+        })
     }
 
     fn convert_throw_statement(&self, idx: NodeIndex) -> IRNode {
@@ -373,7 +377,10 @@ impl<'a> AstToIr<'a> {
                 } else {
                     vec![]
                 };
-                Some(IRCatchClause { param, body })
+                Some(IRCatchClause {
+                    param: param.map(Into::into),
+                    body,
+                })
             } else {
                 None
             };
@@ -510,7 +517,7 @@ impl<'a> AstToIr<'a> {
             } else {
                 get_identifier_text(self.arena, jump_data.label)
             };
-            IRNode::BreakStatement(label)
+            IRNode::BreakStatement(label.map(Into::into))
         } else {
             IRNode::BreakStatement(None)
         }
@@ -524,7 +531,7 @@ impl<'a> AstToIr<'a> {
             } else {
                 get_identifier_text(self.arena, jump_data.label)
             };
-            IRNode::ContinueStatement(label)
+            IRNode::ContinueStatement(label.map(Into::into))
         } else {
             IRNode::ContinueStatement(None)
         }
@@ -536,7 +543,7 @@ impl<'a> AstToIr<'a> {
             && let Some(label) = get_identifier_text(self.arena, labeled.label)
         {
             return IRNode::LabeledStatement {
-                label,
+                label: label.into(),
                 statement: Box::new(self.convert_statement(labeled.statement)),
             };
         }
@@ -552,7 +559,7 @@ impl<'a> AstToIr<'a> {
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
         if let Some(ident) = self.arena.get_identifier(node) {
-            IRNode::Identifier(ident.escaped_text.clone())
+            IRNode::Identifier(ident.escaped_text.clone().into())
         } else {
             IRNode::ASTRef(idx)
         }
@@ -561,7 +568,7 @@ impl<'a> AstToIr<'a> {
     fn convert_numeric_literal(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
         if let Some(lit) = self.arena.get_literal(node) {
-            IRNode::NumericLiteral(lit.text.clone())
+            IRNode::NumericLiteral(lit.text.clone().into())
         } else {
             IRNode::ASTRef(idx)
         }
@@ -622,21 +629,21 @@ impl<'a> AstToIr<'a> {
                     // Static: _super.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: method_name,
+                        property: method_name.into(),
                     }
                 } else {
                     // Instance: _super.prototype.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
                             object: Box::new(IRNode::id("_super")),
-                            property: "prototype".to_string(),
+                            property: "prototype".to_string().into(),
                         }),
-                        property: method_name,
+                        property: method_name.into(),
                     }
                 };
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_method),
-                    property: "call".to_string(),
+                    property: "call".to_string().into(),
                 };
                 let mut call_args = vec![IRNode::This {
                     captured: self.this_captured.get(),
@@ -661,7 +668,7 @@ impl<'a> AstToIr<'a> {
                 } else {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: "prototype".to_string(),
+                        property: "prototype".to_string().into(),
                     }
                 };
                 let super_proto_elem = IRNode::ElementAccess {
@@ -670,7 +677,7 @@ impl<'a> AstToIr<'a> {
                 };
                 let call_method = IRNode::PropertyAccess {
                     object: Box::new(super_proto_elem),
-                    property: "call".to_string(),
+                    property: "call".to_string().into(),
                 };
                 let mut call_args = vec![IRNode::This {
                     captured: self.this_captured.get(),
@@ -722,15 +729,15 @@ impl<'a> AstToIr<'a> {
                 return if self.is_static {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: name,
+                        property: name.into(),
                     }
                 } else {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
                             object: Box::new(IRNode::id("_super")),
-                            property: "prototype".to_string(),
+                            property: "prototype".to_string().into(),
                         }),
-                        property: name,
+                        property: name.into(),
                     }
                 };
             }
@@ -739,7 +746,7 @@ impl<'a> AstToIr<'a> {
             if let Some(name) = get_identifier_text(self.arena, access.name_or_argument) {
                 return IRNode::PropertyAccess {
                     object: Box::new(object),
-                    property: name,
+                    property: name.into(),
                 };
             }
         }
@@ -761,7 +768,7 @@ impl<'a> AstToIr<'a> {
                 } else {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id("_super")),
-                        property: "prototype".to_string(),
+                        property: "prototype".to_string().into(),
                     }
                 };
                 return IRNode::ElementAccess {
@@ -804,7 +811,7 @@ impl<'a> AstToIr<'a> {
 
             IRNode::BinaryExpr {
                 left: Box::new(left),
-                operator: op,
+                operator: op.into(),
                 right: Box::new(right),
             }
         } else {
@@ -823,7 +830,7 @@ impl<'a> AstToIr<'a> {
             let operand = self.convert_expression(unary.operand);
             let op = self.get_prefix_operator(unary.operator);
             IRNode::PrefixUnaryExpr {
-                operator: op,
+                operator: op.into(),
                 operand: Box::new(operand),
             }
         } else {
@@ -847,7 +854,7 @@ impl<'a> AstToIr<'a> {
             };
             IRNode::PostfixUnaryExpr {
                 operand: Box::new(operand),
-                operator: op,
+                operator: op.into(),
             }
         } else {
             IRNode::ASTRef(idx)
@@ -923,8 +930,8 @@ impl<'a> AstToIr<'a> {
         } else if let Some(shorthand) = self.arena.get_shorthand_property(node) {
             let name = get_identifier_text(self.arena, shorthand.name)?;
             Some(IRProperty {
-                key: IRPropertyKey::Identifier(name.clone()),
-                value: IRNode::Identifier(name),
+                key: IRPropertyKey::Identifier(name.clone().into()),
+                value: IRNode::Identifier(name.into()),
                 kind: IRPropertyKind::Init,
             })
         } else {
@@ -971,7 +978,7 @@ impl<'a> AstToIr<'a> {
                 vec![]
             };
             IRNode::FunctionExpr {
-                name,
+                name: name.map(Into::into),
                 parameters: params,
                 body,
                 is_expression_body: false,
@@ -1081,7 +1088,7 @@ impl<'a> AstToIr<'a> {
                 let default_value = (param.initializer.is_some())
                     .then(|| Box::new(self.convert_expression(param.initializer)));
                 Some(IRParam {
-                    name,
+                    name: name.into(),
                     rest,
                     default_value,
                 })

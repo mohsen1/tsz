@@ -19,6 +19,8 @@
 //! The IR is a tree of `IRNode` variants. Each variant represents a JavaScript
 //! construct (expression, statement, declaration) that can be emitted.
 
+use std::borrow::Cow;
+
 use tsz_parser::parser::NodeIndex;
 
 /// Intermediate Representation node for transformed JavaScript
@@ -28,10 +30,10 @@ pub enum IRNode {
     // Literals
     // =========================================================================
     /// Numeric literal: `42`, `3.14`
-    NumericLiteral(String),
+    NumericLiteral(Cow<'static, str>),
 
     /// String literal: `"hello"`, `'world'`
-    StringLiteral(String),
+    StringLiteral(Cow<'static, str>),
 
     /// Boolean literal: `true`, `false`
     BooleanLiteral(bool),
@@ -46,7 +48,7 @@ pub enum IRNode {
     // Identifiers
     // =========================================================================
     /// Identifier: `foo`, `_bar`
-    Identifier(String),
+    Identifier(Cow<'static, str>),
 
     /// This keyword: `this` or `_this` (for captures)
     This { captured: bool },
@@ -60,20 +62,20 @@ pub enum IRNode {
     /// Binary expression: `left op right`
     BinaryExpr {
         left: Box<Self>,
-        operator: String,
+        operator: Cow<'static, str>,
         right: Box<Self>,
     },
 
     /// Unary prefix expression: `!x`, `-x`, `++x`
     PrefixUnaryExpr {
-        operator: String,
+        operator: Cow<'static, str>,
         operand: Box<Self>,
     },
 
     /// Unary postfix expression: `x++`, `x--`
     PostfixUnaryExpr {
         operand: Box<Self>,
-        operator: String,
+        operator: Cow<'static, str>,
     },
 
     /// Call expression: `callee(args)`
@@ -90,7 +92,10 @@ pub enum IRNode {
     },
 
     /// Property access: `object.property`
-    PropertyAccess { object: Box<Self>, property: String },
+    PropertyAccess {
+        object: Box<Self>,
+        property: Cow<'static, str>,
+    },
 
     /// Element access: `object[index]`
     ElementAccess { object: Box<Self>, index: Box<Self> },
@@ -123,7 +128,7 @@ pub enum IRNode {
 
     /// Function expression: `function name(params) { body }`
     FunctionExpr {
-        name: Option<String>,
+        name: Option<Cow<'static, str>>,
         parameters: Vec<IRParam>,
         body: Vec<Self>,
         /// Whether body is a single expression (for arrow conversion)
@@ -143,7 +148,7 @@ pub enum IRNode {
     // =========================================================================
     /// Variable declaration: `var x = value;`
     VarDecl {
-        name: String,
+        name: Cow<'static, str>,
         initializer: Option<Box<Self>>,
     },
 
@@ -206,20 +211,23 @@ pub enum IRNode {
     ThrowStatement(Box<Self>),
 
     /// Break statement: `break;` or `break label;`
-    BreakStatement(Option<String>),
+    BreakStatement(Option<Cow<'static, str>>),
 
     /// Continue statement: `continue;` or `continue label;`
-    ContinueStatement(Option<String>),
+    ContinueStatement(Option<Cow<'static, str>>),
 
     /// Labeled statement: `label: stmt`
-    LabeledStatement { label: String, statement: Box<Self> },
+    LabeledStatement {
+        label: Cow<'static, str>,
+        statement: Box<Self>,
+    },
 
     // =========================================================================
     // Declarations
     // =========================================================================
     /// Function declaration: `function name(params) { body }`
     FunctionDecl {
-        name: String,
+        name: Cow<'static, str>,
         parameters: Vec<IRParam>,
         body: Vec<Self>,
         /// Source range of the body block (for preserving single-line formatting)
@@ -234,7 +242,7 @@ pub enum IRNode {
     /// IIFE pattern for ES5 class:
     /// `var ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
     ES5ClassIIFE {
-        name: String,
+        name: Cow<'static, str>,
         base_class: Option<Box<Self>>,
         body: Vec<Self>,
         /// `WeakMap` declarations for private fields (before the IIFE)
@@ -252,11 +260,11 @@ pub enum IRNode {
     StaticBlockIIFE { statements: Vec<Self> },
 
     /// __extends helper call: `__extends(ClassName, _super);`
-    ExtendsHelper { class_name: String },
+    ExtendsHelper { class_name: Cow<'static, str> },
 
     /// Prototype method assignment: `ClassName.prototype.method = function() {...};`
     PrototypeMethod {
-        class_name: String,
+        class_name: Cow<'static, str>,
         method_name: IRMethodName,
         function: Box<Self>,
         /// Leading `JSDoc` or block comment from the original method declaration
@@ -267,7 +275,7 @@ pub enum IRNode {
 
     /// Static method assignment: `ClassName.method = function() {...};`
     StaticMethod {
-        class_name: String,
+        class_name: Cow<'static, str>,
         method_name: IRMethodName,
         function: Box<Self>,
         /// Leading `JSDoc` or block comment from the original method declaration
@@ -308,7 +316,7 @@ pub enum IRNode {
     GeneratorOp {
         opcode: u32,
         value: Option<Box<Self>>,
-        comment: Option<String>,
+        comment: Option<Cow<'static, str>>,
     },
 
     /// _`a.sent()` - get the sent value in generator
@@ -323,25 +331,25 @@ pub enum IRNode {
     /// __classPrivateFieldGet(receiver, weakmap, "f")
     PrivateFieldGet {
         receiver: Box<Self>,
-        weakmap_name: String,
+        weakmap_name: Cow<'static, str>,
     },
 
     /// __classPrivateFieldSet(receiver, weakmap, value, "f")
     PrivateFieldSet {
         receiver: Box<Self>,
-        weakmap_name: String,
+        weakmap_name: Cow<'static, str>,
         value: Box<Self>,
     },
 
     /// __classPrivateFieldIn(weakmap, obj)
     PrivateFieldIn {
-        weakmap_name: String,
+        weakmap_name: Cow<'static, str>,
         obj: Box<Self>,
     },
 
     /// WeakMap.set for private field init: `_weakmap.set(this, value);`
     WeakMapSet {
-        weakmap_name: String,
+        weakmap_name: Cow<'static, str>,
         key: Box<Self>,
         value: Box<Self>,
     },
@@ -350,15 +358,18 @@ pub enum IRNode {
     // Special
     // =========================================================================
     /// Raw JavaScript string (escape hatch for complex cases)
-    Raw(String),
+    Raw(Cow<'static, str>),
 
     /// Comment: `/* text */` or `// text`
-    Comment { text: String, is_block: bool },
+    Comment {
+        text: Cow<'static, str>,
+        is_block: bool,
+    },
 
     /// Trailing comment that should be emitted on the same line as the previous node.
     /// Used for comments like `M.x = ""; //comment` inside namespace bodies.
     /// The text includes delimiters (e.g., `//comment` or `/* comment */`).
-    TrailingComment(String),
+    TrailingComment(Cow<'static, str>),
 
     /// Sequence of statements/nodes
     Sequence(Vec<Self>),
@@ -380,41 +391,41 @@ pub enum IRNode {
     EsesModuleMarker,
 
     /// `exports.name = void 0;` (export initialization)
-    ExportInit { name: String },
+    ExportInit { name: Cow<'static, str> },
 
     /// `var module = require("module");` (require statement)
     RequireStatement {
-        var_name: String,
-        module_spec: String,
+        var_name: Cow<'static, str>,
+        module_spec: Cow<'static, str>,
     },
 
     /// `import foo from "module";` -> `var foo = module.foo;` (default import)
     DefaultImport {
-        var_name: String,
-        module_var: String,
+        var_name: Cow<'static, str>,
+        module_var: Cow<'static, str>,
     },
 
     /// `import * as ns from "module";` -> `var ns = require("module");` (namespace import)
     NamespaceImport {
-        var_name: String,
-        module_var: String,
+        var_name: Cow<'static, str>,
+        module_var: Cow<'static, str>,
     },
 
     /// `import { foo } from "module";` -> `var foo = module.foo;` (named import)
     NamedImport {
-        var_name: String,
-        module_var: String,
-        import_name: String,
+        var_name: Cow<'static, str>,
+        module_var: Cow<'static, str>,
+        import_name: Cow<'static, str>,
     },
 
     /// `export default value;` -> `exports.default = value;`
-    ExportAssignment { name: String },
+    ExportAssignment { name: Cow<'static, str> },
 
     /// `export { foo as bar } from "module";` (re-export)
     ReExportProperty {
-        export_name: String,
-        module_var: String,
-        import_name: String,
+        export_name: Cow<'static, str>,
+        module_var: Cow<'static, str>,
+        import_name: Cow<'static, str>,
     },
 
     // =========================================================================
@@ -423,15 +434,15 @@ pub enum IRNode {
     /// Enum IIFE: `(function (E) { ... })(E || (E = {}))`
     /// When `namespace_export` is set, emits: `(E = NS.E || (NS.E = {}))`
     EnumIIFE {
-        name: String,
+        name: Cow<'static, str>,
         members: Vec<EnumMember>,
-        namespace_export: Option<String>,
+        namespace_export: Option<Cow<'static, str>>,
     },
 
     /// Namespace IIFE: `(function (NS) { ... })(NS || (NS = {}))`
     NamespaceIIFE {
-        name: String,
-        name_parts: Vec<String>,
+        name: Cow<'static, str>,
+        name_parts: Vec<Cow<'static, str>>,
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
@@ -439,12 +450,12 @@ pub enum IRNode {
         /// Set to false when merging with a class/function/enum that already declared it.
         should_declare_var: bool,
         /// Parent namespace name for qualified binding: `NS = Parent.NS || (Parent.NS = {})`
-        parent_name: Option<String>,
+        parent_name: Option<Cow<'static, str>>,
         /// Renamed IIFE parameter name when a member collides with the namespace name.
         /// E.g., namespace A { export class A {} } => `(function (A_1) { ... A_1.A = A; })`
         /// Only the function parameter and namespace exports use this name;
         /// the var declaration and argument still use the original name.
-        param_name: Option<String>,
+        param_name: Option<Cow<'static, str>>,
         /// Skip automatic indentation when this node is in a Sequence (after the first child).
         /// Used for nested namespace IIFEs that should align with their siblings rather than
         /// being indented as regular statements. This prevents double-indentation when a
@@ -454,8 +465,8 @@ pub enum IRNode {
 
     /// Namespace export: `NS.foo = ...;`
     NamespaceExport {
-        namespace: String,
-        name: String,
+        namespace: Cow<'static, str>,
+        name: Cow<'static, str>,
         value: Box<Self>,
     },
 }
@@ -463,7 +474,7 @@ pub enum IRNode {
 /// Enum member representation for IR
 #[derive(Debug, Clone)]
 pub struct EnumMember {
-    pub name: String,
+    pub name: Cow<'static, str>,
     pub value: EnumMemberValue,
     /// Optional leading JSDoc/block comment from the original enum member
     pub leading_comment: Option<String>,
@@ -479,7 +490,7 @@ pub enum EnumMemberValue {
     /// Explicit numeric value
     Numeric(i64),
     /// String value
-    String(String),
+    String(Cow<'static, str>),
     /// Computed expression (not a simple literal)
     Computed(Box<IRNode>),
 }
@@ -495,9 +506,9 @@ pub struct IRProperty {
 /// Object property key
 #[derive(Debug, Clone)]
 pub enum IRPropertyKey {
-    Identifier(String),
-    StringLiteral(String),
-    NumericLiteral(String),
+    Identifier(Cow<'static, str>),
+    StringLiteral(Cow<'static, str>),
+    NumericLiteral(Cow<'static, str>),
     Computed(Box<IRNode>),
 }
 
@@ -512,16 +523,16 @@ pub enum IRPropertyKind {
 /// Method name (for prototype/static assignments)
 #[derive(Debug, Clone)]
 pub enum IRMethodName {
-    Identifier(String),
-    StringLiteral(String),
-    NumericLiteral(String),
+    Identifier(Cow<'static, str>),
+    StringLiteral(Cow<'static, str>),
+    NumericLiteral(Cow<'static, str>),
     Computed(Box<IRNode>),
 }
 
 /// Function parameter
 #[derive(Debug, Clone)]
 pub struct IRParam {
-    pub name: String,
+    pub name: Cow<'static, str>,
     pub rest: bool,
     pub default_value: Option<Box<IRNode>>,
 }
@@ -536,7 +547,7 @@ pub struct IRSwitchCase {
 /// Catch clause
 #[derive(Debug, Clone)]
 pub struct IRCatchClause {
-    pub param: Option<String>,
+    pub param: Option<Cow<'static, str>>,
     pub body: Vec<IRNode>,
 }
 
@@ -565,17 +576,17 @@ pub struct IRGeneratorCase {
 
 impl IRNode {
     /// Create an identifier node
-    pub fn id(name: impl Into<String>) -> Self {
+    pub fn id(name: impl Into<Cow<'static, str>>) -> Self {
         Self::Identifier(name.into())
     }
 
     /// Create a string literal
-    pub fn string(s: impl Into<String>) -> Self {
+    pub fn string(s: impl Into<Cow<'static, str>>) -> Self {
         Self::StringLiteral(s.into())
     }
 
     /// Create a numeric literal
-    pub fn number(n: impl Into<String>) -> Self {
+    pub fn number(n: impl Into<Cow<'static, str>>) -> Self {
         Self::NumericLiteral(n.into())
     }
 
@@ -588,7 +599,7 @@ impl IRNode {
     }
 
     /// Create a property access
-    pub fn prop(object: Self, property: impl Into<String>) -> Self {
+    pub fn prop(object: Self, property: impl Into<Cow<'static, str>>) -> Self {
         Self::PropertyAccess {
             object: Box::new(object),
             property: property.into(),
@@ -604,7 +615,7 @@ impl IRNode {
     }
 
     /// Create a binary expression
-    pub fn binary(left: Self, op: impl Into<String>, right: Self) -> Self {
+    pub fn binary(left: Self, op: impl Into<Cow<'static, str>>, right: Self) -> Self {
         Self::BinaryExpr {
             left: Box::new(left),
             operator: op.into(),
@@ -616,13 +627,13 @@ impl IRNode {
     pub fn assign(target: Self, value: Self) -> Self {
         Self::BinaryExpr {
             left: Box::new(target),
-            operator: "=".to_string(),
+            operator: Cow::Borrowed("="),
             right: Box::new(value),
         }
     }
 
     /// Create a var declaration
-    pub fn var_decl(name: impl Into<String>, init: Option<Self>) -> Self {
+    pub fn var_decl(name: impl Into<Cow<'static, str>>, init: Option<Self>) -> Self {
         Self::VarDecl {
             name: name.into(),
             initializer: init.map(Box::new),
@@ -635,7 +646,11 @@ impl IRNode {
     }
 
     /// Create a function expression
-    pub const fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
+    pub const fn func_expr(
+        name: Option<Cow<'static, str>>,
+        params: Vec<IRParam>,
+        body: Vec<Self>,
+    ) -> Self {
         Self::FunctionExpr {
             name,
             parameters: params,
@@ -646,7 +661,11 @@ impl IRNode {
     }
 
     /// Create a function declaration
-    pub fn func_decl(name: impl Into<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
+    pub fn func_decl(
+        name: impl Into<Cow<'static, str>>,
+        params: Vec<IRParam>,
+        body: Vec<Self>,
+    ) -> Self {
         Self::FunctionDecl {
             name: name.into(),
             parameters: params,
@@ -735,7 +754,7 @@ impl IRNode {
 }
 
 impl IRParam {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             name: name.into(),
             rest: false,
@@ -743,7 +762,7 @@ impl IRParam {
         }
     }
 
-    pub fn rest(name: impl Into<String>) -> Self {
+    pub fn rest(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             name: name.into(),
             rest: true,
@@ -759,7 +778,7 @@ impl IRParam {
 
 impl IRProperty {
     /// Create a simple property with identifier key: `{ key: value }`
-    pub fn init(key: impl Into<String>, value: IRNode) -> Self {
+    pub fn init(key: impl Into<Cow<'static, str>>, value: IRNode) -> Self {
         Self {
             key: IRPropertyKey::Identifier(key.into()),
             value,
