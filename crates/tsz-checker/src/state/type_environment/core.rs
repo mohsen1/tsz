@@ -705,6 +705,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Plain local class/function symbols can also stay lazy here. Their
+            // concrete types are only needed when the file actually references
+            // them during checking, and on-demand symbol resolution already
+            // knows how to populate type_env/definition_store for those cases.
+            let is_plain_local_callable_or_class =
+                flags & (symbol_flags::CLASS | symbol_flags::FUNCTION) != 0
+                    && flags
+                        & (symbol_flags::INTERFACE
+                            | symbol_flags::ENUM
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE)
+                        == 0;
+            if is_plain_local_callable_or_class {
+                let _ = self.ctx.get_or_create_def_id(sym_id);
+                continue;
+            }
+
             // Get the type for this symbol
             // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
             // returns both the type AND the correct type_params, then inserts them into

@@ -201,3 +201,66 @@ const createIteratorChain = <T>(input: IterableLike<T>): IteratorChain<T> =>
         "Expected no non-lib diagnostics for recursive iterator chain return context, got: {relevant:?}"
     );
 }
+
+#[test]
+fn build_type_environment_defers_plain_class_and_function_symbols() {
+    let source = r#"
+class Box<T> {
+  constructor(readonly value: T) {}
+}
+
+function makeBox<T>(value: T): Box<T> {
+  return new Box(value);
+}
+
+const value = makeBox(1).value;
+"#;
+
+    let (parser, binder, types, root) = build_program(source);
+    let class_idx = find_first_node_by_kind(&parser, syntax_kind_ext::CLASS_DECLARATION);
+    let function_idx = find_first_node_by_kind(&parser, syntax_kind_ext::FUNCTION_DECLARATION);
+    let class_sym = binder
+        .node_symbols
+        .get(&class_idx.0)
+        .copied()
+        .expect("expected class symbol");
+    let function_sym = binder
+        .node_symbols
+        .get(&function_idx.0)
+        .copied()
+        .expect("expected function symbol");
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let _ = checker.build_type_environment();
+
+    assert!(
+        !checker.ctx.symbol_types.contains_key(&class_sym),
+        "expected build_type_environment to defer plain class symbols"
+    );
+    assert!(
+        !checker.ctx.symbol_types.contains_key(&function_sym),
+        "expected build_type_environment to defer plain function symbols"
+    );
+
+    checker.check_source_file(root);
+
+    let relevant: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected deferred class/function environment build to preserve checking, got: {relevant:?}"
+    );
+}
