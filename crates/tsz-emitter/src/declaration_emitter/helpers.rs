@@ -1938,6 +1938,10 @@ impl<'a> DeclarationEmitter<'a> {
             return Some((name_idx, initializer));
         }
 
+        if self.js_commonjs_void_zero_export_init(initializer) {
+            return None;
+        }
+
         let init_node = self.arena.get(initializer)?;
         if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
             || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -1980,6 +1984,46 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.get_identifier_text(class.name)
             .is_some_and(|class_name| class_name == export_name)
+    }
+
+    fn js_commonjs_void_zero_export_init(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.is_void_expression(expr_node)
+            || expr_node.kind == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let Some(lhs_node) = self.arena.get(lhs) else {
+            return false;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+            return false;
+        };
+        if !self.is_exports_identifier_reference(lhs_access.expression) {
+            return false;
+        }
+
+        self.js_commonjs_void_zero_export_init(binary.right)
     }
 
     pub(crate) fn js_assigned_initializer_for_value_reference(
