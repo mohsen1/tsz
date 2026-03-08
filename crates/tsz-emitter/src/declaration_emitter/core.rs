@@ -110,6 +110,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
+    /// JS namespace-like alias exports synthesized from expando assignments such
+    /// as `foo.default = foo` and `module.exports.Bar = Bar`.
+    pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<(String, String)>>,
     /// Consecutive JS re-export declarations that should be merged at the first statement.
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
@@ -190,6 +193,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_named_export_statements: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
+            js_namespace_export_aliases: FxHashMap::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -249,6 +253,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_named_export_statements: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
+            js_namespace_export_aliases: FxHashMap::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -548,6 +553,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
+        self.js_namespace_export_aliases =
+            self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
         let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
         self.js_grouped_reexports = grouped_reexports;
         self.js_skipped_reexports = skipped_reexports;
@@ -1004,6 +1011,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_namespace_export_aliases_for_name(func.name);
 
         // Skip comments within the function body to prevent them from
         // leaking as leading comments on the next statement.
@@ -1106,6 +1114,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_js_namespace_export_aliases_for_name(class.name);
     }
 
     pub(super) fn emit_class_member(&mut self, member_idx: NodeIndex) {
