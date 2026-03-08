@@ -49,6 +49,8 @@ pub struct RelationCacheStats {
 /// Query database wrapper with basic caching.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
+    resolved_def_types: RwLock<FxHashMap<DefId, TypeId>>,
+    resolved_def_type_params: RwLock<FxHashMap<DefId, Vec<TypeParamInfo>>>,
     eval_cache: RwLock<FxHashMap<EvalCacheKey, TypeId>>,
     application_eval_cache: RwLock<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RwLock<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
@@ -76,6 +78,8 @@ impl<'a> QueryCache<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
         QueryCache {
             interner,
+            resolved_def_types: RwLock::new(FxHashMap::default()),
+            resolved_def_type_params: RwLock::new(FxHashMap::default()),
             eval_cache: RwLock::new(FxHashMap::default()),
             application_eval_cache: RwLock::new(FxHashMap::default()),
             element_access_cache: RwLock::new(FxHashMap::default()),
@@ -94,6 +98,14 @@ impl<'a> QueryCache<'a> {
     }
 
     pub fn clear(&self) {
+        match self.resolved_def_types.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.resolved_def_type_params.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
         // Handle poisoned locks gracefully - if poisoned, clear the cache anyway
         match self.eval_cache.write() {
             Ok(mut cache) => cache.clear(),
@@ -643,16 +655,29 @@ impl TypeDatabase for QueryCache<'_> {
     }
 }
 
-/// Implement `TypeResolver` for `QueryCache` with noop resolution.
+/// Implement `TypeResolver` for `QueryCache`.
 ///
-/// `QueryCache` doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or `DefIds`. Only `resolve_ref`
-/// (required) is explicitly implemented; all other resolution methods
-/// inherit the trait's default `None`/`false` behavior. The three boxed/array
-/// methods delegate to the underlying interner.
+/// `QueryCache` still does not resolve arbitrary symbols on its own, but it can
+/// answer `Lazy(DefId)` queries that the checker registered for the current
+/// check run. This keeps hot application/member paths inside the solver after
+/// the checker has already computed the corresponding def body.
 impl TypeResolver for QueryCache<'_> {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        match self.resolved_def_types.read() {
+            Ok(cache) => cache.get(&def_id).copied(),
+            Err(e) => e.into_inner().get(&def_id).copied(),
+        }
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        match self.resolved_def_type_params.read() {
+            Ok(cache) => cache.get(&def_id).cloned(),
+            Err(e) => e.into_inner().get(&def_id).cloned(),
+        }
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -687,6 +712,40 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
         self.interner.register_boxed_def_id(kind, def_id);
+    }
+
+    fn register_resolved_def(
+        &self,
+        def_id: DefId,
+        type_id: TypeId,
+        type_params: Vec<TypeParamInfo>,
+    ) {
+        match self.resolved_def_types.write() {
+            Ok(mut cache) => {
+                cache.insert(def_id, type_id);
+            }
+            Err(e) => {
+                e.into_inner().insert(def_id, type_id);
+            }
+        }
+
+        match self.resolved_def_type_params.write() {
+            Ok(mut cache) => {
+                if type_params.is_empty() {
+                    cache.remove(&def_id);
+                } else {
+                    cache.insert(def_id, type_params);
+                }
+            }
+            Err(e) => {
+                let mut cache = e.into_inner();
+                if type_params.is_empty() {
+                    cache.remove(&def_id);
+                } else {
+                    cache.insert(def_id, type_params);
+                }
+            }
+        }
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {

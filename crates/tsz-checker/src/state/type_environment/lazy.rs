@@ -576,6 +576,11 @@ impl<'a> CheckerState<'a> {
             self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
 
+        if let Some(def_id) = def_id {
+            self.ctx
+                .register_query_resolved_def(def_id, resolved, type_params.clone());
+        }
+
         // Already fully registered with params (or not generic), nothing to do.
         if symbol_already_registered
             && def_already_registered
@@ -629,6 +634,12 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_symbol(sym_id)
         };
+
+        if resolved != TypeId::ERROR && resolved != TypeId::ANY {
+            let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+            self.ctx
+                .register_query_resolved_def(def_id, resolved, params);
+        }
 
         if resolved != TypeId::ERROR
             && resolved != TypeId::ANY

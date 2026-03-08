@@ -13,6 +13,17 @@ use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
+    fn register_query_resolved_lib_def(
+        &self,
+        def_id: tsz_solver::DefId,
+        type_id: TypeId,
+        params: &[tsz_solver::TypeParamInfo],
+    ) {
+        self.ctx
+            .types
+            .register_resolved_def(def_id, type_id, params.to_vec());
+    }
+
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
@@ -552,6 +563,7 @@ impl<'a> CheckerState<'a> {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
                             }
+                            self.register_query_resolved_lib_def(def_id, ty, &params);
 
                             // Register the interface body in TypeEnvironment so that
                             // resolve_lazy(def_id) can find it. Without this, Lazy(DefId)
@@ -596,6 +608,7 @@ impl<'a> CheckerState<'a> {
                                     // Cache type parameters for Application expansion
                                     let def_id = get_cached_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
+                                    self.register_query_resolved_lib_def(def_id, ty, &params);
 
                                     // CRITICAL: Register the type body in TypeEnvironment so that
                                     // evaluate_application can resolve it via resolve_lazy(def_id).
@@ -1045,6 +1058,7 @@ impl<'a> CheckerState<'a> {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
                             }
+                            self.register_query_resolved_lib_def(def_id, ty, &params);
 
                             // Register the interface body in TypeEnvironment so that
                             // resolve_lazy(def_id) can find it. Without this, Lazy(DefId)
@@ -1090,6 +1104,7 @@ impl<'a> CheckerState<'a> {
                                     // Cache type parameters for Application expansion
                                     let def_id = get_cached_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
+                                    self.register_query_resolved_lib_def(def_id, ty, &params);
 
                                     // CRITICAL: Register the type body in TypeEnvironment so that
                                     // evaluate_application can resolve it via resolve_lazy(def_id).
