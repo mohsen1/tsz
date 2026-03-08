@@ -165,9 +165,8 @@ impl<'a> CheckerState<'a> {
             }
             // No type arguments provided - check if this generic type requires them
             // Also, use type_reference_symbol_type to preserve nominal identity for enum members
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_qualified_symbol_in_type_position(type_name_idx)
-            {
+            let qn_sym_res = self.resolve_qualified_symbol_in_type_position(type_name_idx);
+            if let TypeSymbolResolution::Type(sym_id) = qn_sym_res {
                 self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                 let required_count = self.count_required_type_params(sym_id);
                 if required_count > 0 {

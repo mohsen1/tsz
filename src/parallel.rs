@@ -235,6 +235,9 @@ pub struct BindResult {
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Vec<Arc<BinderState>>,
+    /// Arenas corresponding to each `lib_binder` (same order/length as `lib_binders`).
+    /// Used by `merge_bind_results_ref` to populate `declaration_arenas` for lib symbols.
+    pub lib_arenas: Vec<Arc<NodeArena>>,
     /// Symbol IDs that originated from lib files (pre-merge local IDs)
     pub lib_symbol_ids: FxHashSet<SymbolId>,
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
@@ -300,6 +303,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     wildcard_reexports: binder.wildcard_reexports,
                     wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
                     lib_binders: Vec::new(),
+                    lib_arenas: Vec::new(),
                     lib_symbol_ids: binder.lib_symbol_ids,
                     lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                     flow_nodes: binder.flow_nodes,
@@ -342,6 +346,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 wildcard_reexports: binder.wildcard_reexports,
                 wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
                 lib_binders: Vec::new(), // No libs in this path
+                lib_arenas: Vec::new(),
                 lib_symbol_ids: binder.lib_symbol_ids,
                 lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                 flow_nodes: binder.flow_nodes,
@@ -386,6 +391,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders: Vec::new(), // No libs in this path
+        lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
         flow_nodes: binder.flow_nodes,
@@ -626,6 +632,7 @@ fn bind_file_with_libs(
             wildcard_reexports: binder.wildcard_reexports,
             wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
             lib_binders,
+            lib_arenas: Vec::new(), // JSON files don't use libs
             lib_symbol_ids: binder.lib_symbol_ids,
             lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
             flow_nodes: binder.flow_nodes,
@@ -654,8 +661,10 @@ fn bind_file_with_libs(
 
     binder.bind_source_file(&arena, source_file);
 
-    // Extract lib_binders from binder before it's moved
+    // Extract lib_binders and lib_arenas from binder before it's moved
     let lib_binders = binder.lib_binders.clone();
+    let lib_arenas: Vec<Arc<NodeArena>> =
+        lib_files.iter().map(|lf| Arc::clone(&lf.arena)).collect();
 
     BindResult {
         file_name,
@@ -678,6 +687,7 @@ fn bind_file_with_libs(
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders,
+        lib_arenas,
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
         flow_nodes: binder.flow_nodes,
@@ -916,14 +926,16 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
-    // Collect lib_binders from all results (deduplicated by address)
+    // Collect lib_binders from all results (deduplicated by address), paired with their arenas
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
     let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
+    let mut lib_binder_arena_map: FxHashMap<usize, Arc<NodeArena>> = FxHashMap::default();
     for result in results {
-        for lib_binder in &result.lib_binders {
+        for (lib_binder, lib_arena) in result.lib_binders.iter().zip(result.lib_arenas.iter()) {
             let binder_addr = Arc::as_ptr(lib_binder) as usize;
             if lib_binder_set.insert(binder_addr) {
                 lib_binders.push(Arc::clone(lib_binder));
+                lib_binder_arena_map.insert(binder_addr, Arc::clone(lib_arena));
             }
         }
     }
@@ -973,19 +985,6 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // search file_locals to check if it's top-level.
         let top_level_ids: FxHashSet<SymbolId> =
             lib_binder.file_locals.iter().map(|(_, id)| *id).collect();
-
-        // Pre-build a per-symbol index of declaration_arenas entries to avoid
-        // O(N*D) iteration where each symbol scans all declaration_arenas.
-        let mut decl_arenas_by_sym: FxHashMap<SymbolId, Vec<(NodeIndex, Arc<NodeArena>)>> =
-            FxHashMap::default();
-        for (&(sym_id, decl_idx), arenas) in &lib_binder.declaration_arenas {
-            for arena in arenas {
-                decl_arenas_by_sym
-                    .entry(sym_id)
-                    .or_default()
-                    .push((decl_idx, Arc::clone(arena)));
-            }
-        }
 
         // Process all symbols in this lib binder
         for i in 0..lib_binder.symbols.len() {
@@ -1045,24 +1044,40 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), global_id);
 
-                // CRITICAL FIX: Copy arena mapping for lib symbols
-                // Without this, the checker's compute_type_of_symbol will fail to find
-                // the declaration arena for lib symbols like WeakSet, Symbol, Promise, etc.
-                // This was the root cause of "Any poisoning" where global types resolved to Error.
-                if let Some(lib_arena) = lib_binder.symbol_arenas.get(&local_id) {
-                    symbol_arenas.insert(global_id, Arc::clone(lib_arena));
-                }
-
-                // Also copy declaration_arenas for precise cross-file declaration lookup
-                // This is needed when a symbol has declarations across multiple lib files
-                if let Some(entries) = decl_arenas_by_sym.get(&local_id) {
-                    for (decl_idx, arena) in entries {
+                // Set arena mappings for this lib symbol using the lib file's arena.
+                // The original lib binder's symbol_arenas/declaration_arenas are empty
+                // (only populated during per-file merge which uses a different binder).
+                // We use lib_binder_arena_map to get the correct arena for this lib file.
+                if let Some(lib_arena) = lib_binder_arena_map.get(&lib_binder_ptr) {
+                    symbol_arenas
+                        .entry(global_id)
+                        .or_insert_with(|| Arc::clone(lib_arena));
+                    for &decl in &lib_sym.declarations {
                         declaration_arenas
-                            .entry((global_id, *decl_idx))
+                            .entry((global_id, decl))
                             .or_default()
-                            .push(Arc::clone(arena));
+                            .push(Arc::clone(lib_arena));
                     }
                 }
+            }
+        }
+    }
+
+    // ==========================================================================
+    // PHASE 1.25: Clear un-remapped exports/members from global symbols
+    // ==========================================================================
+    // Phase 1's `alloc_from()` copies symbols including their exports/members
+    // tables, but those tables contain lib-LOCAL SymbolIds. In the global arena,
+    // those same numeric IDs map to DIFFERENT symbols (e.g., lib-local SymbolId(2)
+    // might be DateTimeFormat in es5.d.ts, but SymbolId(2) in the global arena is
+    // cancelIdleCallback from dom.d.ts). Phase 1.5 will rebuild exports/members
+    // with correctly remapped global IDs, so we must clear the corrupt data first.
+    {
+        let lib_global_ids: FxHashSet<SymbolId> = lib_symbol_remap.values().copied().collect();
+        for &global_id in &lib_global_ids {
+            if let Some(sym) = global_symbols.get_mut(global_id) {
+                sym.exports = None;
+                sym.members = None;
             }
         }
     }
@@ -1140,6 +1155,30 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             dst.value_declaration = src_value_decl;
                         }
                     }
+
+                    // Copy declaration_arenas and symbol_arenas entries from src to dst.
+                    // When interface symbols inside namespaces are merged (e.g.,
+                    // Intl.DateTimeFormat from es5.d.ts + es2017.intl.d.ts), the dst
+                    // symbol gets src's declarations appended, but the checker needs
+                    // declaration_arenas[(dst_id, decl)] to find the correct arena
+                    // for each declaration. Without this, merged declarations are
+                    // invisible and the interface type is incomplete.
+                    if let Some(src_sym) = global_symbols.get(src_id) {
+                        let src_decls = src_sym.declarations.clone();
+                        for decl_idx in src_decls {
+                            if let Some(arenas) =
+                                declaration_arenas.get(&(src_id, decl_idx)).cloned()
+                            {
+                                declaration_arenas
+                                    .entry((dst_id, decl_idx))
+                                    .or_default()
+                                    .extend(arenas);
+                            }
+                        }
+                    }
+                    if let Some(src_arena) = symbol_arenas.get(&src_id).cloned() {
+                        symbol_arenas.entry(dst_id).or_insert(src_arena);
+                    }
                 }
 
                 if !new_exports.is_empty()
@@ -1196,6 +1235,24 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         if dst.value_declaration.is_none() && src_value_decl.is_some() {
                             dst.value_declaration = src_value_decl;
                         }
+                    }
+
+                    // Copy declaration_arenas and symbol_arenas (same as exports above)
+                    if let Some(src_sym) = global_symbols.get(src_id) {
+                        let src_decls = src_sym.declarations.clone();
+                        for decl_idx in src_decls {
+                            if let Some(arenas) =
+                                declaration_arenas.get(&(src_id, decl_idx)).cloned()
+                            {
+                                declaration_arenas
+                                    .entry((dst_id, decl_idx))
+                                    .or_default()
+                                    .extend(arenas);
+                            }
+                        }
+                    }
+                    if let Some(src_arena) = symbol_arenas.get(&src_id).cloned() {
+                        symbol_arenas.entry(dst_id).or_insert(src_arena);
                     }
                 }
 
