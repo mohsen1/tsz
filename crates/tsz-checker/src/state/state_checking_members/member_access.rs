@@ -764,8 +764,10 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
-        // Track property names and their indices (methods are allowed to have overloads)
-        let mut seen_properties: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        // Track property names → (member_idx, type_annotation_node) pairs.
+        // Methods are allowed to have overloads so they are excluded.
+        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>> =
+            FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -774,40 +776,75 @@ impl<'a> CheckerState<'a> {
 
             // Only check property signatures for duplicates
             // Method signatures can have multiple overloads (same name, different types)
-            let name = match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_SIGNATURE => self
-                    .ctx
-                    .arena
-                    .get_signature(member_node)
-                    .and_then(|sig| self.get_member_name_text(sig.name)),
+            let name_and_type = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
+                    self.ctx.arena.get_signature(member_node).and_then(|sig| {
+                        let name = self.get_member_name_text(sig.name)?;
+                        Some((name, sig.type_annotation))
+                    })
+                }
                 // Method signatures are allowed to have overloads - don't flag as duplicates
                 k if k == syntax_kind_ext::METHOD_SIGNATURE => None,
                 // Call, construct, and index signatures don't have names that can conflict
                 _ => None,
             };
 
-            if let Some(name) = name {
+            if let Some((name, type_ann)) = name_and_type {
                 // tsc does not flag duplicate well-known Symbol properties in interfaces
                 // (e.g., [Symbol.isConcatSpreadable]) because symbols are structurally unique.
                 if name.starts_with("[Symbol.") {
                     continue;
                 }
-                seen_properties.entry(name).or_default().push(member_idx);
+                seen_properties
+                    .entry(name)
+                    .or_default()
+                    .push((member_idx, type_ann));
             }
         }
 
         // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
         // (both first and subsequent), not just the second+.
-        for (name, indices) in seen_properties {
-            if indices.len() > 1 {
-                for &idx in indices.iter() {
-                    // Get the name node for precise error location
+        for (name, entries) in &seen_properties {
+            if entries.len() > 1 {
+                // Resolve the first property's type for TS2717 comparison
+                let first_type = if entries[0].1.is_some() {
+                    self.get_type_from_type_node(entries[0].1)
+                } else {
+                    TypeId::ANY
+                };
+
+                for (i, &(idx, type_ann)) in entries.iter().enumerate() {
+                    // TS2300 on all occurrences
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
                     self.error_at_node_msg(
                         error_node,
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        &[&name],
+                        &[name],
                     );
+
+                    // TS2717 on subsequent declarations when types differ
+                    if i > 0 {
+                        let this_type = if type_ann.is_some() {
+                            self.get_type_from_type_node(type_ann)
+                        } else {
+                            TypeId::ANY
+                        };
+                        if !self.type_contains_error(first_type)
+                            && !self.type_contains_error(this_type)
+                        {
+                            // TS2717 uses type identity, not assignability.
+                            // With interned types, TypeId equality is structural identity.
+                            if first_type != this_type {
+                                let first_type_str = self.format_type(first_type);
+                                let this_type_str = self.format_type(this_type);
+                                self.error_at_node_msg(
+                                    error_node,
+                                    diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                    &[name, &first_type_str, &this_type_str],
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -943,12 +980,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let prop = self.ctx.arena.get_property_decl(member_node)?;
-        if prop.type_annotation.is_none() {
-            return None;
-        }
-
         let name = self.get_member_name_text(prop.name)?;
-        let type_id = self.get_type_from_type_node(prop.type_annotation);
+
+        let type_id = if prop.type_annotation.is_some() {
+            self.get_type_from_type_node(prop.type_annotation)
+        } else if prop.initializer.is_some() {
+            // Infer type from initializer when no explicit annotation
+            self.get_type_of_node(prop.initializer)
+        } else {
+            return None;
+        };
         Some((name, prop.name, type_id))
     }
 
@@ -1165,9 +1206,8 @@ impl<'a> CheckerState<'a> {
                         if self.type_contains_error(current_type) {
                             continue;
                         }
-                        let compatible_both_ways =
-                            self.are_mutually_assignable(*first_type, current_type);
-                        if !compatible_both_ways {
+                        // TS2717 uses type identity, not assignability.
+                        if *first_type != current_type {
                             let current_type_str = self.format_type(current_type);
                             self.error_at_node_msg(
                                     name_node,
