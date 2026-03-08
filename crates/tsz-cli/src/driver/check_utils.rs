@@ -942,92 +942,27 @@ pub(super) fn parse_diagnostic_to_checker(
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let mut file_locals = SymbolTable::new();
+    let shared_data = program.checker_binder_shared_data();
+    create_binder_from_bound_file_with_shared_data(file, program, file_idx, &shared_data)
+}
 
-    if file_idx < program.file_locals.len() {
-        for (name, &sym_id) in program.file_locals[file_idx].iter() {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    for (name, &sym_id) in program.globals.iter() {
-        if !file_locals.has(name) {
-            file_locals.set(name.clone(), sym_id);
-        }
-    }
-
-    // Merge module augmentations from all files
-    // When checking a file, we need access to augmentations from all other files
-    let mut merged_module_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<tsz::binder::ModuleAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (spec, augs) in &other_file.module_augmentations {
-            merged_module_augmentations
-                .entry(spec.clone())
-                .or_default()
-                .extend(augs.iter().map(|aug| {
-                    tsz::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
-    // Merge global augmentations from all files
-    // Each augmentation is tagged with its source arena for cross-file resolution.
-    let mut merged_global_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<tsz::binder::GlobalAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (name, decls) in &other_file.global_augmentations {
-            merged_global_augmentations
-                .entry(name.clone())
-                .or_default()
-                .extend(decls.iter().map(|aug| {
-                    tsz::binder::GlobalAugmentation::with_arena(
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
-    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
-        BinderOptions::default(),
-        program.symbols.clone(),
-        file_locals,
-        file.node_symbols.clone(),
-        BinderStateScopeInputs {
-            scopes: file.scopes.clone(),
-            node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: merged_global_augmentations,
-            module_augmentations: merged_module_augmentations,
-            module_exports: program.module_exports.clone(),
-            reexports: program.reexports.clone(),
-            wildcard_reexports: program.wildcard_reexports.clone(),
-            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: program.symbol_arenas.clone(),
-            declaration_arenas: program.declaration_arenas.clone(),
-            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
-            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
-            modules_with_export_equals: Default::default(),
-            flow_nodes: file.flow_nodes.clone(),
-            node_flow: file.node_flow.clone(),
-            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
-            expando_properties: file.expando_properties.clone(),
-        },
+pub(super) fn create_binder_from_bound_file_with_shared_data(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared_data: &tsz::parallel::CheckerBinderSharedData,
+) -> BinderState {
+    let mut binder = tsz::parallel::create_binder_from_bound_file_with_shared_data(
+        file,
+        program,
+        file_idx,
+        shared_data,
     );
 
     binder.declared_modules = program.declared_modules.clone();

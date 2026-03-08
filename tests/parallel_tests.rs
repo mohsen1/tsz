@@ -369,6 +369,94 @@ fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
 }
 
 #[test]
+fn test_checker_binder_shared_data_preserves_cross_file_augmentations() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            r#"export {};
+declare global {
+    interface Window {
+        fromA: number;
+    }
+}
+declare module "pkg" {
+    interface Thing {
+        fromA: number;
+    }
+}
+"#
+            .to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            r#"export {};
+declare global {
+    interface Window {
+        fromB: string;
+    }
+}
+declare module "pkg" {
+    interface Thing {
+        fromB: string;
+    }
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let shared = program.checker_binder_shared_data();
+
+    let window_augmentations = shared
+        .merged_global_augmentations
+        .get("Window")
+        .expect("Window augmentations should be present");
+    assert_eq!(window_augmentations.len(), 2);
+    assert!(
+        window_augmentations
+            .iter()
+            .all(|augmentation| augmentation.arena.is_some())
+    );
+
+    let unique_window_arenas: FxHashSet<_> = window_augmentations
+        .iter()
+        .map(|augmentation| {
+            Arc::as_ptr(
+                augmentation
+                    .arena
+                    .as_ref()
+                    .expect("Window augmentation arena should be tagged"),
+            ) as usize
+        })
+        .collect();
+    assert_eq!(unique_window_arenas.len(), 2);
+
+    let module_augmentations = shared
+        .merged_module_augmentations
+        .get("pkg")
+        .expect("module augmentations should be present");
+    assert_eq!(module_augmentations.len(), 2);
+    assert!(
+        module_augmentations
+            .iter()
+            .all(|augmentation| augmentation.arena.is_some())
+    );
+
+    let binder =
+        create_binder_from_bound_file_with_shared_data(&program.files[0], &program, 0, &shared);
+    assert_eq!(
+        binder.global_augmentations.get("Window").map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        binder.module_augmentations.get("pkg").map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
 fn test_merge_bind_results_deduplicates_identical_declaration_arenas() {
     let files = vec![("a.ts".to_string(), "interface Foo {}".to_string())];
 

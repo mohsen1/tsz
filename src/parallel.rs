@@ -783,6 +783,18 @@ pub struct MergedProgram {
     pub type_interner: TypeInterner,
 }
 
+/// Precomputed immutable inputs reused by checker-time binder creation.
+///
+/// The expensive cross-file augmentation merge is purely a function of the
+/// merged program, so we build it once and reuse it across per-file binders.
+#[derive(Debug, Clone, Default)]
+pub struct CheckerBinderSharedData {
+    /// All `declare global {}` augmentations tagged with their source arena.
+    pub merged_global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
+    /// All `declare module "x" {}` augmentations tagged with their source arena.
+    pub merged_module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+}
+
 /// High-level residency counters for `MergedProgram` state.
 ///
 /// These numbers give a stable baseline for large-repo performance work without
@@ -815,6 +827,43 @@ pub struct MergedProgramResidencyStats {
 }
 
 impl MergedProgram {
+    /// Precompute shared augmentation state used by checker-time binder creation.
+    #[must_use]
+    pub fn checker_binder_shared_data(&self) -> CheckerBinderSharedData {
+        let mut shared = CheckerBinderSharedData::default();
+
+        for file in &self.files {
+            for (name, decls) in &file.global_augmentations {
+                shared
+                    .merged_global_augmentations
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(decls.iter().map(|augmentation| {
+                        crate::binder::GlobalAugmentation::with_arena(
+                            augmentation.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+
+            for (specifier, augmentations) in &file.module_augmentations {
+                shared
+                    .merged_module_augmentations
+                    .entry(specifier.clone())
+                    .or_default()
+                    .extend(augmentations.iter().map(|augmentation| {
+                        crate::binder::ModuleAugmentation::with_arena(
+                            augmentation.name.clone(),
+                            augmentation.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+        }
+
+        shared
+    }
+
     /// Return residency-oriented counters for the current merged program.
     #[must_use]
     pub fn residency_stats(&self) -> MergedProgramResidencyStats {
@@ -2210,6 +2259,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
@@ -2220,7 +2270,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             let functions = collect_functions(&file.arena, file.source_file);
 
             // Create a binder state from the node_symbols
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = create_binder_from_bound_file_with_shared_data(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+            );
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
@@ -2290,11 +2345,17 @@ pub fn check_files_parallel(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     // This is thread-safe (uses RwLock internally) and shared across all file checks.
     let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = create_binder_from_bound_file_with_shared_data(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+            );
 
             let mut checker = CheckerState::with_options(
                 &file.arena,
@@ -2337,6 +2398,17 @@ pub fn create_binder_from_bound_file(
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
+    let shared_data = program.checker_binder_shared_data();
+    create_binder_from_bound_file_with_shared_data(file, program, file_idx, &shared_data)
+}
+
+/// Create a `BinderState` from a `BoundFile` using precomputed shared data.
+pub fn create_binder_from_bound_file_with_shared_data(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared_data: &CheckerBinderSharedData,
+) -> BinderState {
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
 
@@ -2354,52 +2426,6 @@ pub fn create_binder_from_bound_file(
         }
     }
 
-    // Merge module augmentations from all files
-    // When checking a file, we need access to augmentations from all other files
-    let mut merged_module_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::ModuleAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (spec, augs) in &other_file.module_augmentations {
-            merged_module_augmentations
-                .entry(spec.clone())
-                .or_default()
-                .extend(augs.iter().map(|aug| {
-                    crate::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
-    // Merge global augmentations from all files
-    // When checking a file, we need access to `declare global` augmentations from all other files.
-    // Each augmentation gets tagged with its source arena for cross-file resolution.
-    let mut merged_global_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::GlobalAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (name, decls) in &other_file.global_augmentations {
-            merged_global_augmentations
-                .entry(name.clone())
-                .or_default()
-                .extend(decls.iter().map(|aug| {
-                    // Tag each augmentation with its source file's arena
-                    // so the checker can read declaration nodes from the correct arena
-                    crate::binder::GlobalAugmentation::with_arena(
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -2408,8 +2434,8 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: merged_global_augmentations,
-            module_augmentations: merged_module_augmentations,
+            global_augmentations: shared_data.merged_global_augmentations.clone(),
+            module_augmentations: shared_data.merged_module_augmentations.clone(),
             module_exports: program.module_exports.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),

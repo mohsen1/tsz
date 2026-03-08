@@ -414,6 +414,7 @@ pub(super) fn collect_diagnostics(
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
@@ -422,7 +423,12 @@ pub(super) fn collect_diagnostics(
         report_progress_start("prime_boxed_types");
         let prime_idx = 0;
         let file = &program.files[prime_idx];
-        let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
+        let binder = create_binder_from_bound_file_with_shared_data(
+            file,
+            program,
+            prime_idx,
+            &binder_shared_data,
+        );
         let mut checker = CheckerState::with_options(
             &file.arena,
             &binder,
@@ -529,7 +535,12 @@ pub(super) fn collect_diagnostics(
                     if trace_first_prepare_binder {
                         report_progress_start("prepare_binders::first_file::create_binder");
                     }
-                    let mut binder = create_binder_from_bound_file(file, program, file_idx);
+                    let mut binder = create_binder_from_bound_file_with_shared_data(
+                        file,
+                        program,
+                        file_idx,
+                        &binder_shared_data,
+                    );
                     if trace_first_prepare_binder {
                         report_progress(
                             "prepare_binders::first_file::create_binder",
@@ -729,7 +740,12 @@ pub(super) fn collect_diagnostics(
             if trace_first_incremental_file {
                 report_progress_start("incremental_first_file::create_binder");
             }
-            let mut binder = create_binder_from_bound_file(file, program, file_idx);
+            let mut binder = create_binder_from_bound_file_with_shared_data(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+            );
             if trace_first_incremental_file {
                 report_progress("incremental_first_file::create_binder", create_binder_start);
             }

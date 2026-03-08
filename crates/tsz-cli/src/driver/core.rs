@@ -13,7 +13,6 @@ use crate::config::{
     load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
     resolve_lib_files,
 };
-use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
 use tsz::binder::{SymbolId, SymbolTable, symbol_flags};
 use tsz::checker::TypeCache;
@@ -26,7 +25,6 @@ use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
-use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::ModuleKind;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
