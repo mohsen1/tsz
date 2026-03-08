@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{FunctionShape, ObjectFlags, ObjectShape, TypeId, TypeInterner};
@@ -11,6 +12,29 @@ fn emit_dts(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.emit(root)
+}
+
+fn emit_js_dts(source: &str) -> String {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.emit(root)
+}
+
+fn emit_js_dts_with_usage_analysis(source: &str) -> String {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.js".to_string());
     emitter.emit(root)
 }
 
@@ -762,6 +786,52 @@ module.exports = a;
         output.matches("export = a;").count(),
         1,
         "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.j = 1;
+exports.k = void 0;
+var o = {};
+function C() {
+    this.p = 1;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export const j:"),
+        "Expected CommonJS named export value declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare var o:"),
+        "Did not expect non-exported locals to leak into JS module declarations: {output}"
+    );
+    assert!(
+        !output.contains("declare function C"),
+        "Did not expect non-exported helper declarations to leak into JS module declarations: {output}"
+    );
+    assert!(
+        !output.contains("export const k:"),
+        "Did not expect void exports to synthesize declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_marks_same_name_function_exported() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+exports.foo = foo;
+"#,
+    );
+
+    assert!(
+        output.contains("export function foo(): void;"),
+        "Expected same-name CommonJS export to reuse the function declaration: {output}"
     );
 }
 
