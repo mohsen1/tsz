@@ -973,7 +973,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: (properties.len()) as u32,
+                                declaration_order: (properties.len() + 1) as u32,
                             });
                         } else {
                             let type_id = if sig.type_annotation.is_some() {
@@ -994,7 +994,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: (properties.len()) as u32,
+                                declaration_order: (properties.len() + 1) as u32,
                             });
                         }
                     }
@@ -1099,7 +1099,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: (properties.len()) as u32,
+                            declaration_order: (properties.len() + 1) as u32,
                         });
                     }
                 } else {
@@ -1128,7 +1128,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: (properties.len()) as u32,
+                            declaration_order: (properties.len() + 1) as u32,
                         });
                     }
                 }

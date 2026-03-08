@@ -802,7 +802,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: tsz_solver::Visibility::Public,
                     parent_id: None,
-                    declaration_order: properties.len() as u32,
+                    declaration_order: (properties.len() + 1) as u32,
                 });
             }
         }

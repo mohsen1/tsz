@@ -1314,34 +1314,57 @@ fn test_union_application_types_same_base_sort_by_args() {
 
 #[test]
 fn test_union_member_order_uses_allocation_order() {
-    // The sharded interner embeds shard index in TypeId low bits, so raw
-    // TypeId comparison is hash-dependent. The allocation counter ensures
-    // union members are ordered by creation time, matching tsc's behavior.
+    // Short string literals (1-2 chars) are sorted by content to match tsc's
+    // lib.d.ts pre-allocation order. tsc pre-creates common short string
+    // literals during lib processing in roughly alphabetical order.
+    // Longer strings use allocation order (source encounter order).
     let interner = TypeInterner::new();
 
-    // Create string literals in a specific order
+    // Create short string literals in a specific order (d, c, a)
     let lit_d = interner.literal_string("d");
     let lit_c = interner.literal_string("c");
     let lit_a = interner.literal_string("a");
 
-    // Union should preserve allocation order (d, c, a), NOT alphabetical
+    // Short strings should sort by content (alphabetical), matching tsc lib ordering
     let union_id = interner.union(vec![lit_a, lit_c, lit_d]);
 
     if let Some(TypeData::Union(list_id)) = interner.lookup(union_id) {
         let members = interner.type_list(list_id);
         assert_eq!(members.len(), 3);
-        // Allocation order: d was interned first, then c, then a
+        // Content order: a, c, d (alphabetical for short strings)
         assert_eq!(
-            members[0], lit_d,
-            "First member should be 'd' (interned first)"
+            members[0], lit_a,
+            "First member should be 'a' (alphabetically first)"
         );
         assert_eq!(
             members[1], lit_c,
-            "Second member should be 'c' (interned second)"
+            "Second member should be 'c' (alphabetically second)"
         );
         assert_eq!(
-            members[2], lit_a,
-            "Third member should be 'a' (interned third)"
+            members[2], lit_d,
+            "Third member should be 'd' (alphabetically third)"
+        );
+    } else {
+        panic!("Expected Union type");
+    }
+
+    // Longer strings should preserve allocation order (source encounter order)
+    let lit_foo = interner.literal_string("foo");
+    let lit_bar = interner.literal_string("bar");
+
+    let union_id2 = interner.union(vec![lit_bar, lit_foo]);
+
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union_id2) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 2);
+        // Allocation order: foo was interned first, then bar
+        assert_eq!(
+            members[0], lit_foo,
+            "First member should be 'foo' (interned first)"
+        );
+        assert_eq!(
+            members[1], lit_bar,
+            "Second member should be 'bar' (interned second)"
         );
     } else {
         panic!("Expected Union type");
