@@ -295,6 +295,16 @@ impl<'a> CheckerState<'a> {
         };
         let is_property_access = node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
 
+        // Skip TS2774 when the property access base involves a type assertion.
+        // e.g., `(result as I).method` — the developer is using a cast to check
+        // if a property exists at runtime, which is a valid truthiness check pattern.
+        // tsc suppresses TS2774 in this case.
+        if is_property_access
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+                && self.expression_has_type_assertion(access.expression) {
+                    return;
+                }
+
         // For identifiers, resolve the symbol
         let tested_sym = if !is_property_access {
             if node.kind == SyntaxKind::Identifier as u16 {
@@ -584,5 +594,26 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         outer_node.pos <= inner_node.pos && inner_node.end <= outer_node.end
+    }
+
+    /// Check if an expression contains a type assertion (as, satisfies, or angle-bracket cast),
+    /// unwrapping through parenthesized expressions.
+    fn expression_has_type_assertion(&self, expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::AS_EXPRESSION
+            | syntax_kind_ext::SATISFIES_EXPRESSION
+            | syntax_kind_ext::TYPE_ASSERTION => true,
+            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.expression_has_type_assertion(paren.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 }
