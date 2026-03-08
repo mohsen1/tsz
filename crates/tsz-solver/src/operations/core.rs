@@ -818,6 +818,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         visitor.visit_type(db, type_id)
     }
 
+    /// Get the base constraint for an index type used in an `IndexAccess`.
+    ///
+    /// For a `TypeParameter` `K extends C`, returns `Some(C)`.
+    /// For an Intersection containing a `TypeParameter` `K extends C`,
+    /// returns `Some(C)` (the constraint is a superset of the intersection).
+    /// Returns None if the index has no usable constraint.
+    fn get_index_constraint(&self, idx: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(idx)? {
+            TypeData::TypeParameter(tp) => tp.constraint,
+            TypeData::Intersection(list_id) => {
+                // Look for a TypeParameter in the intersection and use its constraint
+                let members = self.interner.type_list(list_id);
+                for &member in members.iter() {
+                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(member)
+                        && let Some(constraint) = tp.constraint
+                    {
+                        return Some(constraint);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve a function call: func(args...) -> result
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
@@ -932,6 +957,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if resolved != func_type {
                     self.resolve_call(resolved, arg_types)
                 } else {
+                    // If evaluation couldn't resolve (e.g., IndexAccess with generic
+                    // index), try using the base constraint. For `Obj[K]` where
+                    // `K extends "a" | "b"`, substitute the constraint to get
+                    // `Obj["a" | "b"]` which can be evaluated to a concrete callable type.
+                    // This matches tsc's getBaseConstraintOfType for indexed access types.
+                    if let Some(TypeData::IndexAccess(obj, idx)) = self.interner.lookup(func_type) {
+                        // Try to get the base constraint of the index type.
+                        // For a TypeParameter K extends C, use C.
+                        // For an Intersection containing a TypeParameter, use
+                        // the TypeParameter's constraint (which is a superset).
+                        let constraint = self.get_index_constraint(idx);
+                        if let Some(constraint_type) = constraint {
+                            let eval_constraint = self.checker.evaluate_type(constraint_type);
+                            let constrained_access =
+                                self.interner.index_access(obj, eval_constraint);
+                            let constrained = self.checker.evaluate_type(constrained_access);
+                            if constrained != func_type {
+                                return self.resolve_call(constrained, arg_types);
+                            }
+                        }
+                    }
                     CallResult::NotCallable { type_id: func_type }
                 }
             }

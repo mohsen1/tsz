@@ -475,10 +475,27 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             }
         };
 
+        // TypeParameter index whose constraint matches the mapped constraint:
+        // When the index is `K extends "one" | "two"` and the mapped constraint is
+        // `"one" | "two"`, K is a valid key into the mapped type. Substituting K into
+        // the template preserves the generic relationship, e.g., `{ [P in "one" | "two"]: F<P> }[K]`
+        // becomes `F<K>`. This matches tsc's behavior for indexed access on mapped types
+        // with generic key types.
+        let type_param_constraint_matches = {
+            let interner = self.evaluator.interner();
+            if let Some(TypeData::TypeParameter(index_tp)) = interner.lookup(self.index_type) {
+                index_tp.constraint == Some(mapped.constraint)
+            } else {
+                false
+            }
+        };
+
         // Direct match: index type exactly equals the constraint
         let can_substitute = mapped.constraint == self.index_type
             // Same-named TypeParameters with different TypeIds (see above)
             || same_type_param_name
+            // TypeParameter whose constraint matches the mapped constraint
+            || type_param_constraint_matches
             // Implicit index signature: when the constraint is `keyof T`,
             // string/number are valid key types because keyof T always
             // includes string | number | symbol for any T.
