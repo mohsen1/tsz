@@ -512,6 +512,23 @@ impl<'a> LoweringPass<'a> {
             helpers.create_binding = true; // __exportStar depends on __createBinding
         }
 
+        // Detect CommonJS helpers: export * as ns from "mod"
+        // In CJS with esModuleInterop, this needs __importStar + __createBinding.
+        if self.is_commonjs()
+            && self.ctx.options.es_module_interop
+            && export_decl.module_specifier.is_some()
+            && export_decl.export_clause.is_some()
+            && self.arena.get(export_decl.export_clause).is_some_and(|n| {
+                n.kind != syntax_kind_ext::NAMED_EXPORTS
+                    && n.kind != syntax_kind_ext::NAMESPACE_EXPORT
+                    && n.kind != syntax_kind_ext::NAMED_IMPORTS
+            })
+        {
+            let helpers = self.transforms.helpers_mut();
+            helpers.import_star = true;
+            helpers.create_binding = true;
+        }
+
         if export_decl.export_clause.is_none() {
             return;
         }
