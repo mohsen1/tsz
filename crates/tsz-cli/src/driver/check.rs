@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 const EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD: Duration = Duration::from_millis(500);
 const EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT: usize = 4;
-const EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT: usize = 2;
+const EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT: usize = 4;
+const EXTENDED_DIAGNOSTICS_HOTSPOT_PRETRACE_START_RANK: usize = 3;
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -1501,6 +1502,8 @@ pub(super) fn check_file_for_parallel<'a>(
 
     let parallel_trace_prefix =
         trace_parallel_file_rank.map(|rank| format!("parallel_check_files::source_file_{rank}"));
+    let should_run_hotspot_pretrace = trace_parallel_file_rank
+        .is_some_and(|rank| rank >= EXTENDED_DIAGNOSTICS_HOTSPOT_PRETRACE_START_RANK);
     let report_parallel_start = |phase: &str| {
         if let Some(prefix) = parallel_trace_prefix.as_deref() {
             let phase_name = format!("{prefix}::{phase}");
@@ -1546,52 +1549,55 @@ pub(super) fn check_file_for_parallel<'a>(
 
     let configure_context_start = Instant::now();
     report_parallel_start("configure_context");
-    checker.ctx.report_unresolved_imports = true;
-    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-    checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
+    let configure_checker_context = |checker: &mut CheckerState<'_>| {
+        checker.ctx.report_unresolved_imports = true;
+        checker.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+        checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
 
-    if !lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-    }
+        if !lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        }
 
-    checker.ctx.set_all_arenas(Arc::clone(all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(all_binders));
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::clone(resolved_module_paths));
-    checker
-        .ctx
-        .set_resolved_module_errors(Arc::clone(resolved_module_errors));
-    checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
-    checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
-    checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
-    checker.ctx.resolved_modules = Some(resolved_modules);
-    checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
-    // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
-    // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
-    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
-    checker.ctx.has_syntax_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| d.code != 1185 && d.code != 1009);
-    checker.ctx.syntax_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| d.code != 1185 && d.code != 1009)
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.has_real_syntax_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_real_syntax_error(d.code));
-    checker.ctx.real_syntax_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| is_real_syntax_error(d.code))
-        .map(|d| d.start)
-        .collect();
+        checker.ctx.set_all_arenas(Arc::clone(all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(all_binders));
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(resolved_module_paths));
+        checker
+            .ctx
+            .set_resolved_module_errors(Arc::clone(resolved_module_errors));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
+        checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
+        checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
+        checker.ctx.resolved_modules = Some(resolved_modules.clone());
+        checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+        // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
+        // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
+        // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+        checker.ctx.has_syntax_parse_errors = file
+            .parse_diagnostics
+            .iter()
+            .any(|d| d.code != 1185 && d.code != 1009);
+        checker.ctx.syntax_parse_error_positions = file
+            .parse_diagnostics
+            .iter()
+            .filter(|d| d.code != 1185 && d.code != 1009)
+            .map(|d| d.start)
+            .collect();
+        checker.ctx.has_real_syntax_errors = file
+            .parse_diagnostics
+            .iter()
+            .any(|d| is_real_syntax_error(d.code));
+        checker.ctx.real_syntax_error_positions = file
+            .parse_diagnostics
+            .iter()
+            .filter(|d| is_real_syntax_error(d.code))
+            .map(|d| d.start)
+            .collect();
+    };
+    configure_checker_context(&mut checker);
     report_parallel_elapsed("configure_context", configure_context_start.elapsed());
 
     // Collect parse diagnostics
@@ -1605,6 +1611,33 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
+        if should_run_hotspot_pretrace {
+            let hotspot_trace_start = Instant::now();
+            report_parallel_start("trace_exported_variable_hotspots");
+            let hotspot_query_cache = QueryCache::new(&program.type_interner);
+            let mut hotspot_checker = CheckerState::with_options(
+                &file.arena,
+                &binder,
+                &hotspot_query_cache,
+                file.file_name.clone(),
+                compiler_options,
+            );
+            configure_checker_context(&mut hotspot_checker);
+            hotspot_checker.trace_exported_variable_hotspots_with_progress(
+                file.source_file,
+                |phase| {
+                    if let Some(phase) = phase.strip_suffix(":start") {
+                        let phase_name = format!("trace_exported_variable_hotspots::{phase}");
+                        report_parallel_start(&phase_name);
+                    }
+                },
+            );
+            report_parallel_elapsed(
+                "trace_exported_variable_hotspots",
+                hotspot_trace_start.elapsed(),
+            );
+        }
+
         report_parallel_start("check_source_file");
         if parallel_trace_prefix.is_some() {
             let source_file_stats =
