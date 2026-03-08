@@ -8,7 +8,7 @@ use crate::output::source_writer::{SourcePosition, SourceWriter, source_position
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::debug;
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::Node;
@@ -4090,13 +4090,349 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 Some("any".to_string())
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.preferred_expression_type_text(node_id)
+            }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.infer_object_literal_type_text_at(node_id, depth)
             }
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => Some("any[]".to_string()),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
+                .preferred_expression_type_text(node_id)
+                .or_else(|| Some("any[]".to_string())),
             _ => self
                 .get_node_type(node_id)
                 .map(|type_id| self.print_type_id(type_id)),
+        }
+    }
+
+    pub(crate) fn preferred_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                self.reference_declared_type_annotation_text(expr_idx)
+                    .or_else(|| self.undefined_identifier_type_text(expr_idx))
+            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.nameable_new_expression_type_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.array_literal_expression_type_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.short_circuit_expression_type_text(expr_idx)
+            }
+            _ => None,
+        }
+    }
+
+    fn skip_parenthesized_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return Some(current);
+            }
+            current = self.arena.get_unary_expr_ex(node)?.expression;
+        }
+    }
+
+    fn undefined_identifier_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        (self.get_identifier_text(expr_idx).as_deref() == Some("undefined"))
+            .then(|| "any".to_string())
+    }
+
+    fn reference_declared_type_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
+                let type_node = self.arena.get(var_decl.type_annotation)?;
+                if let Some(type_text) = self.get_source_slice(type_node.pos, type_node.end) {
+                    let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn nameable_new_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let base_text = self.declaration_constructor_expression_text(new_expr.expression)?;
+        let type_args = self.type_argument_list_source_text(new_expr.type_arguments.as_ref());
+        if type_args.is_empty() {
+            Some(base_text)
+        } else {
+            Some(format!("{base_text}<{}>", type_args.join(", ")))
+        }
+    }
+
+    fn type_argument_list_source_text(&self, type_args: Option<&NodeList>) -> Vec<String> {
+        let Some(list) = type_args else {
+            return Vec::new();
+        };
+
+        let last = list.nodes.last().copied();
+        list.nodes
+            .iter()
+            .filter_map(|&arg| {
+                let node = self.arena.get(arg)?;
+                let mut text = self.get_source_slice(node.pos, node.end)?;
+                if Some(arg) == last && text.ends_with('>') {
+                    text.pop();
+                }
+                Some(text)
+            })
+            .collect()
+    }
+
+    fn declaration_constructor_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.identifier_constructor_reference_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(expr_node)?;
+                let lhs = self.declaration_constructor_expression_text(access.expression)?;
+                let rhs = self.get_identifier_text(access.name_or_argument)?;
+                Some(format!("{lhs}.{rhs}"))
+            }
+            _ => None,
+        }
+    }
+
+    fn identifier_constructor_reference_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let ident = self.get_identifier_text(expr_idx)?;
+        let binder = self.binder?;
+        let sym_id = self.resolve_identifier_symbol(expr_idx, &ident)?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+            let import_eq = self.arena.get_import_decl(decl_node)?;
+            let target_node = self.arena.get(import_eq.module_specifier)?;
+            if target_node.kind == SyntaxKind::StringLiteral as u16 {
+                return Some(ident);
+            }
+            return Some(ident);
+        }
+
+        Some(ident)
+    }
+
+    fn resolve_identifier_symbol(&self, expr_idx: NodeIndex, ident: &str) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let no_libs: &[Arc<BinderState>] = &[];
+        binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| {
+                binder.resolve_name_with_filter(ident, self.arena, expr_idx, no_libs, |_| true)
+            })
+            .or_else(|| binder.file_locals.get(ident))
+    }
+
+    fn array_literal_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let array = self.arena.get_literal_expr(expr_node)?;
+        if array.elements.nodes.is_empty() {
+            return Some("any[]".to_string());
+        }
+
+        let mut element_types = Vec::with_capacity(array.elements.nodes.len());
+        for elem_idx in array.elements.nodes.iter().copied() {
+            let elem_type = self.preferred_expression_type_text(elem_idx).or_else(|| {
+                self.get_node_type_or_names(&[elem_idx])
+                    .map(|type_id| self.print_type_id(type_id))
+            })?;
+            element_types.push(elem_type);
+        }
+
+        let mut distinct = Vec::new();
+        for ty in element_types {
+            if !distinct.iter().any(|existing| existing == &ty) {
+                distinct.push(ty);
+            }
+        }
+
+        let elem_text = if distinct.len() == 1 {
+            distinct.pop()?
+        } else {
+            distinct.join(" | ")
+        };
+        let needs_parens =
+            elem_text.contains("=>") || elem_text.contains('|') || elem_text.contains('&');
+        if needs_parens {
+            Some(format!("({elem_text})[]"))
+        } else {
+            Some(format!("{elem_text}[]"))
+        }
+    }
+
+    fn short_circuit_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+        if !self.expression_is_always_truthy_for_decl_emit(binary.left) {
+            return None;
+        }
+
+        self.preferred_expression_type_text(binary.left)
+            .or_else(|| {
+                self.get_node_type_or_names(&[binary.left])
+                    .map(|type_id| self.print_type_id(type_id))
+            })
+    }
+
+    fn expression_is_always_truthy_for_decl_emit(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(expr_node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::BarBarToken as u16
+                        && self.expression_is_always_truthy_for_decl_emit(binary.left)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn function_body_preferred_return_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut preferred = None;
+        if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
+            preferred
+        } else {
+            None
+        }
+    }
+
+    fn collect_unique_return_type_text_from_block(
+        &self,
+        statements: &NodeList,
+        preferred: &mut Option<String>,
+    ) -> bool {
+        statements.nodes.iter().copied().all(|stmt_idx| {
+            self.collect_unique_return_type_text_from_statement(stmt_idx, preferred)
+        })
+    }
+
+    fn collect_unique_return_type_text_from_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        preferred: &mut Option<String>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                    return false;
+                };
+                let type_text = if let Some(text) = self
+                    .preferred_expression_type_text(ret.expression)
+                    .filter(|text| !text.is_empty())
+                {
+                    text
+                } else {
+                    return false;
+                };
+                if let Some(existing) = preferred.as_ref() {
+                    existing == &type_text
+                } else {
+                    *preferred = Some(type_text);
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    self.collect_unique_return_type_text_from_block(&block.statements, preferred)
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => self
+                .arena
+                .get_if_statement(stmt_node)
+                .is_some_and(|if_data| {
+                    self.collect_unique_return_type_text_from_statement(
+                        if_data.then_statement,
+                        preferred,
+                    ) && !if_data.else_statement.is_none()
+                        && self.collect_unique_return_type_text_from_statement(
+                            if_data.else_statement,
+                            preferred,
+                        )
+                }),
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.arena.get_try(stmt_node).is_some_and(|try_data| {
+                    self.collect_unique_return_type_text_from_statement(
+                        try_data.try_block,
+                        preferred,
+                    ) && !try_data.catch_clause.is_none()
+                        && self.collect_unique_return_type_text_from_statement(
+                            try_data.catch_clause,
+                            preferred,
+                        )
+                        && !try_data.finally_block.is_none()
+                        && self.collect_unique_return_type_text_from_statement(
+                            try_data.finally_block,
+                            preferred,
+                        )
+                })
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => self
+                .arena
+                .get_catch_clause(stmt_node)
+                .is_some_and(|catch_data| {
+                    self.collect_unique_return_type_text_from_statement(catch_data.block, preferred)
+                }),
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                self.arena.get_case_clause(stmt_node).is_some_and(|clause| {
+                    self.collect_unique_return_type_text_from_block(&clause.statements, preferred)
+                })
+            }
+            _ => true,
         }
     }
 
@@ -5074,6 +5410,9 @@ impl<'a> DeclarationEmitter<'a> {
                     // Bare identifier referencing an enum/module → emit typeof
                     self.write(": ");
                     self.write(&typeof_text);
+                } else if let Some(type_text) = self.preferred_expression_type_text(initializer) {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
@@ -5939,6 +6278,13 @@ impl<'a> DeclarationEmitter<'a> {
             let access = self.arena.get_access_expr(init_node)?;
             let rhs = self.get_identifier_text(access.name_or_argument)?;
             let lhs = self.nameable_constructor_expression_text(access.expression)?;
+            if self
+                .value_reference_symbol_needs_typeof(access.name_or_argument)
+                .or_else(|| self.value_reference_symbol_needs_typeof(initializer))
+                .unwrap_or(false)
+            {
+                return Some(format!("typeof {lhs}.{rhs}"));
+            }
             let tid = type_id?;
             let is_callable = tsz_solver::visitor::function_shape_id(interner, tid).is_some()
                 || tsz_solver::visitor::callable_shape_id(interner, tid).is_some();
@@ -5977,6 +6323,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let identifier_name = self.get_identifier_text(initializer)?;
 
+        if self
+            .value_reference_symbol_needs_typeof(initializer)
+            .unwrap_or(false)
+        {
+            return Some(format!("typeof {identifier_name}"));
+        }
+
         // Check if the type is an Enum type — this means the initializer is
         // referencing the enum value directly (e.g., `var x = E`)
         if let Some(tid) = type_id
@@ -5999,6 +6352,47 @@ impl<'a> DeclarationEmitter<'a> {
         // For Lazy(DefId) types pointing to VALUE_MODULE/FUNCTION, the printer
         // already handles the typeof prefix in print_lazy_type.
         None
+    }
+
+    fn value_reference_symbol_needs_typeof(&self, expr_idx: NodeIndex) -> Option<bool> {
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        Some(
+            symbol.has_any_flags(
+                symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::METHOD,
+            ) && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER),
+        )
+    }
+
+    fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.get_identifier_text(expr_idx)?;
+            return self.resolve_identifier_symbol(expr_idx, &ident);
+        }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(expr_node)?;
+            if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
+                return Some(sym_id);
+            }
+            if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
+                return Some(sym_id);
+            }
+            let base_sym_id = self.value_reference_symbol(access.expression)?;
+            let base_symbol = binder.symbols.get(base_sym_id)?;
+            let member_name = self.get_identifier_text(access.name_or_argument)?;
+            return base_symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(&member_name));
+        }
+        binder.get_node_symbol(expr_idx)
     }
 
     /// Get the text of an identifier node.

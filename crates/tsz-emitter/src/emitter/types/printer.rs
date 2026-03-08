@@ -292,6 +292,19 @@ impl<'a> TypePrinter<'a> {
         if let Some(literal) = visitor::literal_value(self.interner, type_id) {
             return self.print_literal(&literal);
         }
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            let base_has_name = visitor::lazy_def_id(self.interner, app.base).is_some()
+                || visitor::type_query_symbol(self.interner, app.base).is_some()
+                || visitor::enum_components(self.interner, app.base).is_some()
+                || visitor::object_shape_id(self.interner, app.base)
+                    .or_else(|| visitor::object_with_index_shape_id(self.interner, app.base))
+                    .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+                    .is_some();
+            if base_has_name {
+                return self.print_type_application(app_id);
+            }
+        }
         if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
             .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
         {
@@ -352,6 +365,13 @@ impl<'a> TypePrinter<'a> {
         }
         if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
             let sym_id = SymbolId(sym_ref.0);
+            if let Some(arena) = self.symbol_arena
+                && let Some(symbol) = arena.get(sym_id)
+                && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+                && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            {
+                return name;
+            }
             if self.symbol_needs_inline_type_query(sym_id)
                 && let Some(symbol_type) = self.symbol_type_fallback(sym_id)
             {
@@ -1496,12 +1516,19 @@ impl<'a> TypePrinter<'a> {
 
     fn print_type_application(&self, app_id: tsz_solver::types::TypeApplicationId) -> String {
         let app = self.interner.type_application(app_id);
+        let base_text = if let Some(sym_ref) = visitor::type_query_symbol(self.interner, app.base) {
+            let sym_id = SymbolId(sym_ref.0);
+            self.resolve_symbol_qualified_name(sym_id)
+                .unwrap_or_else(|| self.print_type(app.base))
+        } else {
+            self.print_type(app.base)
+        };
 
         if app.args.is_empty() {
-            self.print_type(app.base)
+            base_text
         } else {
             let args: Vec<String> = app.args.iter().map(|&id| self.print_type(id)).collect();
-            format!("{}<{}>", self.print_type(app.base), args.join(", "))
+            format!("{base_text}<{}>", args.join(", "))
         }
     }
 
