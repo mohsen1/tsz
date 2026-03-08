@@ -254,6 +254,16 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// When set, a block-level using-lowering try/catch is active. `using` variable
+    /// statements should emit `const x = __addDisposableResource(env, expr, async)`
+    /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
+    pub(crate) block_using_env: Option<(String, bool)>,
+
+    /// Type parameter names of the class currently being decorated (for metadata serialization).
+    /// Set during `emit_legacy_member_decorator_calls` so `serialize_type_for_metadata` can
+    /// resolve generic type parameters to "Object".
+    pub(crate) metadata_class_type_params: Option<Vec<String>>,
+
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
@@ -493,6 +503,8 @@ impl<'a> Printer<'a> {
             current_namespace_name: None,
             anonymous_default_export_name: None,
             next_disposable_env_id: 1,
+            block_using_env: None,
+            metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
             pending_commonjs_class_export_name: None,
