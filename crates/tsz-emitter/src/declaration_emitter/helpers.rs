@@ -4394,7 +4394,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
-                if let Some(typeof_text) =
+                if type_id == tsz_solver::types::TypeId::ANY
+                    && has_initializer
+                    && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if let Some(typeof_text) =
                     self.typeof_prefix_for_value_entity(initializer, has_initializer, Some(type_id))
                 {
                     // Bare identifier referencing an enum/module → emit typeof
@@ -4404,7 +4410,10 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
                 }
-            } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
+            } else if let Some(type_text) = self
+                .infer_fallback_type_text(initializer)
+                .or_else(|| self.data_view_new_expression_type_text(initializer))
+            {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer || keyword != "const" {
@@ -4413,6 +4422,54 @@ impl<'a> DeclarationEmitter<'a> {
                 // initializer but no resolved type, default to `: any`.
                 self.write(": any");
             }
+        }
+    }
+
+    fn data_view_new_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let callee_text = self.nameable_constructor_expression_text(new_expr.expression)?;
+        if callee_text != "DataView" {
+            return None;
+        }
+
+        let args = new_expr.arguments.as_ref()?;
+        let &arg0 = args.nodes.first()?;
+        let backing_type = self.data_view_backing_store_type_text(arg0)?;
+        Some(format!("DataView<{backing_type}>"))
+    }
+
+    fn data_view_backing_store_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        if let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+            && type_id != tsz_solver::types::TypeId::ANY
+        {
+            return Some(self.print_type_id(type_id));
+        }
+
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        self.nameable_constructor_expression_text(new_expr.expression)
+    }
+
+    fn nameable_constructor_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(expr_node)?;
+                let lhs = self.nameable_constructor_expression_text(access.expression)?;
+                let rhs = self.get_identifier_text(access.name_or_argument)?;
+                Some(format!("{lhs}.{rhs}"))
+            }
+            _ => None,
         }
     }
 
