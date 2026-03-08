@@ -93,6 +93,8 @@ pub struct NamespaceES5Transformer<'a> {
     /// Used for cross-block export substitution (e.g., `x` → `M.x` in block 2
     /// when `export var x` was declared in block 1).
     prior_exported_vars: std::collections::HashSet<String>,
+    /// Whether legacy decorators are enabled (experimentalDecorators)
+    legacy_decorators: bool,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -104,6 +106,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
+            legacy_decorators: false,
         }
     }
 
@@ -115,7 +118,13 @@ impl<'a> NamespaceES5Transformer<'a> {
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
+            legacy_decorators: false,
         }
+    }
+
+    /// Set whether legacy decorators are enabled
+    pub const fn set_legacy_decorators(&mut self, enabled: bool) {
+        self.legacy_decorators = enabled;
     }
 
     /// Set source text for comment extraction
@@ -974,6 +983,69 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        // Classes in namespace are nested one level deeper than top-level
+        class_transformer.set_indent_base(1);
+
+        // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
+        if self.legacy_decorators {
+            let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
+                let Some(m_node) = self.arena.get(m_idx) else {
+                    return false;
+                };
+                let mods = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(m_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(m_node)
+                        .and_then(|p| p.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(m_node)
+                            .and_then(|a| a.modifiers.as_ref())
+                    }
+                    _ => None,
+                };
+                mods.is_some_and(|m| {
+                    m.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                })
+            });
+            if has_member_decorators {
+                class_transformer.set_legacy_decorators(true);
+            }
+            // Collect class-level decorators
+            let class_decorators: Vec<NodeIndex> = class_data
+                .modifiers
+                .as_ref()
+                .map(|mods| {
+                    mods.nodes
+                        .iter()
+                        .copied()
+                        .filter(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !class_decorators.is_empty() {
+                class_transformer.set_class_decorators(class_decorators);
+            }
+        }
+
+        if let Some(text) = self.source_text {
+            class_transformer.set_source_text(text);
+        }
+
         let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
 
         if is_exported {
