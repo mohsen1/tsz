@@ -483,11 +483,13 @@ impl<'a> DeclarationEmitter<'a> {
             // Process each specifier
             for &spec_idx in &bindings.elements.nodes {
                 if let Some(spec) = arena.get_specifier_at(spec_idx) {
-                    // Use the property_name if present (for 'as' imports), otherwise use name
-                    let name_idx = if spec.property_name.is_some() {
-                        spec.property_name
-                    } else {
+                    // Track the local binding name, mirroring binder import symbol creation.
+                    // For `import { foo as bar }`, the symbol exposed to usage analysis is `bar`,
+                    // not the imported property name `foo`.
+                    let name_idx = if spec.name.is_some() {
                         spec.name
+                    } else {
+                        spec.property_name
                     };
 
                     if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
