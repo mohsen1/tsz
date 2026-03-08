@@ -1863,9 +1863,10 @@ impl<'a> Printer<'a> {
                 };
                 for &decl_list_idx in &var_stmt.declarations.nodes {
                     if let Some(decl_list_node) = self.arena.get(decl_list_idx)
-                        && (decl_list_node.flags as u32 & node_flags::USING) != 0 {
-                            return true;
-                        }
+                        && (decl_list_node.flags as u32 & node_flags::USING) != 0
+                    {
+                        return true;
+                    }
                 }
             }
         }
@@ -1886,9 +1887,9 @@ impl<'a> Printer<'a> {
                     if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                         && (decl_list_node.flags as u32 & node_flags::AWAIT_USING)
                             == node_flags::AWAIT_USING
-                        {
-                            return true;
-                        }
+                    {
+                        return true;
+                    }
                 }
             }
         }
