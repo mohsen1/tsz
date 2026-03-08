@@ -486,6 +486,19 @@ pub(super) fn collect_diagnostics(
         }
         report_progress("build_work_queue", phase_start);
     }
+    if extended_progress_enabled {
+        let (type_cache_entries, bind_cache_entries) = cache.as_deref().map_or((0, 0), |cache| {
+            (cache.type_caches.len(), cache.bind_cache.len())
+        });
+        eprintln!(
+            "{}",
+            format_extended_diagnostics_collect_cache_state(
+                type_cache_entries,
+                bind_cache_entries,
+                use_incremental_check_path,
+            )
+        );
+    }
 
     // --- FILE CHECKING ---
     //
@@ -508,14 +521,42 @@ pub(super) fn collect_diagnostics(
             let _prep_span = tracing::info_span!("prepare_binders").entered();
             let binders = work_queue
                 .iter()
-                .map(|&file_idx| {
+                .enumerate()
+                .map(|(queue_idx, &file_idx)| {
+                    let trace_first_prepare_binder = extended_progress_enabled && queue_idx == 0;
                     let file = &program.files[file_idx];
+                    let create_binder_start = Instant::now();
+                    if trace_first_prepare_binder {
+                        report_progress_start("prepare_binders::first_file::create_binder");
+                    }
                     let mut binder = create_binder_from_bound_file(file, program, file_idx);
+                    if trace_first_prepare_binder {
+                        report_progress(
+                            "prepare_binders::first_file::create_binder",
+                            create_binder_start,
+                        );
+                    }
+                    let collect_specifiers_start = Instant::now();
+                    if trace_first_prepare_binder {
+                        report_progress_start(
+                            "prepare_binders::first_file::collect_module_specifiers",
+                        );
+                    }
                     let module_specifiers =
                         collect_module_specifiers(&file.arena, file.source_file);
+                    if trace_first_prepare_binder {
+                        report_progress(
+                            "prepare_binders::first_file::collect_module_specifiers",
+                            collect_specifiers_start,
+                        );
+                    }
 
                     // Bridge raw module specifiers to resolved export tables using
                     // the pre-computed resolved_module_paths map (no FS calls needed).
+                    let bridge_modules_start = Instant::now();
+                    if trace_first_prepare_binder {
+                        report_progress_start("prepare_binders::first_file::bridge_modules");
+                    }
                     for (specifier, _, _) in &module_specifiers {
                         if let Some(&target_idx) =
                             resolved_module_paths.get(&(file_idx, specifier.clone()))
@@ -528,6 +569,12 @@ pub(super) fn collect_diagnostics(
                                 &resolved_module_paths,
                             );
                         }
+                    }
+                    if trace_first_prepare_binder {
+                        report_progress(
+                            "prepare_binders::first_file::bridge_modules",
+                            bridge_modules_start,
+                        );
                     }
                     binder
                 })
@@ -1005,6 +1052,16 @@ fn format_extended_diagnostics_collect_phase_start(phase: &str) -> String {
     format!("[extendedDiagnostics] collect_diagnostics::{phase}: start")
 }
 
+fn format_extended_diagnostics_collect_cache_state(
+    type_cache_entries: usize,
+    bind_cache_entries: usize,
+    use_incremental_check_path: bool,
+) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::cache_state type_cache_entries={type_cache_entries} bind_cache_entries={bind_cache_entries} incremental_path={use_incremental_check_path}"
+    )
+}
+
 fn collect_no_check_file_diagnostics(
     program: &MergedProgram,
     resolved_module_errors: &FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
@@ -1435,6 +1492,15 @@ let __: B = new B();"#
         assert_eq!(
             line,
             "[extendedDiagnostics] collect_diagnostics::prime_boxed_types: start"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_cache_state() {
+        let line = format_extended_diagnostics_collect_cache_state(12, 3, true);
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::cache_state type_cache_entries=12 bind_cache_entries=3 incremental_path=true"
         );
     }
 
