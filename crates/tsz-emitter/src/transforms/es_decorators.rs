@@ -115,10 +115,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // --- IIFE header ---
         out.push_str(&format!("let {class_name} = (() => {{\n"));
 
-        // Var declarations for temp vars
+        // Var declarations: class alias on its own line, computed key vars combined
         out.push_str(&format!("{i1}var {class_alias};\n"));
-        for (_, var) in &computed_key_vars {
-            out.push_str(&format!("{i1}var {var};\n"));
+        if !computed_key_vars.is_empty() {
+            let key_names: Vec<&str> = computed_key_vars.iter().map(|(_, v)| v.as_str()).collect();
+            out.push_str(&format!("{i1}var {};\n", key_names.join(", ")));
         }
 
         // Class decorator variables
@@ -466,11 +467,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // All modifiers are decorators/TS-only.
-        // Use the name node position as the reliable anchor.
+        // Use the name node position as the reliable anchor, but for GET_ACCESSOR
+        // and SET_ACCESSOR we must include the `get`/`set` keyword which precedes
+        // the name in the source text and is NOT stored as a modifier.
         if let Some(idx) = name_idx
             && let Some(name_node) = self.arena.get(idx)
         {
-            return name_node.pos as usize;
+            let name_pos = name_node.pos as usize;
+            let is_accessor = member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR;
+            if is_accessor
+                && let Some(source) = self.source_text {
+                    // Scan backwards from name position to find 'get' or 'set' keyword
+                    let keyword = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        "get"
+                    } else {
+                        "set"
+                    };
+                    // Allow generous whitespace between keyword and name
+                    let search_start = name_pos.saturating_sub(keyword.len() + 20);
+                    // Look for the keyword in the text before the name
+                    if let Some(kw_offset) = source[search_start..name_pos].rfind(keyword) {
+                        return search_start + kw_offset;
+                    }
+                }
+            return name_pos;
         }
 
         member_node.pos as usize
@@ -677,9 +698,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     fn compute_all_member_vars(&self, members: &[DecoratedMember]) -> Vec<MemberVarInfo> {
         let mut counter: u32 = 0;
+        // Track the last seen computed/string member name to group getter/setter pairs.
+        // tsc only increments the suffix counter between different member names.
+        let mut last_computed_name: Option<String> = None;
         members
             .iter()
-            .map(|m| self.compute_member_var_info(m, &mut counter))
+            .map(|m| self.compute_member_var_info(m, &mut counter, &mut last_computed_name))
             .collect()
     }
 
@@ -687,6 +711,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         &self,
         member: &DecoratedMember,
         counter: &mut u32,
+        last_computed_name: &mut Option<String>,
     ) -> MemberVarInfo {
         let base_name = match &member.name {
             MemberName::Identifier(name) => name.clone(),
@@ -703,22 +728,35 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         let var_base = format!("_{kind_prefix}{prefix}{base_name}");
 
-        let suffix = if *counter > 0
-            && matches!(
-                member.name,
-                MemberName::StringLiteral(_) | MemberName::Computed(_)
-            ) {
+        // For computed/string members, only increment counter on NEW member names.
+        // Getter/setter pairs with the same name share the same suffix.
+        let is_computed_or_string = matches!(
+            member.name,
+            MemberName::StringLiteral(_) | MemberName::Computed(_)
+        );
+
+        if is_computed_or_string {
+            let current_name = match &member.name {
+                MemberName::StringLiteral(s) => s.clone(),
+                MemberName::Computed(idx) => self.node_text(*idx),
+                _ => unreachable!(),
+            };
+            let is_new_name = last_computed_name
+                .as_ref()
+                .is_none_or(|prev| *prev != current_name);
+            if is_new_name {
+                if last_computed_name.is_some() {
+                    *counter += 1;
+                }
+                *last_computed_name = Some(current_name);
+            }
+        }
+
+        let suffix = if *counter > 0 && is_computed_or_string {
             format!("_{}", *counter)
         } else {
             String::new()
         };
-
-        if matches!(
-            member.name,
-            MemberName::StringLiteral(_) | MemberName::Computed(_)
-        ) {
-            *counter += 1;
-        }
 
         let decorators_var = format!("{var_base}_decorators{suffix}");
         let has_field_inits = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
