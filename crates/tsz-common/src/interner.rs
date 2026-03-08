@@ -462,3 +462,7 @@ impl Default for ShardedInterner {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/interner_tests.rs"]
+mod tests;

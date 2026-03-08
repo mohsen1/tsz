@@ -77,3 +77,7 @@ use crate::types::*;
 #[cfg(test)]
 #[path = "../../tests/operations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/binary_ops_comprehensive_tests.rs"]
+mod binary_ops_comprehensive_tests;

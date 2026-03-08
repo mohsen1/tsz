@@ -220,8 +220,17 @@ mod mapped_comprehensive_tests;
 #[path = "../tests/narrowing_comprehensive_tests.rs"]
 mod narrowing_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/narrowing_discriminant_tests.rs"]
+mod narrowing_discriminant_tests;
+#[cfg(test)]
+#[path = "../tests/property_helpers_tests.rs"]
+mod property_helpers_tests;
+#[cfg(test)]
 #[path = "../tests/string_intrinsic_subtype_tests.rs"]
 mod string_intrinsic_subtype_tests;
+#[cfg(test)]
+#[path = "../tests/subtype_cache_tests.rs"]
+mod subtype_cache_tests;
 #[cfg(test)]
 #[path = "../tests/template_literal_comprehensive_tests.rs"]
 mod template_literal_comprehensive_tests;
@@ -252,6 +261,9 @@ mod typedata_contract_tests;
 #[cfg(test)]
 #[path = "../tests/union_intersection_comprehensive_tests.rs"]
 mod union_intersection_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/variance_tests.rs"]
+mod variance_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;

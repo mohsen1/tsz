@@ -56,7 +56,7 @@ use crate::types::{
     CallSignature, IntrinsicKind, LiteralValue, ParamInfo, TypeData, TypeId, TypeParamInfo,
 };
 #[cfg(test)]
-use crate::types::{FunctionShape, PropertyInfo, Visibility};
+use crate::types::{PropertyInfo, Visibility};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::sync::Arc;
