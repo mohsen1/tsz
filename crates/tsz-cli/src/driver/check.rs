@@ -52,6 +52,7 @@ pub(super) fn collect_diagnostics(
     cache: Option<&mut CompilationCache>,
     lib_contexts: &[LibContext],
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
+    has_deprecation_diagnostics: bool,
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
@@ -483,6 +484,7 @@ pub(super) fn collect_diagnostics(
                             check_js,
                             explicit_check_js_false,
                             skip_lib_check,
+                            has_deprecation_diagnostics,
                         };
                         check_file_for_parallel(context)
                     })
@@ -512,6 +514,7 @@ pub(super) fn collect_diagnostics(
                             check_js,
                             explicit_check_js_false,
                             skip_lib_check,
+                            has_deprecation_diagnostics,
                         };
                         check_file_for_parallel(context)
                     })
@@ -543,6 +546,7 @@ pub(super) fn collect_diagnostics(
                     check_js,
                     explicit_check_js_false,
                     skip_lib_check,
+                    has_deprecation_diagnostics,
                 };
                 check_file_for_parallel(context)
             })
@@ -924,6 +928,8 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `plainJSErrors` allowlist that would otherwise survive the filter.
     explicit_check_js_false: bool,
     skip_lib_check: bool,
+    /// When true, skip lib type resolution in the checker (TS5107/TS5101 mode).
+    has_deprecation_diagnostics: bool,
 }
 
 /// Check a single file for the parallel checking path.
@@ -953,6 +959,7 @@ pub(super) fn check_file_for_parallel<'a>(
         check_js,
         explicit_check_js_false,
         skip_lib_check,
+        has_deprecation_diagnostics,
     } = context;
     let file = &program.files[file_idx];
 
@@ -982,6 +989,7 @@ pub(super) fn check_file_for_parallel<'a>(
     );
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+    checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
 
     if !lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());

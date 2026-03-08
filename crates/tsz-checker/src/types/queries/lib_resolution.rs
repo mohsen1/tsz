@@ -67,14 +67,26 @@ impl<'a> CheckerState<'a> {
             return derived_type;
         }
 
+        // Name-based cycle guard: prevent re-entrant heritage merging for the same
+        // interface name. This breaks the resolve_lib_type_by_name ↔ merge_lib_interface_heritage
+        // mutual recursion that occurs through deep heritage chains
+        // (e.g., Array → ReadonlyArray → Iterable → ...), especially when child
+        // CheckerStates are created for cross-arena type param resolution.
+        if !self.ctx.lib_heritage_in_progress.insert(name.to_string()) {
+            self.ctx.leave_recursion();
+            return derived_type;
+        }
+
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         // Look up the symbol and its declarations
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+            self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         };
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         };
@@ -253,6 +265,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        self.ctx.lib_heritage_in_progress.remove(name);
         self.ctx.leave_recursion();
         derived_type
     }
@@ -345,6 +358,15 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use tsz_lowering::TypeLowering;
+
+        // When TS5107/TS5101 deprecation diagnostics are present, skip all lib type
+        // resolution. tsc stops compilation at TS5107 and never resolves lib types.
+        // We still walk the AST for grammar errors (17xxx), but short-circuit type
+        // resolution to avoid the O(n²) memory explosion from multiple files
+        // independently resolving deep es5 heritage chains.
+        if self.ctx.skip_lib_type_resolution {
+            return None;
+        }
 
         // TS 6.0 lib intrinsic: defaults to `undefined` unless
         // `strictBuiltinIteratorReturn` is disabled.
@@ -639,7 +661,25 @@ impl<'a> CheckerState<'a> {
 
         // Merge heritage (extends) from lib interface declarations.
         // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
+        //
+        // CRITICAL: Insert the pre-heritage type into the cache BEFORE merging heritage.
+        // merge_lib_interface_heritage calls resolve_lib_type_by_name recursively for base
+        // types. Without this early cache insertion, recursive calls redo all lowering work
+        // for types already being resolved, causing O(n!) blowup on deep heritage chains
+        // (e.g., es5.d.ts where Array extends ReadonlyArray, etc.).
+        // The recursive call gets the un-merged type (missing inherited members), which is
+        // still correct for breaking cycles. The final cache update below overwrites with
+        // the fully-merged type.
         if let Some(ty) = lib_type_id {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), Some(ty));
+            // Also insert pre-heritage type into shared cache so parallel threads
+            // can break out of their own resolution early (they get the un-merged
+            // type, which is correct for cycle breaking).
+            if let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
+                shared_cache.entry(name.to_string()).or_insert(Some(ty));
+            }
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
 
