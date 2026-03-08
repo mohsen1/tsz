@@ -294,6 +294,12 @@ impl<'a> Printer<'a> {
         // so using next_stmt.pos as the scan limit prevents over-scanning.
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
+            // Save state before leading comments so we can undo them if the
+            // statement produces no output (e.g., namespace alias import or
+            // CJS export var with no initializer).
+            let pre_comment_writer_len = self.writer.len();
+            let pre_comment_idx = self.comment_emit_idx;
+
             // Emit leading comments before this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // When a statement is erased (interface, type alias, declare, etc.),
@@ -365,12 +371,13 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let before_len = self.writer.len();
+            let before_emit_len = self.writer.len();
             self.emit(stmt_idx);
+            let emitted_output = self.writer.len() > before_emit_len;
             // Only add newline if something was actually emitted and we're not
             // already at line start (e.g. class with lowered static fields already
             // wrote a trailing newline after the last `ClassName.field = value;`).
-            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+            if emitted_output && !self.writer.is_at_line_start() {
                 // Emit trailing same-line comments (e.g. `foo(); // comment`).
                 // Use the next statement's pos as the scan upper bound: stmt_node.end
                 // extends into the next statement, which would cause
@@ -401,6 +408,48 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write_line();
+            } else if !emitted_output {
+                // Statement produced no output (e.g., namespace alias `import a = M`
+                // with no runtime value, or CJS export var with no initializer).
+                // Undo any leading comments we emitted before it, then consume
+                // trailing same-line comments so they don't leak to the next
+                // statement's leading comment emission.
+                if self.writer.len() > pre_comment_writer_len {
+                    self.writer.truncate(pre_comment_writer_len);
+                    self.comment_emit_idx = pre_comment_idx;
+                }
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                    // Skip leading comments
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        if self.all_comments[self.comment_emit_idx].end <= actual_start {
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    // Skip trailing same-line comments
+                    let scan_end = stmts
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map_or(stmt_node.end, |next_node| next_node.pos);
+                    let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
+                    if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut pos = stmt_token_end as usize;
+                        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                            pos += 1;
+                        }
+                        let line_end = pos as u32;
+                        while self.comment_emit_idx < self.all_comments.len() {
+                            if self.all_comments[self.comment_emit_idx].end <= line_end {
+                                self.comment_emit_idx += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 

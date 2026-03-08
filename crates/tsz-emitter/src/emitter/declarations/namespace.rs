@@ -596,7 +596,10 @@ impl<'a> Printer<'a> {
                     .map(|n| n.pos);
                 let upper_bound = next_pos.unwrap_or(body_close_pos);
 
-                // Emit leading comments before this statement
+                // Emit leading comments before this statement.
+                // Save state so we can undo if the statement produces no output.
+                let pre_comment_writer_len = self.writer.len();
+                let pre_comment_idx = self.comment_emit_idx;
                 self.emit_comments_before_pos(stmt_node.pos);
 
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
@@ -714,6 +717,14 @@ impl<'a> Printer<'a> {
                             self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                         self.emit_trailing_comments_before(token_end, body_close_pos);
                         self.write_line();
+                    } else {
+                        // Statement produced no output — undo any leading comments
+                        // emitted at line 600 and skip trailing same-line comments.
+                        if self.writer.len() > pre_comment_writer_len {
+                            self.writer.truncate(pre_comment_writer_len);
+                            self.comment_emit_idx = pre_comment_idx;
+                        }
+                        self.skip_comments_for_erased_node(stmt_node);
                     }
                 }
             }
