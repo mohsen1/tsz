@@ -497,7 +497,14 @@ impl Reporter {
             for (file, count) in &file_errors {
                 let first_line = first_error_lines.get(file).copied().unwrap_or(1);
                 out.push('\n');
-                out.push_str(&format!("{count:>6}  {file}:{first_line}"));
+                if self.color {
+                    out.push_str(&format!(
+                        "{count:>6}  {file}{}",
+                        format!(":{first_line}").bright_black()
+                    ));
+                } else {
+                    out.push_str(&format!("{count:>6}  {file}:{first_line}"));
+                }
             }
             out.push('\n');
         }

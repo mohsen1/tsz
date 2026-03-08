@@ -253,10 +253,13 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
 
     if has_errors {
         // Match tsc exit codes:
-        // tsc uses exit code 2 when there are errors (DiagnosticsPresent_OutputsGenerated)
-        // regardless of whether --noEmit is set. Exit code 1 is only for when emit
-        // is explicitly skipped due to errors (noEmitOnError).
-        if args.no_emit || !result.emitted_files.is_empty() {
+        // Exit code 1 (DiagnosticsPresent_OutputsSkipped): emit was suppressed due to errors
+        //   (--noEmitOnError with errors means no outputs were generated).
+        // Exit code 2 (DiagnosticsPresent_OutputsGenerated): errors exist but outputs were
+        //   still generated (or --noEmit where there's nothing to emit regardless).
+        if args.no_emit_on_error {
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+        } else if args.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
@@ -1074,16 +1077,18 @@ fn extract_option_from_invalid_value(msg: &str) -> Option<String> {
 
 /// Get the valid values string for enum-typed CLI options, matching tsc's TS6046 format.
 fn get_valid_values_for_option(option_name: &str) -> Option<&'static str> {
+    // Value ordering and inclusion matches tsc v6 baselines exactly.
+    // Deprecated values (es3, es5, none, amd, system, umd, node10, node, classic) are excluded.
     match option_name {
         "target" => Some(
             "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'",
         ),
         "module" => Some(
-            "'none', 'commonjs', 'amd', 'umd', 'system', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'",
+            "'commonjs', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'",
         ),
-        "jsx" => Some("'preserve', 'react', 'react-jsx', 'react-jsxdev', 'react-native'"),
+        "jsx" => Some("'preserve', 'react-native', 'react-jsx', 'react-jsxdev', 'react'"),
         "moduleResolution" | "module-resolution" | "moduleresolution" => {
-            Some("'classic', 'node10', 'node', 'node16', 'nodenext', 'bundler'")
+            Some("'node16', 'nodenext', 'bundler'")
         }
         "moduleDetection" | "module-detection" | "moduledetection" => {
             Some("'auto', 'legacy', 'force'")
@@ -2691,6 +2696,13 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         allow_js: resolved.allow_js,
     };
 
+    // Print lib files first (matching tsc --listFilesOnly order)
+    if !resolved.checker.no_lib {
+        for lib_file in &resolved.lib_files {
+            println!("{}", lib_file.display());
+        }
+    }
+
     let files = discover_ts_files(&discovery)?;
     for file in files {
         println!("{}", file.display());
@@ -2714,14 +2726,23 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                 p.clone()
             }
         })
-        .or_else(|| {
-            let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then_some(default_path)
-        });
+        .unwrap_or_else(|| cwd.join("tsconfig.json"));
 
-    let Some(ref root_config_path) = tsconfig_path else {
-        anyhow::bail!("No tsconfig.json found. Use --project to specify one.");
-    };
+    if !tsconfig_path.exists() {
+        // Match tsc behavior: TS5083 to stdout, exit code 1
+        let display_path = if tsconfig_path.is_absolute() {
+            tsconfig_path.clone()
+        } else {
+            cwd.join(&tsconfig_path)
+        };
+        println!(
+            "error TS5083: Cannot read file '{}'.",
+            display_path.display()
+        );
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
+    let root_config_path = &tsconfig_path;
 
     // Load project reference graph
     let graph = match ProjectReferenceGraph::load(root_config_path) {

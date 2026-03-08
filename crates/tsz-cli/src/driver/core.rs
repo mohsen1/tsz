@@ -1034,9 +1034,9 @@ fn compile_inner(
         sources.push(source);
     }
 
-    // Collect all files that were read (including dependencies) before sources is moved
-    let mut files_read: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
-    files_read.sort();
+    // Collect user source files that were read before sources is moved
+    let mut user_files_read: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
+    user_files_read.sort();
 
     // Build file info with inclusion reasons
     let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
@@ -1055,6 +1055,11 @@ fn compile_inner(
             resolved.lib_files.clone()
         };
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
+
+    // Build files_read: lib files first (matching tsc --listFiles order), then user files
+    let mut files_read: Vec<PathBuf> = Vec::with_capacity(lib_paths.len() + user_files_read.len());
+    files_read.extend(lib_paths.iter().cloned());
+    files_read.append(&mut user_files_read);
     // Load and bind each lib exactly once, then reuse for:
     // 1) user-file binding (global symbol availability during bind)
     // 2) checker lib contexts (global symbol/type resolution)
@@ -1873,6 +1878,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_emit {
         options.no_emit = true;
+    }
+    if args.no_emit_on_error {
+        options.no_emit_on_error = true;
     }
     if args.no_resolve {
         options.no_resolve = true;
