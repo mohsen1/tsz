@@ -1351,6 +1351,9 @@ impl<'a> CheckerState<'a> {
                                         None
                                     }
                                 })
+                            } else if clause.kind == SyntaxKind::Identifier as u16 {
+                                // For `export default Bar`, point at the identifier
+                                Some(ed.export_clause)
                             } else {
                                 None
                             }
