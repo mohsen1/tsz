@@ -398,7 +398,11 @@ impl<'a> CheckerState<'a> {
         }) {
             return;
         }
-        let arg_str = self.format_type_for_assignability_message(arg_type);
+        // tsc widens literal types for TS2345 messages so that e.g.
+        // `Argument of type 'number'` is shown instead of `Argument of type '1'`.
+        // This matches tsc's getWidenedLiteralType call in checkTypeRelatedTo.
+        let widened_arg = tsz_solver::widening::widen_type(self.ctx.types, arg_type);
+        let arg_str = self.format_type_for_assignability_message(widened_arg);
         let param_str = self.format_type_for_assignability_message(param_type);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,

@@ -249,6 +249,13 @@ impl<'a> CheckerState<'a> {
         self.ctx.contextual_type = prev_context;
         self.ctx.preserve_literal_types = prev_preserve;
 
+        // tsc's checkConditionalExpression calls getWidenedLiteralType on each
+        // branch before computing the union.  This widens fresh literal types
+        // (e.g. 1 → number, "" → string) so that the resulting union uses the
+        // primitive base types in diagnostics and inferred types.
+        let when_true = tsz_solver::widening::widen_type(self.ctx.types, when_true);
+        let when_false = tsz_solver::widening::widen_type(self.ctx.types, when_false);
+
         // Use Solver API for type computation (Solver-First architecture)
         expression_ops::compute_conditional_expression_type(
             self.ctx.types,
