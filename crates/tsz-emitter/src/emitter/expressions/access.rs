@@ -270,10 +270,30 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        // Determine if the paren wraps a type assertion (which gets erased) or
+        // directly wraps an object literal.
+        // - Type assertion case: `(<Type>{}).foo` → `({}.foo)` — suffix stays inside parens
+        //   because the outer statement-level paren provides the disambiguation.
+        // - Direct object literal: `({...})['hello']` → `({...})['hello']` — suffix goes
+        //   outside since the parens just wrap the object literal.
+        let inner_is_erasable = if let Some(inner) = self.arena.get(paren.expression) {
+            inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                || inner.kind == syntax_kind_ext::AS_EXPRESSION
+                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+        } else {
+            false
+        };
+
         self.write("(");
         self.emit(paren.expression);
-        emit_suffix(self);
-        self.write(")");
+        if inner_is_erasable {
+            emit_suffix(self);
+            self.write(")");
+        } else {
+            self.write(")");
+            emit_suffix(self);
+        }
         true
     }
 
