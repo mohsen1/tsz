@@ -52,6 +52,11 @@ pub(crate) fn format_watch_timestamp() -> String {
         }
 
         let mut tm: Tm = unsafe { std::mem::zeroed() };
+        // SAFETY: `localtime_r` is a POSIX standard C library function available on all
+        // Unix systems (this code is gated by `#[cfg(unix)]`). The `Tm` struct is
+        // `#[repr(C)]` and its layout matches the C `struct tm` defined by libc. The
+        // result pointer (`&mut tm`) is valid because `tm` lives on the stack for the
+        // entire duration of the call.
         unsafe {
             localtime_r(&secs, &mut tm);
         }
