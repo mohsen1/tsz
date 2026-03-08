@@ -1418,13 +1418,15 @@ impl<'a> Printer<'a> {
             };
             if prop_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 seen_spread = true;
-            } else if prop_node.kind == syntax_kind_ext::JSX_ATTRIBUTE && seen_spread
-                && let Some(attr) = self.arena.get_jsx_attribute(prop_node) {
-                    let name = self.get_jsx_attr_name(attr.name);
-                    if name == "key" {
-                        return true;
-                    }
+            } else if prop_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                && seen_spread
+                && let Some(attr) = self.arena.get_jsx_attribute(prop_node)
+            {
+                let name = self.get_jsx_attr_name(attr.name);
+                if name == "key" {
+                    return true;
                 }
+            }
         }
         false
     }
