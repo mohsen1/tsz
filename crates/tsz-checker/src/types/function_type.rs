@@ -1204,14 +1204,8 @@ impl<'a> CheckerState<'a> {
                     self.check_assignable_or_report(actual_return, expected_return_type, body);
                 }
             }
-            // Skip body statement checking for function declarations.
-            // Function declarations are checked via check_function_declaration (in
-            // state_checking_members.rs) which correctly maintains the full type
-            // parameter scope chain for nested functions.  get_type_of_function can
-            // be called lazily (e.g. via get_type_of_symbol) outside the enclosing
-            // function's scope, so it would only have its own type params - not the
-            // outer function's - causing false TS2304 "Cannot find name" errors for
-            // outer type parameters like T/U in nested generics.
+            // Skip body checking for function declarations — they are checked via
+            // check_function_declaration which maintains the full type param scope chain.
             if !is_function_declaration {
                 // Save and reset control flow context (function body creates new context)
                 let saved_cf_context = (
@@ -1230,9 +1224,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.iteration_depth = 0;
                 self.ctx.switch_depth = 0;
                 // Note: function_depth was already incremented at body entry
-                // For expression-bodied arrows (non-block bodies), propagate the
-                // contextual return type so nested expressions (object literals,
-                // lambdas) retain proper contextual typing during statement checking.
+                // Propagate contextual return type for expression-bodied arrows.
                 let prev_ctx_for_body = self.ctx.contextual_type;
                 if let Some(body_node) = self.ctx.arena.get(body)
                     && body_node.kind != syntax_kind_ext::BLOCK
@@ -1256,6 +1248,24 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
 
                 self.check_statement(body);
+
+                // For annotated generator expressions, check that Generator<TYield, any, any>
+                // is assignable to the declared return type.
+                if is_generator && has_type_annotation {
+                    let declared_type = annotated_return_type.unwrap_or(return_type);
+                    let yield_t = self.ctx.current_yield_type();
+                    let error_node = if type_annotation != NodeIndex::NONE {
+                        type_annotation
+                    } else {
+                        idx
+                    };
+                    self.check_generator_return_type_assignability(
+                        function_is_async,
+                        yield_t,
+                        declared_type,
+                        error_node,
+                    );
+                }
 
                 // For unannotated generator expressions, determine the inferred yield type
                 // and emit TS7055/TS7025 if TYield is 'any'.

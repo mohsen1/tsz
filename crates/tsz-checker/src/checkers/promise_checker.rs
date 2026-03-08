@@ -966,4 +966,48 @@ impl<'a> CheckerState<'a> {
         }
         return_type
     }
+
+    /// Check that `Generator<TYield, any, any>` (or `AsyncGenerator`) is assignable
+    /// to the declared return type of an annotated generator function.
+    ///
+    /// This catches cases like `function* g(): WeirdIter {}` where `WeirdIter`
+    /// extends `IterableIterator` with extra properties that `Generator<>` lacks.
+    pub fn check_generator_return_type_assignability(
+        &mut self,
+        is_async: bool,
+        yield_type: Option<TypeId>,
+        declared_return_type: TypeId,
+        error_node: NodeIndex,
+    ) {
+        if declared_return_type == TypeId::ANY
+            || declared_return_type == TypeId::ERROR
+            || declared_return_type == TypeId::VOID
+            || self.type_contains_error(declared_return_type)
+        {
+            return;
+        }
+        let gen_name = if is_async {
+            "AsyncGenerator"
+        } else {
+            "Generator"
+        };
+        // Ensure the lib type is loaded, then get a Lazy(DefId) reference
+        // so the type displays as `Generator<...>` in error messages.
+        let _resolved = self.resolve_lib_type_by_name(gen_name);
+        let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.types.factory().lazy(def_id)
+        });
+        if let Some(base) = lazy_base {
+            let yield_t = yield_type.unwrap_or(TypeId::ANY);
+            let inferred_gen = self
+                .ctx
+                .types
+                .factory()
+                .application(base, vec![yield_t, TypeId::ANY, TypeId::ANY]);
+            self.ensure_relation_input_ready(inferred_gen);
+            self.ensure_relation_input_ready(declared_return_type);
+            self.check_assignable_or_report(inferred_gen, declared_return_type, error_node);
+        }
+    }
 }
