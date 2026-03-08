@@ -112,17 +112,21 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Track accessor names that have already been emitted so that
+        // getter/setter pairs produce only one __decorate call (the first one).
+        let mut emitted_accessor_names = std::collections::HashSet::<String>::new();
+
         for &member_idx in members {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
 
-            let (modifiers, name_idx, is_property) = match member_node.kind {
+            let (modifiers, name_idx, is_property, is_accessor) = match member_node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     let Some(method) = self.arena.get_method_decl(member_node) else {
                         continue;
                     };
-                    (&method.modifiers, method.name, false)
+                    (&method.modifiers, method.name, false, false)
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                     let Some(prop) = self.arena.get_property_decl(member_node) else {
@@ -133,13 +137,13 @@ impl<'a> Printer<'a> {
                     let is_auto_accessor = self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    (&prop.modifiers, prop.name, !is_auto_accessor)
+                    (&prop.modifiers, prop.name, !is_auto_accessor, false)
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.arena.get_accessor(member_node) else {
                         continue;
                     };
-                    (&accessor.modifiers, accessor.name, false)
+                    (&accessor.modifiers, accessor.name, false, true)
                 }
                 _ => continue,
             };
@@ -159,6 +163,13 @@ impl<'a> Printer<'a> {
                 // Computed property names are not supported for legacy decorator lowering
                 continue;
             }
+
+            // For getter/setter pairs, tsc emits only one __decorate call
+            // for the first accessor that has decorators. Skip the second.
+            if is_accessor
+                && !emitted_accessor_names.insert(member_name.clone()) {
+                    continue;
+                }
 
             self.write("__decorate([");
             self.write_line();
