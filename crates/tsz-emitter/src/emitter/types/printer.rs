@@ -7,6 +7,7 @@ use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
@@ -562,6 +563,17 @@ impl<'a> TypePrinter<'a> {
                     continue;
                 }
 
+                if let Some(accessors) = nested.print_property_as_accessors(property) {
+                    for accessor in accessors {
+                        let mut accessor_line = String::new();
+                        accessor_line.push_str(&member_indent);
+                        accessor_line.push_str(&accessor);
+                        accessor_line.push(';');
+                        lines.push(accessor_line);
+                    }
+                    continue;
+                }
+
                 // Readonly marker
                 if property.readonly {
                     line.push_str("readonly ");
@@ -653,6 +665,11 @@ impl<'a> TypePrinter<'a> {
                     continue;
                 }
 
+                if let Some(accessors) = self.print_property_as_accessors(property) {
+                    members.extend(accessors);
+                    continue;
+                }
+
                 // Readonly modifier
                 if property.readonly {
                     member.push_str("readonly ");
@@ -732,6 +749,115 @@ impl<'a> TypePrinter<'a> {
             sig.type_predicate.as_ref(),
             sig.return_type,
         ))
+    }
+
+    fn print_property_as_accessors(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+    ) -> Option<Vec<String>> {
+        if property.is_method || !self.property_is_accessor(property) {
+            return None;
+        }
+
+        let name = self.resolve_atom(property.name);
+        let printed_name = if needs_property_name_quoting(&name) {
+            quote_property_name(&name)
+        } else {
+            name
+        };
+
+        let mut members = Vec::new();
+        if property.type_id != TypeId::UNDEFINED {
+            members.push(format!(
+                "get {printed_name}(): {}",
+                self.print_type(property.type_id)
+            ));
+        }
+        if !property.readonly && property.write_type != TypeId::UNDEFINED {
+            members.push(format!(
+                "set {printed_name}(arg: {})",
+                self.print_type(property.write_type)
+            ));
+        }
+
+        if members.is_empty() {
+            return None;
+        }
+
+        Some(members)
+    }
+
+    fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
+        if property.is_class_prototype {
+            return true;
+        }
+
+        let Some(parent_id) = property.parent_id else {
+            return false;
+        };
+        let Some(symbol_arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(node_arena) = self.node_arena else {
+            return false;
+        };
+        let Some(parent_symbol) = symbol_arena.get(parent_id) else {
+            return false;
+        };
+
+        parent_symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl_idx| self.class_declares_accessor(node_arena, decl_idx, property.name))
+    }
+
+    fn class_declares_accessor(
+        &self,
+        node_arena: &NodeArena,
+        decl_idx: tsz_parser::NodeIndex,
+        property_name: Atom,
+    ) -> bool {
+        let Some(decl_node) = node_arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(class_data) = node_arena.get_class(decl_node) else {
+            return false;
+        };
+
+        class_data.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = node_arena.get(member_idx) else {
+                return false;
+            };
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    node_arena
+                        .get_accessor(member_node)
+                        .is_some_and(|accessor| {
+                            self.node_name_matches_atom(node_arena, accessor.name, property_name)
+                        })
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => node_arena
+                    .get_property_decl(member_node)
+                    .is_some_and(|prop| {
+                        node_arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                            && self.node_name_matches_atom(node_arena, prop.name, property_name)
+                    }),
+                _ => false,
+            }
+        })
+    }
+
+    fn node_name_matches_atom(
+        &self,
+        node_arena: &NodeArena,
+        name_idx: tsz_parser::NodeIndex,
+        property_name: Atom,
+    ) -> bool {
+        node_arena.get_identifier_at(name_idx).is_some_and(|ident| {
+            node_arena.resolve_identifier_text(ident) == self.resolve_atom(property_name)
+        })
     }
 
     fn print_method_signature(
@@ -961,6 +1087,16 @@ impl<'a> TypePrinter<'a> {
             return self.print_call_signature_arrow(&callable.call_signatures[0]);
         }
 
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+        {
+            return self.print_construct_signature_arrow(&callable.construct_signatures[0]);
+        }
+
         // Collect all signatures (call + construct)
         let mut parts = Vec::new();
 
@@ -1151,6 +1287,53 @@ impl<'a> TypePrinter<'a> {
         };
         format!(
             "{}({}) => {}",
+            type_params_str,
+            params.join(", "),
+            return_str
+        )
+    }
+
+    fn print_construct_signature_arrow(&self, sig: &tsz_solver::types::CallSignature) -> String {
+        let type_params_str = if !sig.type_params.is_empty() {
+            let params: Vec<String> = sig
+                .type_params
+                .iter()
+                .map(|tp| self.print_type_parameter_decl(tp))
+                .collect();
+            format!("<{}>", params.join(", "))
+        } else {
+            String::new()
+        };
+
+        let mut params = Vec::new();
+        for param in &sig.params {
+            let mut param_str = String::new();
+            if param.rest {
+                param_str.push_str("...");
+            }
+            if let Some(name) = param.name {
+                param_str.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    param_str.push('?');
+                }
+                param_str.push_str(": ");
+            }
+            param_str.push_str(&self.print_type(param.type_id));
+            params.push(param_str);
+        }
+
+        let mut nested = self.clone();
+        if let Some(indent) = nested.indent_level {
+            nested.indent_level = Some(indent.saturating_sub(2));
+        }
+        let return_str = if let Some(ref pred) = sig.type_predicate {
+            nested.print_type_predicate(pred)
+        } else {
+            nested.print_type(sig.return_type)
+        };
+
+        format!(
+            "abstract new {}({}) => {}",
             type_params_str,
             params.join(", "),
             return_str
