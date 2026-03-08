@@ -82,6 +82,77 @@ fn test_line_offset_to_byte_second_line() {
 }
 
 #[test]
+fn test_line_offset_to_byte_end_of_line() {
+    // Offset pointing past the last char on line 1 (before \n)
+    // "hello" is 5 chars, so offset 6 (1-based) is position 5 (the \n)
+    assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 6), 5);
+}
+
+#[test]
+fn test_line_offset_to_byte_mid_line() {
+    // Offset 3 (1-based) on line 1 means col 2 (0-based) -> byte 2
+    assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 3), 2);
+}
+
+#[test]
+fn test_line_offset_to_byte_third_line() {
+    assert_eq!(Server::line_offset_to_byte("aaa\nbbb\nccc\n", 3, 1), 8);
+}
+
+#[test]
+fn test_line_offset_to_byte_empty_line() {
+    // Line 2 is empty (just \n), offset 1 should point to byte 6
+    assert_eq!(Server::line_offset_to_byte("hello\n\nworld\n", 2, 1), 6);
+}
+
+#[test]
+fn test_line_offset_to_byte_past_end() {
+    // Line beyond file should return content length
+    assert_eq!(
+        Server::line_offset_to_byte("hello\n", 10, 1),
+        "hello\n".len()
+    );
+}
+
+#[test]
+fn test_line_offset_to_byte_utf16_bmp() {
+    // BMP characters: each is 1 UTF-16 code unit
+    // "café" - é is U+00E9 (2 UTF-8 bytes, 1 UTF-16 code unit)
+    let s = "caf\u{00E9}\nend";
+    // offset 5 (1-based) on line 1 = past 'c','a','f','é' = byte 5 (1+1+1+2)
+    assert_eq!(Server::line_offset_to_byte(s, 1, 5), 5);
+}
+
+#[test]
+fn test_line_offset_to_byte_utf16_supplementary() {
+    // Supplementary character: 😀 is U+1F600 (4 UTF-8 bytes, 2 UTF-16 code units)
+    let s = "a\u{1F600}b\nend";
+    // In UTF-16 offsets (1-based): a=1, 😀=2-3, b=4
+    // offset 4 (1-based) should point to 'b' = byte 5 (1 + 4)
+    assert_eq!(Server::line_offset_to_byte(s, 1, 4), 5);
+    // offset 2 (1-based) should point to start of 😀 = byte 1
+    assert_eq!(Server::line_offset_to_byte(s, 1, 2), 1);
+}
+
+#[test]
+fn test_apply_change_multiline_delete() {
+    // Delete from line 1 col 4 to line 2 col 4 (delete "lo\nwor")
+    assert_eq!(
+        Server::apply_change("hello\nworld", 1, 4, 2, 4, ""),
+        "helld"
+    );
+}
+
+#[test]
+fn test_apply_change_multiline_insert() {
+    // Insert newline in the middle
+    assert_eq!(
+        Server::apply_change("helloworld", 1, 6, 1, 6, "\n"),
+        "hello\nworld"
+    );
+}
+
+#[test]
 fn test_content_appears_binary_with_control_bytes() {
     assert!(content_appears_binary("G@\u{0004}\u{0004}\u{0004}\u{0004}"));
     assert!(!content_appears_binary("const x = 1;\n"));

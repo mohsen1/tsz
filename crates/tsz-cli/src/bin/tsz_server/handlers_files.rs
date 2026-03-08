@@ -121,9 +121,15 @@ impl Server {
     }
 
     /// Convert 1-based line/offset to a byte offset in the content string.
+    ///
+    /// The tsserver protocol uses 1-based line numbers and 1-based offsets where
+    /// offsets count **UTF-16 code units** from the start of the line (matching
+    /// TypeScript's internal string representation). Characters outside the BMP
+    /// (U+10000 and above) occupy 2 UTF-16 code units but are a single Rust
+    /// `char`, so we must account for surrogate pairs when advancing.
     pub(crate) fn line_offset_to_byte(content: &str, line: u32, offset: u32) -> usize {
         let target_line = (line as usize).saturating_sub(1);
-        let target_col = (offset as usize).saturating_sub(1);
+        let target_utf16 = (offset as usize).saturating_sub(1);
         let mut current_line = 0usize;
         let mut line_start = 0usize;
         if target_line > 0 {
@@ -141,9 +147,13 @@ impl Server {
             }
         }
         let mut byte_pos = line_start;
-        for _ in 0..target_col {
+        let mut utf16_consumed = 0usize;
+        while utf16_consumed < target_utf16 {
             match content[byte_pos..].chars().next() {
-                Some(c) if c != '\n' => byte_pos += c.len_utf8(),
+                Some(c) if c != '\n' => {
+                    byte_pos += c.len_utf8();
+                    utf16_consumed += c.len_utf16();
+                }
                 _ => break,
             }
         }
