@@ -188,6 +188,47 @@ impl<'a> TypePrinter<'a> {
         true
     }
 
+    fn symbol_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let cache = self.type_cache?;
+        let type_id = cache.symbol_types.get(&sym_id).copied()?;
+        if visitor::type_query_symbol(self.interner, type_id)
+            .is_some_and(|sym_ref| sym_ref.0 == sym_id.0)
+        {
+            return None;
+        }
+        Some(type_id)
+    }
+
+    fn symbol_needs_inline_type_query(&self, sym_id: SymbolId) -> bool {
+        if self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id) {
+            return false;
+        }
+
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(node_arena) = self.node_arena else {
+                return false;
+            };
+            let Some(decl_node) = node_arena.get(decl_idx) else {
+                return false;
+            };
+            matches!(
+                decl_node.kind,
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+            )
+        })
+    }
+
     /// Resolve a SymbolRef/SymbolId to its qualified name (e.g., "M.c" for `typeof M.c`).
     /// If an enclosing symbol is set, the qualified name is relative to it
     /// (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
@@ -309,7 +350,13 @@ impl<'a> TypePrinter<'a> {
             return self.print_index_access(container, index);
         }
         if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
-            if let Some(name) = self.resolve_symbol_qualified_name(SymbolId(sym_ref.0)) {
+            let sym_id = SymbolId(sym_ref.0);
+            if self.symbol_needs_inline_type_query(sym_id)
+                && let Some(symbol_type) = self.symbol_type_fallback(sym_id)
+            {
+                return self.print_type(symbol_type);
+            }
+            if let Some(name) = self.resolve_symbol_qualified_name(sym_id) {
                 return format!("typeof {name}");
             }
             return "any".to_string();
@@ -1220,13 +1267,13 @@ impl<'a> TypePrinter<'a> {
 
         if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
             let sym_id = SymbolId(sym_ref.0);
-            return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+            return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
         }
 
         if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
             let callable = self.interner.callable_shape(callable_id);
             if let Some(sym_id) = callable.symbol {
-                return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+                return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
             }
             return 0;
         }
@@ -1236,7 +1283,7 @@ impl<'a> TypePrinter<'a> {
         {
             let shape = self.interner.object_shape(shape_id);
             if let Some(sym_id) = shape.symbol {
-                return u8::from(self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id));
+                return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
             }
             return 0;
         }
