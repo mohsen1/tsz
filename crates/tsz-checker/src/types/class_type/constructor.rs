@@ -54,8 +54,15 @@ impl<'a> CheckerState<'a> {
             if self.ctx.class_constructor_resolution_set.insert(sym_id) {
                 true
             } else {
-                // Already resolving this class's constructor type — cycle detected
-                return TypeId::ERROR;
+                // Already resolving this class's constructor type. If a partial
+                // constructor type is cached in symbol_types, prefer that over
+                // collapsing the recursive lookup to ERROR.
+                return self
+                    .ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .unwrap_or(TypeId::ERROR);
             }
         } else {
             false
@@ -163,6 +170,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                    let readonly = self.has_readonly_modifier(&prop.modifiers);
                     let type_id = if prop.type_annotation.is_some() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else if prop.initializer.is_some() {
@@ -190,17 +199,51 @@ impl<'a> CheckerState<'a> {
                                 self.clear_type_cache_recursive(prop.initializer);
                             }
                         }
+                        let prev_sym_cached = current_sym
+                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        if let Some(sym_id) = current_sym {
+                            let mut partial_ctor_props: Vec<PropertyInfo> =
+                                properties.values().cloned().collect();
+                            partial_ctor_props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: TypeId::ANY,
+                                write_type: TypeId::ANY,
+                                optional: prop.question_token,
+                                readonly,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility,
+                                parent_id: current_sym,
+                                declaration_order: 0,
+                            });
+                            let partial_ctor = factory.callable(CallableShape {
+                                call_signatures: Vec::new(),
+                                construct_signatures: Vec::new(),
+                                properties: partial_ctor_props,
+                                string_index: static_string_index.clone(),
+                                number_index: static_number_index.clone(),
+                                symbol: current_sym,
+                                is_abstract: false,
+                            });
+                            self.ctx.symbol_types.insert(sym_id, partial_ctor);
+                        }
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
                         let init_type = self.get_type_of_node(prop.initializer);
                         self.ctx.preserve_literal_types = prev;
+                        if let Some(sym_id) = current_sym {
+                            if let Some(prev_type) = prev_sym_cached {
+                                self.ctx.symbol_types.insert(sym_id, prev_type);
+                            } else {
+                                self.ctx.symbol_types.remove(&sym_id);
+                            }
+                        }
                         self.ctx.contextual_type = prev_ctx;
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = false;
                         }
 
-                        let is_readonly = self.has_readonly_modifier(&prop.modifiers);
-                        if is_readonly {
+                        if readonly {
                             init_type
                         } else {
                             self.widen_literal_type(init_type)
@@ -212,8 +255,6 @@ impl<'a> CheckerState<'a> {
                         TypeId::ANY
                     };
 
-                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
-
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -221,7 +262,7 @@ impl<'a> CheckerState<'a> {
                             type_id,
                             write_type: type_id,
                             optional: prop.question_token,
-                            readonly: self.has_readonly_modifier(&prop.modifiers),
+                            readonly,
                             is_method: false,
                             is_class_prototype: false,
                             visibility,
@@ -759,15 +800,6 @@ impl<'a> CheckerState<'a> {
                 {
                     break;
                 }
-                // Check resolution set to prevent infinite recursion through circular extends
-                if self
-                    .ctx
-                    .class_constructor_resolution_set
-                    .contains(&base_sym_id)
-                {
-                    break;
-                }
-
                 let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 else {
                     // Mixin pattern detection: check if the base expression is typed
@@ -888,8 +920,21 @@ impl<'a> CheckerState<'a> {
                         type_args.push(self.get_type_from_type_node(arg_idx));
                     }
                 }
-                let base_constructor_type =
-                    self.get_class_constructor_type(base_class_idx, base_class);
+                let base_constructor_type = if self
+                    .ctx
+                    .class_constructor_resolution_set
+                    .contains(&base_sym_id)
+                {
+                    self.ctx
+                        .symbol_types
+                        .get(&base_sym_id)
+                        .copied()
+                        .unwrap_or_else(|| {
+                            self.get_class_constructor_type(base_class_idx, base_class)
+                        })
+                } else {
+                    self.get_class_constructor_type(base_class_idx, base_class)
+                };
                 let (instantiated_base_constructor_type, inherited_substitution) =
                     if can_skip_base_instantiation(
                         base_class

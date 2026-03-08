@@ -15,7 +15,8 @@ use tsz_binder::BinderState;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::type_queries::get_callable_shape;
+use tsz_solver::{TypeId, TypeInterner};
 
 fn check_source(source: &str) -> Vec<Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -140,6 +141,76 @@ fn instance_private_field_still_works() {
     assert!(
         !codes.contains(&2339),
         "Instance private field access should work; got: {codes:?}"
+    );
+}
+
+#[test]
+fn recursive_static_class_expression_keeps_placeholder_static_member() {
+    let source = r#"
+        class C {
+            static D = class extends C {};
+        }
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        tsz_checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = arena.get(class_idx).expect("class node");
+    let class_decl = arena.get_class(class_node).expect("class decl");
+    let static_prop_idx = class_decl.members.nodes[0];
+    let static_prop_node = arena.get(static_prop_idx).expect("static property node");
+    let static_prop = arena
+        .get_property_decl(static_prop_node)
+        .expect("static property decl");
+    let static_prop_type = checker
+        .ctx
+        .node_types
+        .get(&static_prop.initializer.0)
+        .copied()
+        .expect("static property initializer type");
+    let callable = get_callable_shape(&types, static_prop_type).expect("callable shape");
+    let property_names: Vec<_> = callable
+        .properties
+        .iter()
+        .map(|prop| (types.resolve_atom(prop.name), prop.type_id))
+        .collect();
+    let base_name = arena
+        .get_class_at(static_prop.initializer)
+        .and_then(|class_expr| class_expr.heritage_clauses.as_ref())
+        .and_then(|clauses| clauses.nodes.first().copied())
+        .and_then(|clause_idx| arena.get_heritage_clause_at(clause_idx))
+        .and_then(|heritage| heritage.types.nodes.first().copied())
+        .and_then(|type_idx| {
+            arena
+                .get_expr_type_args_at(type_idx)
+                .map_or(Some(type_idx), |eta| Some(eta.expression))
+        })
+        .and_then(|expr_idx| arena.get_identifier_at(expr_idx))
+        .map(|ident| ident.escaped_text.clone());
+
+    assert!(
+        callable
+            .properties
+            .iter()
+            .any(|prop| types.resolve_atom(prop.name) == "D" && prop.type_id == TypeId::ANY),
+        "Expected recursive static class expression to preserve inherited D: any placeholder; base={base_name:?}, properties={property_names:#?}, callable={callable:#?}"
     );
 }
 
