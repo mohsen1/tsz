@@ -688,15 +688,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         .get(decl_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::MODULE_DECLARATION)
                 });
-                if has_module_decl
-                    && let Some(name_node) = self.ctx.arena.get(enum_data.name) {
-                        self.ctx.error(
+                if has_module_decl && let Some(name_node) = self.ctx.arena.get(enum_data.name) {
+                    self.ctx.error(
                             name_node.pos,
                             name_node.end - name_node.pos,
                             diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
                             diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                         );
-                    }
+                }
             }
 
             // Collect member names for forward reference detection
@@ -1410,9 +1409,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         && Some(left_name) == enum_name
                         && let Some(right_text) =
                             self.ctx.arena.get_identifier_text(prop.name_or_argument)
-                        {
-                            return later_members.contains(&right_text);
-                        }
+                    {
+                        return later_members.contains(&right_text);
+                    }
                     self.const_enum_has_forward_reference(prop.expression, later_members, enum_name)
                 } else {
                     false
@@ -1425,11 +1424,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         && let Some(left_name) = self.ctx.arena.get_identifier_text(elem.expression)
                         && Some(left_name) == enum_name
                         && let Some(arg_node) = self.ctx.arena.get(elem.name_or_argument)
-                            && arg_node.kind == SyntaxKind::StringLiteral as u16
-                            && let Some(lit) = self.ctx.arena.get_literal(arg_node)
-                        {
-                            return later_members.contains(&lit.text.as_str());
-                        }
+                        && arg_node.kind == SyntaxKind::StringLiteral as u16
+                        && let Some(lit) = self.ctx.arena.get_literal(arg_node)
+                    {
+                        return later_members.contains(&lit.text.as_str());
+                    }
                     self.const_enum_has_forward_reference(elem.expression, later_members, enum_name)
                         || self.const_enum_has_forward_reference(
                             elem.name_or_argument,
