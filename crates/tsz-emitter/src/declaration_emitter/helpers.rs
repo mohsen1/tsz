@@ -37,6 +37,31 @@ pub(crate) struct JsCommonjsExpandoDeclarations {
     pub(crate) prototype_methods: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct JsStaticMethodAugmentationGroup {
+    pub(crate) class_idx: NodeIndex,
+    pub(crate) method_idx: NodeIndex,
+    pub(crate) class_is_exported: bool,
+    pub(crate) properties: Vec<(NodeIndex, NodeIndex)>,
+}
+
+#[derive(Default)]
+pub(crate) struct JsStaticMethodAugmentations {
+    pub(crate) statements: FxHashMap<NodeIndex, JsStaticMethodAugmentationGroup>,
+    pub(crate) skipped_statements: FxHashSet<NodeIndex>,
+    pub(crate) augmented_method_nodes: FxHashSet<NodeIndex>,
+}
+
+type JsStaticMethodKey = (String, String);
+type JsStaticMethodInfo = (NodeIndex, NodeIndex, bool);
+type JsStaticMethodAugmentationEntry = (
+    NodeIndex,
+    NodeIndex,
+    NodeIndex,
+    bool,
+    Vec<(NodeIndex, NodeIndex)>,
+);
+
 struct JsdocTypeAliasDecl {
     name: String,
     type_params: Vec<String>,
@@ -1832,6 +1857,79 @@ impl<'a> DeclarationEmitter<'a> {
         declarations
     }
 
+    pub(crate) fn collect_js_class_static_method_augmentations(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> JsStaticMethodAugmentations {
+        let mut augmentations = JsStaticMethodAugmentations::default();
+        if !self.source_file_is_js(source_file) {
+            return augmentations;
+        }
+
+        let mut static_methods: FxHashMap<JsStaticMethodKey, JsStaticMethodInfo> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_js_static_class_methods_for_statement(stmt_idx, &mut static_methods);
+        }
+
+        let mut grouped: FxHashMap<JsStaticMethodKey, JsStaticMethodAugmentationEntry> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((class_name, method_name, member_name, initializer)) =
+                self.js_class_static_method_augmentation_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(&(class_idx, method_idx, class_is_exported)) =
+                static_methods.get(&(class_name.clone(), method_name.clone()))
+            else {
+                continue;
+            };
+
+            let entry = grouped.entry((class_name, method_name)).or_insert_with(|| {
+                (
+                    stmt_idx,
+                    class_idx,
+                    method_idx,
+                    class_is_exported,
+                    Vec::new(),
+                )
+            });
+            if !entry.4.iter().any(|(existing_name, existing_initializer)| {
+                *existing_name == member_name && *existing_initializer == initializer
+            }) {
+                entry.4.push((member_name, initializer));
+            }
+        }
+
+        for (_key, (first_stmt_idx, class_idx, method_idx, class_is_exported, properties)) in
+            grouped
+        {
+            augmentations.augmented_method_nodes.insert(method_idx);
+            augmentations.statements.insert(
+                first_stmt_idx,
+                JsStaticMethodAugmentationGroup {
+                    class_idx,
+                    method_idx,
+                    class_is_exported,
+                    properties,
+                },
+            );
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            if self
+                .js_class_static_method_augmentation_for_statement(stmt_idx)
+                .is_some()
+                && !augmentations.statements.contains_key(&stmt_idx)
+            {
+                augmentations.skipped_statements.insert(stmt_idx);
+            }
+        }
+
+        augmentations
+    }
+
     pub(crate) fn collect_js_grouped_reexports(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -2404,6 +2502,139 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some((root_name, true))
+    }
+
+    fn js_class_static_method_augmentation_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, String, NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let prop_name = lhs_access.name_or_argument;
+        self.get_identifier_text(prop_name)?;
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_node = self.arena.get(receiver)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+
+        let class_name = self.get_identifier_text(receiver_access.expression)?;
+        let method_name = self.get_identifier_text(receiver_access.name_or_argument)?;
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let init_node = self.arena.get(initializer)?;
+        let is_supported = init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || self.js_namespace_object_member_initializer_supported(initializer);
+        if !is_supported {
+            return None;
+        }
+
+        Some((class_name, method_name, prop_name, initializer))
+    }
+
+    fn collect_js_static_class_methods_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        methods: &mut FxHashMap<JsStaticMethodKey, JsStaticMethodInfo>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let Some(class) = self.arena.get_class(stmt_node) else {
+                    return;
+                };
+                let class_is_exported = self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    || self.is_js_named_exported_name(class.name);
+                self.collect_js_static_class_methods(stmt_idx, class, class_is_exported, methods);
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    return;
+                };
+                let Some(clause_node) = self.arena.get(export.export_clause) else {
+                    return;
+                };
+                if clause_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return;
+                }
+                let Some(class) = self.arena.get_class(clause_node) else {
+                    return;
+                };
+                self.collect_js_static_class_methods(export.export_clause, class, true, methods);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_js_static_class_methods(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        class_is_exported: bool,
+        methods: &mut FxHashMap<JsStaticMethodKey, JsStaticMethodInfo>,
+    ) {
+        let Some(class_name) = self.get_identifier_text(class.name) else {
+            return;
+        };
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+            {
+                continue;
+            }
+            let Some(method_name) = self.get_identifier_text(method.name) else {
+                continue;
+            };
+            methods.insert(
+                (class_name.clone(), method_name),
+                (class_idx, member_idx, class_is_exported),
+            );
+        }
     }
 
     fn is_module_exports_reference(&self, idx: NodeIndex) -> bool {

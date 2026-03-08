@@ -123,6 +123,16 @@ pub struct DeclarationEmitter<'a> {
     /// re-emitted as a synthetic `declare class Root { method(): ... }`.
     pub(super) js_deferred_prototype_method_statements:
         FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// JS `Clazz.method.prop = value` statements re-emitted as merged
+    /// `namespace Clazz { function method(); namespace method { ... } }`.
+    pub(super) js_static_method_augmentation_statements:
+        FxHashMap<NodeIndex, crate::declaration_emitter::helpers::JsStaticMethodAugmentationGroup>,
+    /// Extra JS static-method augmentation statements folded into an earlier
+    /// synthetic namespace emit.
+    pub(super) js_skipped_static_method_augmentation_statements: FxHashSet<NodeIndex>,
+    /// Static class method nodes suppressed from class emit because an
+    /// augmentation statement re-emits them as namespace members.
+    pub(super) js_augmented_static_method_nodes: FxHashSet<NodeIndex>,
     /// Consecutive JS re-export declarations that should be merged at the first statement.
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
@@ -207,6 +217,9 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
+            js_static_method_augmentation_statements: FxHashMap::default(),
+            js_skipped_static_method_augmentation_statements: FxHashSet::default(),
+            js_augmented_static_method_nodes: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -270,6 +283,9 @@ impl<'a> DeclarationEmitter<'a> {
             js_deferred_function_export_statements: FxHashMap::default(),
             js_deferred_value_export_statements: FxHashMap::default(),
             js_deferred_prototype_method_statements: FxHashMap::default(),
+            js_static_method_augmentation_statements: FxHashMap::default(),
+            js_skipped_static_method_augmentation_statements: FxHashSet::default(),
+            js_augmented_static_method_nodes: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
@@ -581,6 +597,13 @@ impl<'a> DeclarationEmitter<'a> {
             js_commonjs_expando_declarations.value_statements;
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
+        let js_static_method_augmentations =
+            self.collect_js_class_static_method_augmentations(source_file);
+        self.js_static_method_augmentation_statements = js_static_method_augmentations.statements;
+        self.js_skipped_static_method_augmentation_statements =
+            js_static_method_augmentations.skipped_statements;
+        self.js_augmented_static_method_nodes =
+            js_static_method_augmentations.augmented_method_nodes;
         let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
         self.js_grouped_reexports = grouped_reexports;
         self.js_skipped_reexports = skipped_reexports;
@@ -742,6 +765,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         if !allow_deferred_js_named_export
             && self.js_deferred_named_export_statements.contains(&stmt_idx)
+        {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_skipped_static_method_augmentation_statements
+            .contains(&stmt_idx)
         {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
@@ -1312,6 +1342,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self.should_skip_js_augmented_static_method(method_idx, method) {
+            self.skip_comments_in_node(method_node.pos, method_node.end);
+            return;
+        }
+
         // Get method name as string for overload tracking
         let method_name = self.get_function_name(method_idx);
 
@@ -1466,6 +1501,21 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(method_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    fn should_skip_js_augmented_static_method(
+        &self,
+        method_idx: NodeIndex,
+        method: &tsz_parser::parser::node::MethodDeclData,
+    ) -> bool {
+        if !self.source_is_js_file
+            || !self
+                .arena
+                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+        {
+            return false;
+        }
+        self.js_augmented_static_method_nodes.contains(&method_idx)
     }
 
     fn emit_constructor_declaration(&mut self, ctor_idx: NodeIndex) {
@@ -2559,6 +2609,9 @@ impl<'a> DeclarationEmitter<'a> {
             || self
                 .js_deferred_value_export_statements
                 .contains_key(&stmt_idx)
+            || self
+                .js_static_method_augmentation_statements
+                .contains_key(&stmt_idx)
     }
 
     fn emit_js_synthetic_expression_statement(&mut self, stmt_idx: NodeIndex) {
@@ -2582,6 +2635,16 @@ impl<'a> DeclarationEmitter<'a> {
             .copied()
         {
             self.emit_js_synthetic_value_declaration(name_idx, initializer);
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
+        if let Some(group) = self
+            .js_static_method_augmentation_statements
+            .get(&stmt_idx)
+            .cloned()
+        {
+            self.emit_js_static_method_augmentation_namespace(&group);
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
         }
     }
@@ -2690,6 +2753,84 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(": ");
         self.write(&type_text);
         self.write(";");
+        self.write_line();
+    }
+
+    fn emit_js_static_method_augmentation_namespace(
+        &mut self,
+        group: &crate::declaration_emitter::helpers::JsStaticMethodAugmentationGroup,
+    ) {
+        let Some(class_node) = self.arena.get(group.class_idx) else {
+            return;
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return;
+        };
+        let Some(method_node) = self.arena.get(group.method_idx) else {
+            return;
+        };
+        let Some(method) = self.arena.get_method_decl(method_node) else {
+            return;
+        };
+
+        self.write_indent();
+        if group.class_is_exported {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(group.class_is_exported) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(class.name);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        self.emit_js_namespace_function_member(
+            method.name,
+            method.type_parameters.as_ref(),
+            &method.parameters,
+            method.body,
+            method.type_annotation,
+        );
+
+        self.write_indent();
+        self.write("namespace ");
+        self.emit_node(method.name);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for &(prop_name, initializer) in &group.properties {
+            let Some(init_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                let Some(func) = self.arena.get_function(init_node) else {
+                    continue;
+                };
+                self.emit_js_namespace_function_member(
+                    prop_name,
+                    func.type_parameters.as_ref(),
+                    &func.parameters,
+                    func.body,
+                    func.type_annotation,
+                );
+            } else if let Some(type_text) = self.js_namespace_value_member_type_text(initializer) {
+                self.emit_js_namespace_value_member(prop_name, &type_text);
+            }
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
         self.write_line();
     }
 
