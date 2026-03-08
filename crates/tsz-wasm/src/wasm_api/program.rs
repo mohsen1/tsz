@@ -132,6 +132,7 @@ impl TsCompilerOptions {
             allow_importing_ts_extensions: false,
             rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
+            verbatim_module_syntax: false,
         }
     }
 }
