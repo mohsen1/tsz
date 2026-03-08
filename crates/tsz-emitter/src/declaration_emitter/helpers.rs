@@ -4106,6 +4106,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn preferred_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        if let Some(asserted_type_text) = self.explicit_asserted_type_text(expr_idx) {
+            return Some(asserted_type_text);
+        }
+
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
         let expr_node = self.arena.get(expr_idx)?;
 
@@ -4127,6 +4131,42 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn explicit_asserted_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let mut current = expr_idx;
+
+        for _ in 0..100 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr_ex(node)
+            {
+                current = unary.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::CommaToken as u16
+            {
+                current = binary.right;
+                continue;
+            }
+
+            let assertion = self.arena.get_type_assertion(node)?;
+            let asserted_type = self.arena.get(assertion.type_node)?;
+            if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {
+                return None;
+            }
+            return self.emit_type_node_text(assertion.type_node);
+        }
+
+        None
     }
 
     fn skip_parenthesized_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
@@ -4303,6 +4343,33 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_node_type_or_names(&[binary.left])
                     .map(|type_id| self.print_type_id(type_id))
             })
+    }
+
+    fn emit_type_node_text(&self, type_idx: NodeIndex) -> Option<String> {
+        self.arena.get(type_idx)?;
+
+        let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                self.arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(self.arena)
+        };
+
+        scratch.source_is_declaration_file = self.source_is_declaration_file;
+        scratch.source_is_js_file = self.source_is_js_file;
+        scratch.current_source_file_idx = self.current_source_file_idx;
+        scratch.source_file_text = self.source_file_text.clone();
+        scratch.current_file_path = self.current_file_path.clone();
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.emit_type(type_idx);
+        Some(scratch.writer.take_output())
     }
 
     fn expression_is_always_truthy_for_decl_emit(&self, expr_idx: NodeIndex) -> bool {
@@ -5508,6 +5575,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && let Some(type_text) = self.explicit_asserted_type_text(initializer)
             {
                 self.write(": ");
                 self.write(&type_text);

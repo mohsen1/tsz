@@ -204,12 +204,12 @@ impl<'a> CheckerState<'a> {
         // An identifier whose parent is a binding element
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
             && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
-            {
-                return true;
-            }
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+        {
+            return true;
+        }
 
         false
     }

@@ -3475,6 +3475,29 @@ fn test_export_type_with_resolution_mode_attributes_is_preserved() {
 }
 
 #[test]
+fn test_asserted_import_type_with_resolution_mode_attributes_is_preserved() {
+    let output = emit_dts(
+        r#"
+    export type LocalInterface = import("pkg", { with: {"resolution-mode": "require"} }).RequireInterface;
+    export const value = (null as any as import("pkg", { with: {"resolution-mode": "require"} }).RequireInterface);
+    "#,
+    );
+
+    assert!(
+        output.contains(
+            r#"export type LocalInterface = import("pkg", { with: { "resolution-mode": "require" } }).RequireInterface;"#
+        ),
+        "Expected import type attributes to be formatted canonically in type aliases: {output}"
+    );
+    assert!(
+        output.contains(
+            r#"export declare const value: import("pkg", { with: { "resolution-mode": "require" } }).RequireInterface;"#
+        ),
+        "Expected asserted import type with attributes to be preserved on exported values: {output}"
+    );
+}
+
+#[test]
 fn test_invalid_resolution_mode_attribute_is_dropped_and_unused_mixed_import_is_elided() {
     let output = emit_dts_with_usage_analysis(
         r#"
