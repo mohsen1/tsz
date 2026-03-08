@@ -229,7 +229,9 @@ impl<'a> Printer<'a> {
                 .unwrap_or(false);
 
         if body_is_empty_single_line {
-            self.write(" => __awaiter(");
+            self.write(" => ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () { })");
             return;
@@ -238,7 +240,9 @@ impl<'a> Printer<'a> {
         if body_is_single_line {
             // Single-line body: emit inline like TSC
             // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
-            self.write(" => __awaiter(");
+            self.write(" => ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
 
@@ -259,7 +263,9 @@ impl<'a> Printer<'a> {
         if !is_block {
             // Concise expression body: emit single-line
             // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield expr; })
-            self.write(" => __awaiter(");
+            self.write(" => ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () { ");
             self.ctx.emit_await_as_yield = true;
@@ -271,7 +277,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.write(" => __awaiter(");
+        self.write(" => ");
+        self.write_helper("__awaiter");
+        self.write("(");
         self.write(this_arg);
         self.write(", void 0, void 0, function* () {");
         self.write_line();

@@ -302,6 +302,17 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::PARAMETER => {
                 if let Some(param) = self.arena.get_parameter(node) {
                     if let Some(mods) = &param.modifiers {
+                        // Check if any modifier is a decorator — set __param helper flag
+                        if self.ctx.options.legacy_decorators {
+                            let has_decorator = mods.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            });
+                            if has_decorator {
+                                self.transforms.helpers_mut().param = true;
+                            }
+                        }
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
                         }

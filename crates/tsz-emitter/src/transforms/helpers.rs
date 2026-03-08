@@ -397,6 +397,91 @@ impl HelpersNeeded {
             || self.prop_key
             || self.set_function_name
     }
+
+    /// Returns the list of `__helperName` strings for all needed helpers.
+    /// Used for generating `import { ... } from "tslib"` statements.
+    pub fn needed_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.extends {
+            names.push("__extends");
+        }
+        if self.make_template_object {
+            names.push("__makeTemplateObject");
+        }
+        if self.assign {
+            names.push("__assign");
+        }
+        if self.create_binding {
+            names.push("__createBinding");
+        }
+        if self.decorate {
+            names.push("__decorate");
+        }
+        if self.es_decorate {
+            names.push("__esDecorate");
+        }
+        if self.run_initializers {
+            names.push("__runInitializers");
+        }
+        if self.import_star {
+            names.push("__importStar");
+        }
+        if self.export_star {
+            names.push("__exportStar");
+        }
+        if self.metadata {
+            names.push("__metadata");
+        }
+        if self.param {
+            names.push("__param");
+        }
+        if self.awaiter {
+            names.push("__awaiter");
+        }
+        if self.generator {
+            names.push("__generator");
+        }
+        if self.rest {
+            names.push("__rest");
+        }
+        if self.values {
+            names.push("__values");
+        }
+        if self.read {
+            names.push("__read");
+        }
+        if self.spread_array {
+            names.push("__spreadArray");
+        }
+        if self.async_values {
+            names.push("__asyncValues");
+        }
+        if self.import_default {
+            names.push("__importDefault");
+        }
+        if self.class_private_field_get {
+            names.push("__classPrivateFieldGet");
+        }
+        if self.class_private_field_set {
+            names.push("__classPrivateFieldSet");
+        }
+        if self.class_private_field_in {
+            names.push("__classPrivateFieldIn");
+        }
+        if self.add_disposable_resource {
+            names.push("__addDisposableResource");
+        }
+        if self.dispose_resources {
+            names.push("__disposeResources");
+        }
+        if self.prop_key {
+            names.push("__propKey");
+        }
+        if self.set_function_name {
+            names.push("__setFunctionName");
+        }
+        names
+    }
 }
 
 /// Generate helper code for the needed helpers.

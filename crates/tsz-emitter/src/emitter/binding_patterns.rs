@@ -414,7 +414,9 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 self.write(&rest_name);
-                self.write(" = __rest(");
+                self.write(" = ");
+                self.write_helper("__rest");
+                self.write("(");
                 self.write(&source_name);
                 self.write(", [");
                 self.emit_excluded_props_list(&excluded_props);
@@ -568,7 +570,9 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 self.write(&rest_name);
-                self.write(" = __rest(");
+                self.write(" = ");
+                self.write_helper("__rest");
+                self.write("(");
                 self.write(&source_name);
                 self.write(", [");
                 self.emit_excluded_props_list(&excluded_props);

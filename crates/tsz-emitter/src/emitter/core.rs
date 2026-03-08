@@ -85,6 +85,8 @@ pub struct PrinterOptions {
     pub resolved_node_module_to_esm: bool,
     /// When true, preserve const enum declarations instead of erasing them
     pub preserve_const_enums: bool,
+    /// Import helpers from tslib instead of inlining them
+    pub import_helpers: bool,
     /// JSX emit mode
     pub jsx: JsxEmit,
     /// Custom JSX factory function (e.g. "React.createElement", "h")
@@ -115,6 +117,7 @@ impl Default for PrinterOptions {
             module_detection_force: false,
             resolved_node_module_to_esm: false,
             preserve_const_enums: false,
+            import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
             jsx_fragment_factory: None,

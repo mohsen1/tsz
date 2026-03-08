@@ -62,7 +62,9 @@ impl<'a> Printer<'a> {
         self.write(&temp_var);
         self.write(" || (");
         self.write(&temp_var);
-        self.write(" = __makeTemplateObject(");
+        self.write(" = ");
+        self.write_helper("__makeTemplateObject");
+        self.write("(");
         self.emit_string_array_literal(&parts.cooked);
         self.write(", ");
         self.emit_string_array_literal(&parts.raw);

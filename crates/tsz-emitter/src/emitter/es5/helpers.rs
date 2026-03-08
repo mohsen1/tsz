@@ -75,7 +75,8 @@ impl<'a> Printer<'a> {
                     // Only a spread element: [...a] -> __spreadArray([], a, true)
                     // When __read wraps the spread, the pack arg is false because
                     // __read already produces an array.
-                    self.write("__spreadArray([], ");
+                    self.write_helper("__spreadArray");
+                    self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
@@ -90,7 +91,8 @@ impl<'a> Printer<'a> {
             // Multiple segments: use nested __spreadArray calls.
             // Open __spreadArray( for all pairs (segments.len() - 1 calls).
             for _ in 0..segments.len() - 1 {
-                self.write("__spreadArray(");
+                self.write_helper("__spreadArray");
+                self.write("(");
             }
 
             // Emit the first segment as the innermost base.
@@ -102,7 +104,8 @@ impl<'a> Printer<'a> {
                 }
                 ArraySegment::Spread(spread_idx) => {
                     // First segment is spread: base is __spreadArray([], spread, false)
-                    self.write("__spreadArray([], ");
+                    self.write_helper("__spreadArray");
+                    self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
@@ -147,7 +150,8 @@ impl<'a> Printer<'a> {
     ) {
         if let Some(spread) = self.arena.get_spread(node) {
             if wrap_with_read {
-                self.write("__read(");
+                self.write_helper("__read");
+                self.write("(");
                 self.emit(spread.expression);
                 self.write(")");
             } else {
@@ -378,7 +382,8 @@ impl<'a> Printer<'a> {
             }
             [ObjectSegment::Spread(spread_idx)] => {
                 // Only a spread element: { ...a } → __assign({}, a)
-                self.write("__assign({}, ");
+                self.write_helper("__assign");
+                self.write("({}, ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }
@@ -395,7 +400,8 @@ impl<'a> Printer<'a> {
                 if has_computed {
                     // Need temp var for computed properties
                     let temp_var = self.make_unique_name_hoisted();
-                    self.write("__assign((");
+                    self.write_helper("__assign");
+                    self.write("((");
                     self.write(&temp_var);
                     self.write(" = ");
                     self.emit_object_literal_entries_es5(elems);
@@ -403,7 +409,8 @@ impl<'a> Printer<'a> {
                     self.write(&temp_var);
                     self.write("), ");
                 } else {
-                    self.write("__assign(");
+                    self.write_helper("__assign");
+                    self.write("(");
                     self.emit_object_literal_entries_es5(elems);
                     self.write(", ");
                 }
@@ -420,7 +427,10 @@ impl<'a> Printer<'a> {
                 ObjectSegment::Elements(elems),
             ] => {
                 // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
-                self.write("__assign(__assign({}, ");
+                self.write_helper("__assign");
+                self.write("(");
+                self.write_helper("__assign");
+                self.write("({}, ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }
@@ -444,7 +454,8 @@ impl<'a> Printer<'a> {
                 };
 
                 for _ in 0..num_assigns {
-                    self.write("__assign(");
+                    self.write_helper("__assign");
+                    self.write("(");
                 }
 
                 // 2. Handle the first segment
@@ -962,6 +973,9 @@ impl<'a> Printer<'a> {
             async_emitter.set_source_map_context(text, self.writer.current_source_index());
         }
         async_emitter.set_lexical_this(this_expr != "this");
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            async_emitter.set_tslib_prefix(true);
+        }
 
         let body_has_await = async_emitter.body_contains_await(func.body);
         let (generator_body, hoisted_vars) = if body_has_await {
@@ -973,7 +987,9 @@ impl<'a> Printer<'a> {
 
         if has_param_transforms {
             // Multi-line path (with param prologue)
-            self.write("return __awaiter(");
+            self.write("return ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_expr);
             self.write(", void 0, void 0, function () {");
             self.write_line();
@@ -998,7 +1014,9 @@ impl<'a> Printer<'a> {
             self.write("}");
         } else {
             // Inline path: function () { return __awaiter(...); };
-            self.write(") { return __awaiter(");
+            self.write(") { return ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_expr);
             self.write(", void 0, void 0, function () {");
             self.write_line();

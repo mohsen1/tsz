@@ -200,6 +200,9 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_source_text(text);
             }
         }
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            es5_emitter.set_tslib_prefix(true);
+        }
         let es5_output = es5_emitter.emit_class_with_name(class_node, &temp_name);
         let mappings = es5_emitter.take_mappings();
         if !mappings.is_empty() && self.writer.has_source_map() {

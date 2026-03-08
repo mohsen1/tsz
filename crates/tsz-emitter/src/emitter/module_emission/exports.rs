@@ -39,7 +39,8 @@ impl<'a> Printer<'a> {
                 self.write("\");");
                 self.write_line();
 
-                self.write("__exportStar(");
+                self.write_helper("__exportStar");
+                self.write("(");
                 self.write(&module_var);
                 self.write(", exports);");
                 self.write_line();
@@ -71,7 +72,8 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                     }
                     if self.ctx.options.es_module_interop {
-                        self.write("__importStar(require(\"");
+                        self.write_helper("__importStar");
+                        self.write("(require(\"");
                         self.write(&module_spec);
                         self.write("\"));");
                     } else {
@@ -375,6 +377,11 @@ impl<'a> Printer<'a> {
                                     } else {
                                         es5_emitter.set_source_text(text);
                                     }
+                                }
+                                if self.ctx.options.import_helpers
+                                    && self.ctx.is_effectively_commonjs()
+                                {
+                                    es5_emitter.set_tslib_prefix(true);
                                 }
                                 // Pass decorator info so __decorate calls are inside the IIFE
                                 es5_emitter.set_decorator_info(ClassDecoratorInfo {

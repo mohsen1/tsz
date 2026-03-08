@@ -21,7 +21,8 @@ impl<'a> Printer<'a> {
         {
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
             if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
-                self.write("__classPrivateFieldGet(");
+                self.write_helper("__classPrivateFieldGet");
+                self.write("(");
                 self.emit(access.expression);
                 self.write(", ");
                 self.write(&weakmap_name);
