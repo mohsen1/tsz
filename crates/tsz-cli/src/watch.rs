@@ -131,7 +131,12 @@ impl WatcherImpl {
 
 pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     let cwd = canonicalize_or_owned(cwd);
-    let color = std::io::stdout().is_terminal();
+    let color = args
+        .pretty
+        .unwrap_or_else(|| std::io::stdout().is_terminal());
+    if args.pretty == Some(true) {
+        Reporter::force_colors(true);
+    }
     let mut reporter = Reporter::new(color);
     let mut state = WatchState::new(args, &cwd);
 

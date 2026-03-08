@@ -1,6 +1,6 @@
 use colored::Colorize;
 use rustc_hash::FxHashMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use crate::locale;
 use tsz::checker::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation};
@@ -31,6 +31,13 @@ impl Reporter {
     /// By default, pretty mode matches the color setting.
     pub const fn set_pretty(&mut self, pretty: bool) {
         self.pretty = pretty;
+    }
+
+    /// Force color output regardless of TTY detection.
+    /// Call this when `--pretty true` is explicitly passed so that ANSI codes
+    /// are emitted even when piped (matching tsc v6 behavior).
+    pub fn force_colors(enabled: bool) {
+        colored::control::set_override(enabled);
     }
 
     /// Render all diagnostics, matching tsc output format exactly.
@@ -121,17 +128,17 @@ impl Reporter {
         // Header line: file:line:col - error TScode: message
         if let Some((line, col)) = self.position_for(&diagnostic.file, diagnostic.start) {
             if self.color {
-                out.push_str(&file_display.cyan().to_string());
+                out.push_str(&file_display.bright_cyan().to_string());
                 out.push(':');
-                out.push_str(&line.to_string().yellow().to_string());
+                out.push_str(&line.to_string().bright_yellow().to_string());
                 out.push(':');
-                out.push_str(&col.to_string().yellow().to_string());
+                out.push_str(&col.to_string().bright_yellow().to_string());
             } else {
                 out.push_str(&format!("{file_display}:{line}:{col}"));
             }
         } else if !diagnostic.file.is_empty() {
             if self.color {
-                out.push_str(&file_display.cyan().to_string());
+                out.push_str(&file_display.bright_cyan().to_string());
             } else {
                 out.push_str(&file_display);
             }
@@ -142,7 +149,11 @@ impl Reporter {
 
         if diagnostic.code != 0 {
             if self.color {
-                out.push_str(&format!(" TS{}: ", diagnostic.code).dimmed().to_string());
+                out.push_str(
+                    &format!(" TS{}: ", diagnostic.code)
+                        .bright_black()
+                        .to_string(),
+                );
             } else {
                 out.push_str(&format!(" TS{}: ", diagnostic.code));
             }
@@ -219,7 +230,7 @@ impl Reporter {
             snippet.push(' ');
 
             let underline = self.build_underline(line_text, column, length);
-            snippet.push_str(&underline.red().to_string());
+            snippet.push_str(&underline.bright_red().to_string());
         } else {
             snippet.push_str(&indent_str);
             snippet.push_str(&line_num_str);
@@ -295,17 +306,17 @@ impl Reporter {
         out.push_str("  ");
         if let Some((line, col)) = self.position_for(&related.file, related.start) {
             if self.color {
-                out.push_str(&file_display.cyan().to_string());
+                out.push_str(&file_display.bright_cyan().to_string());
                 out.push(':');
-                out.push_str(&line.to_string().yellow().to_string());
+                out.push_str(&line.to_string().bright_yellow().to_string());
                 out.push(':');
-                out.push_str(&col.to_string().yellow().to_string());
+                out.push_str(&col.to_string().bright_yellow().to_string());
             } else {
                 out.push_str(&format!("{file_display}:{line}:{col}"));
             }
         } else if !related.file.is_empty() {
             if self.color {
-                out.push_str(&file_display.cyan().to_string());
+                out.push_str(&file_display.bright_cyan().to_string());
             } else {
                 out.push_str(&file_display);
             }
@@ -365,7 +376,7 @@ impl Reporter {
 
             // Related info uses cyan underline (not red)
             let underline = self.build_underline(line_text, column, length);
-            snippet.push_str(&underline.cyan().to_string());
+            snippet.push_str(&underline.bright_cyan().to_string());
         } else {
             snippet.push_str("    ");
             snippet.push_str(&line_num_str);
@@ -445,7 +456,7 @@ impl Reporter {
                     out.push_str(&format!(
                         "Found 1 error in {}{}\n",
                         file,
-                        format!(":{first_line}").dimmed()
+                        format!(":{first_line}").bright_black()
                     ));
                 } else {
                     out.push_str(&format!("Found 1 error in {file}:{first_line}\n"));
@@ -457,7 +468,7 @@ impl Reporter {
                         "Found {} errors in the same file, starting at: {}{}\n",
                         error_count,
                         file,
-                        format!(":{first_line}").dimmed()
+                        format!(":{first_line}").bright_black()
                     ));
                 } else {
                     out.push_str(&format!(
@@ -488,20 +499,41 @@ impl Reporter {
     }
 
     /// Get a file path relative to cwd (matching tsc behavior).
+    /// Produces `../../../path` for files outside cwd, just like tsc v6.
     fn relative_path(&self, file: &str) -> String {
         if file.is_empty() {
             return file.to_string();
         }
-
         if let Some(ref cwd) = self.cwd {
             let file_path = Path::new(file);
             let cwd_path = Path::new(cwd);
-            if let Ok(relative) = file_path.strip_prefix(cwd_path) {
-                return relative.to_string_lossy().into_owned();
+            if let Some(rel) = Self::diff_paths(file_path, cwd_path) {
+                return rel.to_string_lossy().into_owned();
             }
         }
-
         file.to_string()
+    }
+
+    /// Compute a relative path from `base` to `path`, similar to `pathdiff::diff_paths`.
+    fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+        let path_components: Vec<Component<'_>> = path.components().collect();
+        let base_components: Vec<Component<'_>> = base.components().collect();
+        let common_len = path_components
+            .iter()
+            .zip(base_components.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if common_len == 0 && path.is_absolute() && base.is_absolute() {
+            return None;
+        }
+        let mut result = PathBuf::new();
+        for _ in common_len..base_components.len() {
+            result.push("..");
+        }
+        for component in &path_components[common_len..] {
+            result.push(component);
+        }
+        Some(result)
     }
 
     fn position_for(&mut self, file: &str, offset: u32) -> Option<(u32, u32)> {
@@ -540,10 +572,10 @@ impl Reporter {
         }
 
         match category {
-            DiagnosticCategory::Error => label.red().bold().to_string(),
-            DiagnosticCategory::Warning => label.yellow().bold().to_string(),
+            DiagnosticCategory::Error => label.bright_red().to_string(),
+            DiagnosticCategory::Warning => label.bright_yellow().bold().to_string(),
             DiagnosticCategory::Suggestion => label.blue().bold().to_string(),
-            DiagnosticCategory::Message => label.cyan().bold().to_string(),
+            DiagnosticCategory::Message => label.bright_cyan().bold().to_string(),
         }
     }
 

@@ -59,12 +59,16 @@ fn plain_mode_formats_diagnostic_with_location() {
     let mut reporter = Reporter::new(false);
     let output = reporter.render(std::slice::from_ref(&diagnostic));
 
-    // Non-pretty: file(line,col): error TScode: message\n (no snippets)
-    let expected = format!(
-        "{}(2,1): error TS2304: Cannot find name 'y'.\n",
-        diagnostic.file
+    // Non-pretty: relative_path(line,col): error TScode: message\n (no snippets)
+    // The reporter now shows relative paths from cwd, so check structure
+    assert!(
+        output.ends_with("(2,1): error TS2304: Cannot find name 'y'.\n"),
+        "unexpected format: {output}"
     );
-    assert_eq!(output, expected);
+    assert!(
+        output.contains("main.ts"),
+        "should contain file name: {output}"
+    );
 }
 
 #[test]
@@ -171,9 +175,9 @@ fn pretty_mode_uses_colon_separated_location() {
     reporter.set_pretty(true);
     let output = reporter.render(std::slice::from_ref(&diagnostic));
 
-    // Pretty mode: file:line:col - error TScode: message
+    // Pretty mode: relative_path:line:col - error TScode: message
     assert!(
-        output.contains(&format!("{}:2:1 - error TS2304: ", diagnostic.file)),
+        output.contains("test.ts:2:1 - error TS2304: "),
         "pretty mode should use colon-separated location: {output}"
     );
 }
