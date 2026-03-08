@@ -581,10 +581,10 @@ impl<'a> Printer<'a> {
                         }
                     } else {
                         let export_name = names.first().copied();
-                        // Function declarations are hoisted, so tsc emits
-                        // `exports.default = f;` before the function body.
-                        let is_hoisted =
-                            is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                        // Function declarations are hoisted — tsc emits
+                        // `exports.default = f;` (default) or `exports.f = f;` (named)
+                        // in the preamble before the function body.
+                        let is_hoisted = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
                         self.emit_commonjs_export_with_hoisting(
                             names.as_ref(),
                             is_default,
@@ -1214,8 +1214,7 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     let export_name = names.first().copied();
-                    let is_hoisted =
-                        *is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                    let is_hoisted = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
                     self.emit_commonjs_export_with_hoisting(
                         names.as_ref(),
                         *is_default,

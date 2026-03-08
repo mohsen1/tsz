@@ -73,9 +73,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For hoisted default exports, the assignment was already emitted
-        // (either above as inline hoisting, or in the preamble).
-        if is_default && is_hoisted_declaration {
+        // For hoisted declarations (functions), the export assignment was already
+        // emitted — either above as inline hoisting (default), or in the preamble
+        // (named function exports via `exports.foo = foo;`).
+        if is_hoisted_declaration {
             if !self.writer.is_at_line_start() {
                 self.write_line();
             }
