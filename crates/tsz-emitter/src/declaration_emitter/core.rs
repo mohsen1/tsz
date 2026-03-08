@@ -1430,6 +1430,22 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        let has_visibility_modifier = ctor.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena.get(mod_idx).is_some_and(|mod_node| {
+                    mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                        || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
+                })
+            })
+        });
+
+        if self.source_is_js_file && ctor.parameters.nodes.is_empty() && !has_visibility_modifier {
+            if let Some(body_node) = self.arena.get(ctor.body) {
+                self.skip_comments_in_node(body_node.pos, body_node.end);
+            }
+            return;
+        }
+
         self.write_indent();
 
         // Emit visibility modifiers (private, protected) on the constructor

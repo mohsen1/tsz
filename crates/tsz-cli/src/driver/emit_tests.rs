@@ -107,13 +107,13 @@ fn test_declaration_file_name_for_js_inputs() {
 
 #[test]
 fn test_declaration_bundle_output_path_uses_out_file_name() {
-    let bundle_path = declaration_bundle_output_path(
-        Path::new("/tmp/project"),
-        None,
-        Path::new("dist/out.js"),
-    );
+    let bundle_path =
+        declaration_bundle_output_path(Path::new("/tmp/project"), None, Path::new("dist/out.js"));
 
-    assert_eq!(bundle_path, Some(Path::new("/tmp/project/dist/out.d.ts").into()));
+    assert_eq!(
+        bundle_path,
+        Some(Path::new("/tmp/project/dist/out.d.ts").into())
+    );
 }
 
 #[test]
