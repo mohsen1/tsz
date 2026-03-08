@@ -3927,7 +3927,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
-            let mut printer = TypePrinter::new(interner).with_indent_level(self.indent_level);
+            let mut printer = TypePrinter::new(interner)
+                .with_indent_level(self.indent_level)
+                .with_node_arena(self.arena);
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
