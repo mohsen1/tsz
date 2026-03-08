@@ -102,6 +102,26 @@ impl<'a> Printer<'a> {
         }
 
         let (env_name, error_name) = self.next_disposable_env_names();
+
+        // Hoist variable declarations before the try block (tsc hoists `var name;` separately)
+        let mut hoisted_names: Vec<String> = Vec::new();
+        for &decl_idx in &decl_list.declarations.nodes {
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                && decl.initializer.is_some()
+                && let Some(name_node) = self.arena.get(decl.name)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                {
+                    hoisted_names.push(self.get_identifier_text_idx(decl.name));
+                }
+        }
+        if !hoisted_names.is_empty() {
+            self.write("var ");
+            self.write(&hoisted_names.join(", "));
+            self.write(";");
+            self.write_line();
+        }
+
         self.write("var ");
         self.write(&env_name);
         self.write(" = { stack: [], error: void 0, hasError: false };");
@@ -126,7 +146,6 @@ impl<'a> Printer<'a> {
                 if let Some(name_node) = self.arena.get(decl.name)
                     && name_node.kind == SyntaxKind::Identifier as u16
                 {
-                    self.write("var ");
                     self.emit_decl_name(decl.name);
                     self.write(" = __addDisposableResource(");
                     self.write(&env_name);
