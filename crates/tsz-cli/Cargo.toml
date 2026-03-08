@@ -40,6 +40,7 @@ tsz-lsp = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }
+dashmap = { workspace = true }
 globset = { workspace = true }
 notify = { workspace = true }
 rustc-hash = { workspace = true }

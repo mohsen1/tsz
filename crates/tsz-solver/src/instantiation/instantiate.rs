@@ -101,6 +101,16 @@ impl TypeSubstitution {
         self.map.len()
     }
 
+    /// Check if this substitution is an identity mapping (every type parameter maps to itself).
+    pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
+        self.map.iter().all(|(&name, &type_id)| {
+            matches!(
+                interner.lookup(type_id),
+                Some(TypeData::TypeParameter(info)) if info.name == name
+            )
+        })
+    }
+
     /// Get a reference to the internal substitution map.
     ///
     /// This is useful for building new substitutions based on existing ones.
@@ -1042,7 +1052,7 @@ pub fn instantiate_type(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    if substitution.is_empty() {
+    if substitution.is_empty() || substitution.is_identity(interner) {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -1060,7 +1070,7 @@ pub fn instantiate_type_with_infer(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    if substitution.is_empty() {
+    if substitution.is_empty() || substitution.is_identity(interner) {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);

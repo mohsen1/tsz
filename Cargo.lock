@@ -1510,6 +1510,7 @@ dependencies = [
 name = "tsz-checker"
 version = "0.1.9"
 dependencies = [
+ "dashmap",
  "globset",
  "rustc-hash",
  "serde",
@@ -1533,6 +1534,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
+ "dashmap",
  "globset",
  "notify",
  "rayon",

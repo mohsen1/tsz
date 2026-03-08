@@ -448,6 +448,8 @@ pub(super) fn collect_diagnostics(
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let lib_ctx_for_parallel = lib_contexts.to_vec();
+        let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
+            Arc::new(dashmap::DashMap::new());
 
         // Check all files in parallel — each file gets its own CheckerState.
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
@@ -476,6 +478,7 @@ pub(super) fn collect_diagnostics(
                             resolved_module_errors: &resolved_module_errors,
                             is_external_module_by_file: &is_external_module_by_file,
                             file_is_esm_map: &file_is_esm_map,
+                            shared_lib_cache: Arc::clone(&shared_lib_cache),
                             no_check,
                             check_js,
                             explicit_check_js_false,
@@ -504,6 +507,7 @@ pub(super) fn collect_diagnostics(
                             resolved_module_errors: &resolved_module_errors,
                             is_external_module_by_file: &is_external_module_by_file,
                             file_is_esm_map: &file_is_esm_map,
+                            shared_lib_cache: Arc::clone(&shared_lib_cache),
                             no_check,
                             check_js,
                             explicit_check_js_false,
@@ -534,6 +538,7 @@ pub(super) fn collect_diagnostics(
                     resolved_module_errors: &resolved_module_errors,
                     is_external_module_by_file: &is_external_module_by_file,
                     file_is_esm_map: &file_is_esm_map,
+                    shared_lib_cache: Arc::clone(&shared_lib_cache),
                     no_check,
                     check_js,
                     explicit_check_js_false,
@@ -911,6 +916,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
         &'a Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
     is_external_module_by_file: &'a Arc<FxHashMap<String, bool>>,
     file_is_esm_map: &'a Arc<FxHashMap<String, bool>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     no_check: bool,
     check_js: bool,
     /// `true` when `checkJs: false` was explicitly specified in compiler options.
@@ -942,6 +948,7 @@ pub(super) fn check_file_for_parallel<'a>(
         resolved_module_errors,
         is_external_module_by_file,
         file_is_esm_map,
+        shared_lib_cache,
         no_check,
         check_js,
         explicit_check_js_false,
@@ -974,6 +981,7 @@ pub(super) fn check_file_for_parallel<'a>(
         compiler_options,
     );
     checker.ctx.report_unresolved_imports = true;
+    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
 
     if !lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());
