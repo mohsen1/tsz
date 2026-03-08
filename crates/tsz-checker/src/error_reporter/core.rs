@@ -510,9 +510,10 @@ impl<'a> CheckerState<'a> {
                 // e.g. for `let x: string = 42`, tsc underlines just `x`.
                 if let Some(vd_idx) = var_decl
                     && let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                        && vd.name.is_some() {
-                            return vd.name;
-                        }
+                    && vd.name.is_some()
+                {
+                    return vd.name;
+                }
                 return parent; // fallback to old behavior if name unavailable
             }
 
@@ -527,9 +528,10 @@ impl<'a> CheckerState<'a> {
         // VariableStatement (e.g., for-in/for-of), anchor at the variable name.
         if let Some(vd_idx) = var_decl {
             if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                && vd.name.is_some() {
-                    return vd.name;
-                }
+                && vd.name.is_some()
+            {
+                return vd.name;
+            }
             return vd_idx;
         }
         idx
