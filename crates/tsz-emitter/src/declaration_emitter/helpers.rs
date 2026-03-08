@@ -1771,12 +1771,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 valid = false;
                                 break;
                             }
-                            let Some(prop_init) = self.arena.get(prop.initializer) else {
+                            let Some(_) = self.arena.get(prop.initializer) else {
                                 valid = false;
                                 break;
                             };
-                            if prop_init.kind != syntax_kind_ext::ARROW_FUNCTION
-                                && prop_init.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                            if !self
+                                .js_namespace_object_member_initializer_supported(prop.initializer)
                             {
                                 valid = false;
                                 break;
@@ -1817,6 +1817,31 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         deferred
+    }
+
+    pub(crate) fn js_namespace_object_member_initializer_supported(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+
+        match init_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION => true,
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => true,
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::BigIntLiteral as u16 => true,
+            k if k == SyntaxKind::TrueKeyword as u16 => true,
+            k if k == SyntaxKind::FalseKeyword as u16 => true,
+            k if k == SyntaxKind::NullKeyword as u16 => true,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                self.is_negative_literal(init_node)
+            }
+            _ => false,
+        }
     }
 
     fn groupable_js_reexport_info(&self, export_idx: NodeIndex) -> Option<(String, bool)> {

@@ -654,6 +654,31 @@ const foo = {
 }
 
 #[test]
+fn test_js_object_literal_values_emit_namespace_members() {
+    let source = r#"
+const Strings = {
+    a: "A",
+    b: "B"
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"declare namespace Strings {
+    let a: string;
+    let b: string;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected JS object literal values to emit as namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {
