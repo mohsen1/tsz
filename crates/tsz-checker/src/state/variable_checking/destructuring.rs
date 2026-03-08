@@ -737,7 +737,24 @@ impl<'a> CheckerState<'a> {
             let prop_access_result =
                 self.resolve_property_access_with_env(parent_type, prop_name_str);
             match prop_access_result {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
+                PropertyAccessResult::Success { type_id, .. } => {
+                    // Check accessibility (TS2341/TS2445) — destructuring still
+                    // respects private/protected modifiers.
+                    let error_node = if element_data.property_name != NodeIndex::NONE {
+                        element_data.property_name
+                    } else if element_data.name != NodeIndex::NONE {
+                        element_data.name
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    self.check_property_accessibility(
+                        NodeIndex::NONE, // no direct object expr in destructuring
+                        prop_name_str,
+                        error_node,
+                        parent_type,
+                    );
+                    type_id
+                }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     let error_node = if element_data.property_name.is_some() {
                         element_data.property_name
