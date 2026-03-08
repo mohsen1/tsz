@@ -5446,11 +5446,49 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let init_node = self.arena.get(initializer)?;
+        let interner = self.type_interner?;
+
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(init_node)?;
+            let rhs = self.get_identifier_text(access.name_or_argument)?;
+            let lhs = self.nameable_constructor_expression_text(access.expression)?;
+            let tid = type_id?;
+            let is_callable = tsz_solver::visitor::function_shape_id(interner, tid).is_some()
+                || tsz_solver::visitor::callable_shape_id(interner, tid).is_some();
+            if !is_callable {
+                return None;
+            }
+            let base_type = self.get_node_type_or_names(&[access.expression]);
+            let is_constructor_like = base_type.is_some_and(|base_type| {
+                if let Some(shape_id) = tsz_solver::visitor::callable_shape_id(interner, base_type)
+                {
+                    return !interner
+                        .callable_shape(shape_id)
+                        .construct_signatures
+                        .is_empty();
+                }
+                tsz_solver::visitor::function_shape_id(interner, base_type)
+                    .is_some_and(|shape_id| interner.function_shape(shape_id).is_constructor)
+            });
+            if is_constructor_like {
+                return Some(format!("typeof {lhs}.{rhs}"));
+            }
+            let binder = self.binder?;
+            let base_sym_id = binder.get_node_symbol(access.expression)?;
+            let symbol = binder.symbols.get(base_sym_id)?;
+            if symbol.flags
+                & (tsz_binder::symbol_flags::ENUM | tsz_binder::symbol_flags::VALUE_MODULE)
+                != 0
+            {
+                return Some(format!("typeof {lhs}.{rhs}"));
+            }
+            return None;
+        }
+
         if init_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
         let identifier_name = self.get_identifier_text(initializer)?;
-        let interner = self.type_interner?;
 
         // Check if the type is an Enum type — this means the initializer is
         // referencing the enum value directly (e.g., `var x = E`)

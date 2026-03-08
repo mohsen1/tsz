@@ -15,6 +15,20 @@ use tsz_solver::{
 
 use super::can_skip_base_instantiation;
 
+struct MethodAggregate {
+    overload_signatures: Vec<CallSignature>,
+    impl_signatures: Vec<CallSignature>,
+    overload_optional: bool,
+    impl_optional: bool,
+    visibility: Visibility,
+}
+
+struct AccessorAggregate {
+    getter: Option<TypeId>,
+    setter: Option<TypeId>,
+    visibility: Visibility,
+}
+
 // =============================================================================
 // Class Constructor Type Resolution
 // =============================================================================
@@ -123,20 +137,6 @@ impl<'a> CheckerState<'a> {
         // Get the class symbol for nominal identity
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
 
-        struct MethodAggregate {
-            overload_signatures: Vec<CallSignature>,
-            impl_signatures: Vec<CallSignature>,
-            overload_optional: bool,
-            impl_optional: bool,
-            visibility: Visibility,
-        }
-
-        struct AccessorAggregate {
-            getter: Option<TypeId>,
-            setter: Option<TypeId>,
-            visibility: Visibility,
-        }
-
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
@@ -202,29 +202,26 @@ impl<'a> CheckerState<'a> {
                         let prev_sym_cached = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                         if let Some(sym_id) = current_sym {
-                            let mut partial_ctor_props: Vec<PropertyInfo> =
-                                properties.values().cloned().collect();
-                            partial_ctor_props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: TypeId::ANY,
-                                write_type: TypeId::ANY,
-                                optional: prop.question_token,
-                                readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility,
-                                parent_id: current_sym,
-                                declaration_order: 0,
-                            });
-                            let partial_ctor = factory.callable(CallableShape {
-                                call_signatures: Vec::new(),
-                                construct_signatures: Vec::new(),
-                                properties: partial_ctor_props,
-                                string_index: static_string_index.clone(),
-                                number_index: static_number_index.clone(),
-                                symbol: current_sym,
-                                is_abstract: false,
-                            });
+                            let partial_ctor = self.build_partial_static_constructor_type(
+                                current_sym,
+                                &properties,
+                                &methods,
+                                &accessors,
+                                &static_string_index,
+                                &static_number_index,
+                                Some(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: prop.question_token,
+                                    readonly,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility,
+                                    parent_id: current_sym,
+                                    declaration_order: 0,
+                                }),
+                            );
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                         }
                         let prev = self.ctx.preserve_literal_types;
@@ -293,6 +290,20 @@ impl<'a> CheckerState<'a> {
                     let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                     // For static methods, `this` refers to the constructor type
                     // Get it from the symbol if available
+                    let prev_sym_cached =
+                        current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                    if let Some(sym_id) = current_sym {
+                        let partial_ctor = self.build_partial_static_constructor_type(
+                            current_sym,
+                            &properties,
+                            &methods,
+                            &accessors,
+                            &static_string_index,
+                            &static_number_index,
+                            None,
+                        );
+                        self.ctx.symbol_types.insert(sym_id, partial_ctor);
+                    }
                     let static_this_type = self
                         .ctx
                         .binder
@@ -303,6 +314,13 @@ impl<'a> CheckerState<'a> {
                         static_this_type,
                         member_idx,
                     );
+                    if let Some(sym_id) = current_sym {
+                        if let Some(prev) = prev_sym_cached {
+                            self.ctx.symbol_types.insert(sym_id, prev);
+                        } else {
+                            self.ctx.symbol_types.remove(&sym_id);
+                        }
+                    }
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),
@@ -338,21 +356,42 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
-                    let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
-                        getter: None,
-                        setter: None,
-                        visibility,
-                    });
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
                         let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
+                            let prev_sym_cached = current_sym
+                                .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                            if let Some(sym_id) = current_sym {
+                                let partial_ctor = self.build_partial_static_constructor_type(
+                                    current_sym,
+                                    &properties,
+                                    &methods,
+                                    &accessors,
+                                    &static_string_index,
+                                    &static_number_index,
+                                    None,
+                                );
+                                self.ctx.symbol_types.insert(sym_id, partial_ctor);
+                            }
                             let t = self.infer_getter_return_type(accessor.body);
+                            if let Some(sym_id) = current_sym {
+                                if let Some(prev) = prev_sym_cached {
+                                    self.ctx.symbol_types.insert(sym_id, prev);
+                                } else {
+                                    self.ctx.symbol_types.remove(&sym_id);
+                                }
+                            }
                             // Cache so the declaration emitter can look it up
                             self.ctx.node_types.insert(member_idx.0, t);
                             t
                         };
+                        let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                            visibility,
+                        });
                         entry.getter = Some(getter_type);
                     } else {
                         let setter_type = accessor
@@ -366,6 +405,11 @@ impl<'a> CheckerState<'a> {
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
+                        let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                            visibility,
+                        });
                         entry.setter = Some(setter_type);
                     }
                 }
@@ -1132,6 +1176,91 @@ impl<'a> CheckerState<'a> {
         }
 
         constructor_type
+    }
+
+    fn build_partial_static_constructor_type(
+        &self,
+        current_sym: Option<tsz_binder::SymbolId>,
+        properties: &FxHashMap<Atom, PropertyInfo>,
+        methods: &FxHashMap<Atom, MethodAggregate>,
+        accessors: &FxHashMap<Atom, AccessorAggregate>,
+        static_string_index: &Option<IndexSignature>,
+        static_number_index: &Option<IndexSignature>,
+        extra_property: Option<PropertyInfo>,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        let mut partial_ctor_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+
+        for (&name, method) in methods {
+            let (signatures, optional) = if !method.overload_signatures.is_empty() {
+                (&method.overload_signatures, method.overload_optional)
+            } else {
+                (&method.impl_signatures, method.impl_optional)
+            };
+            if signatures.is_empty() {
+                continue;
+            }
+
+            let type_id = factory.callable(CallableShape {
+                call_signatures: signatures.clone(),
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            });
+            partial_ctor_props.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: method.visibility,
+                parent_id: current_sym,
+                declaration_order: 0,
+            });
+        }
+
+        for (&name, accessor) in accessors {
+            let read_type = accessor.getter.unwrap_or_else(|| {
+                if accessor.setter.is_some() {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::UNKNOWN
+                }
+            });
+            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            partial_ctor_props.push(PropertyInfo {
+                name,
+                type_id: read_type,
+                write_type,
+                optional: false,
+                readonly,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: accessor.visibility,
+                parent_id: current_sym,
+                declaration_order: 0,
+            });
+        }
+
+        if let Some(extra_property) = extra_property {
+            partial_ctor_props.push(extra_property);
+        }
+
+        factory.callable(CallableShape {
+            call_signatures: Vec::new(),
+            construct_signatures: Vec::new(),
+            properties: partial_ctor_props,
+            string_index: static_string_index.clone(),
+            number_index: static_number_index.clone(),
+            symbol: current_sym,
+            is_abstract: false,
+        })
     }
 
     fn remap_inherited_construct_signatures(

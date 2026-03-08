@@ -1732,6 +1732,84 @@ fn test_any_dataview_new_expression_falls_back_to_generic_type() {
 }
 
 #[test]
+fn test_static_method_property_access_emits_typeof() {
+    let source = r#"
+class C {
+    static s1: number;
+    static s2(b: number) {
+        return C.s1 + b;
+    }
+}
+var methodValue = C.s2;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_decl = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class declaration");
+    let var_stmt_idx = source_file.statements.nodes[1];
+    let var_decl = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing variable declaration");
+    let access = parser
+        .arena
+        .get(var_decl.initializer)
+        .and_then(|node| parser.arena.get_access_expr(node))
+        .expect("missing property access initializer");
+
+    let interner = TypeInterner::new();
+    let b_atom = interner.intern_string("b");
+    let method_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(b_atom, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let constructor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), TypeId::ANY)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_decl.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        is_abstract: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(var_decl.name.0, method_type);
+    type_cache
+        .node_types
+        .insert(access.expression.0, constructor_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var methodValue: typeof C.s2;"),
+        "Expected static method property access to emit typeof: {output}"
+    );
+}
+
+#[test]
 fn test_dataview_new_expression_falls_back_without_type_cache() {
     let output = emit_dts("const dataView = new DataView(new ArrayBuffer(80));");
     assert!(
