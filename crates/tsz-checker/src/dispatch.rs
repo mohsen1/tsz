@@ -430,10 +430,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, expected_yield_type)
                 && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, resolved_expected_yield_type);
 
-            // TS delegates nuanced `yield*` compatibility through iterator protocols.
-            // Avoid direct TS2322 checks here to prevent false positives.
-            // For yield*, return the delegated iterator's return type instead of ANY.
+            // For yield*, check that the delegated iterable's element type is
+            // assignable to the containing generator's expected yield type.
+            // e.g. `yield * [new Baz]` in `function* g(): IterableIterator<Foo>`
+            // checks Baz assignable to Foo → TS2741 if Baz is missing props from Foo.
             if yield_expr.asterisk_token {
+                if !self.checker.type_contains_error(expected_yield_type)
+                    && yielded_type != TypeId::ANY
+                    && expected_yield_type != TypeId::ANY
+                    && expected_yield_type != TypeId::UNKNOWN
+                {
+                    self.checker.check_assignable_or_report(
+                        yielded_type,
+                        expected_yield_type,
+                        yield_expr.expression,
+                    );
+                }
                 return yield_star_return_type.unwrap_or(TypeId::ANY);
             }
 

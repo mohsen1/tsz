@@ -483,6 +483,17 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             self.check_statement(func.body);
 
+            // For annotated generators, check that Generator<TYield, any, any>
+            // is assignable to the declared return type.
+            if is_generator && has_type_annotation {
+                self.check_generator_return_type_assignability(
+                    func.is_async,
+                    contextual_yield_type,
+                    return_type,
+                    func.type_annotation,
+                );
+            }
+
             // For unannotated generators, determine the inferred yield type
             // and emit TS7055 (function-level) if TYield is 'any'.
             // TS7055 and TS7057 are independent — TS7055 fires at function name when TYield
