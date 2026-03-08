@@ -18,6 +18,19 @@ fn emit_dts(source: &str) -> String {
     emitter.emit(root)
 }
 
+fn emit_dts_with_binding(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.emit(root)
+}
+
 fn emit_js_dts(source: &str) -> String {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1335,6 +1348,43 @@ export var basePrototype = {
     assert!(
         output.contains("export declare var basePrototype: {\n    readonly primaryPath: any;\n};"),
         "Expected multi-line object literal accessor inference: {output}"
+    );
+}
+
+#[test]
+fn test_enum_member_initializers_respect_const_assertion_widening() {
+    let output = emit_dts_with_binding(
+        r#"
+enum E { A, B }
+let widened = E.B;
+let preserved = E.B as const;
+class C {
+    p1 = E.B;
+    p2 = E.B as const;
+    readonly p3 = E.B;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare let widened: E;"),
+        "Expected let enum member to widen to enum type: {output}"
+    );
+    assert!(
+        output.contains("declare let preserved: E.B;"),
+        "Expected const-asserted enum member to preserve member type: {output}"
+    );
+    assert!(
+        output.contains("p1: E;"),
+        "Expected property widening: {output}"
+    );
+    assert!(
+        output.contains("p2: E.B;"),
+        "Expected const-asserted property member type: {output}"
+    );
+    assert!(
+        output.contains("readonly p3 = E.B;"),
+        "Expected readonly enum property initializer form: {output}"
     );
 }
 
