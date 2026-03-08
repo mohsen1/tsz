@@ -68,8 +68,16 @@ impl<'a> CheckerState<'a> {
                     stack.insert(sym_id);
                 }
 
-                // Resolve the symbol type
-                let result = self.get_type_of_symbol(SymbolId(sym_id));
+                // For merged interface+variable symbols, typeof must return the VALUE type.
+                let sym = SymbolId(sym_id);
+                let result = if self.is_merged_interface_value_symbol(sym) {
+                    let vd = self
+                        .get_cross_file_symbol(sym)
+                        .map_or(NodeIndex::NONE, |s| s.value_declaration);
+                    self.type_of_value_declaration_for_symbol(sym, vd)
+                } else {
+                    self.get_type_of_symbol(sym)
+                };
 
                 // Unmark after resolution
                 if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
@@ -1988,6 +1996,5 @@ impl<'a> CheckerState<'a> {
 
         results
     }
-    // JSDoc param tag validation, comment finding, text parsing utilities,
-    // and TS8033 duplicate @type tag checking have been moved to jsdoc_params.rs
+    // JSDoc param tags, comment finding, text parsing, TS8033 moved to jsdoc_params.rs
 }
