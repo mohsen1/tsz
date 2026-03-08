@@ -69,7 +69,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::Mapped(_)
             | TypeData::TemplateLiteral(_) => {
                 // Resolve meta-types to their actual types before checking constructability.
-                let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+                // Use checker.evaluate_type() which has a full resolver context,
+                // rather than the standalone evaluate_type() with NoopResolver.
+                // This is critical for Lazy(DefId) types (interfaces, type aliases)
+                // which require the checker's resolver to look up their definitions.
+                let resolved = self.checker.evaluate_type(type_id);
                 if resolved != type_id {
                     self.resolve_new(resolved, arg_types)
                 } else {
