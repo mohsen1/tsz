@@ -527,7 +527,31 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|&m| this.evaluate_type_with_env(m))
                         .collect();
-                    this.ctx.types.union_literal_reduce(evaluated_members)
+                    // If evaluation didn't change any member, preserve the original
+                    // TypeId so that type alias name resolution still works.
+                    if evaluated_members
+                        .iter()
+                        .zip(members.iter())
+                        .all(|(e, m)| e == m)
+                    {
+                        param_type
+                    } else {
+                        let reduced = this.ctx.types.union_literal_reduce(evaluated_members);
+                        // Propagate type alias name mapping to the evaluated TypeId.
+                        // When a union type alias (e.g., `ExoticAnimal = CatDog | ManBearPig`)
+                        // is stored with Lazy members, evaluation resolves each member,
+                        // producing a new union TypeId. Transfer the DefId mapping so
+                        // diagnostics can still display the alias name.
+                        if reduced != param_type
+                            && let Some(def_id) =
+                                this.ctx.definition_store.find_def_for_type(param_type)
+                        {
+                            this.ctx
+                                .definition_store
+                                .register_type_to_def(reduced, def_id);
+                        }
+                        reduced
+                    }
                 } else {
                     this.evaluate_type_with_env(param_type)
                 };

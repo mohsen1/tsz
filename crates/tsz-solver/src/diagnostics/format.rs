@@ -197,12 +197,14 @@ impl<'a> TypeFormatter<'a> {
             None => return format!("Type({})", type_id.0).into(),
         };
 
-        // For composite types that don't already have a symbol name, check if this
-        // TypeId is the body of a non-generic type alias.  Display the alias name
-        // (e.g., "Color", "YesNo") instead of the structural expansion.  Restricted
-        // to composite shapes (objects, unions, intersections) to avoid false
-        // positives where a primitive/literal type coincidentally matches an alias
-        // body (e.g. type U = 1).
+        // For composite types that might be named (interfaces, type aliases, classes),
+        // check if this TypeId maps to a definition name. This handles:
+        // - Type aliases: `type ExoticAnimal = CatDog | ManBearPig` displays as "ExoticAnimal"
+        // - Interfaces: `interface Foo { a: string }` displays as "Foo"
+        // - Cross-file scenarios where ObjectShape's symbol can't be resolved
+        //
+        // Restricted to composite shapes to avoid false positives where a primitive
+        // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
         if matches!(
             &key,
             TypeData::Object(_)
@@ -210,22 +212,21 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Union(_)
                 | TypeData::Intersection(_)
                 | TypeData::Tuple(_)
-        ) && let Some(def_store) = self.def_store
-            && let Some(def_id) = def_store.find_type_alias_by_body(type_id)
-            && let Some(def) = def_store.get(def_id)
-        {
-            return self.format_def_name(&def).into();
-        }
-
-        // For class/interface instance types, check the type-to-def reverse map.
-        // This handles cross-file scenarios where the ObjectShape's symbol belongs
-        // to a different file's SymbolArena and can't be resolved by format_symbol_name.
-        if matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_))
-            && let Some(def_store) = self.def_store
-            && let Some(def_id) = def_store.find_def_for_type(type_id)
-            && let Some(def) = def_store.get(def_id)
-        {
-            return self.format_def_name(&def).into();
+                | TypeData::Callable(_)
+                | TypeData::Function(_)
+        ) {
+            if let Some(def_store) = self.def_store {
+                if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
+                    && let Some(def) = def_store.get(def_id)
+                {
+                    return self.format_def_name(&def).into();
+                }
+                if let Some(def_id) = def_store.find_def_for_type(type_id)
+                    && let Some(def) = def_store.get(def_id)
+                {
+                    return self.format_def_name(&def).into();
+                }
+            }
         }
 
         self.current_depth += 1;

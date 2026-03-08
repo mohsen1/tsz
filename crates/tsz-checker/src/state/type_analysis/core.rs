@@ -1512,6 +1512,50 @@ impl<'a> CheckerState<'a> {
                     "type_env try_borrow_mut FAILED - skipping insertion"
                 );
             }
+
+            // Register TypeId -> DefId reverse mapping for TYPE ALIASES only.
+            // This enables diagnostics to display type alias names (e.g., "ExoticAnimal")
+            // instead of structural expansions (e.g., "CatDog | ManBearPig | Platypus").
+            //
+            // Only type aliases need this: interfaces already get their names resolved
+            // via ObjectShape.symbol in format_symbol_name, and registering interfaces
+            // would cause false positives where inline types like `A | B` display
+            // as a matching alias name instead of their structural form.
+            //
+            // Extract def_id before calling evaluate_type_with_env to avoid borrow
+            // conflicts with symbol_to_def.
+            let alias_def_id = self
+                .ctx
+                .symbol_to_def
+                .borrow()
+                .get(&sym_id)
+                .copied()
+                .filter(|_| {
+                    self.ctx
+                        .binder
+                        .symbols
+                        .get(sym_id)
+                        .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+                });
+            if let Some(def_id) = alias_def_id {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(result, def_id);
+                self.ctx.definition_store.set_body(def_id, result);
+                // Also register the evaluated form of the type.
+                // Type aliases with union/intersection bodies often contain Lazy
+                // members (e.g., `type Exotic = CatDog | ManBearPig`). When these
+                // are evaluated, the Lazy members resolve to concrete types,
+                // producing a new TypeId.  Register this evaluated TypeId too so
+                // diagnostic formatting can display the alias name regardless of
+                // whether the raw or evaluated form is referenced.
+                let evaluated = self.evaluate_type_with_env(result);
+                if evaluated != result {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(evaluated, def_id);
+                }
+            }
         }
 
         result
