@@ -311,14 +311,14 @@ pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> Tuple
                 fixed.extend(inner.fixed);
                 // Capture tail elements: inner.tail + elements after the rest
                 let mut tail = inner.tail;
-                tail.extend(elements[i + 1..].iter().cloned());
+                tail.extend(elements[i + 1..].iter().copied());
                 return TupleRestExpansion {
                     fixed,
                     variadic: inner.variadic,
                     tail,
                 };
             }
-            fixed.push(elem.clone());
+            fixed.push(*elem);
         }
         return TupleRestExpansion {
             fixed,

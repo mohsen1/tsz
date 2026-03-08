@@ -656,7 +656,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 return ty;
             };
             let union_members = self.interner.type_list(ul);
-            let mut new_combinations = Vec::new();
+            let mut new_combinations = Vec::with_capacity(combinations.len() * union_members.len());
             for combination in &combinations {
                 for &um in union_members.iter() {
                     let mut new_combo = combination.clone();

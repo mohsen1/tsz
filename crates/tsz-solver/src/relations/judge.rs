@@ -448,9 +448,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         use crate::instantiation::instantiate::instantiate_generic;
 
         // Get type params from the generic type
-        let key = match self.db.lookup(generic) {
-            Some(k) => k,
-            None => return TypeId::ERROR,
+        let Some(key) = self.db.lookup(generic) else {
+            return TypeId::ERROR;
         };
 
         // Try to get type params from Lazy - use DefId directly
@@ -476,9 +475,8 @@ impl<'a> Judge for DefaultJudge<'a> {
             return IterableKind::String;
         }
 
-        let key = match self.db.lookup(evaluated) {
-            Some(k) => k,
-            None => return IterableKind::NotIterable,
+        let Some(key) = self.db.lookup(evaluated) else {
+            return IterableKind::NotIterable;
         };
 
         match key {
@@ -618,9 +616,8 @@ impl<'a> Judge for DefaultJudge<'a> {
             _ => {}
         }
 
-        let key = match self.db.lookup(type_id) {
-            Some(k) => k,
-            None => return flags,
+        let Some(key) = self.db.lookup(type_id) else {
+            return flags;
         };
 
         match key {
@@ -730,9 +727,8 @@ impl<'a> Judge for DefaultJudge<'a> {
     }
 
     fn apparent_type(&self, type_id: TypeId) -> TypeId {
-        let key = match self.db.lookup(type_id) {
-            Some(k) => k,
-            None => return type_id,
+        let Some(key) = self.db.lookup(type_id) else {
+            return type_id;
         };
 
         match key {
@@ -752,9 +748,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
 
         let evaluated = self.evaluate(type_id);
-        let key = match self.db.lookup(evaluated) {
-            Some(k) => k,
-            None => return PropertyResult::NotFound,
+        let Some(key) = self.db.lookup(evaluated) else {
+            return PropertyResult::NotFound;
         };
 
         match key {

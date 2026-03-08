@@ -16,13 +16,6 @@ fn parse_source(source: &str) -> (ParserState, NodeIndex) {
     (parser, root)
 }
 
-#[allow(dead_code)]
-fn parse_tsx(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
-
 fn assert_no_errors(parser: &ParserState, context: &str) {
     let diags = parser.get_diagnostics();
     assert!(

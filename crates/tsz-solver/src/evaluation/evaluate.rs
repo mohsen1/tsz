@@ -1215,7 +1215,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for inner_elem in inner_elements.iter() {
-                        result.push(inner_elem.clone());
+                        result.push(*inner_elem);
                     }
                     changed = true;
                     continue;

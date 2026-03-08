@@ -942,7 +942,7 @@ impl Default for ObjectShape {
 }
 
 /// Tuple element information
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TupleElement {
     pub type_id: TypeId,
     pub name: Option<Atom>,

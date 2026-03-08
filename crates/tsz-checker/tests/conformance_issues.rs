@@ -5206,7 +5206,7 @@ class Derived extends Base {
 
 /// TS18013 diagnostic should use the actual class name, not "the class".
 /// When accessing `obj.#prop` outside its declaring class via a type annotation,
-/// the error message must say "outside class 'ClassName'" with the real name.
+/// the error message must say "outside class '`ClassName`'" with the real name.
 #[test]
 fn test_ts18013_uses_actual_class_name_not_the_class() {
     let diagnostics = compile_and_get_diagnostics(
