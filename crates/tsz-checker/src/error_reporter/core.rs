@@ -428,8 +428,11 @@ impl<'a> CheckerState<'a> {
         Some(prop.name)
     }
 
-    /// Prefer statement-level anchors for assignment diagnostics so TS2322 spans
-    /// line up with tsc in assignment/variable-declaration contexts.
+    /// Walk up the AST to find the appropriate diagnostic anchor for assignment errors.
+    ///
+    /// For variable declarations, tsc anchors TS2322 at the variable **name** (e.g.,
+    /// just `x` in `let x: string = 42`), not the full statement.
+    /// For assignment expressions, tsc walks up to the expression statement level.
     pub(super) fn assignment_diagnostic_anchor_idx(&self, idx: NodeIndex) -> NodeIndex {
         let mut current = idx;
         let mut saw_assignment_binary = false;
@@ -503,7 +506,14 @@ impl<'a> CheckerState<'a> {
             }
 
             if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT && var_decl.is_some() {
-                return parent;
+                // tsc anchors TS2322 at the variable name, not the full statement.
+                // e.g. for `let x: string = 42`, tsc underlines just `x`.
+                if let Some(vd_idx) = var_decl
+                    && let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
+                        && vd.name.is_some() {
+                            return vd.name;
+                        }
+                return parent; // fallback to old behavior if name unavailable
             }
 
             if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT && saw_assignment_binary {
@@ -513,7 +523,16 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
 
-        var_decl.unwrap_or(idx)
+        // When we walked through a variable declaration but didn't reach a
+        // VariableStatement (e.g., for-in/for-of), anchor at the variable name.
+        if let Some(vd_idx) = var_decl {
+            if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
+                && vd.name.is_some() {
+                    return vd.name;
+                }
+            return vd_idx;
+        }
+        idx
     }
 
     // =========================================================================
