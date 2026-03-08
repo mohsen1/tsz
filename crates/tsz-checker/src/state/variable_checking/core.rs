@@ -631,13 +631,30 @@ impl<'a> CheckerState<'a> {
                                 var_decl.initializer,
                             );
                             if checker.ctx.diagnostics.len() == diags_before {
-                                // No excess errors — proceed with assignability
-                                let _ = checker.check_assignable_or_report_at(
-                                    init_type,
-                                    declared_type,
-                                    var_decl.initializer,
-                                    decl_idx,
-                                );
+                                // Try per-property elaboration for object literals before
+                                // the generic TS2322. tsc reports TS2322 on the specific
+                                // mismatching property (e.g. inside an object literal assigned
+                                // to an index-signature type) instead of on the outer assignment.
+                                // Only attempt elaboration when overall assignment fails and
+                                // the initializer is an object literal (arrays/tuples are
+                                // handled earlier by try_elaborate_initializer_elements).
+                                if !checker.is_assignable_to(init_type, declared_type)
+                                    && checker.try_elaborate_object_literal_properties_for_var_init(
+                                        var_decl.initializer,
+                                        declared_type,
+                                    )
+                                {
+                                    // Elaboration emitted per-property TS2322 errors.
+                                    // Skip the generic TS2322 on the outer assignment.
+                                } else {
+                                    // No elaboration possible — fall back to generic TS2322
+                                    let _ = checker.check_assignable_or_report_at(
+                                        init_type,
+                                        declared_type,
+                                        var_decl.initializer,
+                                        decl_idx,
+                                    );
+                                }
                             }
                         }
                     }

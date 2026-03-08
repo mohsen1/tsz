@@ -1,6 +1,5 @@
 FAIL TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts
 FAIL TypeScript/tests/cases/compiler/abstractPropertyInConstructor.ts
-FAIL TypeScript/tests/cases/compiler/accessorInferredReturnTypeErrorInReturnStatement.ts
 FAIL TypeScript/tests/cases/compiler/accessors_spec_section-4.5_error-cases.ts
 FAIL TypeScript/tests/cases/compiler/aliasAssignments.ts
 FAIL TypeScript/tests/cases/compiler/aliasBug.ts
@@ -114,7 +113,6 @@ FAIL TypeScript/tests/cases/compiler/conditionallyDuplicateOverloadsCausedByOver
 FAIL TypeScript/tests/cases/compiler/conditionalReturnExpression.ts
 FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts
 FAIL TypeScript/tests/cases/compiler/conditionalTypeDoesntSpinForever.ts
-FAIL TypeScript/tests/cases/compiler/configFileExtendsAsList.ts
 FAIL TypeScript/tests/cases/compiler/conflictingDeclarationsImportFromNamespace1.ts
 FAIL TypeScript/tests/cases/compiler/conflictingDeclarationsImportFromNamespace2.ts
 FAIL TypeScript/tests/cases/compiler/conflictingTypeAnnotatedVar.ts
@@ -2444,6 +2442,7 @@ PASS TypeScript/tests/cases/compiler/accessorDeclarationEmitJs.ts
 PASS TypeScript/tests/cases/compiler/accessorDeclarationEmitVisibilityErrors.ts
 PASS TypeScript/tests/cases/compiler/accessorDeclarationOrder.ts
 PASS TypeScript/tests/cases/compiler/accessorInAmbientContextES5.ts
+PASS TypeScript/tests/cases/compiler/accessorInferredReturnTypeErrorInReturnStatement.ts
 PASS TypeScript/tests/cases/compiler/accessorParameterAccessibilityModifier.ts
 PASS TypeScript/tests/cases/compiler/accessors_spec_section-4.5_inference.ts
 PASS TypeScript/tests/cases/compiler/accessorsEmit.ts
@@ -3373,6 +3372,7 @@ PASS TypeScript/tests/cases/compiler/conditionalTypeSimplification.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypesSimplifyWhenTrivial.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypeSubclassExtendsTypeParam.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypeVarianceBigArrayConstraintsPerformance.ts
+PASS TypeScript/tests/cases/compiler/configFileExtendsAsList.ts
 PASS TypeScript/tests/cases/compiler/conflictingMemberTypesInBases.ts
 PASS TypeScript/tests/cases/compiler/conflictingTypeParameterSymbolTransfer.ts
 PASS TypeScript/tests/cases/compiler/conflictMarkerDiff3Trivia1.ts
