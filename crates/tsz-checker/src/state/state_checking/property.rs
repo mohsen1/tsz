@@ -107,29 +107,16 @@ impl<'a> CheckerState<'a> {
             //    This differs from the old `matched_shapes` approach which
             //    incorrectly restricted property existence checks to only
             //    structurally-matched members, causing false TS2353 errors.
-            let mut discriminant_shapes = Vec::new();
-            for source_prop in source_props {
-                if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
-                    continue;
-                }
-                let mut matching_indices = Vec::new();
-                for (i, shape) in target_shapes.iter().enumerate() {
-                    if let Some(target_prop) =
-                        shape.properties.iter().find(|p| p.name == source_prop.name)
-                        && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
-                    {
-                        matching_indices.push(i);
-                    }
-                }
-                // If this property narrows to a strict subset of members, use it
-                if !matching_indices.is_empty() && matching_indices.len() < target_shapes.len() {
-                    discriminant_shapes = matching_indices
-                        .iter()
-                        .map(|&i| target_shapes[i].clone())
-                        .collect();
-                    break;
-                }
-            }
+            let discriminant_shapes = self
+                .discriminant_matching_union_member_indices(
+                    source_props,
+                    &target_shapes,
+                    explicit_property_names.as_ref(),
+                )
+                .unwrap_or_default()
+                .into_iter()
+                .map(|i| target_shapes[i].clone())
+                .collect::<Vec<_>>();
             let effective_shapes = if discriminant_shapes.is_empty() {
                 target_shapes
             } else {
@@ -436,41 +423,23 @@ impl<'a> CheckerState<'a> {
 
         // Find a source property with a unit type that matches exactly one member
         let source_props = source_shape.properties.as_slice();
-        let mut best_member: Option<(TypeId, &std::sync::Arc<tsz_solver::ObjectShape>)> = None;
+        let union_shapes: Vec<_> = member_shapes
+            .iter()
+            .map(|(_, shape)| shape.clone())
+            .collect();
+        let matching_indices = self
+            .discriminant_matching_union_member_indices(
+                source_props,
+                &union_shapes,
+                explicit_property_names.as_ref(),
+            )
+            .unwrap_or_default();
 
-        for source_prop in source_props {
-            if explicit_property_names.is_some()
-                && !explicit_property_names
-                    .as_ref()
-                    .is_some_and(|names| names.contains(&source_prop.name))
-            {
-                continue;
-            }
-
-            if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
-                continue;
-            }
-            let mut matching: Vec<usize> = Vec::new();
-            for (i, (_, shape)) in member_shapes.iter().enumerate() {
-                if let Some(target_prop) =
-                    shape.properties.iter().find(|p| p.name == source_prop.name)
-                    && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
-                {
-                    matching.push(i);
-                }
-            }
-            // Narrowed to a strict subset — pick the best match
-            if !matching.is_empty() && matching.len() < member_shapes.len() {
-                // Use the first matching member (tsc picks the best discriminant match)
-                let idx = matching[0];
-                best_member = Some((member_shapes[idx].0, &member_shapes[idx].1));
-                break;
-            }
-        }
-
-        let Some((narrowed_member_type, narrowed_shape)) = best_member else {
+        let Some(idx) = matching_indices.first().copied() else {
             return false;
         };
+        let narrowed_member_type = member_shapes[idx].0;
+        let narrowed_shape = &member_shapes[idx].1;
 
         // Collect excess properties (not in narrowed member) with their AST positions.
         // tsc reports only the first excess property in source order.
@@ -511,6 +480,60 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    fn discriminant_matching_union_member_indices(
+        &mut self,
+        source_props: &[tsz_solver::PropertyInfo],
+        union_shapes: &[std::sync::Arc<tsz_solver::ObjectShape>],
+        explicit_property_names: Option<&HashSet<Atom>>,
+    ) -> Option<Vec<usize>> {
+        for source_prop in source_props {
+            if explicit_property_names.is_some_and(|names| !names.contains(&source_prop.name)) {
+                continue;
+            }
+
+            if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
+                continue;
+            }
+
+            let mut target_prop_types = Vec::with_capacity(union_shapes.len());
+            for shape in union_shapes {
+                let Some(target_prop) =
+                    shape.properties.iter().find(|p| p.name == source_prop.name)
+                else {
+                    target_prop_types.clear();
+                    break;
+                };
+                target_prop_types.push(target_prop.type_id);
+            }
+
+            if target_prop_types.len() != union_shapes.len() {
+                continue;
+            }
+
+            if !target_prop_types
+                .iter()
+                .all(|&target_ty| query::is_unit_type(self.ctx.types, target_ty))
+            {
+                continue;
+            }
+
+            let matching_indices: Vec<usize> = target_prop_types
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &target_ty)| {
+                    self.is_subtype_of(source_prop.type_id, target_ty)
+                        .then_some(i)
+                })
+                .collect();
+
+            if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
+                return Some(matching_indices);
+            }
+        }
+
+        None
     }
 
     /// Detect whether an object shape represents the global `Object` or `Function`
