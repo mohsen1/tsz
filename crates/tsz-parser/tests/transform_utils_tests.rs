@@ -56,3 +56,15 @@ fn contains_arguments_reference_ignores_missing_reference() {
 
     assert!(!contains_arguments_reference(parser.get_arena(), body));
 }
+
+#[test]
+fn contains_arguments_reference_ignores_object_literal_property_names() {
+    let (parser, root) = parse_arena("function f() { foo({ x, arguments: [] }); return 0; }");
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let statement = sf.statements.nodes[0];
+    let statement_node = parser.get_arena().get(statement).unwrap();
+    let func = parser.get_arena().get_function(statement_node).unwrap();
+    let body = func.body;
+
+    assert!(!contains_arguments_reference(parser.get_arena(), body));
+}

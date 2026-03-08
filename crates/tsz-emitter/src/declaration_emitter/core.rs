@@ -926,7 +926,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Parameters
         self.write("(");
-        self.emit_parameters(&func.parameters);
+        self.emit_parameters_with_body(&func.parameters, func.body);
         self.write(")");
 
         // Return type
@@ -1314,7 +1314,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Parameters
         self.write("(");
-        self.emit_parameters(&method.parameters);
+        self.emit_parameters_with_body(&method.parameters, method.body);
         self.write(")");
 
         // Return type - SPECIAL CASE: For private methods, TypeScript omits return type in .d.ts
@@ -1448,7 +1448,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_private {
             // Set flag to strip accessibility modifiers from constructor parameters
             self.in_constructor_params = true;
-            self.emit_parameters(&ctor.parameters);
+            self.emit_parameters_with_body(&ctor.parameters, ctor.body);
             self.in_constructor_params = false;
         }
         self.write(");");

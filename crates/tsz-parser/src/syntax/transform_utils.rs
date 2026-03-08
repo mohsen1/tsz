@@ -5,7 +5,7 @@
 use crate::parser::{NodeArena, NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ReferenceTarget {
     Arguments,
     This,
@@ -64,12 +64,16 @@ fn contains_target_reference(
         return identifier.escaped_text == target.identifier_name();
     }
 
-    target_reference_children(arena, node_idx)
+    target_reference_children(arena, node_idx, target)
         .into_iter()
         .any(|child_idx| contains_target_reference(arena, child_idx, target))
 }
 
-fn target_reference_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeIndex> {
+fn target_reference_children(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    target: ReferenceTarget,
+) -> Vec<NodeIndex> {
     let Some(node) = arena.get(node_idx) else {
         return Vec::new();
     };
@@ -82,14 +86,30 @@ fn target_reference_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<Node
         }
         kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
             if let Some(method) = arena.get_method_decl(node) {
-                Vec::from([method.name])
+                let mut children = Vec::new();
+                if target == ReferenceTarget::This
+                    || arena
+                        .get(method.name)
+                        .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                {
+                    children.push(method.name);
+                }
+                children
             } else {
                 Vec::new()
             }
         }
         kind if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR => {
             if let Some(accessor) = arena.get_accessor(node) {
-                Vec::from([accessor.name])
+                let mut children = Vec::new();
+                if target == ReferenceTarget::This
+                    || arena
+                        .get(accessor.name)
+                        .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                {
+                    children.push(accessor.name);
+                }
+                children
             } else {
                 Vec::new()
             }
@@ -111,6 +131,21 @@ fn target_reference_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<Node
                 if func.body.is_some() {
                     children.push(func.body);
                 }
+                children
+            } else {
+                Vec::new()
+            }
+        }
+        kind if kind == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+            if let Some(data) = arena.get_property_assignment(node) {
+                let mut children = Vec::new();
+                if arena
+                    .get(data.name)
+                    .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                {
+                    children.push(data.name);
+                }
+                children.push(data.initializer);
                 children
             } else {
                 Vec::new()

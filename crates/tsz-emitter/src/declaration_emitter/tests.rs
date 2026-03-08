@@ -425,6 +425,25 @@ export { x };
 }
 
 #[test]
+fn test_js_function_using_arguments_emits_rest_param() {
+    let source = r#"
+function f(x) {
+    arguments;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function f(x: any, ...args: any[]): void;"),
+        "Expected JS functions that reference arguments to gain a synthetic rest param: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_equals_emits_before_target_declaration() {
     let source = r#"
 const a = {};
