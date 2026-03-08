@@ -1723,6 +1723,7 @@ name = "tsz-wasm"
 version = "0.1.9"
 dependencies = [
  "console_error_panic_hook",
+ "js-sys",
  "rustc-hash",
  "serde",
  "serde-wasm-bindgen",
@@ -1737,6 +1738,7 @@ dependencies = [
  "tsz-scanner",
  "tsz-solver",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
