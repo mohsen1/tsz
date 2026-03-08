@@ -1107,6 +1107,12 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if func_body.is_some()
+                    && let Some(type_text) =
+                        self.function_body_preferred_return_type_text(func_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self
