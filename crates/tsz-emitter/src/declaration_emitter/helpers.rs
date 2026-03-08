@@ -4124,6 +4124,47 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn infer_property_name_text(&self, node_id: NodeIndex) -> Option<String> {
         let node = self.arena.get(node_id)?;
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(node)?;
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(computed.expression);
+            let expr_node = self.arena.get(expr_idx)?;
+            match expr_node.kind {
+                k if k == SyntaxKind::StringLiteral as u16 => {
+                    let literal = self.arena.get_literal(expr_node)?;
+                    let quote = self.original_quote_char(expr_node);
+                    return Some(format!("{}{}{}", quote, literal.text, quote));
+                }
+                k if k == SyntaxKind::NumericLiteral as u16 => {
+                    let literal = self.arena.get_literal(expr_node)?;
+                    return Some(Self::normalize_numeric_literal(literal.text.as_ref()));
+                }
+                k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    let unary = self.arena.get_unary_expr(expr_node)?;
+                    let operand_idx = self
+                        .arena
+                        .skip_parenthesized_and_assertions_and_comma(unary.operand);
+                    let operand_node = self.arena.get(operand_idx)?;
+                    if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                        return None;
+                    }
+                    let literal = self.arena.get_literal(operand_node)?;
+                    let normalized = Self::normalize_numeric_literal(literal.text.as_ref());
+                    return match unary.operator {
+                        k if k == SyntaxKind::MinusToken as u16 => Some(format!("[-{normalized}]")),
+                        k if k == SyntaxKind::PlusToken as u16 => Some(normalized),
+                        _ => None,
+                    };
+                }
+                k if k == SyntaxKind::Identifier as u16
+                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+                {
+                    return self.get_source_slice(node.pos, node.end);
+                }
+                _ => return None,
+            }
+        }
         if let Some(ident) = self.arena.get_identifier(node) {
             return Some(ident.escaped_text.clone());
         }
@@ -4132,6 +4173,126 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(format!("{}{}{}", quote, literal.text, quote));
         }
         self.get_source_slice(node.pos, node.end)
+    }
+
+    fn object_literal_prefers_syntax_type_text(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+
+        object.elements.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let name_idx = if let Some(data) = self.arena.get_property_assignment(member_node) {
+                Some(data.name)
+            } else if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                Some(data.name)
+            } else if let Some(data) = self.arena.get_accessor(member_node) {
+                Some(data.name)
+            } else {
+                self.arena
+                    .get_method_decl(member_node)
+                    .map(|data| data.name)
+            };
+
+            name_idx.is_some_and(|name_idx| {
+                self.arena.get(name_idx).is_some_and(|name_node| {
+                    name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                })
+            })
+        })
+    }
+
+    fn rewrite_object_literal_computed_member_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(init_node)?;
+
+        let mut computed_members = Vec::new();
+        let mut only_numeric_like = true;
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let name_idx = if let Some(data) = self.arena.get_property_assignment(member_node) {
+                Some(data.name)
+            } else if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                Some(data.name)
+            } else if let Some(data) = self.arena.get_accessor(member_node) {
+                Some(data.name)
+            } else {
+                self.arena
+                    .get_method_decl(member_node)
+                    .map(|data| data.name)
+            };
+            let Some(name_idx) = name_idx else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                continue;
+            }
+
+            let Some(name_text) = self.infer_property_name_text(name_idx) else {
+                continue;
+            };
+            only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
+
+            let Some(member_text) =
+                self.infer_object_member_type_text_at(member_idx, self.indent_level + 1)
+            else {
+                continue;
+            };
+            computed_members.push(member_text);
+        }
+
+        if computed_members.is_empty() {
+            return None;
+        }
+
+        let printed = self.print_type_id(type_id);
+        let mut lines: Vec<String> = printed.lines().map(str::to_string).collect();
+        if lines.len() < 2 {
+            return Some(printed);
+        }
+
+        if only_numeric_like {
+            lines.retain(|line| !line.trim_start().starts_with("[x: string]:"));
+        }
+
+        let insert_at = lines.len().saturating_sub(1);
+        let indent = "    ".repeat((self.indent_level + 1) as usize);
+        for (offset, member_text) in computed_members.into_iter().enumerate() {
+            let line = format!("{indent}{member_text};");
+            if !lines.iter().any(|existing| existing.trim() == line.trim()) {
+                lines.insert(insert_at + offset, line);
+            }
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    fn is_numeric_property_name_text(name: &str) -> bool {
+        name.parse::<f64>().is_ok()
+            || (name.starts_with("[-")
+                && name.ends_with(']')
+                && name[2..name.len().saturating_sub(1)].parse::<f64>().is_ok())
     }
 
     pub(crate) fn get_node_type_or_names(
@@ -4685,6 +4846,13 @@ impl<'a> DeclarationEmitter<'a> {
                 if type_id == tsz_solver::types::TypeId::ANY
                     && has_initializer
                     && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if has_initializer
+                    && self.object_literal_prefers_syntax_type_text(initializer)
+                    && let Some(type_text) =
+                        self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
                 {
                     self.write(": ");
                     self.write(&type_text);
