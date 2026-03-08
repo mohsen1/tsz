@@ -3,6 +3,21 @@
 //! parse diagnostic conversion, and pragma detection.
 
 use super::*;
+use std::time::{Duration, Instant};
+
+pub(super) type CollectedModuleSpecifier = (String, NodeIndex, tsz::module_resolver::ImportKind);
+
+pub(super) struct PreparedFileBinder {
+    pub binder: BinderState,
+    pub module_specifiers: Vec<CollectedModuleSpecifier>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct PreparedFileBinderStats {
+    pub create_binder: Duration,
+    pub collect_module_specifiers: Duration,
+    pub bridge_modules: Duration,
+}
 
 pub(super) fn detect_missing_tslib_helper_diagnostics(
     program: &MergedProgram,
@@ -973,7 +988,67 @@ pub(super) fn create_binder_from_bound_file_with_shared_data(
     binder
 }
 
-/// Build a binder for cross-file symbol and type resolution.
+pub(super) fn prepare_binder_for_check(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared_data: &tsz::parallel::CheckerBinderSharedData,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> PreparedFileBinder {
+    let (prepared, _) = prepare_binder_for_check_with_stats(
+        file,
+        program,
+        file_idx,
+        shared_data,
+        resolved_module_paths,
+    );
+    prepared
+}
+
+pub(super) fn prepare_binder_for_check_with_stats(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared_data: &tsz::parallel::CheckerBinderSharedData,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> (PreparedFileBinder, PreparedFileBinderStats) {
+    let create_binder_start = Instant::now();
+    let mut binder =
+        create_binder_from_bound_file_with_shared_data(file, program, file_idx, shared_data);
+    let create_binder = create_binder_start.elapsed();
+
+    let collect_specifiers_start = Instant::now();
+    let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+    let collect_module_specifiers = collect_specifiers_start.elapsed();
+
+    let bridge_modules_start = Instant::now();
+    for (specifier, _, _) in &module_specifiers {
+        if let Some(&target_idx) = resolved_module_paths.get(&(file_idx, specifier.clone())) {
+            super::check::propagate_module_export_maps(
+                &mut binder,
+                specifier,
+                target_idx,
+                program,
+                resolved_module_paths,
+            );
+        }
+    }
+    let bridge_modules = bridge_modules_start.elapsed();
+
+    (
+        PreparedFileBinder {
+            binder,
+            module_specifiers,
+        },
+        PreparedFileBinderStats {
+            create_binder,
+            collect_module_specifiers,
+            bridge_modules,
+        },
+    )
+}
+
+/// Build a lightweight binder for cross-file symbol/export lookups.
 ///
 /// Cross-file delegation can use entries from `CheckerContext::all_binders` for
 /// full semantic type computation, not just export-table lookups. Reuse the same

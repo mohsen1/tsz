@@ -2,6 +2,7 @@
 
 use super::check_utils::*;
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
@@ -63,6 +64,14 @@ pub(super) fn collect_diagnostics(
             eprintln!(
                 "{}",
                 format_extended_diagnostics_collect_progress(phase, start.elapsed())
+            );
+        }
+    };
+    let report_elapsed = |phase: &'static str, elapsed: Duration| {
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(phase, elapsed)
             );
         }
     };
@@ -520,80 +529,6 @@ pub(super) fn collect_diagnostics(
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
 
-        // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
-        let per_file_binders: Vec<BinderState> = {
-            let phase_start = Instant::now();
-            report_progress_start("prepare_binders");
-            let _prep_span = tracing::info_span!("prepare_binders").entered();
-            let binders = work_queue
-                .iter()
-                .enumerate()
-                .map(|(queue_idx, &file_idx)| {
-                    let trace_first_prepare_binder = extended_progress_enabled && queue_idx == 0;
-                    let file = &program.files[file_idx];
-                    let create_binder_start = Instant::now();
-                    if trace_first_prepare_binder {
-                        report_progress_start("prepare_binders::first_file::create_binder");
-                    }
-                    let mut binder = create_binder_from_bound_file_with_shared_data(
-                        file,
-                        program,
-                        file_idx,
-                        &binder_shared_data,
-                    );
-                    if trace_first_prepare_binder {
-                        report_progress(
-                            "prepare_binders::first_file::create_binder",
-                            create_binder_start,
-                        );
-                    }
-                    let collect_specifiers_start = Instant::now();
-                    if trace_first_prepare_binder {
-                        report_progress_start(
-                            "prepare_binders::first_file::collect_module_specifiers",
-                        );
-                    }
-                    let module_specifiers =
-                        collect_module_specifiers(&file.arena, file.source_file);
-                    if trace_first_prepare_binder {
-                        report_progress(
-                            "prepare_binders::first_file::collect_module_specifiers",
-                            collect_specifiers_start,
-                        );
-                    }
-
-                    // Bridge raw module specifiers to resolved export tables using
-                    // the pre-computed resolved_module_paths map (no FS calls needed).
-                    let bridge_modules_start = Instant::now();
-                    if trace_first_prepare_binder {
-                        report_progress_start("prepare_binders::first_file::bridge_modules");
-                    }
-                    for (specifier, _, _) in &module_specifiers {
-                        if let Some(&target_idx) =
-                            resolved_module_paths.get(&(file_idx, specifier.clone()))
-                        {
-                            propagate_module_export_maps(
-                                &mut binder,
-                                specifier,
-                                target_idx,
-                                program,
-                                &resolved_module_paths,
-                            );
-                        }
-                    }
-                    if trace_first_prepare_binder {
-                        report_progress(
-                            "prepare_binders::first_file::bridge_modules",
-                            bridge_modules_start,
-                        );
-                    }
-                    binder
-                })
-                .collect();
-            report_progress("prepare_binders", phase_start);
-            binders
-        };
-
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
         let check_js = options.check_js;
@@ -603,6 +538,7 @@ pub(super) fn collect_diagnostics(
         let lib_ctx_for_parallel = lib_contexts.to_vec();
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
+        let traced_parallel_file = Arc::new(AtomicBool::new(false));
 
         // Check all files in parallel — each file gets its own CheckerState.
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
@@ -610,18 +546,55 @@ pub(super) fn collect_diagnostics(
         let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
             let phase_start = Instant::now();
             report_progress_start("parallel_check_files");
-            use rayon::iter::{
-                IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-                ParallelIterator,
-            };
+            use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
             let results = if work_items.len() <= 1 {
                 work_items
                     .iter()
-                    .zip(per_file_binders)
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let file = &program.files[file_idx];
+                        let trace_first_prepare_binder = extended_progress_enabled
+                            && !(skip_lib_check && is_declaration_file(&file.file_name))
+                            && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                        let prepared = if trace_first_prepare_binder {
+                            report_progress_start("prepare_binders::first_file::create_binder");
+                            let (prepared, stats) = prepare_binder_for_check_with_stats(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            );
+                            report_elapsed(
+                                "prepare_binders::first_file::create_binder",
+                                stats.create_binder,
+                            );
+                            report_progress_start(
+                                "prepare_binders::first_file::collect_module_specifiers",
+                            );
+                            report_elapsed(
+                                "prepare_binders::first_file::collect_module_specifiers",
+                                stats.collect_module_specifiers,
+                            );
+                            report_progress_start("prepare_binders::first_file::bridge_modules");
+                            report_elapsed(
+                                "prepare_binders::first_file::bridge_modules",
+                                stats.bridge_modules,
+                            );
+                            prepared
+                        } else {
+                            prepare_binder_for_check(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            )
+                        };
                         let context = CheckFileForParallelContext {
                             file_idx,
-                            binder,
+                            binder: prepared.binder,
+                            module_specifiers: prepared.module_specifiers,
+                            trace_first_file_progress: trace_first_prepare_binder,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -647,11 +620,51 @@ pub(super) fn collect_diagnostics(
                 tsz::parallel::ensure_rayon_global_pool();
                 work_items
                     .par_iter()
-                    .zip(per_file_binders.into_par_iter())
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let file = &program.files[file_idx];
+                        let trace_first_prepare_binder = extended_progress_enabled
+                            && !(skip_lib_check && is_declaration_file(&file.file_name))
+                            && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                        let prepared = if trace_first_prepare_binder {
+                            report_progress_start("prepare_binders::first_file::create_binder");
+                            let (prepared, stats) = prepare_binder_for_check_with_stats(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            );
+                            report_elapsed(
+                                "prepare_binders::first_file::create_binder",
+                                stats.create_binder,
+                            );
+                            report_progress_start(
+                                "prepare_binders::first_file::collect_module_specifiers",
+                            );
+                            report_elapsed(
+                                "prepare_binders::first_file::collect_module_specifiers",
+                                stats.collect_module_specifiers,
+                            );
+                            report_progress_start("prepare_binders::first_file::bridge_modules");
+                            report_elapsed(
+                                "prepare_binders::first_file::bridge_modules",
+                                stats.bridge_modules,
+                            );
+                            prepared
+                        } else {
+                            prepare_binder_for_check(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            )
+                        };
                         let context = CheckFileForParallelContext {
                             file_idx,
-                            binder,
+                            binder: prepared.binder,
+                            module_specifiers: prepared.module_specifiers,
+                            trace_first_file_progress: trace_first_prepare_binder,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -683,11 +696,51 @@ pub(super) fn collect_diagnostics(
             let phase_start = Instant::now();
             let results = work_items
                 .iter()
-                .zip(per_file_binders.into_iter())
-                .map(|(&file_idx, binder)| {
+                .map(|&file_idx| {
+                    let file = &program.files[file_idx];
+                    let trace_first_prepare_binder = extended_progress_enabled
+                        && !(skip_lib_check && is_declaration_file(&file.file_name))
+                        && !traced_parallel_file.swap(true, Ordering::Relaxed);
+                    let prepared = if trace_first_prepare_binder {
+                        report_progress_start("prepare_binders::first_file::create_binder");
+                        let (prepared, stats) = prepare_binder_for_check_with_stats(
+                            file,
+                            program,
+                            file_idx,
+                            &binder_shared_data,
+                            &resolved_module_paths,
+                        );
+                        report_elapsed(
+                            "prepare_binders::first_file::create_binder",
+                            stats.create_binder,
+                        );
+                        report_progress_start(
+                            "prepare_binders::first_file::collect_module_specifiers",
+                        );
+                        report_elapsed(
+                            "prepare_binders::first_file::collect_module_specifiers",
+                            stats.collect_module_specifiers,
+                        );
+                        report_progress_start("prepare_binders::first_file::bridge_modules");
+                        report_elapsed(
+                            "prepare_binders::first_file::bridge_modules",
+                            stats.bridge_modules,
+                        );
+                        prepared
+                    } else {
+                        prepare_binder_for_check(
+                            file,
+                            program,
+                            file_idx,
+                            &binder_shared_data,
+                            &resolved_module_paths,
+                        )
+                    };
                     let context = CheckFileForParallelContext {
                         file_idx,
-                        binder,
+                        binder: prepared.binder,
+                        module_specifiers: prepared.module_specifiers,
+                        trace_first_file_progress: trace_first_prepare_binder,
                         program,
                         query_cache: &query_cache,
                         compiler_options: &compiler_options,
@@ -736,51 +789,32 @@ pub(super) fn collect_diagnostics(
             let file = &program.files[file_idx];
             let file_path = PathBuf::from(&file.file_name);
 
-            let create_binder_start = Instant::now();
             if trace_first_incremental_file {
                 report_progress_start("incremental_first_file::create_binder");
             }
-            let mut binder = create_binder_from_bound_file_with_shared_data(
+            let (prepared_binder, prepare_stats) = prepare_binder_for_check_with_stats(
                 file,
                 program,
                 file_idx,
                 &binder_shared_data,
+                &resolved_module_paths,
             );
+            let binder = prepared_binder.binder;
+            let module_specifiers = prepared_binder.module_specifiers;
             if trace_first_incremental_file {
-                report_progress("incremental_first_file::create_binder", create_binder_start);
-            }
-            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-
-            // Bridge multi-file module resolution for ES module imports.
-            let bridge_modules_start = Instant::now();
-            if trace_first_incremental_file {
+                report_elapsed(
+                    "incremental_first_file::create_binder",
+                    prepare_stats.create_binder,
+                );
+                report_progress_start("incremental_first_file::collect_module_specifiers");
+                report_elapsed(
+                    "incremental_first_file::collect_module_specifiers",
+                    prepare_stats.collect_module_specifiers,
+                );
                 report_progress_start("incremental_first_file::bridge_modules");
-            }
-            for (specifier, _, _) in &module_specifiers {
-                if let Some(resolved) = resolve_module_specifier(
-                    Path::new(&file.file_name),
-                    specifier,
-                    options,
-                    base_dir,
-                    &mut resolution_cache,
-                    &program_paths,
-                ) {
-                    let canonical = canonicalize_or_owned(&resolved);
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                        propagate_module_export_maps(
-                            &mut binder,
-                            specifier,
-                            target_idx,
-                            program,
-                            &resolved_module_paths,
-                        );
-                    }
-                }
-            }
-            if trace_first_incremental_file {
-                report_progress(
+                report_elapsed(
                     "incremental_first_file::bridge_modules",
-                    bridge_modules_start,
+                    prepare_stats.bridge_modules,
                 );
             }
             let create_checker_start = Instant::now();
@@ -1115,7 +1149,7 @@ fn collect_no_check_file_diagnostics(
     diagnostics
 }
 
-fn propagate_module_export_maps(
+pub(super) fn propagate_module_export_maps(
     binder: &mut BinderState,
     specifier: &str,
     target_idx: usize,
@@ -1190,6 +1224,8 @@ fn propagate_module_export_maps(
 pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
+    module_specifiers: Vec<CollectedModuleSpecifier>,
+    trace_first_file_progress: bool,
     program: &'a MergedProgram,
     query_cache: &'a QueryCache<'a>,
     compiler_options: &'a tsz_common::CheckerOptions,
@@ -1225,6 +1261,8 @@ pub(super) fn check_file_for_parallel<'a>(
     let CheckFileForParallelContext {
         file_idx,
         binder,
+        module_specifiers,
+        trace_first_file_progress,
         program,
         query_cache,
         compiler_options,
@@ -1250,9 +1288,23 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
-    let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+    let report_parallel_start = |phase: &'static str| {
+        if trace_first_file_progress {
+            eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
+        }
+    };
+    let report_parallel_elapsed = |phase: &'static str, elapsed: Duration| {
+        if trace_first_file_progress {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(phase, elapsed)
+            );
+        }
+    };
 
     // Build resolved_modules from the pre-computed resolved module maps
+    let resolved_modules_start = Instant::now();
+    report_parallel_start("parallel_check_files::first_file::build_resolved_modules");
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
         .filter(|(specifier, _, _)| {
@@ -1261,7 +1313,13 @@ pub(super) fn check_file_for_parallel<'a>(
         })
         .map(|(specifier, _, _)| specifier.clone())
         .collect();
+    report_parallel_elapsed(
+        "parallel_check_files::first_file::build_resolved_modules",
+        resolved_modules_start.elapsed(),
+    );
 
+    let create_checker_start = Instant::now();
+    report_parallel_start("parallel_check_files::first_file::create_checker");
     let mut checker = CheckerState::with_options(
         &file.arena,
         &binder,
@@ -1269,6 +1327,13 @@ pub(super) fn check_file_for_parallel<'a>(
         file.file_name.clone(),
         compiler_options,
     );
+    report_parallel_elapsed(
+        "parallel_check_files::first_file::create_checker",
+        create_checker_start.elapsed(),
+    );
+
+    let configure_context_start = Instant::now();
+    report_parallel_start("parallel_check_files::first_file::configure_context");
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
     checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
@@ -1315,6 +1380,10 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| is_real_syntax_error(d.code))
         .map(|d| d.start)
         .collect();
+    report_parallel_elapsed(
+        "parallel_check_files::first_file::configure_context",
+        configure_context_start.elapsed(),
+    );
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
@@ -1327,7 +1396,13 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
+        let check_source_file_start = Instant::now();
+        report_parallel_start("parallel_check_files::first_file::check_source_file");
         checker.check_source_file(file.source_file);
+        report_parallel_elapsed(
+            "parallel_check_files::first_file::check_source_file",
+            check_source_file_start.elapsed(),
+        );
 
         // Filter diagnostics for JS files without checkJs
         let is_js = is_js_file(Path::new(&file.file_name));
@@ -1392,7 +1467,13 @@ pub(super) fn check_file_for_parallel<'a>(
         );
     }
 
+    let extract_cache_start = Instant::now();
+    report_parallel_start("parallel_check_files::first_file::extract_cache");
     let type_cache = checker.extract_cache();
+    report_parallel_elapsed(
+        "parallel_check_files::first_file::extract_cache",
+        extract_cache_start.elapsed(),
+    );
     (file_diagnostics, Some(type_cache))
 }
 
