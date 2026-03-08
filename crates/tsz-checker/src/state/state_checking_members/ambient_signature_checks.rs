@@ -910,19 +910,49 @@ impl<'a> CheckerState<'a> {
                         let receiver_type = self.get_type_of_node(receiver_idx);
                         if let Some(property_name) = callee_property_name.as_deref() {
                             report(&format!(
-                                "{statement_phase}::call_callee_receiver_evaluate_application_type"
-                            ));
-                            let evaluated_receiver = self.evaluate_application_type(receiver_type);
-                            report(&format!(
                                 "{statement_phase}::call_callee_receiver_resolve_type_for_property_access"
                             ));
                             let resolved_receiver =
-                                self.resolve_type_for_property_access(evaluated_receiver);
+                                self.prepare_property_access_receiver_type(receiver_type);
                             report(&format!(
                                 "{statement_phase}::call_callee_receiver_resolve_property_access_with_env"
                             ));
-                            let _ = self
-                                .resolve_property_access_with_env(resolved_receiver, property_name);
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::resolve_type_query_type"
+                            ));
+                            let lookup_receiver = self.resolve_type_query_type(resolved_receiver);
+                            let resolution_kind = crate::query_boundaries::state::type_environment::classify_for_property_access_resolution(
+                                self.ctx.types,
+                                lookup_receiver,
+                            );
+                            if !matches!(
+                                resolution_kind,
+                                crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Resolved
+                                    | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::FunctionLike
+                                    | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Application(_)
+                            ) {
+                                report(&format!(
+                                    "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::ensure_relation_input_ready"
+                                ));
+                                self.ensure_relation_input_ready(lookup_receiver);
+                            }
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::initial_query"
+                            ));
+                            let lookup_result =
+                                self.ctx.types.resolve_property_access_with_options(
+                                    lookup_receiver,
+                                    property_name,
+                                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                                );
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::post_query"
+                            ));
+                            let _ = self.resolve_property_access_with_env_post_query(
+                                lookup_receiver,
+                                property_name,
+                                lookup_result,
+                            );
                         }
                     }
                     report(&format!("{statement_phase}::call_callee_get_type_of_node"));

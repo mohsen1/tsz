@@ -1014,7 +1014,8 @@ impl<'a> CheckerState<'a> {
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
-        // need relation preconditioning here.
+        // need relation preconditioning here, and direct generic applications
+        // are handled by the narrower post-query fallback below.
         let resolution_kind =
             crate::query_boundaries::state::type_environment::classify_for_property_access_resolution(
                 self.ctx.types,
@@ -1024,6 +1025,7 @@ impl<'a> CheckerState<'a> {
             resolution_kind,
             crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Resolved
                 | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::FunctionLike
+                | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Application(_)
         ) {
             self.ensure_relation_input_ready(object_type);
         }
@@ -1052,6 +1054,16 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
         result: tsz_solver::operations::property::PropertyAccessResult,
     ) -> tsz_solver::operations::property::PropertyAccessResult {
+        // The solver already resolved the property successfully. Do not
+        // eagerly expand generic applications after the fact just to
+        // rediscover the same member shape through the checker path.
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+        ) {
+            return result;
+        }
+
         let mut result = result;
         let mut resolved_object_type = object_type;
         let mut mapped_candidate_type = object_type;
@@ -1379,6 +1391,29 @@ function f<P extends MyPartial<Foo>>(p: P) {
         assert!(
             relevant.is_empty(),
             "expected zero errors for type param property access via constraint, got: {:?}",
+            relevant
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nested_generic_receiver_method_access_does_not_require_eager_application_expansion() {
+        let diags = check_source_diagnostics(
+            "interface Bucket<K, V> {
+    set(key: K, value: V): void;
+}
+interface State<T> {
+    items: Bucket<string, T>;
+}
+declare const state: State<number>;
+state.items.set(\"x\", 1);",
+        );
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        assert!(
+            relevant.is_empty(),
+            "expected zero errors for nested generic receiver method access, got: {:?}",
             relevant
                 .iter()
                 .map(|d| (d.code, &d.message_text))

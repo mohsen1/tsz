@@ -1809,6 +1809,15 @@ export class Box {
         assert!(
             phases.iter().any(|phase| {
                 phase.contains("check_class_members::member_0::kind_")
+                    && phase.ends_with(
+                        "call_callee_receiver_resolve_property_access_with_env::initial_query:start"
+                    )
+            }),
+            "expected property access initial-query marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains("check_class_members::member_0::kind_")
                     && phase.ends_with("call_arg_0::get_type_of_node:start")
             }),
             "expected call argument pre-typing marker, got {phases:?}"

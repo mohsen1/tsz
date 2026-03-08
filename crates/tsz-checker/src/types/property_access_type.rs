@@ -8,6 +8,18 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn prepare_property_access_receiver_type(&mut self, object_type: TypeId) -> TypeId {
+        // Preserve direct generic applications for the actual property lookup path.
+        // `resolve_property_access_with_env_post_query` can expand them narrowly on
+        // demand, while eagerly resolving them here forces full interface/lib
+        // instantiation before we know which member is needed.
+        if tsz_solver::is_generic_application(self.ctx.types, object_type) {
+            object_type
+        } else {
+            self.resolve_type_for_property_access(object_type)
+        }
+    }
+
     /// Get type of property access expression.
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
@@ -160,8 +172,14 @@ impl<'a> CheckerState<'a> {
             self.ctx.skip_flow_narrowing = prev_skip;
 
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
-                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
-                let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+                let object_type_no_flow_for_access =
+                    if tsz_solver::is_generic_application(self.ctx.types, object_type_no_flow) {
+                        object_type_no_flow
+                    } else {
+                        self.evaluate_application_type(object_type_no_flow)
+                    };
+                let resolved_no_flow =
+                    self.prepare_property_access_receiver_type(object_type_no_flow_for_access);
                 !matches!(
                     self.resolve_property_access_with_env(resolved_no_flow, property_name),
                     PropertyAccessResult::PropertyNotFound { .. }
@@ -207,7 +225,16 @@ impl<'a> CheckerState<'a> {
         // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
         // below will resolve property access through `resolve_type_for_property_access`,
         // and eagerly evaluating applications here is redundant on hot paths.
-        let object_type = if access.question_dot_token && skip_optional_base_flow {
+        // Defer eager expansion for direct generic applications. Property access
+        // already routes through `resolve_type_for_property_access`, which can
+        // expand the receiver narrowly for member lookup. Fully evaluating
+        // monomorphic applications here forces expensive lib/interface
+        // instantiation (e.g. `Map<string, T>`) before we even know whether the
+        // property path needs it.
+        let should_preserve_original_object_type = access.question_dot_token
+            && skip_optional_base_flow
+            || tsz_solver::is_generic_application(self.ctx.types, original_object_type);
+        let object_type = if should_preserve_original_object_type {
             original_object_type
         } else {
             self.evaluate_application_type(original_object_type)
@@ -247,7 +274,7 @@ impl<'a> CheckerState<'a> {
                 .resolve_class_for_access(access.expression, non_nullish_base)
                 .is_none()
             {
-                let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                let resolved_base = self.prepare_property_access_receiver_type(non_nullish_base);
                 let can_cache_fast = !self.contains_type_parameters_cached(resolved_base);
                 let prop_atom = can_cache_fast.then(|| self.ctx.types.intern_string(property_name));
 
@@ -577,7 +604,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            let object_type_for_access = self.resolve_type_for_property_access(object_type);
+            let object_type_for_access = self.prepare_property_access_receiver_type(object_type);
             if object_type_for_access == TypeId::ANY {
                 return TypeId::ANY;
             }

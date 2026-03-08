@@ -158,17 +158,28 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        let classification =
+            query::classify_for_property_access_resolution(self.ctx.types, type_id);
+
         // Fast path: already property-access-ready types do not need relation-input
         // preparation or recursive resolution.
         if matches!(
-            query::classify_for_property_access_resolution(self.ctx.types, type_id),
+            classification,
             query::PropertyAccessResolutionKind::Resolved
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
             return type_id;
         }
 
-        self.ensure_relation_input_ready(type_id);
+        // Direct application receivers are handled by the property-access-specific
+        // resolver below. Running the full relation-input preparation here eagerly
+        // resolves nested generic graphs before we even know which member is needed.
+        if !matches!(
+            classification,
+            query::PropertyAccessResolutionKind::Application(_)
+        ) {
+            self.ensure_relation_input_ready(type_id);
+        }
 
         let mut visited = FxHashSet::default();
         let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
