@@ -1107,7 +1107,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Application on target side (not matched by Application-Application above):
             // evaluate and recurse. This handles inference from object literal against
             // generic types like Options<T, U>.
-            (_, Some(TypeData::Application(_))) => {
+            (_, Some(TypeData::Application(t_app_id))) => {
+                let t_app = self.interner.type_application(t_app_id);
+                let t_app_args = t_app.args.clone();
                 let evaluated = self.checker.evaluate_type(target);
                 trace!(
                     source = ?source,
@@ -1118,6 +1120,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     evaluated_key = ?self.interner.lookup(evaluated),
                     "constrain_types: evaluated target application"
                 );
+
+                // Special case: Array/Tuple source against iterable-like Application target.
+                // When the target is e.g. Iterable<readonly [K, V]> and the source is an
+                // Array<T>, the evaluated Object form loses the connection between Array
+                // element types and the Application's type arguments. We detect this case
+                // by checking whether the evaluated form is iterable-like (has
+                // [Symbol.iterator]) and directly constrain the array element type against
+                // the Application's first type argument.
+                // This enables inference for cases like: new Map([["", 0]]) where the
+                // constructor parameter is Iterable<readonly [K, V]>.
+                if !t_app_args.is_empty() {
+                    let is_iterable_like = self.is_iterable_like_evaluated_object(evaluated);
+                    if is_iterable_like {
+                        match self.interner.lookup(source) {
+                            Some(TypeData::Array(s_elem)) => {
+                                self.constrain_types(ctx, var_map, s_elem, t_app_args[0], priority);
+                                return;
+                            }
+                            Some(TypeData::Tuple(s_elems)) => {
+                                let s_elems = self.interner.tuple_list(s_elems);
+                                for s_elem in s_elems.iter() {
+                                    let elem_type = if s_elem.rest {
+                                        self.rest_element_type(s_elem.type_id)
+                                    } else {
+                                        s_elem.type_id
+                                    };
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        elem_type,
+                                        t_app_args[0],
+                                        priority,
+                                    );
+                                }
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 if let Some(TypeData::Callable(callable_id)) = self.interner.lookup(source) {
                     let callable = self.interner.callable_shape(callable_id);
                     trace!(
@@ -2499,6 +2542,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             self.constrain_types(ctx, var_map, s_elem.type_id, t_elem.type_id, priority);
+        }
+    }
+
+    /// Check if an evaluated type looks like an iterable object (has `[Symbol.iterator]`).
+    /// Used during constraint collection to detect when an Application target evaluates
+    /// to an Iterable-like interface, so Array/Tuple source element types can be
+    /// constrained against the Application's type arguments.
+    fn is_iterable_like_evaluated_object(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Has number index → array-like (ArrayLike<T>, ReadonlyArray<T>)
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                // Has Symbol.iterator property → iterable (Iterable<T>)
+                for prop in &shape.properties {
+                    let name = self.interner.resolve_atom(prop.name);
+                    if name == "__@iterator" || name == "[Symbol.iterator]" {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Intersection(members)) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|&m| self.is_iterable_like_evaluated_object(m))
+            }
+            _ => false,
         }
     }
 }
