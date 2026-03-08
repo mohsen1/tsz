@@ -91,23 +91,33 @@ pub(crate) fn format_12h(hour24: u32, min: u32, sec: u32) -> String {
     format!("{hour12}:{min:02}:{sec:02} {period}")
 }
 
-/// Print the TS6031 watch start message to stdout.
-fn print_watch_start() {
+/// Format a watch timestamp, optionally with gray ANSI coloring (matching tsc v6 pretty output).
+fn format_colored_timestamp(color: bool) -> String {
     let ts = format_watch_timestamp();
-    println!("[{ts}] Starting compilation in watch mode...");
+    if color {
+        format!("[\x1b[90m{ts}\x1b[0m]")
+    } else {
+        format!("[{ts}]")
+    }
+}
+
+/// Print the TS6031 watch start message to stdout.
+fn print_watch_start(color: bool) {
+    let ts = format_colored_timestamp(color);
+    println!("{ts} Starting compilation in watch mode...");
 }
 
 /// Print the TS6032 file change detected message to stdout.
-fn print_watch_change() {
-    let ts = format_watch_timestamp();
-    println!("[{ts}] File change detected. Starting incremental compilation...");
+fn print_watch_change(color: bool) {
+    let ts = format_colored_timestamp(color);
+    println!("{ts} File change detected. Starting incremental compilation...");
 }
 
 /// Print the TS6194 watch completion message to stdout.
-fn print_watch_complete(error_count: usize) {
-    let ts = format_watch_timestamp();
+fn print_watch_complete(error_count: usize, color: bool) {
+    let ts = format_colored_timestamp(color);
     let error_word = if error_count == 1 { "error" } else { "errors" };
-    println!("[{ts}] Found {error_count} {error_word}. Watching for file changes.");
+    println!("{ts} Found {error_count} {error_word}. Watching for file changes.");
 }
 
 const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -145,8 +155,8 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     let mut reporter = Reporter::new(color);
     let mut state = WatchState::new(args, &cwd);
 
-    print_watch_start();
-    state.compile_and_report(args, &cwd, &mut reporter, None)?;
+    print_watch_start(color);
+    state.compile_and_report(args, &cwd, &mut reporter, None, color)?;
 
     let (tx, rx) = mpsc::channel();
     let mut watcher = create_watcher(args, tx)?;
@@ -168,8 +178,8 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
         }
 
         if let Some(changed) = state.debouncer.flush_ready(Instant::now()) {
-            print_watch_change();
-            state.compile_and_report(args, &cwd, &mut reporter, Some(changed))?;
+            print_watch_change(color);
+            state.compile_and_report(args, &cwd, &mut reporter, Some(changed), color)?;
         }
     }
 }
@@ -303,6 +313,7 @@ impl WatchState {
         cwd: &Path,
         reporter: &mut Reporter,
         changed_paths: Option<Vec<PathBuf>>,
+        color: bool,
     ) -> Result<()> {
         let changed_paths_ref = changed_paths.as_deref();
         let needs_full_rebuild =
@@ -321,8 +332,8 @@ impl WatchState {
 
         // Clear console unless --preserveWatchOutput is set
         if !args.preserve_watch_output {
-            // Clear screen (ANSI escape sequence)
-            print!("\x1B[2J\x1B[H");
+            // Clear screen + scrollback (ANSI escape sequence, matches tsc v6)
+            print!("\x1B[2J\x1B[3J\x1B[H");
         }
 
         let error_count = match result {
@@ -348,7 +359,7 @@ impl WatchState {
             }
         };
 
-        print_watch_complete(error_count);
+        print_watch_complete(error_count, color);
 
         if let Ok(project) = load_project_state(args, cwd) {
             self.filter.ignore_dirs = compute_ignore_dirs(&project.base_dir, &project.resolved);
