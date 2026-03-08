@@ -72,6 +72,8 @@ pub struct ClassES5Emitter<'a> {
     leading_comment: Option<String>,
     /// When true, suppress `/** @class */` annotation and leading comments.
     remove_comments: bool,
+    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    tslib_prefix: bool,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -86,7 +88,12 @@ impl<'a> ClassES5Emitter<'a> {
             transforms: None,
             leading_comment: None,
             remove_comments: false,
+            tslib_prefix: false,
         }
+    }
+
+    pub const fn set_tslib_prefix(&mut self, enable: bool) {
+        self.tslib_prefix = enable;
     }
 
     /// Set transform directives for `ASTRef` nodes
@@ -179,6 +186,7 @@ impl<'a> ClassES5Emitter<'a> {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
+        printer.set_tslib_prefix(self.tslib_prefix);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
         }

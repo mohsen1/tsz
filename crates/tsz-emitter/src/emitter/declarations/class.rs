@@ -44,6 +44,46 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
+    /// Collect parameter decorators from a parameter list.
+    /// Returns Vec of (`param_index`, `decorator_node_indices`) for parameters that have decorators.
+    fn collect_param_decorators(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
+        let mut result = Vec::new();
+        for (i, &param_idx) in parameters.nodes.iter().enumerate() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let decorators = self.collect_class_decorators(&param.modifiers);
+            if !decorators.is_empty() {
+                result.push((i, decorators));
+            }
+        }
+        result
+    }
+
+    /// Collect parameter decorators from the constructor of a class.
+    /// Finds the constructor among class members, then collects decorators from its parameters.
+    fn collect_constructor_param_decorators(
+        &self,
+        members: &[NodeIndex],
+    ) -> Vec<(usize, Vec<NodeIndex>)> {
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.arena.get_constructor(member_node) else {
+                continue;
+            };
+            return self.collect_param_decorators(&ctor.parameters);
+        }
+        Vec::new()
+    }
+
     // =========================================================================
     // Decorator Metadata
     // =========================================================================
@@ -188,7 +228,8 @@ impl<'a> Printer<'a> {
         } else {
             "Object".to_string()
         };
-        self.write("__metadata(\"design:type\", ");
+        self.write_helper("__metadata");
+        self.write("(\"design:type\", ");
         self.write(&serialized);
         self.write(")");
     }
@@ -197,11 +238,13 @@ impl<'a> Printer<'a> {
     /// Caller must have already emitted a trailing comma+newline after decorators.
     fn emit_metadata_for_method(&mut self, parameters: &NodeList, return_type: NodeIndex) {
         // design:type is always Function for methods
-        self.write("__metadata(\"design:type\", Function),");
+        self.write_helper("__metadata");
+        self.write("(\"design:type\", Function),");
         self.write_line();
 
         // design:paramtypes
-        self.write("__metadata(\"design:paramtypes\", [");
+        self.write_helper("__metadata");
+        self.write("(\"design:paramtypes\", [");
         self.emit_serialized_param_types(parameters);
         self.write("]),");
         self.write_line();
@@ -209,11 +252,13 @@ impl<'a> Printer<'a> {
         // design:returntype
         if return_type.is_some() {
             let serialized = self.serialize_type_for_metadata(return_type);
-            self.write("__metadata(\"design:returntype\", ");
+            self.write_helper("__metadata");
+            self.write("(\"design:returntype\", ");
             self.write(&serialized);
             self.write(")");
         } else {
-            self.write("__metadata(\"design:returntype\", void 0)");
+            self.write_helper("__metadata");
+            self.write("(\"design:returntype\", void 0)");
         }
     }
 
@@ -252,7 +297,8 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            self.write("__metadata(\"design:paramtypes\", [");
+            self.write_helper("__metadata");
+            self.write("(\"design:paramtypes\", [");
             self.emit_serialized_param_types(&ctor.parameters);
             self.write("])");
             return;
@@ -293,20 +339,48 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Collect constructor parameter decorators
+        let ctor_param_decorators = self.collect_constructor_param_decorators(class_members);
+
         self.write(class_name);
-        self.write(" = __decorate([");
+        self.write(" = ");
+        self.write_helper("__decorate");
+        self.write("([");
         self.write_line();
         self.increase_indent();
+        let has_param_decs = !ctor_param_decorators.is_empty();
         let has_metadata = emit_metadata && !class_members.is_empty();
+        let has_more_after_decs = has_param_decs || has_metadata;
         for (i, &dec_idx) in decorators.iter().enumerate() {
             if let Some(dec_node) = self.arena.get(dec_idx)
                 && let Some(dec) = self.arena.get_decorator(dec_node)
             {
                 self.emit(dec.expression);
-                if i + 1 != decorators.len() || has_metadata {
+                if i + 1 != decorators.len() || has_more_after_decs {
                     self.write(",");
                 }
                 self.write_line();
+            }
+        }
+        // Emit __param(index, decorator) for constructor parameter decorators
+        for (pi, (param_idx, param_decs)) in ctor_param_decorators.iter().enumerate() {
+            for (di, &dec_idx) in param_decs.iter().enumerate() {
+                if let Some(dec_node) = self.arena.get(dec_idx)
+                    && let Some(dec) = self.arena.get_decorator(dec_node)
+                {
+                    self.write_helper("__param");
+                    self.write("(");
+                    self.write(&param_idx.to_string());
+                    self.write(", ");
+                    self.emit(dec.expression);
+                    self.write(")");
+                    let is_last_dec = di + 1 >= param_decs.len();
+                    let is_last_param = pi + 1 >= ctor_param_decorators.len();
+                    if !(is_last_dec && is_last_param) || has_metadata {
+                        self.write(",");
+                    }
+                    self.write_line();
+                }
             }
         }
         if has_metadata {
@@ -418,22 +492,54 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            self.write("__decorate([");
+            // Collect parameter decorators for methods/constructors
+            let param_decorators: Vec<(usize, Vec<NodeIndex>)> =
+                if let MemberMetadata::Method { ref parameters, .. } = metadata {
+                    self.collect_param_decorators(parameters)
+                } else {
+                    Vec::new()
+                };
+
+            self.write_helper("__decorate");
+            self.write("([");
             self.write_line();
             self.increase_indent();
 
-            // Determine if metadata will follow the decorators
+            // Determine if metadata or param decorators will follow
             let will_emit_metadata = emit_metadata && !matches!(metadata, MemberMetadata::Accessor);
+            let has_more = will_emit_metadata || !param_decorators.is_empty();
 
             for (i, &dec_idx) in decorators.iter().enumerate() {
                 if let Some(dec_node) = self.arena.get(dec_idx)
                     && let Some(dec) = self.arena.get_decorator(dec_node)
                 {
                     self.emit(dec.expression);
-                    if i + 1 != decorators.len() || will_emit_metadata {
+                    if i + 1 != decorators.len() || has_more {
                         self.write(",");
                     }
                     self.write_line();
+                }
+            }
+
+            // Emit __param(index, decorator) for each parameter decorator
+            for (pi, (param_idx, param_decs)) in param_decorators.iter().enumerate() {
+                for (di, &dec_idx) in param_decs.iter().enumerate() {
+                    if let Some(dec_node) = self.arena.get(dec_idx)
+                        && let Some(dec) = self.arena.get_decorator(dec_node)
+                    {
+                        self.write_helper("__param");
+                        self.write("(");
+                        self.write(&param_idx.to_string());
+                        self.write(", ");
+                        self.emit(dec.expression);
+                        self.write(")");
+                        let is_last_dec = di + 1 >= param_decs.len();
+                        let is_last_param = pi + 1 >= param_decorators.len();
+                        if !(is_last_dec && is_last_param) || will_emit_metadata {
+                            self.write(",");
+                        }
+                        self.write_line();
+                    }
                 }
             }
 
@@ -550,6 +656,9 @@ impl<'a> Printer<'a> {
                         es5_emitter.set_source_text(text);
                     }
                 }
+                if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+                    es5_emitter.set_tslib_prefix(true);
+                }
                 // Pass decorator info to the ES5 emitter so __decorate calls
                 // are emitted INSIDE the IIFE (before `return ClassName;`)
                 es5_emitter.set_decorator_info(ClassDecoratorInfo {
@@ -660,6 +769,9 @@ impl<'a> Printer<'a> {
                 } else {
                     es5_emitter.set_source_text(text);
                 }
+            }
+            if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+                es5_emitter.set_tslib_prefix(true);
             }
             let output = es5_emitter.emit_class(idx);
             let mappings = es5_emitter.take_mappings();
@@ -2173,7 +2285,9 @@ impl<'a> Printer<'a> {
             self.write("static ");
             self.write("get ");
             self.emit(prop.name);
-            self.write("() { return __classPrivateFieldGet(");
+            self.write("() { return ");
+            self.write_helper("__classPrivateFieldGet");
+            self.write("(");
             self.write(alias);
             self.write(", ");
             self.write(alias);
@@ -2185,7 +2299,9 @@ impl<'a> Printer<'a> {
             self.write("static ");
             self.write("set ");
             self.emit(prop.name);
-            self.write("(value) { __classPrivateFieldSet(");
+            self.write("(value) { ");
+            self.write_helper("__classPrivateFieldSet");
+            self.write("(");
             self.write(alias);
             self.write(", ");
             self.write(alias);
@@ -2195,14 +2311,18 @@ impl<'a> Printer<'a> {
         } else {
             self.write("get ");
             self.emit(prop.name);
-            self.write("() { return __classPrivateFieldGet(this, ");
+            self.write("() { return ");
+            self.write_helper("__classPrivateFieldGet");
+            self.write("(this, ");
             self.write(storage_name);
             self.write(", \"f\"); }");
             self.emit_trailing_comments(property_end);
             self.write_line();
             self.write("set ");
             self.emit(prop.name);
-            self.write("(value) { __classPrivateFieldSet(this, ");
+            self.write("(value) { ");
+            self.write_helper("__classPrivateFieldSet");
+            self.write("(this, ");
             self.write(storage_name);
             self.write(", value, \"f\"); }");
         }

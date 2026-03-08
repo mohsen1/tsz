@@ -68,6 +68,8 @@ pub struct IRPrinter<'a> {
     target_es5: bool,
     /// When true, comments like `/** @class */` are suppressed in output.
     remove_comments: bool,
+    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    tslib_prefix: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -216,6 +218,7 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
+            tslib_prefix: false,
         }
     }
 
@@ -234,6 +237,7 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
+            tslib_prefix: false,
         }
     }
 
@@ -252,12 +256,26 @@ impl<'a> IRPrinter<'a> {
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
+            tslib_prefix: false,
         }
     }
 
     /// Set transform directives for `ASTRef` emission
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms);
+    }
+
+    /// Enable `tslib_1.` prefix for runtime helper calls (importHelpers + CJS).
+    pub const fn set_tslib_prefix(&mut self, enable: bool) {
+        self.tslib_prefix = enable;
+    }
+
+    /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
+    fn write_helper(&mut self, name: &str) {
+        if self.tslib_prefix {
+            self.output.push_str("tslib_1.");
+        }
+        self.output.push_str(name);
     }
 
     /// Set the source text for `ASTRef` emission
@@ -894,7 +912,8 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::ExtendsHelper { class_name } => {
-                self.write("__extends(");
+                self.write_helper("__extends");
+                self.write("(");
                 self.write(class_name);
                 self.write(", _super);");
             }
@@ -1084,7 +1103,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("});");
             }
             IRNode::GeneratorBody { has_await, cases } => {
-                self.write("return __generator(this, function (_a) {");
+                self.write("return ");
+                self.write_helper("__generator");
+                self.write("(this, function (_a) {");
                 if !*has_await || cases.is_empty() {
                     // Simple body - always multi-line to match tsc
                     if cases.is_empty() {
@@ -1183,7 +1204,8 @@ impl<'a> IRPrinter<'a> {
                 receiver,
                 weakmap_name,
             } => {
-                self.write("__classPrivateFieldGet(");
+                self.write_helper("__classPrivateFieldGet");
+                self.write("(");
                 self.emit_node(receiver);
                 self.write(", ");
                 self.write(weakmap_name);
@@ -1194,7 +1216,8 @@ impl<'a> IRPrinter<'a> {
                 weakmap_name,
                 value,
             } => {
-                self.write("__classPrivateFieldSet(");
+                self.write_helper("__classPrivateFieldSet");
+                self.write("(");
                 self.emit_node(receiver);
                 self.write(", ");
                 self.write(weakmap_name);
@@ -1203,7 +1226,8 @@ impl<'a> IRPrinter<'a> {
                 self.write(", \"f\")");
             }
             IRNode::PrivateFieldIn { weakmap_name, obj } => {
-                self.write("__classPrivateFieldIn(");
+                self.write_helper("__classPrivateFieldIn");
+                self.write("(");
                 self.write(weakmap_name);
                 self.write(", ");
                 self.emit_node(obj);

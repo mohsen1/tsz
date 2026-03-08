@@ -628,7 +628,7 @@ impl<'a> Printer<'a> {
         }
 
         // Emit runtime helpers (must come BEFORE __esModule marker)
-        // Order: "use strict" → jsx-import(ESM) → helpers → __esModule → jsx-import(CJS) → exports init
+        // Order: "use strict" → jsx-import(ESM) → tslib-import(ESM) → helpers → __esModule → tslib-require(CJS) → exports init
 
         // Use helpers from TransformContext (populated during lowering pass)
         // This eliminates O(N) arena scans - all helpers are detected in Phase 1
@@ -657,6 +657,17 @@ impl<'a> Printer<'a> {
             if !helpers_code.is_empty() {
                 self.write(&helpers_code);
                 // emit_helpers() already adds newlines, no need to add more
+            }
+        }
+
+        // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`
+        if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
+            let names = helpers.needed_names();
+            if !names.is_empty() {
+                self.write("import { ");
+                self.write(&names.join(", "));
+                self.write(" } from \"tslib\";");
+                self.write_line();
             }
         }
 
@@ -771,6 +782,16 @@ impl<'a> Printer<'a> {
             // Emit CJS JSX runtime require() after exports preamble
             if let Some(ref jsx_import) = jsx_import_text {
                 self.write(jsx_import);
+            }
+
+            // Emit CJS tslib require after exports preamble
+            if self.ctx.options.import_helpers && helpers.any_needed() {
+                if self.ctx.options.target.is_es5() {
+                    self.write("var tslib_1 = require(\"tslib\");");
+                } else {
+                    self.write("const tslib_1 = require(\"tslib\");");
+                }
+                self.write_line();
             }
         }
 

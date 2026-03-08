@@ -891,7 +891,9 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(rest_target);
         }
-        self.write(" = __rest(");
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
         self.write(temp_name);
         self.write(", ");
         self.emit_rest_exclude_list(rest_props);
@@ -957,7 +959,9 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(rest_target);
         }
-        self.write(" = __rest(");
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
         self.write(temp_name);
         self.write(", ");
         self.emit_rest_exclude_list(rest_props);
@@ -1172,11 +1176,14 @@ impl<'a> Printer<'a> {
         if is_nested_iterator_for_of {
             self.write("(");
             self.write(&error_container_name);
-            self.write(" = void 0, __values(");
+            self.write(" = void 0, ");
+            self.write_helper("__values");
+            self.write("(");
             self.emit_expression(for_in_of.expression);
             self.write(")), ");
         } else {
-            self.write("__values(");
+            self.write_helper("__values");
+            self.write("(");
             self.emit_expression(for_in_of.expression);
             self.write("), ");
         }
@@ -1355,11 +1362,14 @@ impl<'a> Printer<'a> {
         if is_nested_iterator_for_of {
             self.write("(");
             self.write(&error_container_name);
-            self.write(" = void 0, __asyncValues(");
+            self.write(" = void 0, ");
+            self.write_helper("__asyncValues");
+            self.write("(");
             self.emit_expression(for_in_of.expression);
             self.write(")), ");
         } else {
-            self.write("__asyncValues(");
+            self.write_helper("__asyncValues");
+            self.write("(");
             self.emit_expression(for_in_of.expression);
             self.write("), ");
         }

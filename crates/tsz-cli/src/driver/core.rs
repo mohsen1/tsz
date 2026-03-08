@@ -1784,6 +1784,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.import_helpers {
         options.import_helpers = true;
+        options.printer.import_helpers = true;
         // importHelpers means "import from tslib" — suppress inline helper emission
         options.printer.no_emit_helpers = true;
     }

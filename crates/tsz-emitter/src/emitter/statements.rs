@@ -452,7 +452,8 @@ impl<'a> Printer<'a> {
             if using_async {
                 self.write("await ");
             }
-            self.write("__disposeResources(");
+            self.write_helper("__disposeResources");
+            self.write("(");
             self.write(&env_name);
             self.write(");");
             self.write_line();
@@ -691,7 +692,9 @@ impl<'a> Printer<'a> {
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
                     self.emit(decl.name);
-                    self.write(" = __addDisposableResource(");
+                    self.write(" = ");
+                    self.write_helper("__addDisposableResource");
+                    self.write("(");
                     self.write(&env_name);
                     self.write(", ");
                     self.emit(decl.initializer);
@@ -732,7 +735,8 @@ impl<'a> Printer<'a> {
         if using_async {
             self.write("await ");
         }
-        self.write("__disposeResources(");
+        self.write_helper("__disposeResources");
+        self.write("(");
         self.write(&env_name);
         self.write(");");
         self.write_line();
@@ -1882,7 +1886,9 @@ impl<'a> Printer<'a> {
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
                     self.emit(decl.name);
-                    self.write(" = __addDisposableResource(");
+                    self.write(" = ");
+                    self.write_helper("__addDisposableResource");
+                    self.write("(");
                     self.write(env_name);
                     self.write(", ");
                     self.emit(decl.initializer);

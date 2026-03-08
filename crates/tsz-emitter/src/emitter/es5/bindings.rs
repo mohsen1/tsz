@@ -147,7 +147,9 @@ impl<'a> Printer<'a> {
                     && name_node.kind == SyntaxKind::Identifier as u16
                 {
                     self.emit_decl_name(decl.name);
-                    self.write(" = __addDisposableResource(");
+                    self.write(" = ");
+                    self.write_helper("__addDisposableResource");
+                    self.write("(");
                     self.write(&env_name);
                     self.write(", ");
                     self.emit(decl.initializer);
@@ -190,7 +192,8 @@ impl<'a> Printer<'a> {
         self.write("finally {");
         self.write_line();
         self.increase_indent();
-        self.write("__disposeResources(");
+        self.write_helper("__disposeResources");
+        self.write("(");
         self.write(&env_name);
         self.write(");");
         self.write_line();
@@ -926,7 +929,9 @@ impl<'a> Printer<'a> {
                 if is_array_shape {
                     let read_name = self.get_temp_var_name();
                     self.write(&read_name);
-                    self.write(" = __read(");
+                    self.write(" = ");
+                    self.write_helper("__read");
+                    self.write("(");
                     if allow_expression_emit {
                         self.emit(initializer);
                     } else {
@@ -957,7 +962,9 @@ impl<'a> Printer<'a> {
                         let read_name = self.get_temp_var_name();
                         self.write(", ");
                         self.write(&read_name);
-                        self.write(" = __read(");
+                        self.write(" = ");
+                        self.write_helper("__read");
+                        self.write("(");
                         self.write(&value_name);
                         self.write(", ");
                         self.write(&child_count.to_string());
@@ -1024,7 +1031,9 @@ impl<'a> Printer<'a> {
                     let read_name = self.get_temp_var_name();
                     self.write(", ");
                     self.write(&read_name);
-                    self.write(" = __read(");
+                    self.write(" = ");
+                    self.write_helper("__read");
+                    self.write("(");
                     self.write(&defaulted_name);
                     self.write(", ");
                     self.write(&child_count.to_string());
@@ -1291,7 +1300,9 @@ impl<'a> Printer<'a> {
 
         let read_temp = self.get_temp_var_name();
         self.write(&read_temp);
-        self.write(" = __read(");
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
         self.destructuring_read_depth += 1;
         self.emit(source_expr);
         self.destructuring_read_depth -= 1;
@@ -1408,7 +1419,9 @@ impl<'a> Printer<'a> {
                         let element_count = self.binding_pattern_non_rest_count(unwrapped_node);
                         let nested_temp = self.get_temp_var_name();
                         self.write(&nested_temp);
-                        self.write(" = __read(");
+                        self.write(" = ");
+                        self.write_helper("__read");
+                        self.write("(");
                         self.write(&source_expr);
                         if element_count > 0 {
                             self.write(", ");
@@ -1510,7 +1523,9 @@ impl<'a> Printer<'a> {
                     let nested_temp = self.get_temp_var_name();
                     self.write(", ");
                     self.write(&nested_temp);
-                    self.write(" = __read(");
+                    self.write(" = ");
+                    self.write_helper("__read");
+                    self.write("(");
                     self.write(&elem_source);
                     if nested_count > 0 {
                         self.write(", ");
@@ -1590,7 +1605,9 @@ impl<'a> Printer<'a> {
         let read_temp = self.get_temp_var_name();
         // Note: caller has already handled the comma and set first=false
         self.write(&read_temp);
-        self.write(" = __read(");
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
         self.write(source_expr);
         self.write(", ");
         self.write(&element_count.to_string());

@@ -88,6 +88,8 @@ pub struct AsyncES5Emitter<'a> {
     mappings: Vec<Mapping>,
     this_capture_depth: u32,
     class_name: Option<String>,
+    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    tslib_prefix: bool,
 }
 
 impl<'a> AsyncES5Emitter<'a> {
@@ -101,11 +103,16 @@ impl<'a> AsyncES5Emitter<'a> {
             mappings: Vec::new(),
             this_capture_depth: 0,
             class_name: None,
+            tslib_prefix: false,
         }
     }
 
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+    }
+
+    pub const fn set_tslib_prefix(&mut self, enable: bool) {
+        self.tslib_prefix = enable;
     }
 
     pub fn set_lexical_this(&mut self, capture: bool) {
@@ -147,6 +154,7 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
         printer.emit(&ir);
         printer.take_output()
     }
@@ -161,6 +169,7 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
         printer.emit(&ir);
         printer.take_output()
     }
@@ -195,6 +204,7 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
         printer.emit(&ir);
         (printer.take_output(), hoisted)
     }
@@ -208,6 +218,7 @@ impl<'a> AsyncES5Emitter<'a> {
             printer.set_source_text(text);
         }
         printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
         printer.emit(&ir);
         printer.take_output()
     }

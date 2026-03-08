@@ -194,7 +194,9 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.write("return __awaiter(this");
+        self.write("return ");
+        self.write_helper("__awaiter");
+        self.write("(this");
         if move_params_to_generator {
             self.write(", arguments, void 0, function* (");
             let saved = self.ctx.emit_await_as_yield;

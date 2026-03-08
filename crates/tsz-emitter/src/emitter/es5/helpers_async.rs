@@ -111,7 +111,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
 
-                self.write("return __awaiter(");
+                self.write("return ");
+                self.write_helper("__awaiter");
+                self.write("(");
                 self.write(this_expr);
                 self.write(", arguments, void 0, function (");
                 self.emit_function_parameter_names_only(params);
@@ -128,7 +130,9 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
 
-                self.write("return __generator(this, function (_a) {");
+                self.write("return ");
+                self.write_helper("__generator");
+                self.write("(this, function (_a) {");
                 self.write_line();
                 self.increase_indent();
                 self.write("switch (_a.label) {");
@@ -166,12 +170,17 @@ impl<'a> Printer<'a> {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
             }
             async_emitter.set_lexical_this(this_expr != "this");
+            if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+                async_emitter.set_tslib_prefix(true);
+            }
 
             let body_has_await = async_emitter.body_contains_await(body);
             let hoist_function_decls_only =
                 !body_has_await && self.block_has_only_function_decls(body);
             if hoist_function_decls_only {
-                self.write("return __awaiter(");
+                self.write("return ");
+                self.write_helper("__awaiter");
+                self.write("(");
                 self.write(this_expr);
                 self.write(", void 0, void 0, function () {");
                 self.write_line();
@@ -191,7 +200,9 @@ impl<'a> Printer<'a> {
                     }
                 }
 
-                self.write("return __generator(this, function (_a) {");
+                self.write("return ");
+                self.write_helper("__generator");
+                self.write("(this, function (_a) {");
                 self.write_line();
                 self.increase_indent();
                 self.write("return [2 /*return*/];");
@@ -231,7 +242,9 @@ impl<'a> Printer<'a> {
             let generator_mappings = async_emitter.take_mappings();
 
             // Write with surrounding __awaiter wrapper
-            self.write("return __awaiter(");
+            self.write("return ");
+            self.write_helper("__awaiter");
+            self.write("(");
             self.write(this_expr);
             self.write(", void 0, void 0, function () {");
             self.write_line();
@@ -289,7 +302,9 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         // return __awaiter(this, void 0, void 0, function* () {
-        self.write("return __awaiter(");
+        self.write("return ");
+        self.write_helper("__awaiter");
+        self.write("(");
         self.write(this_expr);
         if move_params_to_generator {
             self.write(", arguments, void 0, function* (");
@@ -484,6 +499,9 @@ impl<'a> Printer<'a> {
             } else {
                 es5_emitter.set_source_text(text);
             }
+        }
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            es5_emitter.set_tslib_prefix(true);
         }
 
         let (class_name, es5_output) = if class_data.name.is_some() {
@@ -820,7 +838,8 @@ impl<'a> Printer<'a> {
         self.write(".call.apply(");
         self.write(&method_temp);
         self.write(", ");
-        self.write("__spreadArray([");
+        self.write_helper("__spreadArray");
+        self.write("([");
         self.write(&this_temp);
         self.write("], ");
         self.emit_spread_args_array(&args.nodes);
@@ -941,7 +960,8 @@ impl<'a> Printer<'a> {
 
         // Open __spreadArray calls for all but the last segment
         for _ in 0..segments.len() - 1 {
-            self.write("__spreadArray(");
+            self.write_helper("__spreadArray");
+            self.write("(");
         }
 
         // Emit the first segment as a complete unit
@@ -953,7 +973,8 @@ impl<'a> Printer<'a> {
             }
             ArraySegment::Spread(spread_idx) => {
                 // First segment is spread: emit as __spreadArray([], spread, false)
-                self.write("__spreadArray([], ");
+                self.write_helper("__spreadArray");
+                self.write("([], ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }

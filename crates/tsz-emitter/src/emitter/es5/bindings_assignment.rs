@@ -1126,7 +1126,9 @@ impl<'a> Printer<'a> {
                     if let Some(spread) = self.arena.get_spread(elem_node) {
                         self.emit_assignment_separator(first);
                         self.emit(spread.expression);
-                        self.write(" = __rest(");
+                        self.write(" = ");
+                        self.write_helper("__rest");
+                        self.write("(");
                         self.write(source);
                         self.write(", [");
                         // Collect non-rest property names

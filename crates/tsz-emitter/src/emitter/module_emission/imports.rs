@@ -396,7 +396,9 @@ impl<'a> Printer<'a> {
             if self.ctx.options.es_module_interop {
                 // With esModuleInterop:
                 // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
-                self.write(" = __importDefault(require(\"");
+                self.write(" = ");
+                self.write_helper("__importDefault");
+                self.write("(require(\"");
                 self.write(&module_spec);
                 self.write("\"));");
             } else {
@@ -431,7 +433,9 @@ impl<'a> Printer<'a> {
                     self.write(&ns_name);
                     if self.ctx.options.es_module_interop {
                         // `import * as ns from "mod"` -> `const ns = __importStar(require("mod"));`
-                        self.write(" = __importStar(require(\"");
+                        self.write(" = ");
+                        self.write_helper("__importStar");
+                        self.write("(require(\"");
                         self.write(&module_spec);
                         self.write("\"));");
                     } else {
@@ -467,7 +471,9 @@ impl<'a> Printer<'a> {
         self.write_var_or_const();
         self.write(&module_var);
         if use_import_star {
-            self.write(" = __importStar(require(\"");
+            self.write(" = ");
+            self.write_helper("__importStar");
+            self.write("(require(\"");
             self.write(&module_spec);
             self.write("\"));");
         } else {
@@ -761,7 +767,9 @@ impl<'a> Printer<'a> {
                 {
                     let dep_var = dep_var.to_string();
                     self.write(&dep_var);
-                    self.write(" = __importDefault(");
+                    self.write(" = ");
+                    self.write_helper("__importDefault");
+                    self.write("(");
                     self.write(&dep_var);
                     self.write(");");
                     self.write_line();
@@ -777,7 +785,9 @@ impl<'a> Printer<'a> {
                 let local_name = self.get_identifier_text_idx(named_imports.name);
                 if !local_name.is_empty() {
                     self.write(&local_name);
-                    self.write(" = __importStar(");
+                    self.write(" = ");
+                    self.write_helper("__importStar");
+                    self.write("(");
                     self.write(&local_name);
                     self.write(");");
                     self.write_line();
