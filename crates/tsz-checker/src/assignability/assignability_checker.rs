@@ -453,8 +453,16 @@ impl<'a> CheckerState<'a> {
     /// the type system to validate assignments, function calls, returns, etc.
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
+
+        if source == target {
+            return true;
+        }
 
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
@@ -480,6 +488,10 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
+        if source == target {
+            return true;
+        }
+
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
 
         // Post-check: keyof type checking logic
@@ -498,7 +510,13 @@ impl<'a> CheckerState<'a> {
 
     /// Like `is_assignable_to`, but forces the strict-function-types relation flag.
     pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
+        if source == target {
+            return true;
+        }
         self.check_assignability_cached(
             source,
             target,
@@ -513,7 +531,13 @@ impl<'a> CheckerState<'a> {
     /// overrides, caching, and precondition setup) while pinning nullability
     /// semantics to strict mode for localized checks.
     pub fn is_assignable_to_strict_null(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
+        if source == target {
+            return true;
+        }
         self.check_assignability_cached(
             source,
             target,
@@ -555,6 +579,9 @@ impl<'a> CheckerState<'a> {
     /// Follows the same pattern as `is_assignable_to` but calls `is_assignable_to_bivariant_callback`
     /// which disables `strict_function_types` for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
@@ -562,6 +589,10 @@ impl<'a> CheckerState<'a> {
 
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
+
+        if source == target {
+            return true;
+        }
 
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning

@@ -112,6 +112,10 @@ name = "map_lib_query_tests"
 path = "tests/map_lib_query_tests.rs"
 
 [[test]]
+name = "stack_overflow_regressions"
+path = "tests/stack_overflow_regressions.rs"
+
+[[test]]
 name = "static_member_access_types"
 path = "tests/static_member_access_types.rs"
 

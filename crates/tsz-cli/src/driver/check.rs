@@ -575,7 +575,9 @@ pub(super) fn collect_diagnostics(
                     .iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
-                        let source_file_rank = if !is_declaration_file(&file.file_name) {
+                        let source_file_rank = if extended_progress_enabled
+                            && !is_declaration_file(&file.file_name)
+                        {
                             let start_rank =
                                 started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
                             report_parallel_file_start(start_rank, &file.file_name);
@@ -670,7 +672,9 @@ pub(super) fn collect_diagnostics(
                     .par_iter()
                     .map(|&file_idx| {
                         let file = &program.files[file_idx];
-                        let source_file_rank = if !is_declaration_file(&file.file_name) {
+                        let source_file_rank = if extended_progress_enabled
+                            && !is_declaration_file(&file.file_name)
+                        {
                             let start_rank =
                                 started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
                             report_parallel_file_start(start_rank, &file.file_name);
@@ -771,14 +775,15 @@ pub(super) fn collect_diagnostics(
                 .iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
-                    let source_file_rank = if !is_declaration_file(&file.file_name) {
-                        let start_rank =
-                            started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
-                        report_parallel_file_start(start_rank, &file.file_name);
-                        Some(start_rank)
-                    } else {
-                        None
-                    };
+                    let source_file_rank =
+                        if extended_progress_enabled && !is_declaration_file(&file.file_name) {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
                     let trace_parallel_file_rank = source_file_rank
                         .filter(|rank| *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT);
                     let file_total_start = Instant::now();
