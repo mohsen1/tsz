@@ -1130,12 +1130,15 @@ impl<'a> CheckerState<'a> {
                             properties.values().cloned().collect();
                         let name_atom = self.ctx.types.intern_string(&name);
                         if !this_props.iter().any(|p| p.name == name_atom) {
+                            // Getter-only accessors are readonly in the object type
+                            let is_getter_only = elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+                                && !setter_names.contains(&name_atom);
                             this_props.push(PropertyInfo {
                                 name: name_atom,
                                 type_id: TypeId::ANY,
                                 write_type: TypeId::ANY,
                                 optional: false,
-                                readonly: false,
+                                readonly: is_getter_only,
                                 is_method: false,
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,

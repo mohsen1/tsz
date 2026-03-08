@@ -293,6 +293,33 @@ impl<'a> CheckerState<'a> {
         elaborated
     }
 
+    /// Try to elaborate a variable initializer assignment failure by checking
+    /// each property of an object literal against the target type's properties
+    /// or index signatures.
+    ///
+    /// This is specifically for variable declarations (not function call arguments).
+    /// Only handles `OBJECT_LITERAL_EXPRESSION` — arrays and functions are handled
+    /// separately by `try_elaborate_initializer_elements`.
+    ///
+    /// Returns `true` if elaboration produced property-level diagnostics.
+    pub fn try_elaborate_object_literal_properties_for_var_init(
+        &mut self,
+        init_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(init_node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        self.try_elaborate_object_literal_properties(init_idx, declared_type)
+    }
+
     /// Try to elaborate a variable initializer assignment failure with per-element errors.
     ///
     /// When a variable like `let x: [number, any] = [undefined, undefined]` fails assignability,
