@@ -3038,12 +3038,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Return true if a module declaration should be emitted when API filtering is enabled.
-    pub(crate) const fn should_emit_public_api_module(&self, is_exported: bool) -> bool {
+    pub(crate) fn should_emit_public_api_module(
+        &self,
+        is_exported: bool,
+        name_idx: NodeIndex,
+    ) -> bool {
         if !self.public_api_filter_enabled() {
             return true;
         }
 
-        is_exported
+        is_exported || self.should_emit_public_api_dependency(name_idx)
     }
 
     /// Return true if a declaration should be skipped because it's a

@@ -346,9 +346,40 @@ impl<'a> UsageAnalyzer<'a> {
             let old = self.in_value_pos;
             self.in_value_pos = true;
             self.analyze_entity_name(export_assign.expression);
+            self.analyze_local_import_equals_dependency(export_assign.expression);
             self.in_value_pos = old;
             // Also type usage
             self.analyze_entity_name(export_assign.expression);
+            self.analyze_local_import_equals_dependency(export_assign.expression);
+        }
+    }
+
+    fn analyze_local_import_equals_dependency(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        let Some(ident) = self.arena.get_identifier(name_node) else {
+            return;
+        };
+        let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) else {
+            return;
+        };
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return;
+        };
+
+        let mut declarations = symbol.declarations.clone();
+        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
+            declarations.push(symbol.value_declaration);
+        }
+
+        for decl_idx in declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                self.analyze_import_equals_declaration(decl_idx);
+            }
         }
     }
 
