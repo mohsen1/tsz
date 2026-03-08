@@ -1500,6 +1500,29 @@ fn test_function_type_in_declaration() {
 }
 
 #[test]
+fn test_function_variable_type_preserves_inline_parameter_comments() {
+    let output = emit_dts(
+        r#"
+const fooFunc = function (/** foo */ value: string): string {
+    return value;
+};
+const lambdaFoo = (/** left */ left: number, /** right */ right: number): number => left + right;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const fooFunc: (/** foo */ value: string) => string;"),
+        "Expected function expression parameter comment to be preserved: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare const lambdaFoo: (/** left */ left: number, /** right */ right: number) => number;"
+        ),
+        "Expected arrow function parameter comments to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_array_type_in_declaration() {
     let output = emit_dts("export type Numbers = number[];");
     assert!(output.contains("number[]"), "Expected array type: {output}");
