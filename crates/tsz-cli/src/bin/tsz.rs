@@ -24,7 +24,7 @@ fn main() -> Result<()> {
 
     // Check for TS6369: --build must be the first argument
     if let Some(msg) = check_build_position(&preprocessed) {
-        println!("{msg}");
+        print!("{msg}");
         std::process::exit(1);
     }
 
@@ -88,7 +88,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // print version + help and exit 1 (matching tsc v6 behavior).
     if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
         println!("Version {TSC_VERSION}");
-        print!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(1);
     }
 
@@ -435,7 +435,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
 
     // --all takes precedence (with or without --help)
     if has_all {
-        print!(
+        println!(
             "{}",
             help::colorize_help(&help::render_help_all(TSC_VERSION))
         );
@@ -444,7 +444,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
 
     // --help / -h / -?
     if has_help {
-        print!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(0);
     }
 
@@ -881,27 +881,36 @@ fn split_response_line(line: &str) -> Vec<String> {
     args
 }
 
-/// Check that --build/-b is the first argument (TS6369).
-/// Returns an error message if --build/-b appears but is not first.
+/// Check that --build/-b is the first argument.
+/// tsc v6 behavior:
+///   - `--build` (long form) not first → TS6369 ("must be first")
+///   - `-b` (short form) not first → TS5023 ("unknown compiler option")
+/// Returns an error message if either form appears but is not first.
 fn check_build_position(args: &[OsString]) -> Option<String> {
     // Skip program name (index 0)
-    let mut found_build_pos: Option<usize> = None;
     let mut first_non_program = true;
 
-    for (i, arg) in args.iter().enumerate().skip(1) {
+    for arg in args.iter().skip(1) {
         let s = arg.to_string_lossy();
-        if s == "--build" || s == "-b" {
+        if s == "--build" {
             if !first_non_program {
-                found_build_pos = Some(i);
+                return Some(
+                    "error TS6369: Option '--build' must be the first command line argument.\n"
+                        .to_string(),
+                );
             }
-            break;
+            return None;
+        }
+        if s == "-b" {
+            if !first_non_program {
+                return Some("error TS5023: Unknown compiler option '-b'.\n".to_string());
+            }
+            return None;
         }
         first_non_program = false;
     }
 
-    found_build_pos.map(|_| {
-        "error TS6369: Option '--build' must be the first command line argument.\n".to_string()
-    })
+    None
 }
 
 /// Handle a clap parsing error by reformatting it as a tsc-style diagnostic.

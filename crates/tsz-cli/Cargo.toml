@@ -55,6 +55,10 @@ tracing-tree = { workspace = true }
 [build-dependencies]
 serde_json = { workspace = true }
 
+[[test]]
+name = "tsc_compat_tests"
+path = "tests/tsc_compat_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
