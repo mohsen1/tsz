@@ -1178,6 +1178,33 @@ impl<'a> Printer<'a> {
                     self.emit_trailing_comments_before(token_end, upper_bound);
                     self.write_line();
                 }
+            } else if !is_erased {
+                // Statement produced no output but wasn't formally erased (e.g.,
+                // `export var x: Type;` in CJS where the export was hoisted to the
+                // preamble, or an import that was elided by the text heuristic).
+                // Consume its trailing same-line comments so they don't leak to the
+                // next statement's leading comment emission.
+                let scan_end = next_stmt_pos.unwrap_or(stmt_node.end);
+                let stmt_token_end = self.find_token_end_before_trivia(stmt_node_pos, scan_end);
+                let line_end = if let Some(text) = self.source_text {
+                    let bytes = text.as_bytes();
+                    let mut pos = stmt_token_end as usize;
+                    while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                    pos as u32
+                } else {
+                    stmt_token_end
+                };
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end <= line_end {
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                last_erased_stmt_end = Some(line_end);
             }
 
             // Note: We do NOT skip inner comments here. The "emit comments before

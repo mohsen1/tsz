@@ -1220,13 +1220,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Position i is beyond this member's positional params, but the
                     // member has a rest param that covers all remaining positions.
                     // Include its element type in the intersection.
-                    if let Some(rest_param) = params.last().filter(|p| p.rest) {
-                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                    if let Some(rest_param) = params.last().filter(|p| p.rest)
+                        && let Some(elem) = crate::type_queries::get_array_element_type(
                             self.interner,
                             rest_param.type_id,
-                        ) {
-                            param_types_at_pos.push(elem);
-                        }
+                        )
+                    {
+                        param_types_at_pos.push(elem);
                     }
                 }
                 // If a member doesn't have a param at this position and has no rest,
