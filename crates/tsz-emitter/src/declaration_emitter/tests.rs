@@ -1104,6 +1104,37 @@ exports.K = class K {
 }
 
 #[test]
+fn test_object_literal_computed_numeric_names_prefer_syntax_shape() {
+    let output = emit_dts(
+        r#"
+var v = {
+  [-1]: {},
+  [+1]: {},
+  [~1]: {},
+  [!1]: {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[-1]: {};"),
+        "Expected negative computed numeric literal to survive in fallback object typing: {output}"
+    );
+    assert!(
+        output.contains("1: {};"),
+        "Expected unary-plus computed numeric literal to normalize to a numeric property: {output}"
+    );
+    assert!(
+        !output.contains("[~1]: {}"),
+        "Did not expect non-emittable computed names to survive fallback object typing: {output}"
+    );
+    assert!(
+        !output.contains("[!1]: {}"),
+        "Did not expect non-emittable computed names to survive fallback object typing: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
     let source = r#"
 class Handler {
