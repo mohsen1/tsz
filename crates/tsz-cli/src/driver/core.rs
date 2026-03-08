@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::args::{CliArgs, Module, ModuleDetection};
 use crate::config::{
@@ -42,7 +42,9 @@ use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]
 use std::cell::RefCell;
-use tsz::parallel::{self, BindResult, BoundFile, CheckStats, MergedProgram};
+use tsz::parallel::{
+    self, BindResult, BoundFile, CheckStats, MergedProgram, MergedProgramResidencyStats,
+};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::{NodeAccess, NodeArena};
@@ -726,14 +728,22 @@ fn compile_inner(
 ) -> Result<CompilationResult> {
     let _compile_span = tracing::info_span!("compile", cwd = %cwd.display()).entered();
     let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
+    let extended_progress_enabled = args.extended_diagnostics;
     let compile_start = Instant::now();
 
-    let perf_log_phase = |phase: &'static str, start: Instant| {
+    let report_phase = |phase: &'static str, start: Instant| {
+        let elapsed = start.elapsed();
         if perf_enabled {
             tracing::info!(
                 target: "wasm::perf",
                 phase,
-                ms = start.elapsed().as_secs_f64() * 1000.0
+                ms = elapsed.as_secs_f64() * 1000.0
+            );
+        }
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_phase_progress(phase, elapsed)
             );
         }
     };
@@ -977,7 +987,7 @@ fn compile_inner(
             changed_set.as_ref(),
         )?
     };
-    perf_log_phase("read_sources", read_sources_start);
+    report_phase("read_sources", read_sources_start);
 
     // Update dependencies in the cache
     if let Some(ref mut c) = effective_cache {
@@ -1071,7 +1081,7 @@ fn compile_inner(
     // 2) checker lib contexts (global symbol/type resolution)
     let load_libs_start = Instant::now();
     let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding_strict(&lib_path_refs)?;
-    perf_log_phase("load_libs", load_libs_start);
+    report_phase("load_libs", load_libs_start);
 
     let build_program_start = Instant::now();
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
@@ -1092,7 +1102,14 @@ fn compile_inner(
         let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
         (parallel::merge_bind_results(bind_results), None)
     };
-    perf_log_phase("build_program", build_program_start);
+    report_phase("build_program", build_program_start);
+    let program_residency = program.residency_stats();
+    if extended_progress_enabled {
+        eprintln!(
+            "{}",
+            format_extended_diagnostics_residency_snapshot(&program_residency)
+        );
+    }
 
     // Update import symbol IDs if we have a cache
     if let Some(ref mut c) = effective_cache {
@@ -1106,7 +1123,7 @@ fn compile_inner(
     } else {
         load_lib_files_for_contexts(&lib_files)
     };
-    perf_log_phase("build_lib_contexts", build_lib_contexts_start);
+    report_phase("build_lib_contexts", build_lib_contexts_start);
 
     let collect_diagnostics_start = Instant::now();
     let parallel_type_caches = std::sync::Mutex::new(FxHashMap::default());
@@ -1118,8 +1135,9 @@ fn compile_inner(
         &lib_contexts,
         &parallel_type_caches,
         has_deprecation_diagnostics,
+        extended_progress_enabled,
     );
-    perf_log_phase("collect_diagnostics", collect_diagnostics_start);
+    report_phase("collect_diagnostics", collect_diagnostics_start);
 
     // Get reference to type caches for declaration emit.
     // In the parallel (no-cache) path, type caches are returned via the
@@ -1229,7 +1247,7 @@ fn compile_inner(
         })?;
         write_outputs(&outputs)?
     };
-    perf_log_phase("emit_outputs", emit_outputs_start);
+    report_phase("emit_outputs", emit_outputs_start);
 
     // Find the most recent .d.ts file for BuildInfo tracking
     let latest_changed_dts_file = if !emitted_files.is_empty() {
@@ -1297,7 +1315,7 @@ fn compile_inner(
         file_count: program.files.len(),
         function_count: 0,
         diagnostic_count: diagnostics.len(),
-        program_residency: program.residency_stats(),
+        program_residency,
     });
 
     Ok(CompilationResult {
@@ -1320,6 +1338,30 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         file_infos: Vec::new(),
         check_stats: None,
     }
+}
+
+fn format_extended_diagnostics_phase_progress(phase: &str, elapsed: Duration) -> String {
+    format!(
+        "[extendedDiagnostics] phase {phase}: {:.2}ms",
+        elapsed.as_secs_f64() * 1000.0
+    )
+}
+
+fn format_extended_diagnostics_residency_snapshot(stats: &MergedProgramResidencyStats) -> String {
+    format!(
+        "[extendedDiagnostics] residency files={} bound_file_arenas={} unique_arenas={} global_symbols={} file_local_symbols={} module_export_symbols={} cross_file_symbol_arenas={} lib_symbols={} symbol_entries={} declaration_buckets={} declaration_mappings={}",
+        stats.file_count,
+        stats.bound_file_arena_count,
+        stats.unique_arena_count,
+        stats.global_symbol_count,
+        stats.file_local_symbol_count,
+        stats.module_export_symbol_count,
+        stats.cross_file_node_symbol_arena_count,
+        stats.lib_symbol_count,
+        stats.symbol_arena_count,
+        stats.declaration_arena_bucket_count,
+        stats.declaration_arena_mapping_count
+    )
 }
 
 pub(super) fn no_input_diagnostics_for_config(

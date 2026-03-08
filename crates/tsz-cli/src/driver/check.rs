@@ -2,6 +2,7 @@
 
 use super::check_utils::*;
 use super::*;
+use std::time::{Duration, Instant};
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -53,9 +54,18 @@ pub(super) fn collect_diagnostics(
     lib_contexts: &[LibContext],
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
+    extended_progress_enabled: bool,
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    let report_progress = |phase: &'static str, start: Instant| {
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(phase, start.elapsed())
+            );
+        }
+    };
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
@@ -65,6 +75,7 @@ pub(super) fn collect_diagnostics(
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
 
     {
+        let phase_start = Instant::now();
         let _span = tracing::info_span!("build_program_path_maps").entered();
         for (idx, file) in program.files.iter().enumerate() {
             let canonical = canonicalize_or_owned(Path::new(&file.file_name));
@@ -72,20 +83,8 @@ pub(super) fn collect_diagnostics(
             canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
             canonical_to_file_idx.insert(canonical, idx);
         }
+        report_progress("build_program_path_maps", phase_start);
     }
-
-    // Pre-create all binders for cross-file resolution
-    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
-        let _span = tracing::info_span!("build_cross_file_binders").entered();
-        program
-            .files
-            .iter()
-            .enumerate()
-            .map(|(file_idx, file)| {
-                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
-            })
-            .collect()
-    });
 
     // Extract is_external_module from BoundFile to preserve state across file bindings
     // This fixes TS2664 which requires accurate per-file is_external_module values
@@ -96,16 +95,6 @@ pub(super) fn collect_diagnostics(
             .map(|file| (file.file_name.clone(), file.is_external_module))
             .collect(),
     );
-
-    // Collect all arenas for cross-file resolution
-    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
-        let _span = tracing::info_span!("collect_all_arenas").entered();
-        program
-            .files
-            .iter()
-            .map(|file| Arc::clone(&file.arena))
-            .collect()
-    });
 
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
@@ -120,6 +109,7 @@ pub(super) fn collect_diagnostics(
     > = FxHashMap::default();
 
     {
+        let phase_start = Instant::now();
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -318,7 +308,60 @@ pub(super) fn collect_diagnostics(
                 }
             }
         }
+        report_progress("build_resolved_module_maps", phase_start);
     }
+
+    if options.no_check {
+        let phase_start = Instant::now();
+        diagnostics.extend(collect_no_check_file_diagnostics(
+            program,
+            &resolved_module_errors,
+        ));
+        report_progress("collect_no_check_file_diagnostics", phase_start);
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program, options, base_dir,
+        ));
+
+        for file in &program.files {
+            used_paths.insert(PathBuf::from(&file.file_name));
+        }
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        return diagnostics;
+    }
+
+    // Pre-create all binders for cross-file resolution
+    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
+        let phase_start = Instant::now();
+        let _span = tracing::info_span!("build_cross_file_binders").entered();
+        let binders = program
+            .files
+            .iter()
+            .enumerate()
+            .map(|(file_idx, file)| {
+                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
+            })
+            .collect();
+        report_progress("build_cross_file_binders", phase_start);
+        binders
+    });
+
+    // Collect all arenas for cross-file resolution
+    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
+        let phase_start = Instant::now();
+        let _span = tracing::info_span!("collect_all_arenas").entered();
+        let arenas = program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect();
+        report_progress("collect_all_arenas", phase_start);
+        arenas
+    });
 
     let resolved_module_paths = Arc::new(resolved_module_paths);
     let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
@@ -358,6 +401,7 @@ pub(super) fn collect_diagnostics(
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
+        let phase_start = Instant::now();
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -373,6 +417,7 @@ pub(super) fn collect_diagnostics(
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker.prime_boxed_types();
+        report_progress("prime_boxed_types", phase_start);
     }
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
@@ -413,8 +458,9 @@ pub(super) fn collect_diagnostics(
 
         // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
         let per_file_binders: Vec<BinderState> = {
+            let phase_start = Instant::now();
             let _prep_span = tracing::info_span!("prepare_binders").entered();
-            work_queue
+            let binders = work_queue
                 .iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
@@ -439,7 +485,9 @@ pub(super) fn collect_diagnostics(
                     }
                     binder
                 })
-                .collect()
+                .collect();
+            report_progress("prepare_binders", phase_start);
+            binders
         };
 
         let work_items: Vec<usize> = work_queue.into_iter().collect();
@@ -456,11 +504,12 @@ pub(super) fn collect_diagnostics(
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
+            let phase_start = Instant::now();
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
             };
-            if work_items.len() <= 1 {
+            let results = if work_items.len() <= 1 {
                 work_items
                     .iter()
                     .zip(per_file_binders)
@@ -519,38 +568,45 @@ pub(super) fn collect_diagnostics(
                         check_file_for_parallel(context)
                     })
                     .collect()
-            }
+            };
+            report_progress("parallel_check_files", phase_start);
+            results
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = work_items
-            .iter()
-            .zip(per_file_binders.into_iter())
-            .map(|(&file_idx, binder)| {
-                let context = CheckFileForParallelContext {
-                    file_idx,
-                    binder,
-                    program,
-                    query_cache: &query_cache,
-                    compiler_options: &compiler_options,
-                    lib_contexts: &lib_ctx_for_parallel,
-                    all_arenas: &all_arenas,
-                    all_binders: &all_binders,
-                    resolved_module_paths: &resolved_module_paths,
-                    resolved_module_specifiers: &resolved_module_specifiers,
-                    resolved_module_errors: &resolved_module_errors,
-                    is_external_module_by_file: &is_external_module_by_file,
-                    file_is_esm_map: &file_is_esm_map,
-                    shared_lib_cache: Arc::clone(&shared_lib_cache),
-                    no_check,
-                    check_js,
-                    explicit_check_js_false,
-                    skip_lib_check,
-                    has_deprecation_diagnostics,
-                };
-                check_file_for_parallel(context)
-            })
-            .collect();
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
+            let phase_start = Instant::now();
+            let results = work_items
+                .iter()
+                .zip(per_file_binders.into_iter())
+                .map(|(&file_idx, binder)| {
+                    let context = CheckFileForParallelContext {
+                        file_idx,
+                        binder,
+                        program,
+                        query_cache: &query_cache,
+                        compiler_options: &compiler_options,
+                        lib_contexts: &lib_ctx_for_parallel,
+                        all_arenas: &all_arenas,
+                        all_binders: &all_binders,
+                        resolved_module_paths: &resolved_module_paths,
+                        resolved_module_specifiers: &resolved_module_specifiers,
+                        resolved_module_errors: &resolved_module_errors,
+                        is_external_module_by_file: &is_external_module_by_file,
+                        file_is_esm_map: &file_is_esm_map,
+                        shared_lib_cache: Arc::clone(&shared_lib_cache),
+                        no_check,
+                        check_js,
+                        explicit_check_js_false,
+                        skip_lib_check,
+                        has_deprecation_diagnostics,
+                    };
+                    check_file_for_parallel(context)
+                })
+                .collect();
+            report_progress("parallel_check_files", phase_start);
+            results
+        };
 
         {
             let mut tc_out = type_cache_output.lock().unwrap();
@@ -839,6 +895,50 @@ pub(super) fn collect_diagnostics(
     diagnostics
 }
 
+fn format_extended_diagnostics_collect_progress(phase: &str, elapsed: Duration) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::{phase}: {:.2}ms",
+        elapsed.as_secs_f64() * 1000.0
+    )
+}
+
+fn collect_no_check_file_diagnostics(
+    program: &MergedProgram,
+    resolved_module_errors: &FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file) in program.files.iter().enumerate() {
+        diagnostics.extend(
+            file.parse_diagnostics
+                .iter()
+                .map(|d| parse_diagnostic_to_checker(&file.file_name, d)),
+        );
+
+        for (specifier, specifier_node, _) in
+            collect_module_specifiers(&file.arena, file.source_file)
+        {
+            let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone())) else {
+                continue;
+            };
+            let (start, length) = file
+                .arena
+                .get(specifier_node)
+                .map(|node| (node.pos, node.end.saturating_sub(node.pos)))
+                .unwrap_or((0, 0));
+            diagnostics.push(Diagnostic::error(
+                file.file_name.clone(),
+                start,
+                length,
+                error.message.clone(),
+                error.code,
+            ));
+        }
+    }
+
+    diagnostics
+}
+
 fn propagate_module_export_maps(
     binder: &mut BinderState,
     specifier: &str,
@@ -1123,6 +1223,7 @@ pub(super) fn check_file_for_parallel<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_is_declaration_file() {
@@ -1211,5 +1312,17 @@ let __: B = new B();"#
             .resolve_import_with_reexports_type_only("./c", "A")
             .expect("expected A to resolve via wildcard chain");
         assert!(exports_via_c.1, "A should be considered type-only via ./b");
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_progress() {
+        let line = format_extended_diagnostics_collect_progress(
+            "build_resolved_module_maps",
+            Duration::from_millis(875),
+        );
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::build_resolved_module_maps: 875.00ms"
+        );
     }
 }

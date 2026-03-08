@@ -6486,3 +6486,58 @@ fn ts2303_not_emitted_for_import_equals_in_js_file() {
         "TS8002 should still be emitted for `import = require()` in JS file"
     );
 }
+
+#[test]
+fn no_check_still_reports_unresolved_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.ts"),
+        "import { value } from \"./missing\";\nvalue;\n",
+    );
+
+    let mut args = default_args();
+    args.files = vec![PathBuf::from("index.ts")];
+    args.no_check = true;
+    args.no_emit = true;
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        }),
+        "Expected TS2307 under --noCheck, got codes: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_check_skips_type_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("index.ts"), "const value: string = 1;\nvalue;\n");
+
+    let mut args = default_args();
+    args.files = vec![PathBuf::from("index.ts")];
+    args.no_check = true;
+    args.no_emit = true;
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Did not expect semantic diagnostics under --noCheck, got: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
