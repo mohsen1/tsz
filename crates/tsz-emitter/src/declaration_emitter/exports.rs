@@ -18,6 +18,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self.js_skipped_reexports.contains(&export_idx) {
+            return;
+        }
+        if let Some(group) = self.js_grouped_reexports.get(&export_idx).cloned() {
+            self.emit_grouped_js_reexports(&group);
+            return;
+        }
+
         if self.should_fold_js_named_export_clause(export_idx) {
             return;
         }
@@ -126,6 +134,50 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_node(export.module_specifier);
         }
 
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_grouped_js_reexports(&mut self, group: &[NodeIndex]) {
+        let Some(&first_idx) = group.first() else {
+            return;
+        };
+        let Some(first_node) = self.arena.get(first_idx) else {
+            return;
+        };
+        let Some(first_export) = self.arena.get_export_decl(first_node) else {
+            return;
+        };
+
+        self.write_indent();
+        self.write("export ");
+        self.write("{ ");
+
+        let mut first = true;
+        for &export_idx in group {
+            let Some(export_node) = self.arena.get(export_idx) else {
+                continue;
+            };
+            let Some(export) = self.arena.get_export_decl(export_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.emit_specifier(spec_idx, true);
+            }
+        }
+
+        self.write(" } from ");
+        self.emit_node(first_export.module_specifier);
         self.write(";");
         self.write_line();
     }

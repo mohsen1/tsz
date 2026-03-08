@@ -105,6 +105,10 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
+    /// Consecutive JS re-export declarations that should be merged at the first statement.
+    pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
+    /// JS re-export declarations skipped because they are emitted by an earlier merged group.
+    pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
 }
 
 pub(super) struct SourceMapState {
@@ -177,6 +181,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_named_export_names: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
+            js_grouped_reexports: FxHashMap::default(),
+            js_skipped_reexports: FxHashSet::default(),
         }
     }
 
@@ -231,6 +237,8 @@ impl<'a> DeclarationEmitter<'a> {
             js_named_export_names: FxHashSet::default(),
             js_export_equals_names: FxHashSet::default(),
             emitted_js_export_equals_names: FxHashSet::default(),
+            js_grouped_reexports: FxHashMap::default(),
+            js_skipped_reexports: FxHashSet::default(),
         }
     }
 
@@ -523,6 +531,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_named_export_names = self.collect_js_named_export_names(source_file);
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
+        let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
+        self.js_grouped_reexports = grouped_reexports;
+        self.js_skipped_reexports = skipped_reexports;
 
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;

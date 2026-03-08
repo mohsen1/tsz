@@ -421,6 +421,30 @@ export = a;
 }
 
 #[test]
+fn test_js_reexports_from_same_module_are_grouped() {
+    let source = r#"
+export { default } from "fs";
+export { default as foo } from "fs";
+export { bar as baz } from "fs";
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export { default, default as foo, bar as baz } from \"fs\";"),
+        "Expected JS re-exports from the same module to be grouped: {output}"
+    );
+    assert_eq!(
+        output.matches(" from \"fs\";").count(),
+        1,
+        "Did not expect duplicate JS re-export lines after grouping: {output}"
+    );
+}
+
+#[test]
 fn test_method_declaration_emits_inferred_return_type() {
     let source = r#"
 class C {
