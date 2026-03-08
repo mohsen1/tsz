@@ -2,6 +2,7 @@ use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
 use super::format_extended_diagnostics_phase_progress;
+use super::format_extended_diagnostics_phase_start;
 use super::format_extended_diagnostics_residency_snapshot;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
@@ -253,6 +254,15 @@ fn test_format_extended_diagnostics_phase_progress() {
     let line =
         format_extended_diagnostics_phase_progress("build_program", Duration::from_millis(1250));
     assert_eq!(line, "[extendedDiagnostics] phase build_program: 1250.00ms");
+}
+
+#[test]
+fn test_format_extended_diagnostics_phase_start() {
+    let line = format_extended_diagnostics_phase_start("collect_diagnostics");
+    assert_eq!(
+        line,
+        "[extendedDiagnostics] phase collect_diagnostics: start"
+    );
 }
 
 #[test]

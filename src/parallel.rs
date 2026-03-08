@@ -28,7 +28,10 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
+use crate::binder::state::{
+    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap,
+    push_unique_declaration_arena,
+};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -1123,10 +1126,19 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         .entry(global_id)
                         .or_insert_with(|| Arc::clone(lib_arena));
                     for &decl in &lib_sym.declarations {
-                        declaration_arenas
+                        let target = declaration_arenas
                             .entry((global_id, decl))
-                            .or_default()
-                            .push(Arc::clone(lib_arena));
+                            .or_default();
+                        push_unique_declaration_arena(target, lib_arena);
+                    }
+                }
+
+                // Also copy declaration_arenas for precise cross-file declaration lookup.
+                // This is needed when a symbol has declarations across multiple lib files.
+                if let Some(entries) = decl_arenas_by_sym.get(&local_id) {
+                    for (decl_idx, arena) in entries {
+                        let target = declaration_arenas.entry((global_id, *decl_idx)).or_default();
+                        push_unique_declaration_arena(target, arena);
                     }
                 }
             }
@@ -1565,7 +1577,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .entry((new_sym_id, decl_idx))
                     .or_default();
                 for arena in arenas {
-                    target.push(Arc::clone(arena));
+                    push_unique_declaration_arena(target, arena);
                 }
             }
         }
@@ -1707,10 +1719,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
             // CRITICAL: Populate declaration_arenas for user symbols
             for &decl_idx in &old_sym.declarations {
-                declaration_arenas
-                    .entry((new_id, decl_idx))
-                    .or_default()
-                    .push(Arc::clone(&result.arena));
+                let target = declaration_arenas.entry((new_id, decl_idx)).or_default();
+                push_unique_declaration_arena(target, &result.arena);
             }
 
             let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();

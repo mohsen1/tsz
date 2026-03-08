@@ -747,6 +747,11 @@ fn compile_inner(
             );
         }
     };
+    let report_phase_start = |phase: &'static str| {
+        if extended_progress_enabled {
+            eprintln!("{}", format_extended_diagnostics_phase_start(phase));
+        }
+    };
 
     let cwd = canonicalize_or_owned(cwd);
     let tsconfig_path = if args.ignore_config {
@@ -973,6 +978,7 @@ fn compile_inner(
     let mut effective_cache = local_cache_ref.or(cache.as_deref_mut());
 
     let read_sources_start = Instant::now();
+    report_phase_start("read_sources");
     let SourceReadResult {
         sources: all_sources,
         dependencies,
@@ -1080,10 +1086,12 @@ fn compile_inner(
     // 1) user-file binding (global symbol availability during bind)
     // 2) checker lib contexts (global symbol/type resolution)
     let load_libs_start = Instant::now();
+    report_phase_start("load_libs");
     let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding_strict(&lib_path_refs)?;
     report_phase("load_libs", load_libs_start);
 
     let build_program_start = Instant::now();
+    report_phase_start("build_program");
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
         let result = build_program_with_cache(sources, c, &lib_files);
         (result.program, Some(result.dirty_paths))
@@ -1118,6 +1126,7 @@ fn compile_inner(
 
     // Load lib files only when type checking is needed (lazy loading for faster startup)
     let build_lib_contexts_start = Instant::now();
+    report_phase_start("build_lib_contexts");
     let lib_contexts = if resolved.no_check {
         Vec::new() // Skip lib loading when --noCheck is set
     } else {
@@ -1126,6 +1135,7 @@ fn compile_inner(
     report_phase("build_lib_contexts", build_lib_contexts_start);
 
     let collect_diagnostics_start = Instant::now();
+    report_phase_start("collect_diagnostics");
     let parallel_type_caches = std::sync::Mutex::new(FxHashMap::default());
     let mut diagnostics: Vec<Diagnostic> = collect_diagnostics(
         &program,
@@ -1232,6 +1242,7 @@ fn compile_inner(
     }
 
     let emit_outputs_start = Instant::now();
+    report_phase_start("emit_outputs");
     let emitted_files = if !should_emit {
         Vec::new()
     } else {
@@ -1345,6 +1356,10 @@ fn format_extended_diagnostics_phase_progress(phase: &str, elapsed: Duration) ->
         "[extendedDiagnostics] phase {phase}: {:.2}ms",
         elapsed.as_secs_f64() * 1000.0
     )
+}
+
+fn format_extended_diagnostics_phase_start(phase: &str) -> String {
+    format!("[extendedDiagnostics] phase {phase}: start")
 }
 
 fn format_extended_diagnostics_residency_snapshot(stats: &MergedProgramResidencyStats) -> String {

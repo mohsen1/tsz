@@ -66,9 +66,17 @@ pub(super) fn collect_diagnostics(
             );
         }
     };
+    let report_progress_start = |phase: &str| {
+        if extended_progress_enabled {
+            eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
+        }
+    };
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
+    let use_incremental_check_path = cache
+        .as_deref()
+        .is_some_and(|cache| !cache.type_caches.is_empty());
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut program_paths = FxHashSet::default();
     let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
@@ -76,6 +84,7 @@ pub(super) fn collect_diagnostics(
 
     {
         let phase_start = Instant::now();
+        report_progress_start("build_program_path_maps");
         let _span = tracing::info_span!("build_program_path_maps").entered();
         for (idx, file) in program.files.iter().enumerate() {
             let canonical = canonicalize_or_owned(Path::new(&file.file_name));
@@ -110,6 +119,7 @@ pub(super) fn collect_diagnostics(
 
     {
         let phase_start = Instant::now();
+        report_progress_start("build_resolved_module_maps");
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -313,6 +323,7 @@ pub(super) fn collect_diagnostics(
 
     if options.no_check {
         let phase_start = Instant::now();
+        report_progress_start("collect_no_check_file_diagnostics");
         diagnostics.extend(collect_no_check_file_diagnostics(
             program,
             &resolved_module_errors,
@@ -337,6 +348,7 @@ pub(super) fn collect_diagnostics(
     // Pre-create all binders for cross-file resolution
     let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
         let phase_start = Instant::now();
+        report_progress_start("build_cross_file_binders");
         let _span = tracing::info_span!("build_cross_file_binders").entered();
         let binders = program
             .files
@@ -353,6 +365,7 @@ pub(super) fn collect_diagnostics(
     // Collect all arenas for cross-file resolution
     let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
         let phase_start = Instant::now();
+        report_progress_start("collect_all_arenas");
         let _span = tracing::info_span!("collect_all_arenas").entered();
         let arenas = program
             .files
@@ -372,6 +385,7 @@ pub(super) fn collect_diagnostics(
     // The checker needs this to correctly emit TS1479 (CJS importing ESM).
     let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
         let phase_start = Instant::now();
+        report_progress_start("build_file_is_esm_map");
         let resolution_kind = options.effective_module_resolution();
         let is_node_resolution = matches!(
             resolution_kind,
@@ -405,6 +419,7 @@ pub(super) fn collect_diagnostics(
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let phase_start = Instant::now();
+        report_progress_start("prime_boxed_types");
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -419,7 +434,28 @@ pub(super) fn collect_diagnostics(
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
-        checker.prime_boxed_types();
+        let prime_stats = checker.prime_boxed_types_with_progress(|phase| {
+            if let Some(phase) = phase.strip_suffix(":start") {
+                let phase = format!("prime_boxed_types::{phase}");
+                report_progress_start(&phase);
+            }
+        });
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(
+                    "prime_boxed_types::register_function_def_ids_early",
+                    prime_stats.register_function_def_ids_early,
+                )
+            );
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(
+                    "prime_boxed_types::register_boxed_types",
+                    prime_stats.register_boxed_types,
+                )
+            );
+        }
         report_progress("prime_boxed_types", phase_start);
     }
 
@@ -429,21 +465,26 @@ pub(super) fn collect_diagnostics(
     let mut work_queue: VecDeque<usize> = VecDeque::new();
     let mut checked_files: FxHashSet<usize> = FxHashSet::default();
 
-    // Mark all files as used for cache cleanup
-    for (idx, file) in program.files.iter().enumerate() {
-        let file_path = PathBuf::from(&file.file_name);
-        used_paths.insert(file_path.clone());
+    {
+        let phase_start = Instant::now();
+        report_progress_start("build_work_queue");
+        // Mark all files as used for cache cleanup
+        for (idx, file) in program.files.iter().enumerate() {
+            let file_path = PathBuf::from(&file.file_name);
+            used_paths.insert(file_path.clone());
 
-        // Check if file has cached type information
-        // If no cache or cache miss, file needs to be checked
-        let needs_check = cache
-            .as_deref()
-            .is_none_or(|c| !c.type_caches.contains_key(&file_path)); // No cache at all -> check everything
+            // Check if file has cached type information
+            // If no cache or cache miss, file needs to be checked
+            let needs_check = cache
+                .as_deref()
+                .is_none_or(|c| !c.type_caches.contains_key(&file_path)); // No cache at all -> check everything
 
-        if needs_check {
-            work_queue.push_back(idx);
-            checked_files.insert(idx);
+            if needs_check {
+                work_queue.push_back(idx);
+                checked_files.insert(idx);
+            }
         }
+        report_progress("build_work_queue", phase_start);
     }
 
     // --- FILE CHECKING ---
@@ -454,7 +495,8 @@ pub(super) fn collect_diagnostics(
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
-    if cache.is_none() {
+    if !use_incremental_check_path {
+        report_progress_start("parallel_check_path");
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
@@ -462,6 +504,7 @@ pub(super) fn collect_diagnostics(
         // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
         let per_file_binders: Vec<BinderState> = {
             let phase_start = Instant::now();
+            report_progress_start("prepare_binders");
             let _prep_span = tracing::info_span!("prepare_binders").entered();
             let binders = work_queue
                 .iter()
@@ -508,6 +551,7 @@ pub(super) fn collect_diagnostics(
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
             let phase_start = Instant::now();
+            report_progress_start("parallel_check_files");
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -622,17 +666,33 @@ pub(super) fn collect_diagnostics(
             }
         }
     } else {
+        report_progress_start("incremental_check_path");
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
 
         // Process files in the work queue
+        let mut incremental_iteration = 0usize;
         while let Some(file_idx) = work_queue.pop_front() {
+            incremental_iteration += 1;
+            let trace_first_incremental_file =
+                extended_progress_enabled && incremental_iteration == 1;
             let file = &program.files[file_idx];
             let file_path = PathBuf::from(&file.file_name);
 
+            let create_binder_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::create_binder");
+            }
             let mut binder = create_binder_from_bound_file(file, program, file_idx);
+            if trace_first_incremental_file {
+                report_progress("incremental_first_file::create_binder", create_binder_start);
+            }
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
             // Bridge multi-file module resolution for ES module imports.
+            let bridge_modules_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::bridge_modules");
+            }
             for (specifier, _, _) in &module_specifiers {
                 if let Some(resolved) = resolve_module_specifier(
                     Path::new(&file.file_name),
@@ -653,6 +713,16 @@ pub(super) fn collect_diagnostics(
                         );
                     }
                 }
+            }
+            if trace_first_incremental_file {
+                report_progress(
+                    "incremental_first_file::bridge_modules",
+                    bridge_modules_start,
+                );
+            }
+            let create_checker_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::create_checker");
             }
             let cached = cache
                 .as_deref_mut()
@@ -693,8 +763,18 @@ pub(super) fn collect_diagnostics(
             checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
             checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
             checker.ctx.file_is_esm_map = Some(Arc::clone(&file_is_esm_map));
+            if trace_first_incremental_file {
+                report_progress(
+                    "incremental_first_file::create_checker",
+                    create_checker_start,
+                );
+            }
 
             // Build resolved_modules set for backward compatibility
+            let build_resolved_modules_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::build_resolved_modules");
+            }
             let mut resolved_modules = rustc_hash::FxHashSet::default();
             for (specifier, _, _) in &module_specifiers {
                 if resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
@@ -718,6 +798,12 @@ pub(super) fn collect_diagnostics(
                 }
             }
             checker.ctx.resolved_modules = Some(resolved_modules);
+            if trace_first_incremental_file {
+                report_progress(
+                    "incremental_first_file::build_resolved_modules",
+                    build_resolved_modules_start,
+                );
+            }
             checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
             // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
             // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
@@ -764,9 +850,19 @@ pub(super) fn collect_diagnostics(
             // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
             // even for JS files without checkJs. Only type-level errors are gated by checkJs.
             if !options.no_check {
+                let check_source_file_start = Instant::now();
+                if trace_first_incremental_file {
+                    report_progress_start("incremental_first_file::check_source_file");
+                }
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
                 checker.check_source_file(file.source_file);
+                if trace_first_incremental_file {
+                    report_progress(
+                        "incremental_first_file::check_source_file",
+                        check_source_file_start,
+                    );
+                }
 
                 // Filter diagnostics for JS files without checkJs
                 let is_js = is_js_file(Path::new(&file.file_name));
@@ -903,6 +999,10 @@ fn format_extended_diagnostics_collect_progress(phase: &str, elapsed: Duration) 
         "[extendedDiagnostics] collect_diagnostics::{phase}: {:.2}ms",
         elapsed.as_secs_f64() * 1000.0
     )
+}
+
+fn format_extended_diagnostics_collect_phase_start(phase: &str) -> String {
+    format!("[extendedDiagnostics] collect_diagnostics::{phase}: start")
 }
 
 fn collect_no_check_file_diagnostics(
@@ -1327,5 +1427,46 @@ let __: B = new B();"#
             line,
             "[extendedDiagnostics] collect_diagnostics::build_resolved_module_maps: 875.00ms"
         );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_phase_start() {
+        let line = format_extended_diagnostics_collect_phase_start("prime_boxed_types");
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::prime_boxed_types: start"
+        );
+    }
+
+    #[test]
+    fn test_empty_cache_uses_parallel_check_path() {
+        let cache = CompilationCache::default();
+        let use_incremental_check_path =
+            Some(&cache).is_some_and(|cache| !cache.type_caches.is_empty());
+        assert!(!use_incremental_check_path);
+    }
+
+    #[test]
+    fn test_non_empty_cache_uses_incremental_check_path() {
+        let mut cache = CompilationCache::default();
+        cache.type_caches.insert(
+            PathBuf::from("a.ts"),
+            TypeCache {
+                symbol_types: FxHashMap::default(),
+                symbol_instance_types: FxHashMap::default(),
+                node_types: FxHashMap::default(),
+                symbol_dependencies: FxHashMap::default(),
+                def_to_symbol: FxHashMap::default(),
+                flow_analysis_cache: FxHashMap::default(),
+                class_instance_type_to_decl: FxHashMap::default(),
+                class_instance_type_cache: FxHashMap::default(),
+                class_constructor_type_cache: FxHashMap::default(),
+                type_only_nodes: FxHashSet::default(),
+                namespace_module_names: FxHashMap::default(),
+            },
+        );
+        let use_incremental_check_path =
+            Some(&cache).is_some_and(|cache| !cache.type_caches.is_empty());
+        assert!(use_incremental_check_path);
     }
 }

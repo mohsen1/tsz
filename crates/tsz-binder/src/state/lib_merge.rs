@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::{Atom, Interner};
 
-use super::{BinderState, LibContext};
+use super::{BinderState, LibContext, push_unique_declaration_arena};
 
 impl BinderState {
     // =========================================================================
@@ -149,10 +149,11 @@ impl BinderState {
                                     }
                                     // Always track the arena — multiple lib files may
                                     // reuse the same NodeIndex (cross-arena collision)
-                                    self.declaration_arenas
+                                    let arenas = self
+                                        .declaration_arenas
                                         .entry((existing_id, decl))
-                                        .or_default()
-                                        .push(Arc::clone(&lib_ctx.arena));
+                                        .or_default();
+                                    push_unique_declaration_arena(arenas, &lib_ctx.arena);
                                 }
                                 // Update value_declaration if not set
                                 if existing_mut.value_declaration.is_none()
@@ -168,10 +169,9 @@ impl BinderState {
                             merged_by_name.insert(name_atom, new_id);
                             // Track declaration arenas for new symbol
                             for &decl in &lib_sym.declarations {
-                                self.declaration_arenas
-                                    .entry((new_id, decl))
-                                    .or_default()
-                                    .push(Arc::clone(&lib_ctx.arena));
+                                let arenas =
+                                    self.declaration_arenas.entry((new_id, decl)).or_default();
+                                push_unique_declaration_arena(arenas, &lib_ctx.arena);
                             }
                             new_id
                         }
@@ -181,10 +181,8 @@ impl BinderState {
                         merged_by_name.insert(name_atom, new_id);
                         // Track declaration arenas for new symbol
                         for &decl in &lib_sym.declarations {
-                            self.declaration_arenas
-                                .entry((new_id, decl))
-                                .or_default()
-                                .push(Arc::clone(&lib_ctx.arena));
+                            let arenas = self.declaration_arenas.entry((new_id, decl)).or_default();
+                            push_unique_declaration_arena(arenas, &lib_ctx.arena);
                         }
                         new_id
                     }
@@ -194,10 +192,8 @@ impl BinderState {
                     merged_by_name.insert(name_atom, new_id);
                     // Track declaration arenas for new symbol
                     for &decl in &lib_sym.declarations {
-                        self.declaration_arenas
-                            .entry((new_id, decl))
-                            .or_default()
-                            .push(Arc::clone(&lib_ctx.arena));
+                        let arenas = self.declaration_arenas.entry((new_id, decl)).or_default();
+                        push_unique_declaration_arena(arenas, &lib_ctx.arena);
                     }
                     new_id
                 };

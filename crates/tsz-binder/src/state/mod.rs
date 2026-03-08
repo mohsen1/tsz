@@ -23,6 +23,17 @@ use tsz_parser::parser::node::NodeArena;
 /// for the common single-arena case.
 pub type DeclarationArenaMap = FxHashMap<(SymbolId, NodeIndex), SmallVec<[Arc<NodeArena>; 1]>>;
 
+#[inline]
+pub fn push_unique_declaration_arena(
+    arenas: &mut SmallVec<[Arc<NodeArena>; 1]>,
+    arena: &Arc<NodeArena>,
+) {
+    if arenas.iter().any(|existing| Arc::ptr_eq(existing, arena)) {
+        return;
+    }
+    arenas.push(Arc::clone(arena));
+}
+
 /// Map from arena pointer (as `usize`) to that arena's `node_symbols` mapping.
 /// Enables cross-file declaration resolution: when a symbol has declarations in
 /// multiple arenas, the checker can look up the correct `node_symbols` for each

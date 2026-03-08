@@ -369,6 +369,38 @@ fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
 }
 
 #[test]
+fn test_merge_bind_results_deduplicates_identical_declaration_arenas() {
+    let files = vec![("a.ts".to_string(), "interface Foo {}".to_string())];
+
+    let mut bind_results = parse_and_bind_parallel(files);
+    let bind_result = bind_results.first_mut().expect("bind result");
+    let string_id = bind_result
+        .file_locals
+        .get("Foo")
+        .expect("Foo symbol should exist");
+    let decl_idx = bind_result
+        .symbols
+        .get(string_id)
+        .and_then(|symbol| symbol.declarations.first().copied())
+        .expect("String declaration");
+    let entry = bind_result
+        .declaration_arenas
+        .entry((string_id, decl_idx))
+        .or_default();
+    let arena = Arc::clone(&bind_result.arena);
+    entry.push(Arc::clone(&arena));
+    entry.push(Arc::clone(&arena));
+
+    let program = merge_bind_results(bind_results);
+    let global_id = program.globals.get("Foo").expect("merged Foo symbol");
+    let merged_arenas = program
+        .declaration_arenas
+        .get(&(global_id, decl_idx))
+        .expect("merged declaration arenas");
+    assert_eq!(merged_arenas.len(), 1);
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
