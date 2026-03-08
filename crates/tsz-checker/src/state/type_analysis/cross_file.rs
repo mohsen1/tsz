@@ -220,6 +220,16 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
+            // Fast path: check lib delegation cache by SymbolId.
+            // Each lib SymbolId is delegated at most once; subsequent lookups
+            // return the cached result directly.
+            if !needs_cross_file_delegation
+                && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
+            {
+                self.ctx.symbol_types.insert(sym_id, cached_type);
+                return Some((cached_type, Vec::new()));
+            }
+
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
             if !Self::enter_cross_arena_delegation() {
@@ -250,7 +260,6 @@ impl<'a> CheckerState<'a> {
                 (arena, binder)
             } else {
                 // Non-cross-file delegation: use the already-computed arena.
-                // Safe to re-fetch since the data hasn't changed.
                 let arena = delegate_arena.unwrap_or(self.ctx.arena);
                 (arena, self.ctx.binder)
             };
@@ -307,62 +316,102 @@ impl<'a> CheckerState<'a> {
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
 
-            // DO NOT merge child's symbol_types back to the parent.
-            // Cross-arena child checkers share the parent's binder (including node_symbols
-            // which maps the parent file's node indices to symbol IDs) but operate on a
-            // different arena. This causes node index collisions: a lib node at index N
-            // can be confused with the parent file's node at index N, contaminating the
-            // symbol cache (e.g., setting an ALIAS import symbol to STRING because the
-            // same node index maps to a StringKeyword in the lib arena).
-            // The delegated symbol's result is returned directly and cached by the caller
-            // in get_type_of_symbol, so no merge-back is needed for correctness.
+            // Collect child data before dropping (child borrows from self.ctx.types).
 
-            // Merge child's DefId→SymbolId mappings to parent.
-            // The child creates DefIds (in the shared DefinitionStore) for enum/class/etc.
-            // symbols. These DefIds are embedded in interned types in the shared TypeStore.
-            // The parent needs DefId→SymbolId mappings to resolve these types
-            // (e.g., for enum property access via resolve_namespace_value_member).
-            // NOTE: symbol_to_def is NOT merged because SymbolIds are binder-local;
-            // the same SymbolId maps to different symbols in different binders.
+            // Merge child's symbol_types back to parent to avoid re-resolving the
+            // same types across delegations.  Without this, multi-file tests with
+            // complex type libraries (react.d.ts) hang due to O(K×N) rework.
+            //
+            // For cross-file delegations (correct binder+arena pairing), ALL entries
+            // are safe to merge.  For lib delegations, the child uses the parent's
+            // binder with a lib arena, so entries for SymbolIds that belong to the
+            // parent's binder may be corrupt (node index collision).  We filter those
+            // out by only merging SymbolIds that the parent's binder doesn't own.
+            let child_symbol_types: Vec<(SymbolId, TypeId)> = if needs_cross_file_delegation {
+                // Cross-file: safe to merge everything
+                checker
+                    .ctx
+                    .symbol_types
+                    .iter()
+                    .map(|(&k, &v)| (k, v))
+                    .collect()
+            } else {
+                // Lib delegation: only merge entries for MERGED lib SymbolIds.
+                // During lib merge, symbols get new IDs tracked in
+                // `lib_symbol_reverse_remap`. Entries for SymbolIds NOT in that
+                // map belong to the parent binder's own symbols — they collide
+                // with lib arena indices and may carry wrong types.
+                checker
+                    .ctx
+                    .symbol_types
+                    .iter()
+                    .filter(|&(&k, _)| self.ctx.binder.lib_symbol_reverse_remap.contains_key(&k))
+                    .map(|(&k, &v)| (k, v))
+                    .collect()
+            };
+
+            let child_def_to_symbol: Vec<(tsz_solver::DefId, SymbolId)> = checker
+                .ctx
+                .def_to_symbol
+                .borrow()
+                .iter()
+                .map(|(&k, &v)| (k, v))
+                .collect();
+
+            let child_def_type_params: Vec<(tsz_solver::DefId, Vec<tsz_solver::TypeParamInfo>)> =
+                checker
+                    .ctx
+                    .def_type_params
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect();
+
+            let child_type_env = checker.ctx.type_env.borrow().clone();
+
+            let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
+                std::mem::take(&mut checker.ctx.namespace_module_names);
+
+            let child_lib_delegation_cache: Vec<(SymbolId, TypeId)> =
+                std::mem::take(&mut checker.ctx.lib_delegation_cache)
+                    .into_iter()
+                    .collect();
+
+            // Drop child checker to release borrow on self.ctx.types.
+            drop(checker);
+
+            // Merge collected data into the parent.
+            for (sym_id, type_id) in child_symbol_types {
+                self.ctx.symbol_types.entry(sym_id).or_insert(type_id);
+            }
             {
-                let child_d2s = checker.ctx.def_to_symbol.borrow();
                 let mut parent_d2s = self.ctx.def_to_symbol.borrow_mut();
-                for (&def_id, &sym_id) in child_d2s.iter() {
+                for (def_id, sym_id) in child_def_to_symbol {
                     parent_d2s.entry(def_id).or_insert(sym_id);
                 }
             }
-
-            // Merge child's def_type_params to parent.
-            // Generic type aliases (e.g., `type Constructor<T = {}> = new (...args: any[]) => T`)
-            // register their type parameters in def_type_params. When the parent later tries to
-            // expand Application(Lazy(DefId), Args) via CompatChecker, it needs these type params.
             {
-                let child_params = checker.ctx.def_type_params.borrow();
                 let mut parent_params = self.ctx.def_type_params.borrow_mut();
-                for (def_id, params) in child_params.iter() {
-                    parent_params
-                        .entry(*def_id)
-                        .or_insert_with(|| params.clone());
+                for (def_id, params) in child_def_type_params {
+                    parent_params.entry(def_id).or_insert(params);
                 }
             }
-
-            // Merge child's type_env def entries (type alias bodies and params) to parent.
-            // The child registers type alias bodies via type_env.insert_def_with_params.
-            // The parent's CompatChecker needs these to expand Application types like
-            // Constructor<{}> → new (...args: any[]) => {}.
             {
-                let child_env = checker.ctx.type_env.borrow();
                 let mut parent_env = self.ctx.type_env.borrow_mut();
-                child_env.merge_defs_into(&mut parent_env);
+                child_type_env.merge_defs_into(&mut parent_env);
             }
-
-            // Merge child's namespace module name mappings to parent.
-            // NS_CONSTRUCT stores `typeof import("module")` display names when building
-            // namespace types. The child may compute these during cross-file resolution,
-            // but the parent needs them for TS2339 error messages.
             self.ctx
                 .namespace_module_names
-                .extend(checker.ctx.namespace_module_names.drain());
+                .extend(child_namespace_names);
+            for (name, type_id) in child_lib_delegation_cache {
+                self.ctx.lib_delegation_cache.entry(name).or_insert(type_id);
+            }
+
+            // Cache the result for lib delegations by SymbolId.
+            // This prevents redundant child checker creation for the same lib symbol.
+            if !needs_cross_file_delegation {
+                self.ctx.lib_delegation_cache.insert(sym_id, result);
+            }
 
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();

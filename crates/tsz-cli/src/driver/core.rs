@@ -1106,6 +1106,7 @@ fn compile_inner(
         effective_cache,
         &lib_contexts,
         &parallel_type_caches,
+        has_deprecation_diagnostics,
     );
     perf_log_phase("collect_diagnostics", collect_diagnostics_start);
 

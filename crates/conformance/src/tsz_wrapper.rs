@@ -157,6 +157,17 @@ pub fn prepare_test_dir(
         }
     }
 
+    // skipLibCheck: when .lib/ files were copied into the tmpdir (via /.lib/ references),
+    // enable skipLibCheck to avoid expensive type-checking of declaration files that tsc
+    // never even resolves (tsc emits TS6053 "file not found" for /.lib/ paths).
+    // The conformance runner already filters out lib diagnostics, so this is safe.
+    // Only inject when the test doesn't explicitly set skipLibCheck.
+    let has_lib_files = dir_path.join(".lib").is_dir();
+    let explicit_skip_lib_check = options.contains_key("skipLibCheck")
+        || options.contains_key("skiplibcheck")
+        || options.contains_key("skipDefaultLibCheck")
+        || options.contains_key("skipdefaultlibcheck");
+
     let tsconfig_path = dir_path.join("tsconfig.json");
     let has_tsconfig_file = filenames
         .iter()
@@ -209,6 +220,16 @@ pub fn prepare_test_dir(
                 map.entry("allowJs")
                     .or_insert(serde_json::Value::Bool(true));
             }
+
+            // Skip checking .d.ts lib files copied from TypeScript/tests/lib/.
+            // tsc can't resolve /.lib/ references (emits TS6053), so it never
+            // checks these files. Without this, tsz spends ~5s per test checking
+            // interface extension compatibility in react16.d.ts (2700+ lines of
+            // complex generic types), only to have those diagnostics filtered out.
+            if has_lib_files && !explicit_skip_lib_check {
+                map.entry("skipLibCheck".to_string())
+                    .or_insert(serde_json::Value::Bool(true));
+            }
         }
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
@@ -230,6 +251,26 @@ pub fn prepare_test_dir(
         }
     } else {
         copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
+        // Inject skipLibCheck into custom tsconfigs when lib files are present
+        if has_lib_files && !explicit_skip_lib_check {
+            if let Ok(raw) = std::fs::read_to_string(&tsconfig_path) {
+                if let Ok(mut tsconfig) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let serde_json::Value::Object(ref mut root) = tsconfig {
+                        let opts = root
+                            .entry("compilerOptions")
+                            .or_insert_with(|| serde_json::json!({}));
+                        if let serde_json::Value::Object(ref mut map) = opts {
+                            map.entry("skipLibCheck".to_string())
+                                .or_insert(serde_json::Value::Bool(true));
+                        }
+                        let _ = std::fs::write(
+                            &tsconfig_path,
+                            serde_json::to_string_pretty(&tsconfig).unwrap_or(raw),
+                        );
+                    }
+                }
+            }
+        }
         if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
             eprintln!(
                 "[tsz_wrapper] copied tsconfig to root at {}",

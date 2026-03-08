@@ -226,9 +226,29 @@ pub struct CheckerContext<'a> {
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
 
+    /// Cache for lib delegation results in `delegate_cross_arena_symbol_resolution`.
+    /// Keyed by SymbolId, stores the resolved TypeId. Prevents redundant child
+    /// checker creation for the same lib symbol, which is the primary cause of
+    /// hangs in multi-file tests with complex type libraries (react.d.ts has
+    /// hundreds of DOM types that each trigger delegation).
+    pub lib_delegation_cache: FxHashMap<SymbolId, TypeId>,
+
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
+
+    /// When true, `resolve_lib_type_by_name` returns `None` immediately without
+    /// resolving lib types. Set when TS5107/TS5101 deprecation diagnostics are
+    /// present — tsc stops compilation at TS5107 and never type-checks files.
+    /// The checker still walks the AST (finding grammar errors like TS17006),
+    /// but all type resolution is short-circuited to avoid the O(n²) memory
+    /// explosion from 48+ files independently resolving es5 heritage chains.
+    pub skip_lib_type_resolution: bool,
+
+    /// Names currently being resolved in `merge_lib_interface_heritage`.
+    /// Used to break cycles in the `resolve_lib_type_by_name` ↔ `merge_lib_interface_heritage`
+    /// mutual recursion (e.g., Array extends ReadonlyArray which extends Iterable ...).
+    pub lib_heritage_in_progress: FxHashSet<String>,
 
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,

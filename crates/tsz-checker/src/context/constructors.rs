@@ -57,7 +57,10 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: FxHashMap::default(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: false,
+            lib_heritage_in_progress: FxHashSet::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
@@ -224,7 +227,10 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: FxHashMap::default(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: false,
+            lib_heritage_in_progress: FxHashSet::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
@@ -382,7 +388,10 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: FxHashMap::default(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: false,
+            lib_heritage_in_progress: FxHashSet::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
@@ -548,7 +557,10 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: FxHashMap::default(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: false,
+            lib_heritage_in_progress: FxHashSet::default(),
             // node_types is per-arena (keyed by raw node index u32), so it must NOT
             // be carried across files — indices from file A collide with file B.
             node_types: FxHashMap::default(),
@@ -709,7 +721,10 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: FxHashMap::default(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: false,
+            lib_heritage_in_progress: FxHashSet::default(),
             // node_types is per-arena (keyed by raw node index u32), so it must NOT
             // be carried across files — indices from file A collide with file B.
             node_types: FxHashMap::default(),
@@ -881,7 +896,15 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: parent.symbol_instance_types.clone(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
+            lib_delegation_cache: parent.lib_delegation_cache.clone(),
             shared_lib_type_cache: None,
+            skip_lib_type_resolution: parent.skip_lib_type_resolution,
+            // CRITICAL: Propagate in-progress set from parent to prevent re-entrant
+            // heritage merging in child contexts (cross-arena delegation). Without this,
+            // child CheckerStates don't see that the parent is already resolving a type,
+            // causing unbounded mutual recursion through resolve_lib_type_by_name ↔
+            // merge_lib_interface_heritage ↔ build_type_environment chains.
+            lib_heritage_in_progress: parent.lib_heritage_in_progress.clone(),
             // CRITICAL: Do NOT share node_types across arenas. Node indices are arena-specific,
             // so a cached type for node X in arena A would be incorrect for node X in arena B.
             // Cross-arena delegation always uses a different arena, making shared node_types
