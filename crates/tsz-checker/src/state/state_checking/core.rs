@@ -301,9 +301,12 @@ impl<'a> CheckerState<'a> {
             let phase_start = Instant::now();
             let prev_unreachable = self.ctx.is_unreachable;
             let prev_reported = self.ctx.has_reported_unreachable;
+            let trace_all_top_level_statements = sf.statements.nodes.len() <= 64;
             for (stmt_position, &stmt_idx) in sf.statements.nodes.iter().enumerate() {
                 let traced_stmt_kind = self.ctx.arena.get(stmt_idx).and_then(|stmt_node| {
-                    let should_trace = stmt_position < 10 || stmt_position % 10 == 0;
+                    let should_trace = trace_all_top_level_statements
+                        || stmt_position < 10
+                        || stmt_position % 10 == 0;
                     if !should_trace {
                         return None;
                     }
