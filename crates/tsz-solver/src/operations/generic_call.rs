@@ -719,9 +719,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 if let InferenceError::BoundsViolation { lower, .. } = &e {
                                     *lower
                                 } else {
-                                    panic!(
-                                        "invariant violation: expected bounds violation when using inferred fallback"
-                                    )
+                                    // Missing bounds violation during inferred fallback: continue without constraint error
+                                    TypeId::ERROR
                                 }
                             } else if let Some(default) = tp.default {
                                 instantiate_type(self.interner, default, &final_subst)

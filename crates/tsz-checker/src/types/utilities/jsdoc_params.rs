@@ -198,7 +198,8 @@ impl<'a> CheckerState<'a> {
         // Check if the next word is the name
         if let Some(after_name) = rest.strip_prefix(name) {
             // Verify it's a complete word (followed by non-alphanumeric or end)
-            if after_name.is_empty() || !after_name.chars().next().unwrap().is_alphanumeric() {
+            if after_name.is_empty() || !after_name.chars().next().unwrap_or('\0').is_alphanumeric()
+            {
                 return Some(offset);
             }
         }
@@ -1472,7 +1473,7 @@ impl<'a> CheckerState<'a> {
                 let after = match_pos + "@type".len();
                 // Ensure @type is not a prefix of @typedef, @typeParam, etc.
                 if after < comment_text.len() {
-                    let next_ch = comment_text[after..].chars().next().unwrap();
+                    let next_ch = comment_text[after..].chars().next().unwrap_or('\0');
                     if next_ch.is_ascii_alphanumeric() || next_ch == 'P' {
                         // Likely @typedef or @typeParam — skip
                         continue;
@@ -1707,7 +1708,7 @@ impl<'a> CheckerState<'a> {
         if expr.is_empty() {
             return false;
         }
-        let first = expr.chars().next().unwrap();
+        let first = expr.chars().next().unwrap_or('\0');
         if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
             return false;
         }

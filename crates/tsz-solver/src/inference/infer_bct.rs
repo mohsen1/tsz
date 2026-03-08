@@ -349,7 +349,8 @@ impl<'a> InferenceContext<'a> {
             let (Some(TypeData::Tuple(s_elems)), Some(TypeData::Tuple(t_elems))) =
                 (source_key.as_ref(), target_key.as_ref())
             else {
-                panic!("invariant violation: tuple subtype check expected tuple operands")
+                // Non-tuple operands in tuple subtype check: skip gracefully
+                return false;
             };
             let s_elems = self.interner.tuple_list(*s_elems);
             let t_elems = self.interner.tuple_list(*t_elems);

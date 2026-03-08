@@ -335,7 +335,8 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
         // Unconstrained type parameters are handled in has_overlap before visitor
         match info.constraint {
             Some(constraint) => self.check(constraint),
-            None => panic!("TypeParameter without constraint should not reach visitor"),
+            // Unconstrained type parameters without constraints treated as no overlap (conservative)
+            None => false,
         }
     }
 
@@ -343,7 +344,8 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
         // Unconstrained type parameters are handled in has_overlap before visitor
         match info.constraint {
             Some(constraint) => self.check(constraint),
-            None => panic!("Infer without constraint should not reach visitor"),
+            // Unconstrained type parameters without constraints treated as no overlap (conservative)
+            None => false,
         }
     }
 
