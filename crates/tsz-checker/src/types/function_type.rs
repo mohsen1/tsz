@@ -1125,6 +1125,7 @@ impl<'a> CheckerState<'a> {
             // For expression-bodied arrows/functions, check the expression against
             // the expected return type.  Use body_return_type which has already been
             // unwrapped for async (Promise<T> → T) and generators (Generator<Y,R,N> → R).
+            let mut checked_expression_body_for_return = false;
             let expected_expression_return_type = has_type_annotation
                 .then_some(body_return_type)
                 .or(jsdoc_return_context);
@@ -1189,6 +1190,7 @@ impl<'a> CheckerState<'a> {
                         actual_return
                     };
                     self.check_assignable_or_report(actual_return, expected_return_type, body);
+                    checked_expression_body_for_return = true;
                 }
             }
             // Skip body checking for function declarations — they are checked via
@@ -1234,7 +1236,9 @@ impl<'a> CheckerState<'a> {
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
 
-                self.check_statement(body);
+                if !checked_expression_body_for_return {
+                    self.check_statement(body);
+                }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>
                 // is assignable to the declared return type.
@@ -1828,6 +1832,17 @@ mod tests {
         assert!(
             diagnostics.contains(&target),
             "expected TS2322, got diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn expression_body_arrow_object_literal_with_return_annotation_reports_type_mismatch() {
+        let diagnostics =
+            diagnostics_for_source("const f = (): { value: number } => ({ value: \"str\" });");
+
+        assert!(
+            diagnostics.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "expected TS2322 from object-literal expression body, got diagnostics: {diagnostics:?}"
         );
     }
 
