@@ -784,14 +784,20 @@ impl<'a> CheckerState<'a> {
                 // Same class - always allowed (even for private constructors)
                 return;
             }
-            if is_protected
-                && self
+            if is_protected {
+                // Check the inheritance graph first (fast path).
+                // Fall back to walking heritage clauses directly, because the
+                // enclosing class's inheritance may not be registered yet when
+                // property initializers are type-checked.
+                if self
                     .ctx
                     .inheritance_graph
                     .is_derived_from(enclosing_sym, class_sym)
-            {
-                // Protected constructor accessible from subclass
-                return;
+                    || self.is_heritage_derived_from(enclosing_sym, class_sym)
+                {
+                    // Protected constructor accessible from subclass
+                    return;
+                }
             }
         }
 
@@ -861,6 +867,83 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Check if `child_sym` extends `ancestor_sym` by walking heritage clauses.
+    ///
+    /// This is a fallback for when `InheritanceGraph::is_derived_from` returns
+    /// false because the graph hasn't been populated yet (e.g., during property
+    /// initializer type-checking before the enclosing class's heritage is registered).
+    fn is_heritage_derived_from(&self, child_sym: SymbolId, ancestor_sym: SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let child = self.ctx.binder.get_symbol(child_sym);
+        let child = match child {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Walk the class declarations for this symbol
+        let decl_idx = if child.value_declaration.is_some() {
+            child.value_declaration
+        } else {
+            match child.declarations.first() {
+                Some(&d) => d,
+                None => return false,
+            }
+        };
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION
+            && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+
+        let Some(heritage_clauses) = &class_data.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let expr_idx = self
+                    .ctx
+                    .arena
+                    .get_expr_type_args_at(type_idx)
+                    .map_or(type_idx, |e| e.expression);
+
+                // Resolve the heritage expression to a symbol
+                let parent_sym = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, expr_idx)
+                    .or_else(|| self.ctx.binder.get_node_symbol(expr_idx));
+
+                if let Some(parent_sym) = parent_sym {
+                    if parent_sym == ancestor_sym {
+                        return true;
+                    }
+                    // Recurse for transitive inheritance
+                    if self.is_heritage_derived_from(parent_sym, ancestor_sym) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Emit the appropriate constructor accessibility error.
