@@ -525,8 +525,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check an enum declaration.
     pub fn check_enum_declaration(&mut self, enum_idx: NodeIndex) {
-        use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(enum_idx) else {
@@ -666,6 +667,143 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         member_name,
                         enum_name_text,
                     );
+                }
+            }
+        }
+
+        // Const enum specific checks
+        let is_const_enum = self
+            .ctx
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+
+        if is_const_enum {
+            // TS2567: const enum cannot merge with namespace
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(enum_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let has_module_decl = symbol.declarations.iter().any(|&decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::MODULE_DECLARATION)
+                });
+                if has_module_decl
+                    && let Some(name_node) = self.ctx.arena.get(enum_data.name) {
+                        self.ctx.error(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
+                            diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                        );
+                    }
+            }
+
+            // Collect member names for forward reference detection
+            let member_names: Vec<&str> = enum_data
+                .members
+                .nodes
+                .iter()
+                .filter_map(|&m_idx| {
+                    let m_node = self.ctx.arena.get(m_idx)?;
+                    let m_data = self.ctx.arena.get_enum_member(m_node)?;
+                    self.ctx.arena.get_identifier_text(m_data.name)
+                })
+                .collect();
+
+            let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
+
+            for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member_data) = self.ctx.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+
+                if member_data.initializer.is_none() {
+                    continue;
+                }
+
+                // TS2651: check for forward references to later members
+                let later_members: Vec<&str> = member_names[i + 1..].to_vec();
+                let has_forward_ref = self.const_enum_has_forward_reference(
+                    member_data.initializer,
+                    &later_members,
+                    enum_name_text,
+                );
+
+                if has_forward_ref {
+                    if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                        self.ctx.error(
+                            init_node.pos,
+                            init_node.end - init_node.pos,
+                            diagnostic_messages::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT.to_string(),
+                            diagnostic_codes::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT,
+                        );
+                    }
+                    continue; // Forward ref takes priority over TS2474
+                }
+
+                // String literal initializers are always valid const enum initializers.
+                // Only numeric initializers need evaluation for TS2474/TS2477/TS2478.
+                let is_string_initializer = self
+                    .ctx
+                    .arena
+                    .get(member_data.initializer)
+                    .is_some_and(|n| {
+                        n.kind == SyntaxKind::StringLiteral as u16
+                            || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    });
+                if is_string_initializer {
+                    continue;
+                }
+
+                // Try to evaluate the initializer as a numeric constant
+                let value =
+                    crate::types_domain::utilities::enum_utils::evaluate_const_enum_initializer(
+                        self.ctx.arena,
+                        member_data.initializer,
+                        enum_data,
+                        enum_name_text,
+                        0,
+                    );
+
+                match value {
+                    None => {
+                        // TS2474: const enum member initializer is not a constant expression
+                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                            self.ctx.error(
+                                init_node.pos,
+                                init_node.end - init_node.pos,
+                                diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS.to_string(),
+                                diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS,
+                            );
+                        }
+                    }
+                    Some(v) if f64::is_nan(v) => {
+                        // TS2478: const enum member evaluated to NaN
+                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                            self.ctx.error(
+                                init_node.pos,
+                                init_node.end - init_node.pos,
+                                diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZER_WAS_EVALUATED_TO_DISALLOWED_VALUE_NAN.to_string(),
+                                diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZER_WAS_EVALUATED_TO_DISALLOWED_VALUE_NAN,
+                            );
+                        }
+                    }
+                    Some(v) if f64::is_infinite(v) => {
+                        // TS2477: const enum member evaluated to non-finite value
+                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                            self.ctx.error(
+                                init_node.pos,
+                                init_node.end - init_node.pos,
+                                diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZER_WAS_EVALUATED_TO_A_NON_FINITE_VALUE.to_string(),
+                                diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZER_WAS_EVALUATED_TO_A_NON_FINITE_VALUE,
+                            );
+                        }
+                    }
+                    _ => {} // Valid constant value
                 }
             }
         }
@@ -1235,6 +1373,106 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Check if a const enum initializer contains a forward reference to a later member.
+    fn const_enum_has_forward_reference(
+        &self,
+        expr_idx: NodeIndex,
+        later_members: &[&str],
+        enum_name: Option<&str>,
+    ) -> bool {
+        if expr_idx.is_none() || later_members.is_empty() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(text) = self.ctx.arena.get_identifier_text(expr_idx) {
+                    later_members.contains(&text)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(prop) = self.ctx.arena.get_access_expr(node) {
+                    if let Some(left_node) = self.ctx.arena.get(prop.expression)
+                        && left_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(left_name) = self.ctx.arena.get_identifier_text(prop.expression)
+                        && Some(left_name) == enum_name
+                        && let Some(right_text) =
+                            self.ctx.arena.get_identifier_text(prop.name_or_argument)
+                        {
+                            return later_members.contains(&right_text);
+                        }
+                    self.const_enum_has_forward_reference(prop.expression, later_members, enum_name)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(elem) = self.ctx.arena.get_access_expr(node) {
+                    if let Some(left_node) = self.ctx.arena.get(elem.expression)
+                        && left_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(left_name) = self.ctx.arena.get_identifier_text(elem.expression)
+                        && Some(left_name) == enum_name
+                        && let Some(arg_node) = self.ctx.arena.get(elem.name_or_argument)
+                            && arg_node.kind == SyntaxKind::StringLiteral as u16
+                            && let Some(lit) = self.ctx.arena.get_literal(arg_node)
+                        {
+                            return later_members.contains(&lit.text.as_str());
+                        }
+                    self.const_enum_has_forward_reference(elem.expression, later_members, enum_name)
+                        || self.const_enum_has_forward_reference(
+                            elem.name_or_argument,
+                            later_members,
+                            enum_name,
+                        )
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+            {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.const_enum_has_forward_reference(unary.operand, later_members, enum_name)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+                    self.const_enum_has_forward_reference(bin.left, later_members, enum_name)
+                        || self.const_enum_has_forward_reference(
+                            bin.right,
+                            later_members,
+                            enum_name,
+                        )
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.const_enum_has_forward_reference(
+                        paren.expression,
+                        later_members,
+                        enum_name,
+                    )
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 }

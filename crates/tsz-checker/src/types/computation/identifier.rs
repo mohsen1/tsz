@@ -327,10 +327,17 @@ impl<'a> CheckerState<'a> {
             }
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
-            let local_symbol = self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id));
-            let flags = local_symbol.map_or(0, |s| s.flags);
+            let (flags, value_decl, symbol_declarations) = {
+                let local_symbol = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id));
+                let flags = local_symbol.map_or(0, |s| s.flags);
+                let value_decl = local_symbol.map_or(NodeIndex::NONE, |s| s.value_declaration);
+                let symbol_declarations = local_symbol
+                    .map(|s| s.declarations.clone())
+                    .unwrap_or_default();
+                (flags, value_decl, symbol_declarations)
+            };
 
             // TS2662: Bare identifier resolving to a static class member.
             // Static members must be accessed via `ClassName.member`, not as
@@ -344,6 +351,38 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            // TS2475: 'const' enums can only be used in property or index access
+            // expressions or the right hand side of an import/export assignment or
+            // type query.
+            if (flags & tsz_binder::symbol_flags::CONST_ENUM) != 0 {
+                let is_valid_const_enum_usage = if let Some(parent_ext) =
+                    self.ctx.arena.get_extended(idx)
+                    && parent_ext.parent.is_some()
+                    && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        && self
+                            .ctx
+                            .arena
+                            .get_access_expr(parent_node)
+                            .is_some_and(|access| access.expression == idx)
+                        || parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || parent_node.kind == syntax_kind_ext::TYPE_QUERY
+                } else {
+                    false
+                };
+                if !is_valid_const_enum_usage {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
+                        diagnostic_codes::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
+                    );
+                }
+            }
+
             let has_type = (flags & tsz_binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & tsz_binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
@@ -355,10 +394,6 @@ impl<'a> CheckerState<'a> {
                 is_interface = (flags & tsz_binder::symbol_flags::INTERFACE) != 0,
                 "get_type_of_identifier: symbol flags"
             );
-            let value_decl = local_symbol.map_or(NodeIndex::NONE, |s| s.value_declaration);
-            let symbol_declarations = local_symbol
-                .map(|s| s.declarations.clone())
-                .unwrap_or_default();
 
             // Check for type-only symbols used as values
             // This includes:
