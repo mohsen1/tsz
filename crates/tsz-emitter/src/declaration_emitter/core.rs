@@ -1802,20 +1802,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
                 // Check if parameter has accessibility modifiers or readonly
-                let has_modifier = param.modifiers.as_ref().is_some_and(|mods| {
-                    mods.nodes.iter().any(|&mod_idx| {
-                        if let Some(mod_node) = self.arena.get(mod_idx) {
-                            let k = mod_node.kind;
-                            k == SyntaxKind::PublicKeyword as u16
-                                || k == SyntaxKind::PrivateKeyword as u16
-                                || k == SyntaxKind::ProtectedKeyword as u16
-                                || k == SyntaxKind::ReadonlyKeyword as u16
-                                || k == SyntaxKind::OverrideKeyword as u16
-                        } else {
-                            false
-                        }
-                    })
-                });
+                let has_modifier = self.parameter_has_property_modifier(&param.modifiers);
 
                 if has_modifier {
                     // Emit as a property declaration
@@ -1858,6 +1845,20 @@ impl<'a> DeclarationEmitter<'a> {
                     if !is_private && param.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(param.type_annotation);
+                        if param.question_token {
+                            self.write(" | undefined");
+                        }
+                    } else if !is_private
+                        && let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
+                    {
+                        self.write(": ");
+                        self.write(&self.print_type_id(type_id));
+                    } else if !is_private
+                        && param.initializer.is_some()
+                        && let Some(type_text) = self.infer_fallback_type_text(param.initializer)
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
                     }
 
                     // Note: No initializer for parameter properties in .d.ts

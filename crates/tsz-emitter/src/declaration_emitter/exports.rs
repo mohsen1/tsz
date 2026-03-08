@@ -1462,6 +1462,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 };
+                let is_parameter_property = self.in_constructor_params
+                    && self.parameter_has_property_modifier(&param.modifiers);
 
                 // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
                 self.emit_inline_parameter_comment(param_node.pos);
@@ -1496,6 +1498,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
+                    if is_parameter_property && param.question_token {
+                        self.write(" | undefined");
+                    }
                 } else if let Some(jsdoc_param) = jsdoc_param {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
@@ -1504,6 +1509,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // Inferred type from type cache
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
+                } else if param.initializer.is_some()
+                    && let Some(type_text) = self.infer_fallback_type_text(param.initializer)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if param.dot_dot_dot_token {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
@@ -1521,6 +1531,21 @@ impl<'a> DeclarationEmitter<'a> {
             }
             self.write("...args: any[]");
         }
+    }
+
+    pub(crate) fn parameter_has_property_modifier(&self, modifiers: &Option<NodeList>) -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena.get(mod_idx).is_some_and(|mod_node| {
+                    let kind = mod_node.kind;
+                    kind == SyntaxKind::PublicKeyword as u16
+                        || kind == SyntaxKind::PrivateKeyword as u16
+                        || kind == SyntaxKind::ProtectedKeyword as u16
+                        || kind == SyntaxKind::ReadonlyKeyword as u16
+                        || kind == SyntaxKind::OverrideKeyword as u16
+                })
+            })
+        })
     }
 
     /// Emit parameters without type annotations (used for private accessors)
