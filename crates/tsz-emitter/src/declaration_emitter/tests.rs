@@ -268,6 +268,48 @@ declare class C {
 }
 
 #[test]
+fn test_accessor_comments_with_bodies_are_preserved() {
+    let source = r#"
+export class C {
+    /** getter property*/
+    public get x() {
+        return 1;
+    }
+    /** setter property*/
+    public set x(/** this is value*/ value: number) {
+    }
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(
+        output.contains("/** getter property*/\n    get x(): number;"),
+        "Expected getter JSDoc to be preserved in declaration emit: {output}"
+    );
+    assert!(
+        output.contains("/** setter property*/\n    set x(/** this is value*/ value: number);"),
+        "Expected setter JSDoc to be preserved in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_exported_interface_member_comments_are_preserved() {
+    let output = emit_dts(
+        r#"
+export interface Box {
+    /** width docs */
+    width: number;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("/** width docs */\n    width: number;"),
+        "Expected exported interface member JSDoc to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_get_accessor_uses_matching_setter_parameter_type_for_computed_name() {
     let output = emit_dts(
         r#"

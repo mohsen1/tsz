@@ -550,7 +550,20 @@ impl<'a> DeclarationEmitter<'a> {
         self.increase_indent();
 
         for &member_idx in &iface.members.nodes {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(member_node.pos);
+            }
+            let before_member_len = self.writer.len();
             self.emit_interface_member(member_idx);
+            if self.writer.len() == before_member_len {
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(member_node.pos, member_node.end);
+                }
+            }
         }
 
         self.decrease_indent();
@@ -613,7 +626,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for &member_idx in &class.members.nodes {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(member_node.pos);
+            }
+            let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
+            if self.writer.len() == before_member_len {
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(member_node.pos, member_node.end);
+                }
+            }
         }
 
         self.decrease_indent();
