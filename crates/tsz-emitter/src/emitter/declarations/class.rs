@@ -197,10 +197,64 @@ impl<'a> Printer<'a> {
                 "Function".to_string()
             }
 
-            // Union/intersection → Object
-            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+            // Union type → try to unwrap to single non-null/undefined type,
+            // or check if all meaningful members serialize to the same type.
+            k if k == syntax_kind_ext::UNION_TYPE => {
+                if let Some(composite) = self.arena.get_composite_type(type_node) {
+                    // Filter out null, undefined, void, never from union members
+                    let meaningful: Vec<NodeIndex> = composite
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&member_idx| {
+                            let Some(member) = self.arena.get(member_idx) else {
+                                return false;
+                            };
+                            let sk = |s: SyntaxKind| s as u16;
+                            // Skip null/undefined/void/never keyword types
+                            if member.kind == sk(SyntaxKind::NullKeyword)
+                                || member.kind == sk(SyntaxKind::UndefinedKeyword)
+                                || member.kind == sk(SyntaxKind::VoidKeyword)
+                                || member.kind == sk(SyntaxKind::NeverKeyword)
+                            {
+                                return false;
+                            }
+                            // Skip literal type null
+                            if member.kind == syntax_kind_ext::LITERAL_TYPE
+                                && let Some(lit) = self.arena.get_literal_type(member)
+                                && let Some(lit_node) = self.arena.get(lit.literal)
+                                && lit_node.kind == sk(SyntaxKind::NullKeyword)
+                            {
+                                return false;
+                            }
+                            true
+                        })
+                        .collect();
+                    if meaningful.len() == 1 {
+                        return self.serialize_type_for_metadata(meaningful[0]);
+                    }
+                    // If all meaningful members serialize to the same type, use that
+                    if meaningful.len() > 1 {
+                        let first = self.serialize_type_for_metadata(meaningful[0]);
+                        if first != "Object"
+                            && meaningful[1..]
+                                .iter()
+                                .all(|&m| self.serialize_type_for_metadata(m) == first)
+                        {
+                            return first;
+                        }
+                    }
+                    // If only null/undefined/void/never, return void 0
+                    if meaningful.is_empty() {
+                        return "void 0".to_string();
+                    }
+                }
                 "Object".to_string()
             }
+
+            // Intersection → Object
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => "Object".to_string(),
 
             // Parenthesized type → unwrap
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
