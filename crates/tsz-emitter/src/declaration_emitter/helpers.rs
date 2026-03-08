@@ -3253,13 +3253,64 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         };
 
-        // Check if the specifier's NAME symbol is used
-        if let Some(&sym_id) = binder.node_symbols.get(&specifier.name.0) {
-            used.contains_key(&sym_id)
+        self.imported_name_is_used(binder, used, specifier.name)
+    }
+
+    fn imported_name_is_used(
+        &self,
+        binder: &BinderState,
+        used: &rustc_hash::FxHashMap<SymbolId, super::usage_analyzer::UsageKind>,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let sym_id = if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
+            sym_id
         } else {
-            // No symbol found - emit conservatively
-            true
+            let Some(name_node) = self.arena.get(name_idx) else {
+                return true;
+            };
+            let Some(ident) = self.arena.get_identifier(name_node) else {
+                return true;
+            };
+            let Some(sym_id) = binder.file_locals.get(&ident.escaped_text) else {
+                return true;
+            };
+            sym_id
+        };
+
+        if used.contains_key(&sym_id) {
+            return true;
         }
+
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        let Some(import_module) = symbol.import_module.as_deref() else {
+            return false;
+        };
+        let local_name = symbol.escaped_name.as_str();
+        let import_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name);
+
+        if local_name != import_name {
+            return false;
+        }
+
+        used.iter().any(|(&used_sym_id, _)| {
+            let Some(used_symbol) = binder.symbols.get(used_sym_id) else {
+                return false;
+            };
+
+            if used_symbol.escaped_name != import_name
+                && used_symbol.import_name.as_deref() != Some(import_name)
+            {
+                return false;
+            }
+
+            used_symbol.import_module.as_deref() == Some(import_module)
+                || self.resolve_symbol_module_path(used_sym_id).as_deref() == Some(import_module)
+        })
     }
 
     /// Count how many import specifiers in an `ImportClause` should be emitted.
@@ -3282,10 +3333,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(clause_node) = self.arena.get(import.import_clause)
                 && let Some(clause) = self.arena.get_import_clause(clause_node)
             {
-                if clause.name.is_some()
-                    && let Some(&sym_id) = binder.node_symbols.get(&clause.name.0)
-                    && used.contains_key(&sym_id)
-                {
+                if clause.name.is_some() && self.imported_name_is_used(binder, used, clause.name) {
                     default_count = 1;
                 }
 
@@ -3294,14 +3342,18 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(bindings_node) = self.arena.get(clause.named_bindings)
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
-                    for &spec_idx in &bindings.elements.nodes {
-                        // Get the specifier's name to check its symbol
-                        if let Some(spec_node) = self.arena.get(spec_idx)
-                            && let Some(specifier) = self.arena.get_specifier(spec_node)
-                            && let Some(&sym_id) = binder.node_symbols.get(&specifier.name.0)
-                            && used.contains_key(&sym_id)
-                        {
-                            named_count += 1;
+                    if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                        if self.imported_name_is_used(binder, used, bindings.name) {
+                            named_count = 1;
+                        }
+                    } else {
+                        for &spec_idx in &bindings.elements.nodes {
+                            if let Some(spec_node) = self.arena.get(spec_idx)
+                                && let Some(specifier) = self.arena.get_specifier(spec_node)
+                                && self.imported_name_is_used(binder, used, specifier.name)
+                            {
+                                named_count += 1;
+                            }
                         }
                     }
                 }

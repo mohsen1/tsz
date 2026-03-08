@@ -823,6 +823,15 @@ impl<'a> UsageAnalyzer<'a> {
         self.in_value_pos = false;
 
         match type_node.kind {
+            // Some explicit type positions, especially heritage clauses in error
+            // recovery, surface a bare entity name instead of a wrapped TypeReference.
+            k if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::QUALIFIED_NAME
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                self.analyze_entity_name(type_idx);
+            }
+
             // Type references - extract the symbol
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {

@@ -3,13 +3,90 @@
 use super::DeclarationEmitter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use rustc_hash::FxHashSet;
-use tracing::debug;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
 impl<'a> DeclarationEmitter<'a> {
+    fn declaration_import_attribute_text(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(node_idx)?;
+        if let Some(lit) = self.arena.get_literal(node) {
+            return Some(lit.text.clone());
+        }
+        if let Some(ident) = self.arena.get_identifier(node) {
+            return Some(ident.escaped_text.clone());
+        }
+        self.get_source_slice(node.pos, node.end)
+    }
+
+    fn should_emit_declaration_import_attribute(&self, attribute_idx: NodeIndex) -> bool {
+        let Some(attr_node) = self.arena.get(attribute_idx) else {
+            return false;
+        };
+        let Some(attr) = self.arena.get_import_attribute_data(attr_node) else {
+            return false;
+        };
+
+        let Some(name) = self.declaration_import_attribute_text(attr.name) else {
+            return true;
+        };
+        if name != "resolution-mode" {
+            return true;
+        }
+
+        matches!(
+            self.declaration_import_attribute_text(attr.value)
+                .as_deref(),
+            Some("import" | "require")
+        )
+    }
+
+    fn emit_declaration_import_attributes(&mut self, attributes: NodeIndex) {
+        let Some(attr_node) = self.arena.get(attributes) else {
+            return;
+        };
+        let Some(attrs) = self.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+        let filtered: Vec<NodeIndex> = attrs
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&elem_idx| self.should_emit_declaration_import_attribute(elem_idx))
+            .collect();
+        if filtered.is_empty() {
+            return;
+        }
+
+        let keyword = if attrs.token == SyntaxKind::AssertKeyword as u16 {
+            "assert"
+        } else {
+            "with"
+        };
+
+        self.write(" ");
+        self.write(keyword);
+        self.write(" { ");
+
+        for (i, elem_idx) in filtered.iter().copied().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+
+            if let Some(elem_node) = self.arena.get(elem_idx)
+                && let Some(attr) = self.arena.get_import_attribute_data(elem_node)
+            {
+                self.emit_node(attr.name);
+                self.write(": ");
+                self.emit_node(attr.value);
+            }
+        }
+
+        self.write(" }");
+    }
+
     pub(crate) fn emit_export_declaration(&mut self, export_idx: NodeIndex) {
         let Some(export_node) = self.arena.get(export_idx) else {
             return;
@@ -154,6 +231,7 @@ impl<'a> DeclarationEmitter<'a> {
         if export.module_specifier.is_some() {
             self.write(" from ");
             self.emit_node(export.module_specifier);
+            self.emit_declaration_import_attributes(export.attributes);
         }
 
         self.write(";");
@@ -993,49 +1071,11 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_import_declaration_if_needed(&mut self, import_idx: NodeIndex) {
-        let Some(import_node) = self.arena.get(import_idx) else {
-            return;
-        };
-        let Some(import) = self.arena.get_import_decl(import_node) else {
-            return;
-        };
-
-        // Check if this import is being handled by the elision system
-        // by checking if any of its imported symbols are in import_symbol_map
-        let mut has_elided_symbols = false;
-        if import.import_clause.is_some() {
-            let binder = match &self.binder {
-                Some(b) => b,
-                None => {
-                    // No binder - fall back to emitting the import
-                    self.emit_import_declaration(import_idx);
-                    return;
-                }
-            };
-
-            // Collect symbols from this import clause
-            let symbols =
-                self.collect_imported_symbols_from_clause(self.arena, binder, import.import_clause);
-
-            // Check if any symbol is in import_symbol_map (meaning it's being elided)
-            for (_name, sym_id) in symbols {
-                if self.import_symbol_map.contains_key(&sym_id) {
-                    has_elided_symbols = true;
-                    break;
-                }
-            }
-        }
-
-        if has_elided_symbols {
-            // This import is being handled by the elision system via emit_auto_imports
-            // Skip emitting it here to avoid duplicates
-            debug!(
-                "[DEBUG] emit_import_declaration_if_needed: skipping import (handled by elision)"
-            );
-        } else {
-            // Not handled by elision - emit normally
-            self.emit_import_declaration(import_idx);
-        }
+        // Source imports carry fidelity that auto-generated imports cannot reproduce
+        // (aliasing, `type` modifiers, attributes, and source ordering). Emit them
+        // through the filtered declaration path and reserve auto-import synthesis for
+        // genuinely foreign symbols that have no source import in this file.
+        self.emit_import_declaration(import_idx);
     }
 
     pub(crate) fn emit_import_declaration(&mut self, import_idx: NodeIndex) {
@@ -1094,6 +1134,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_node(import.module_specifier);
+        self.emit_declaration_import_attributes(import.attributes);
         self.write(";");
         self.write_line();
     }

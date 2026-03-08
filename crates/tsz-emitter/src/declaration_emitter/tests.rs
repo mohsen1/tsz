@@ -3264,6 +3264,92 @@ fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
     );
 }
 
+#[test]
+fn test_import_type_with_resolution_mode_attributes_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import type { RequireInterface } from "pkg" with { "resolution-mode": "require" };
+    import { type RequireInterface as Req } from "pkg" with { "resolution-mode": "require" };
+
+    export interface LocalInterface extends RequireInterface {}
+    export interface Loc extends Req {}
+    "#,
+    );
+
+    assert!(
+        output.contains(
+            r#"import type { RequireInterface } from "pkg" with { "resolution-mode": "require" };"#
+        ),
+        "Expected type-only import attributes to be preserved: {output}"
+    );
+    assert!(
+        output.contains(
+            r#"import { type RequireInterface as Req } from "pkg" with { "resolution-mode": "require" };"#
+        ),
+        "Expected named import attributes to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_import_type_alias_is_preserved_with_usage_analysis() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import { type RequireInterface as Req } from "pkg";
+
+    export interface Loc extends Req {}
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"import { type RequireInterface as Req } from "pkg";"#),
+        "Expected aliased type import to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_export_type_with_resolution_mode_attributes_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export type { RequireInterface } from "pkg" with { "resolution-mode": "require" };
+    "#,
+    );
+
+    assert!(
+        output.contains(
+            r#"export type { RequireInterface } from "pkg" with { "resolution-mode": "require" };"#
+        ),
+        "Expected export type attributes to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_invalid_resolution_mode_attribute_is_dropped_and_unused_mixed_import_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import type { RequireInterface } from "pkg" with { "resolution-mode": "foobar" };
+    import { ImportInterface } from "pkg" with { "resolution-mode": "import" };
+    import { type RequireInterface as Req, RequireInterface as Req2 } from "pkg" with { "resolution-mode": "require" };
+
+    export interface LocalInterface extends RequireInterface, ImportInterface {}
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"import type { RequireInterface } from "pkg";"#),
+        "Expected invalid resolution-mode attribute to be dropped: {output}"
+    );
+    assert!(
+        output.contains(
+            r#"import { ImportInterface } from "pkg" with { "resolution-mode": "import" };"#
+        ),
+        "Expected valid resolution-mode attribute to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("Req2"),
+        "Expected unused mixed import bindings to be elided: {output}"
+    );
+}
+
 // =============================================================================
 // 29. Namespace export as
 // =============================================================================
