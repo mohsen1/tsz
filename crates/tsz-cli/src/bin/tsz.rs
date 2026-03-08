@@ -111,7 +111,21 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     }
 
     let start_time = std::time::Instant::now();
-    let result = driver::compile(&args, &cwd)?;
+    let result = match driver::compile(&args, &cwd) {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            // Intercept TS6053 file-not-found errors from discover_ts_files and
+            // format them matching tsc v6 output.
+            if let Some(rest) = msg.strip_prefix("TS6053: ") {
+                println!("error TS6053: {rest}");
+                println!("  The file is in the program because:");
+                println!("    Root file specified for compilation\n");
+                std::process::exit(1);
+            }
+            return Err(e);
+        }
+    };
     let elapsed = start_time.elapsed();
 
     // Write trace file if requested
@@ -202,6 +216,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         let pretty = args
             .pretty
             .unwrap_or_else(|| std::io::stdout().is_terminal());
+        // When --pretty true is explicitly passed, force ANSI colors even
+        // when piped (not a TTY), matching tsc v6 behavior.
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
@@ -302,7 +321,12 @@ fn run_batch_mode() -> Result<()> {
 /// - `@file` response file expansion (tsc reads args from response files)
 /// - Build mode flag remapping: when `--build`/`-b` is the first argument,
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
+/// - Case-insensitive flag names: `--NoEmit` → `--noEmit` (tsc v6 compat)
+/// - Boolean flag values: `--strict false` → strip the flag (tsc v6 compat)
+/// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
+    let flag_lookup = build_flag_lookup();
+
     // First pass: expand response files and collect normalized arg strings
     let mut expanded = Vec::with_capacity(args.len());
 
@@ -382,6 +406,17 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     if has_version {
         println!("Version {TSC_VERSION}");
         std::process::exit(0);
+    }
+
+    // Check for bare `--` and `-` which tsc treats as unknown options (TS5023).
+    // These must be detected before clap sees them (clap treats `--` as
+    // end-of-options and `-` as a positional arg).
+    for arg in expanded.iter().skip(1) {
+        let s = arg.to_string_lossy();
+        if s == "--" || s == "-" {
+            println!("error TS5023: Unknown compiler option '{s}'.\n");
+            std::process::exit(1);
+        }
     }
 
     // Third pass: detect build mode and remap flags
@@ -502,19 +537,23 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
 
     match err.kind() {
         ErrorKind::UnknownArgument => {
-            // Extract the unknown flag from the error info
-            if let Some(flag) = extract_unknown_flag_from_args(args) {
-                // Try to find a close match for TS5025
-                if let Some(suggestion) = find_closest_option(&flag) {
-                    println!(
-                        "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion}'?\n"
-                    );
-                } else {
-                    println!("error TS5023: Unknown compiler option '{flag}'.\n");
-                }
-            } else {
+            // Extract ALL unknown flags from the args and report each one
+            let unknown_flags = extract_all_unknown_flags(args);
+            if unknown_flags.is_empty() {
                 // Fallback: just print TS5023 with whatever info we have
                 println!("error TS5023: Unknown compiler option.\n");
+            } else {
+                for flag in &unknown_flags {
+                    // Try to find a close match for TS5025
+                    if let Some(suggestion) = find_closest_option(flag) {
+                        println!(
+                            "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion}'?"
+                        );
+                    } else {
+                        println!("error TS5023: Unknown compiler option '{flag}'.");
+                    }
+                }
+                println!();
             }
             std::process::exit(1);
         }
@@ -523,8 +562,64 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
             // but keep this arm for safety
             err.exit();
         }
+        ErrorKind::MissingRequiredArgument => {
+            // TS6044: Compiler option 'X' expects an argument.
+            // Extract the option name from clap's error message
+            let msg = err.to_string();
+            if let Some(option_name) = extract_option_from_missing_value(&msg) {
+                println!("error TS6044: Compiler option '{option_name}' expects an argument.");
+                // Also emit TS6046 with valid values if this is an enum option
+                if let Some(valid_values) = get_valid_values_for_option(&option_name) {
+                    println!(
+                        "error TS6046: Argument for '--{option_name}' option must be: {valid_values}."
+                    );
+                }
+                println!();
+            } else {
+                let msg = msg
+                    .lines()
+                    .next()
+                    .unwrap_or(&msg)
+                    .trim_start_matches("error: ");
+                println!("error TS5023: {msg}\n");
+            }
+            std::process::exit(1);
+        }
+        ErrorKind::InvalidValue => {
+            let msg = err.to_string();
+            // Detect the "missing value" case: clap says "a value is required for"
+            let is_missing_value = msg.contains("a value is required for");
+            if let Some(option_name) = extract_option_from_invalid_value(&msg) {
+                // TS6044: emit when the option was given without any value
+                if is_missing_value {
+                    println!("error TS6044: Compiler option '{option_name}' expects an argument.");
+                }
+                // TS6046: list valid values for enum options
+                if let Some(valid_values) = get_valid_values_for_option(&option_name) {
+                    println!(
+                        "error TS6046: Argument for '--{option_name}' option must be: {valid_values}."
+                    );
+                } else if !is_missing_value {
+                    let msg = msg
+                        .lines()
+                        .next()
+                        .unwrap_or(&msg)
+                        .trim_start_matches("error: ");
+                    println!("error TS5023: {msg}");
+                }
+                println!();
+            } else {
+                let msg = msg
+                    .lines()
+                    .next()
+                    .unwrap_or(&msg)
+                    .trim_start_matches("error: ");
+                println!("error TS5023: {msg}\n");
+            }
+            std::process::exit(1);
+        }
         _ => {
-            // For other clap errors (missing value, etc.), still use exit code 1
+            // For other clap errors, still use exit code 1
             // and tsc-style formatting where possible
             let msg = err.to_string();
             // Strip clap's formatting prefix
@@ -539,10 +634,35 @@ fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<()> {
     }
 }
 
-/// Extract the first unknown flag from the preprocessed args by trying clap parsing.
-/// Walks args looking for anything starting with `-` that is not a known flag.
-fn extract_unknown_flag_from_args(args: &[OsString]) -> Option<String> {
-    // Collect all known options from clap's command definition
+/// Extract ALL unknown flags from the preprocessed args.
+/// Scans all args against known options and returns every unrecognized flag.
+fn extract_all_unknown_flags(args: &[OsString]) -> Vec<String> {
+    let known = collect_known_flags();
+    let mut unknown = Vec::new();
+
+    for arg in args.iter().skip(1) {
+        let s = arg.to_string_lossy();
+        if s == "-" || s == "--" {
+            // Bare `-` and `--` are treated as unknown options to match tsc
+            unknown.push(s.into_owned());
+        } else if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 {
+            // Short flag like -x
+            if !known.iter().any(|k| k == s.as_ref()) {
+                unknown.push(s.into_owned());
+            }
+        } else if s.starts_with("--") {
+            // Long flag like --badFlag (may have =value)
+            let flag_part = s.split('=').next().unwrap_or(&s);
+            if !known.iter().any(|k| k == flag_part) {
+                unknown.push(flag_part.to_string());
+            }
+        }
+    }
+    unknown
+}
+
+/// Collect all known CLI flags from clap's command definition.
+fn collect_known_flags() -> Vec<String> {
     let cmd = CliArgs::command();
     let mut known: Vec<String> = Vec::new();
     for a in cmd.get_arguments() {
@@ -562,24 +682,46 @@ fn extract_unknown_flag_from_args(args: &[OsString]) -> Option<String> {
     known.push("--version".to_string());
     known.push("--help".to_string());
     known.push("-h".to_string());
+    known
+}
 
-    // Walk preprocessed args (skip program name) to find the first unknown flag
-    for arg in args.iter().skip(1) {
-        let s = arg.to_string_lossy();
-        if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 {
-            // Short flag like -x
-            if !known.iter().any(|k| k == s.as_ref()) {
-                return Some(s.into_owned());
-            }
-        } else if s.starts_with("--") {
-            // Long flag like --badFlag (may have =value)
-            let flag_part = s.split('=').next().unwrap_or(&s);
-            if !known.iter().any(|k| k == flag_part) {
-                return Some(flag_part.to_string());
-            }
+/// Extract the option name from a clap "missing required argument" error.
+/// Clap formats these as: "a value is required for '--target <TARGET>' but none was supplied"
+fn extract_option_from_missing_value(msg: &str) -> Option<String> {
+    // Look for pattern: '--optionName' or '--optionName <VALUE>'
+    let start = msg.find("'--")?;
+    let after = &msg[start + 3..];
+    let end = after.find(['\'', ' ', '<'])?;
+    Some(after[..end].to_string())
+}
+
+/// Extract the option name from a clap "invalid value" error.
+/// Clap formats these as: "invalid value 'blah' for '--target <TARGET>'"
+fn extract_option_from_invalid_value(msg: &str) -> Option<String> {
+    let start = msg.find("'--")?;
+    let after = &msg[start + 3..];
+    let end = after.find(['\'', ' ', '<'])?;
+    Some(after[..end].to_string())
+}
+
+/// Get the valid values string for enum-typed CLI options, matching tsc's TS6046 format.
+fn get_valid_values_for_option(option_name: &str) -> Option<&'static str> {
+    match option_name {
+        "target" => Some(
+            "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'",
+        ),
+        "module" => Some(
+            "'none', 'commonjs', 'amd', 'umd', 'system', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'",
+        ),
+        "jsx" => Some("'preserve', 'react', 'react-jsx', 'react-jsxdev', 'react-native'"),
+        "moduleResolution" | "module-resolution" | "moduleresolution" => {
+            Some("'classic', 'node10', 'node', 'node16', 'nodenext', 'bundler'")
         }
+        "moduleDetection" | "module-detection" | "moduledetection" => {
+            Some("'auto', 'legacy', 'force'")
+        }
+        _ => None,
     }
-    None
 }
 
 /// All known tsc compiler option long names (for edit-distance matching).
@@ -772,9 +914,13 @@ fn find_closest_option(unknown: &str) -> Option<&'static str> {
     }
 
     // Only suggest if the distance is small enough to be a plausible typo.
-    // tsc uses a threshold roughly proportional to the option name length;
-    // we use <=3 as a pragmatic cutoff.
-    best.and_then(|(name, dist)| if dist <= 3 { Some(name) } else { None })
+    // tsc uses a threshold proportional to the option name length.
+    // We use max(unknown_len, candidate_len) * 0.4 as the cutoff, with a minimum of 1.
+    best.and_then(|(name, dist)| {
+        let max_len = unknown.len().max(name.len());
+        let threshold = (max_len * 2 / 5).max(1); // ~40% of the longer name
+        if dist <= threshold { Some(name) } else { None }
+    })
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
@@ -943,7 +1089,7 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 }
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options, strip_jsonc};
+    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
     // --ignoreConfig: skip tsconfig loading
@@ -1368,6 +1514,9 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let pretty = args
         .pretty
         .unwrap_or_else(|| std::io::stdout().is_terminal());
+    if args.pretty == Some(true) {
+        Reporter::force_colors(true);
+    }
     let mut reporter = Reporter::new(pretty);
 
     if args.build_verbose {
@@ -1522,6 +1671,9 @@ fn handle_build_single_project(
         let pretty = args
             .pretty
             .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
