@@ -169,23 +169,14 @@ impl<'a> CheckerState<'a> {
         // - IndexedAccess/KeyOf types: fix TS7006 when parameter type is e.g. Type["a"]
         let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
+            tracing::debug!(
+                "function_type: contextual_type = {:?}, is_closure = {}",
+                ctx_type,
+                is_closure
+            );
             use tsz_solver::type_queries::{
                 EvaluationNeeded, classify_for_evaluation, get_lazy_def_id, get_type_application,
             };
-
-            // Per TS spec §3.4: when a closure is contextually typed by a union
-            // of callable types, the call signatures must be identical (ignoring
-            // return types) for contextual parameter typing to work. If the
-            // signatures are incompatible, suppress contextual typing so TS7006
-            // fires under noImplicitAny.
-            //
-            // We check the RAW contextual type (before evaluation) because we need
-            // to distinguish declared union callables (Lazy → interface with call
-            // sigs) from overload-derived unions (already Function/Callable types
-            // from call argument contextual typing).
-            let suppress_for_incompatible_union = is_closure
-                && self.ctx.compiler_options.no_implicit_any
-                && self.union_has_incompatible_call_signatures(ctx_type);
 
             // Evaluate the contextual type to resolve type aliases and generic applications
             let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
@@ -220,18 +211,14 @@ impl<'a> CheckerState<'a> {
             // Resolve them here with the checker's TypeEnvironment which can resolve Lazy(DefId).
             let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
 
-            if suppress_for_incompatible_union {
-                None
-            } else {
-                contextual_signature_type_params =
-                    self.contextual_type_params_from_expected(evaluated_type);
+            contextual_signature_type_params =
+                self.contextual_type_params_from_expected(evaluated_type);
 
-                Some(ContextualTypeContext::with_expected_and_options(
-                    self.ctx.types,
-                    evaluated_type,
-                    self.ctx.compiler_options.no_implicit_any,
-                ))
-            }
+            Some(ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
+            ))
         } else if self.is_js_file() && is_function_declaration {
             // For function declarations in JS files with @type {FunctionType},
             // use the function type as contextual type for parameter typing.
@@ -1494,59 +1481,6 @@ impl<'a> CheckerState<'a> {
 
     fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {
         tsz_solver::type_queries::extract_contextual_type_params(self.ctx.types, expected)
-    }
-
-    /// Per TS spec §3.4: returns true when a union's callable members have
-    /// incompatible call signatures (different param counts or types).
-    fn union_has_incompatible_call_signatures(&self, ctx_type: TypeId) -> bool {
-        use tsz_solver::type_queries::{
-            get_call_signatures, get_lazy_def_id, get_union_members, is_callable_type,
-        };
-        let Some(members) = get_union_members(self.ctx.types, ctx_type) else {
-            return false;
-        };
-        let mut callable_member_sigs: Vec<Vec<Vec<TypeId>>> = Vec::new();
-        for m in &members {
-            let resolved = if get_lazy_def_id(self.ctx.types, *m).is_some() {
-                self.judge_evaluate(*m)
-            } else {
-                *m
-            };
-            if !is_callable_type(self.ctx.types, resolved) {
-                continue;
-            }
-            if let Some(call_sigs) = get_call_signatures(self.ctx.types, resolved)
-                && !call_sigs.is_empty()
-            {
-                let sigs: Vec<Vec<TypeId>> = call_sigs
-                    .iter()
-                    .map(|sig| sig.params.iter().map(|p| p.type_id).collect())
-                    .collect();
-                callable_member_sigs.push(sigs);
-            }
-        }
-
-        if callable_member_sigs.len() < 2 {
-            return false;
-        }
-        let first = &callable_member_sigs[0];
-        for other in &callable_member_sigs[1..] {
-            if other.len() != first.len() {
-                return true; // Different number of signatures → incompatible
-            }
-            for (sig_a, sig_b) in first.iter().zip(other.iter()) {
-                if sig_a.len() != sig_b.len() {
-                    return true; // Different parameter counts → incompatible
-                }
-                for (a, b) in sig_a.iter().zip(sig_b.iter()) {
-                    if a != b {
-                        return true; // Different parameter types → incompatible
-                    }
-                }
-            }
-        }
-
-        false
     }
 
     /// Check if a function body references the `arguments` object.

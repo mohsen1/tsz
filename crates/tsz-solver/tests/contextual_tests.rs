@@ -669,9 +669,11 @@ fn test_apply_contextual_same_type() {
 // =============================================================================
 
 /// When union members have call signatures with different parameter types,
-/// no contextual type is provided (per TS spec §3.4).
+/// the solver unions the parameter types (e.g., `string | number`) to provide
+/// contextual typing. This matches tsc behavior for method calls on union
+/// types (e.g., `(string[] | number[]).map(s => s)`).
 #[test]
-fn test_contextual_union_function_different_params_no_contextual_type() {
+fn test_contextual_union_function_different_params_unions_types() {
     let interner = TypeInterner::new();
 
     // ((x: string) => void) | ((x: number) => void) — different param types
@@ -707,7 +709,24 @@ fn test_contextual_union_function_different_params_no_contextual_type() {
 
     let ctx = ContextualTypeContext::with_expected(&interner, union);
 
-    assert!(ctx.get_parameter_type(0).is_none());
+    // Should return a union of string | number
+    let param_type = ctx.get_parameter_type(0);
+    assert!(
+        param_type.is_some(),
+        "Should provide contextual type for union callable params"
+    );
+    let param = param_type.unwrap();
+    let members = crate::type_queries::get_union_members(&interner, param);
+    assert!(members.is_some(), "Parameter type should be a union");
+    let members = members.unwrap();
+    assert!(
+        members.contains(&TypeId::STRING),
+        "Union should contain string"
+    );
+    assert!(
+        members.contains(&TypeId::NUMBER),
+        "Union should contain number"
+    );
 }
 
 #[test]
