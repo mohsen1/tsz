@@ -45,6 +45,10 @@ pub struct TypeFormatter<'a> {
     symbol_arena: Option<&'a tsz_binder::SymbolArena>,
     /// Definition store for looking up `DefId` names (optional)
     def_store: Option<&'a DefinitionStore>,
+    /// Maps `file_id` -> module specifier for import-qualified type display.
+    module_specifiers: Option<&'a FxHashMap<u32, String>>,
+    /// The `file_id` of the file currently being checked.
+    current_file_id: Option<u32>,
     /// Maximum depth for nested type printing
     max_depth: u32,
     /// Maximum number of union members to display before truncating
@@ -60,6 +64,8 @@ impl<'a> TypeFormatter<'a> {
             interner,
             symbol_arena: None,
             def_store: None,
+            module_specifiers: None,
+            current_file_id: None,
             max_depth: 5,
             max_union_members: 5,
             current_depth: 0,
@@ -76,6 +82,8 @@ impl<'a> TypeFormatter<'a> {
             interner,
             symbol_arena: Some(symbol_arena),
             def_store: None,
+            module_specifiers: None,
+            current_file_id: None,
             max_depth: 5,
             max_union_members: 5,
             current_depth: 0,
@@ -87,6 +95,29 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.def_store = Some(def_store);
         self
+    }
+
+    /// Add module specifier map for import-qualified type display.
+    pub const fn with_module_specifiers(
+        mut self,
+        module_specifiers: &'a FxHashMap<u32, String>,
+    ) -> Self {
+        self.module_specifiers = Some(module_specifiers);
+        self
+    }
+
+    /// Set the `file_id` of the currently-checked file.
+    pub const fn with_current_file_id(mut self, file_id: u32) -> Self {
+        self.current_file_id = Some(file_id);
+        self
+    }
+
+    /// Format a pair of types, disambiguating with import paths when names collide.
+    pub fn format_disambiguated(&mut self, type_a: TypeId, type_b: TypeId) -> (String, String) {
+        (
+            self.format(type_a).into_owned(),
+            self.format(type_b).into_owned(),
+        )
     }
 
     fn atom(&mut self, atom: Atom) -> Arc<str> {
