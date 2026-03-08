@@ -44,6 +44,47 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
+    /// Get the name of a class member for use in `__decorate` calls.
+    /// Handles identifiers, string literals, numeric literals, and computed property
+    /// names whose expression is a string literal (e.g. `["method"]`).
+    fn get_decorator_member_name(&self, name_idx: NodeIndex) -> String {
+        if name_idx.is_none() {
+            return String::new();
+        }
+        // Try identifier first
+        let text = self.get_identifier_text_idx(name_idx);
+        if !text.is_empty() {
+            return text;
+        }
+        // Check if it's a computed property name
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return String::new();
+        };
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(cp) = self.arena.get_computed_property(name_node) {
+                let expr_idx = cp.expression;
+                if let Some(expr_node) = self.arena.get(expr_idx) {
+                    // String literal: ["method"] → "method"
+                    if expr_node.kind == SyntaxKind::StringLiteral as u16
+                        && let Some(text) = self.arena.get_literal_text(expr_idx) {
+                            return text.to_string();
+                        }
+                    // Numeric literal: [1] → "1"
+                    if expr_node.kind == SyntaxKind::NumericLiteral as u16
+                        && let Some(text) = self.arena.get_literal_text(expr_idx) {
+                            return text.to_string();
+                        }
+                }
+            }
+        // String/numeric literal directly as property name
+        if (name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NumericLiteral as u16)
+            && let Some(text) = self.arena.get_literal_text(name_idx) {
+                return text.to_string();
+            }
+        String::new()
+    }
+
     /// Collect parameter decorators from a parameter list.
     /// Returns Vec of (`param_index`, `decorator_node_indices`) for parameters that have decorators.
     fn collect_param_decorators(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
@@ -480,9 +521,8 @@ impl<'a> Printer<'a> {
                 .arena
                 .has_modifier(modifiers, SyntaxKind::StaticKeyword);
 
-            let member_name = self.get_identifier_text_idx(name_idx);
+            let member_name = self.get_decorator_member_name(name_idx);
             if member_name.is_empty() {
-                // Computed property names are not supported for legacy decorator lowering
                 continue;
             }
 
