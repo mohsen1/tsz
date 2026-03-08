@@ -1945,6 +1945,10 @@ impl<'a> DeclarationEmitter<'a> {
             return Some((name_idx, initializer));
         }
 
+        if self.js_named_class_expression_matches_export(initializer, name_idx) {
+            return Some((name_idx, initializer));
+        }
+
         if self.js_commonjs_named_export_value_initializer_supported(initializer) {
             return Some((name_idx, initializer));
         }
@@ -1955,6 +1959,27 @@ impl<'a> DeclarationEmitter<'a> {
     fn js_commonjs_named_export_value_initializer_supported(&self, initializer: NodeIndex) -> bool {
         self.js_synthetic_export_value_type_text(initializer)
             .is_some()
+    }
+
+    fn js_named_class_expression_matches_export(
+        &self,
+        initializer: NodeIndex,
+        export_name_idx: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(init_node) else {
+            return false;
+        };
+        let Some(export_name) = self.get_identifier_text(export_name_idx) else {
+            return false;
+        };
+        self.get_identifier_text(class.name)
+            .is_some_and(|class_name| class_name == export_name)
     }
 
     pub(crate) fn js_assigned_initializer_for_value_reference(
