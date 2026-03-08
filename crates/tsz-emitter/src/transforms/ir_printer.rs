@@ -18,6 +18,7 @@
 //! // output: "function foo() {\n    return 42;\n}"
 //! ```
 
+use std::borrow::Cow;
 use std::fmt::Write;
 
 #[path = "ir_printer_helpers.rs"]
@@ -91,11 +92,7 @@ impl<'a> IRPrinter<'a> {
         let IRNode::Identifier(identifier_name) = &**value else {
             return None;
         };
-        (export_name == name && identifier_name == name).then_some((
-            name.as_str(),
-            members,
-            namespace.as_str(),
-        ))
+        (export_name == name && identifier_name == name).then_some((&**name, members, &**namespace))
     }
 
     /// Check if a node is a `return [opcode ...];` generator op return statement.
@@ -587,7 +584,7 @@ impl<'a> IRPrinter<'a> {
                     return;
                 }
                 let force_multiline_empty = self.force_iife_multiline_empty
-                    || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(n.as_str()));
+                    || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(&**n));
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
@@ -806,7 +803,7 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 let force_multiline_empty =
-                    self.current_class_iife_name.as_deref() == Some(name.as_str());
+                    self.current_class_iife_name.as_deref() == Some(&**name);
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
@@ -861,7 +858,7 @@ impl<'a> IRPrinter<'a> {
                 self.write_line();
                 self.increase_indent();
 
-                let prev_iife_name = self.current_class_iife_name.replace(name.clone());
+                let prev_iife_name = self.current_class_iife_name.replace(name.to_string());
 
                 // Emit body
                 for stmt in body {
@@ -1708,7 +1705,7 @@ impl<'a> IRPrinter<'a> {
 
     fn emit_namespace_iife(
         &mut self,
-        name_parts: &[String],
+        name_parts: &[Cow<'static, str>],
         index: usize,
         body: &[IRNode],
         context: NamespaceIifeContext<'_>,
@@ -1718,9 +1715,9 @@ impl<'a> IRPrinter<'a> {
         // Use renamed parameter name only at the innermost (last) level for collision avoidance.
         // Outer levels of qualified names (A.B.C) always use their original name.
         let iife_param = if is_last {
-            context.param_name.unwrap_or(current_name.as_str())
+            context.param_name.unwrap_or(current_name)
         } else {
-            current_name.as_str()
+            current_name
         };
 
         // Emit var/let declaration only for the outermost namespace and if flag is true.

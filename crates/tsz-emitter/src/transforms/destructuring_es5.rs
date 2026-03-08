@@ -105,9 +105,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
         // First declaration: _a = initializer
         if let Some(init_expr) = self.transform_expression(initializer_idx) {
-            result.push(IRNode::var_decl(&temp_var, Some(init_expr)));
+            result.push(IRNode::var_decl(temp_var.clone(), Some(init_expr)));
         } else {
-            result.push(IRNode::var_decl(&temp_var, Some(IRNode::Undefined)));
+            result.push(IRNode::var_decl(temp_var.clone(), Some(IRNode::Undefined)));
         }
 
         // Generate destructuring assignments
@@ -131,7 +131,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
         // _temp = value
         if let Some(value_expr) = self.transform_expression(value_idx) {
-            exprs.push(IRNode::assign(IRNode::id(&temp_var), value_expr));
+            exprs.push(IRNode::assign(IRNode::id(temp_var.clone()), value_expr));
         }
 
         // Generate destructuring assignments as expressions
@@ -139,7 +139,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
         if keep_result {
             // Preserve expression value when needed by returning the RHS temp.
-            exprs.push(IRNode::id(&temp_var));
+            exprs.push(IRNode::id(temp_var.clone()));
         }
 
         if exprs.len() == 1 {
@@ -239,10 +239,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     );
                     if !name.is_empty() {
                         let slice_call = IRNode::call(
-                            IRNode::prop(IRNode::id(source), "slice"),
+                            IRNode::prop(IRNode::id(source.to_string()), "slice"),
                             vec![IRNode::number(index.to_string())],
                         );
-                        result.push(IRNode::var_decl(&name, Some(slice_call)));
+                        result.push(IRNode::var_decl(name.clone(), Some(slice_call)));
                     }
                     continue;
                 }
@@ -254,9 +254,11 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 {
                     // Nested pattern - create temp and recurse
                     let nested_temp = self.next_temp_var();
-                    let access =
-                        IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
-                    result.push(IRNode::var_decl(&nested_temp, Some(access)));
+                    let access = IRNode::elem(
+                        IRNode::id(source.to_string()),
+                        IRNode::number(index.to_string()),
+                    );
+                    result.push(IRNode::var_decl(nested_temp.clone(), Some(access)));
                     self.emit_destructuring_pattern(&nested_temp, binding_elem.name, result);
                     continue;
                 }
@@ -267,8 +269,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     binding_elem.name,
                 );
                 if !name.is_empty() {
-                    let access =
-                        IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
+                    let access = IRNode::elem(
+                        IRNode::id(source.to_string()),
+                        IRNode::number(index.to_string()),
+                    );
 
                     // Handle default value
                     let value = if binding_elem.initializer.is_none() {
@@ -290,7 +294,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         access
                     };
 
-                    result.push(IRNode::var_decl(&name, Some(value)));
+                    result.push(IRNode::var_decl(name.clone(), Some(value)));
                 }
             }
         }
@@ -329,13 +333,18 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         binding_elem.name,
                     );
                     if !name.is_empty() {
-                        let excluded_array: Vec<IRNode> =
-                            rest_excluded.iter().map(IRNode::string).collect();
+                        let excluded_array: Vec<IRNode> = rest_excluded
+                            .iter()
+                            .map(|s| IRNode::string(s.clone()))
+                            .collect();
                         let rest_call = IRNode::call(
                             IRNode::id("__rest"),
-                            vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
+                            vec![
+                                IRNode::id(source.to_string()),
+                                IRNode::ArrayLiteral(excluded_array),
+                            ],
                         );
-                        result.push(IRNode::var_decl(&name, Some(rest_call)));
+                        result.push(IRNode::var_decl(name.clone(), Some(rest_call)));
                     }
                     continue;
                 }
@@ -349,7 +358,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         // Save computed key to a temporary variable
                         let temp_var = self.next_temp_var();
                         if let Some(key_expr) = self.transform_expression(computed.expression) {
-                            result.push(IRNode::var_decl(&temp_var, Some(key_expr)));
+                            result.push(IRNode::var_decl(temp_var.clone(), Some(key_expr)));
                             (true, Some(temp_var))
                         } else {
                             (false, None)
@@ -388,14 +397,17 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     let nested_temp = self.next_temp_var();
                     let access = if is_computed {
                         if let Some(computed_temp) = computed_temp.as_ref() {
-                            IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                            IRNode::elem(
+                                IRNode::id(source.to_string()),
+                                IRNode::id(computed_temp.clone()),
+                            )
                         } else {
-                            IRNode::prop(IRNode::id(source), &prop_name)
+                            IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                         }
                     } else {
-                        IRNode::prop(IRNode::id(source), &prop_name)
+                        IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                     };
-                    result.push(IRNode::var_decl(&nested_temp, Some(access)));
+                    result.push(IRNode::var_decl(nested_temp.clone(), Some(access)));
                     self.emit_destructuring_pattern(&nested_temp, binding_elem.name, result);
                     continue;
                 }
@@ -412,12 +424,15 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 // Create property access (computed or regular)
                 let access = if is_computed {
                     if let Some(computed_temp) = computed_temp.as_ref() {
-                        IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                        IRNode::elem(
+                            IRNode::id(source.to_string()),
+                            IRNode::id(computed_temp.clone()),
+                        )
                     } else {
-                        IRNode::prop(IRNode::id(source), &prop_name)
+                        IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                     }
                 } else {
-                    IRNode::prop(IRNode::id(source), &prop_name)
+                    IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                 };
 
                 // Handle default value
@@ -440,7 +455,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     access
                 };
 
-                result.push(IRNode::var_decl(&binding_name, Some(value)));
+                result.push(IRNode::var_decl(binding_name.clone(), Some(value)));
             }
         }
     }
@@ -483,7 +498,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     && let Some(target) = self.transform_expression(spread.expression)
                 {
                     let slice_call = IRNode::call(
-                        IRNode::prop(IRNode::id(source), "slice"),
+                        IRNode::prop(IRNode::id(source.to_string()), "slice"),
                         vec![IRNode::number(index.to_string())],
                     );
                     result.push(IRNode::assign(target, slice_call));
@@ -496,15 +511,21 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 || element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let nested_temp = self.next_temp_var();
-                let access = IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
-                result.push(IRNode::assign(IRNode::id(&nested_temp), access));
+                let access = IRNode::elem(
+                    IRNode::id(source.to_string()),
+                    IRNode::number(index.to_string()),
+                );
+                result.push(IRNode::assign(IRNode::id(nested_temp.clone()), access));
                 self.emit_destructuring_assignments(&nested_temp, element_idx, result);
                 continue;
             }
 
             // Simple element
             if let Some(target) = self.transform_expression(element_idx) {
-                let access = IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
+                let access = IRNode::elem(
+                    IRNode::id(source.to_string()),
+                    IRNode::number(index.to_string()),
+                );
                 result.push(IRNode::assign(target, access));
             }
         }
@@ -552,7 +573,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                             // Save computed key to a temporary variable
                             let temp_var = self.next_temp_var();
                             if let Some(key_expr) = self.transform_expression(computed.expression) {
-                                result.push(IRNode::assign(IRNode::id(&temp_var), key_expr));
+                                result.push(IRNode::assign(IRNode::id(temp_var.clone()), key_expr));
                                 (true, Some(temp_var))
                             } else {
                                 (false, None)
@@ -579,19 +600,25 @@ impl<'a> ES5DestructuringTransformer<'a> {
                             let nested_temp = self.next_temp_var();
                             let access = if is_computed {
                                 if let Some(computed_temp) = computed_temp.as_ref() {
-                                    IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                                    IRNode::elem(
+                                        IRNode::id(source.to_string()),
+                                        IRNode::id(computed_temp.clone()),
+                                    )
                                 } else {
-                                    IRNode::prop(IRNode::id(source), &prop_name)
+                                    IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                                 }
                             } else if let Some(prop_name_node) = self.arena.get(prop.name)
                                 && prop_name_node.kind == SyntaxKind::StringLiteral as u16
                                 && let Some(str_lit) = self.arena.get_literal(prop_name_node)
                             {
-                                IRNode::elem(IRNode::id(source), IRNode::string(&str_lit.text))
+                                IRNode::elem(
+                                    IRNode::id(source.to_string()),
+                                    IRNode::string(str_lit.clone().text),
+                                )
                             } else {
-                                IRNode::prop(IRNode::id(source), &prop_name)
+                                IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                             };
-                            result.push(IRNode::assign(IRNode::id(&nested_temp), access));
+                            result.push(IRNode::assign(IRNode::id(nested_temp.clone()), access));
                             self.emit_destructuring_assignments(
                                 &nested_temp,
                                 prop.initializer,
@@ -603,17 +630,23 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         if let Some(target) = self.transform_expression(prop.initializer) {
                             let access = if is_computed {
                                 if let Some(computed_temp) = computed_temp.as_ref() {
-                                    IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                                    IRNode::elem(
+                                        IRNode::id(source.to_string()),
+                                        IRNode::id(computed_temp.clone()),
+                                    )
                                 } else {
-                                    IRNode::prop(IRNode::id(source), &prop_name)
+                                    IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                                 }
                             } else if let Some(prop_name_node) = self.arena.get(prop.name)
                                 && prop_name_node.kind == SyntaxKind::StringLiteral as u16
                                 && let Some(str_lit) = self.arena.get_literal(prop_name_node)
                             {
-                                IRNode::elem(IRNode::id(source), IRNode::string(&str_lit.text))
+                                IRNode::elem(
+                                    IRNode::id(source.to_string()),
+                                    IRNode::string(str_lit.text.clone()),
+                                )
                             } else {
-                                IRNode::prop(IRNode::id(source), &prop_name)
+                                IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                             };
                             result.push(IRNode::assign(target, access));
                         }
@@ -626,19 +659,24 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         );
                         rest_excluded.push(name.clone());
 
-                        let access = IRNode::prop(IRNode::id(source), &name);
-                        result.push(IRNode::assign(IRNode::id(&name), access));
+                        let access = IRNode::prop(IRNode::id(source.to_string()), name.clone());
+                        result.push(IRNode::assign(IRNode::id(name.clone()), access));
                     }
                 }
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
                     if let Some(spread) = self.arena.get_unary_expr_ex(element_node)
                         && let Some(target) = self.transform_expression(spread.expression)
                     {
-                        let excluded_array: Vec<IRNode> =
-                            rest_excluded.iter().map(IRNode::string).collect();
+                        let excluded_array: Vec<IRNode> = rest_excluded
+                            .iter()
+                            .map(|s| IRNode::string(s.clone()))
+                            .collect();
                         let rest_call = IRNode::call(
                             IRNode::id("__rest"),
-                            vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
+                            vec![
+                                IRNode::id(source.to_string()),
+                                IRNode::ArrayLiteral(excluded_array),
+                            ],
                         );
                         result.push(IRNode::assign(target, rest_call));
                     }
@@ -721,15 +759,15 @@ impl<'a> ES5DestructuringTransformer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                Some(IRNode::number(&lit.text))
+                Some(IRNode::number(lit.clone().text))
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                Some(IRNode::string(&lit.text))
+                Some(IRNode::string(lit.text.to_string()))
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let ident = self.arena.get_identifier(node)?;
-                Some(IRNode::id(&ident.escaped_text))
+                Some(IRNode::id(ident.escaped_text.to_string()))
             }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
@@ -748,7 +786,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     self.arena,
                     access.name_or_argument,
                 );
-                Some(IRNode::prop(object, &property))
+                Some(IRNode::prop(object, property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;

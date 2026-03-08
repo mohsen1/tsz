@@ -168,7 +168,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             if c.pos >= from_pos && c.end <= to_pos {
                 let text = c.get_text(source_text);
                 if !text.is_empty() {
-                    result.push(IRNode::Raw(text.to_string()));
+                    result.push(IRNode::Raw(text.to_string().into()));
                 }
             }
             if c.pos >= to_pos {
@@ -279,7 +279,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 if before.trim().is_empty() {
                     let text = c.get_text(source_text);
                     if !text.is_empty() {
-                        result.push(IRNode::Raw(text.to_string()));
+                        result.push(IRNode::Raw(text.to_string().into()));
                     }
                 }
             }
@@ -410,14 +410,14 @@ impl<'a> NamespaceES5Transformer<'a> {
         let name = name_parts.first().cloned().unwrap_or_default();
 
         Some(IRNode::NamespaceIIFE {
-            name,
-            name_parts,
+            name: name.into(),
+            name_parts: name_parts.into_iter().map(Into::into).collect(),
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
             parent_name: None,
-            param_name,
+            param_name: param_name.map(Into::into),
             skip_sequence_indent: false,
         })
     }
@@ -718,7 +718,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                         && items.len() > 1
                         && matches!(items.first(), Some(IRNode::FunctionDecl { .. }))
                     {
-                        items.insert(1, IRNode::TrailingComment(comment_text));
+                        items.insert(1, IRNode::TrailingComment(comment_text.into()));
                         trailing_attached_in_sequence = true;
                     }
                     result.push(ir);
@@ -726,7 +726,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                         && !trailing_attached_in_sequence
                         && let Some(comment_text) = trailing
                     {
-                        result.push(IRNode::TrailingComment(comment_text));
+                        result.push(IRNode::TrailingComment(comment_text.into()));
                     }
                 } else {
                     // Erased statement (interface/type alias).
@@ -872,13 +872,13 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         if is_exported {
             Some(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: alias,
+                namespace: ns_name.to_string().into(),
+                name: alias.into(),
                 value: Box::new(target_expr),
             })
         } else {
             Some(IRNode::VarDecl {
-                name: alias,
+                name: alias.into(),
                 initializer: Some(Box::new(target_expr)),
             })
         }
@@ -913,8 +913,8 @@ impl<'a> NamespaceES5Transformer<'a> {
         let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
 
         Some(IRNode::NamespaceExport {
-            namespace: ns_name.to_string(),
-            name: alias,
+            namespace: ns_name.to_string().into(),
+            name: alias.into(),
             value: Box::new(target_expr),
         })
     }
@@ -944,7 +944,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
-            name: func_name.clone(),
+            name: func_name.clone().into(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
             body_source_range,
@@ -955,9 +955,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             Some(IRNode::Sequence(vec![
                 func_decl,
                 IRNode::NamespaceExport {
-                    namespace: ns_name.to_string(),
-                    name: func_name.clone(),
-                    value: Box::new(IRNode::Identifier(func_name)),
+                    namespace: ns_name.to_string().into(),
+                    name: func_name.clone().into(),
+                    value: Box::new(IRNode::Identifier(func_name.into())),
                 },
             ]))
         } else {
@@ -1052,9 +1052,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             Some(IRNode::Sequence(vec![
                 class_ir,
                 IRNode::NamespaceExport {
-                    namespace: ns_name.to_string(),
-                    name: class_name.clone(),
-                    value: Box::new(IRNode::Identifier(class_name)),
+                    namespace: ns_name.to_string().into(),
+                    name: class_name.clone().into(),
+                    value: Box::new(IRNode::Identifier(class_name.into())),
                 },
             ]))
         } else {
@@ -1121,7 +1121,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 namespace_export, ..
             } = &mut enum_ir
         {
-            *namespace_export = Some(ns_name.to_string());
+            *namespace_export = Some(ns_name.to_string().into());
         }
 
         Some(enum_ir)
@@ -1172,14 +1172,14 @@ impl<'a> NamespaceES5Transformer<'a> {
         let name = name_parts.first().cloned().unwrap_or_default();
 
         Some(IRNode::NamespaceIIFE {
-            name,
-            name_parts,
+            name: name.into(),
+            name_parts: name_parts.into_iter().map(Into::into).collect(),
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
-            parent_name: is_exported.then(|| parent_ns.to_string()),
-            param_name,
+            parent_name: is_exported.then(|| parent_ns.to_string().into()),
+            param_name: param_name.map(Into::into),
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
     }

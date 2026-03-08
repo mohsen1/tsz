@@ -504,15 +504,15 @@ pub(crate) fn get_property_key(
 
     if node.kind == SyntaxKind::Identifier as u16 {
         let ident = arena.get_identifier(node)?;
-        return Some(IRPropertyKey::Identifier(ident.escaped_text.clone()));
+        return Some(IRPropertyKey::Identifier(ident.escaped_text.clone().into()));
     }
     if node.kind == SyntaxKind::StringLiteral as u16 {
         let lit = arena.get_literal(node)?;
-        return Some(IRPropertyKey::StringLiteral(lit.text.clone()));
+        return Some(IRPropertyKey::StringLiteral(lit.text.clone().into()));
     }
     if node.kind == SyntaxKind::NumericLiteral as u16 {
         let lit = arena.get_literal(node)?;
-        return Some(IRPropertyKey::NumericLiteral(lit.text.clone()));
+        return Some(IRPropertyKey::NumericLiteral(lit.text.clone().into()));
     }
     if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
         let computed = arena.get_computed_property(node)?;

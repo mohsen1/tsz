@@ -104,7 +104,7 @@ fn test_emit_function_expr() {
 #[test]
 fn test_emit_es5_class_iife() {
     let class = IRNode::ES5ClassIIFE {
-        name: "Point".to_string(),
+        name: "Point".into(),
         base_class: None,
         body: vec![
             IRNode::func_decl(
@@ -133,11 +133,11 @@ fn test_emit_es5_class_iife() {
 #[test]
 fn test_emit_es5_class_with_extends() {
     let class = IRNode::ES5ClassIIFE {
-        name: "Child".to_string(),
+        name: "Child".into(),
         base_class: Some(Box::new(IRNode::id("Parent"))),
         body: vec![
             IRNode::ExtendsHelper {
-                class_name: "Child".to_string(),
+                class_name: "Child".into(),
             },
             IRNode::func_decl("Child", vec![], vec![]),
             IRNode::ret(Some(IRNode::id("Child"))),
@@ -163,7 +163,7 @@ fn test_emit_generator_body_simple() {
             statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                 opcode: 2,
                 value: None,
-                comment: Some("return".to_string()),
+                comment: Some("return".into()),
             }))],
         }],
     };
@@ -185,7 +185,7 @@ fn test_emit_awaiter_call() {
                 statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                     opcode: 2,
                     value: None,
-                    comment: Some("return".to_string()),
+                    comment: Some("return".into()),
                 }))],
             }],
         }),
@@ -199,7 +199,7 @@ fn test_emit_awaiter_call() {
 fn test_emit_private_field_get() {
     let get = IRNode::PrivateFieldGet {
         receiver: Box::new(IRNode::this()),
-        weakmap_name: "_Foo_bar".to_string(),
+        weakmap_name: "_Foo_bar".into(),
     };
 
     let output = IRPrinter::emit_to_string(&get);
@@ -210,7 +210,7 @@ fn test_emit_private_field_get() {
 fn test_emit_private_field_set() {
     let set = IRNode::PrivateFieldSet {
         receiver: Box::new(IRNode::this()),
-        weakmap_name: "_Foo_bar".to_string(),
+        weakmap_name: "_Foo_bar".into(),
         value: Box::new(IRNode::number("42")),
     };
 
@@ -230,10 +230,10 @@ fn test_emit_string_escaping() {
 #[test]
 fn test_nested_sequence_respects_namespace_skip_indent() {
     let seq = IRNode::Sequence(vec![
-        IRNode::Raw("x;".to_string()),
+        IRNode::Raw("x;".into()),
         IRNode::NamespaceIIFE {
-            name: "N".to_string(),
-            name_parts: vec!["N".to_string()],
+            name: "N".into(),
+            name_parts: vec!["N".into()],
             body: vec![],
             is_exported: false,
             attach_to_exports: false,
@@ -257,18 +257,18 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
 #[test]
 fn test_namespace_iife_generated_object_literal_is_multiline() {
     let ns = IRNode::NamespaceIIFE {
-        name: "Translation".to_string(),
-        name_parts: vec!["Translation".to_string()],
+        name: "Translation".into(),
+        name_parts: vec!["Translation".into()],
         body: vec![IRNode::expr_stmt(IRNode::assign(
             IRNode::prop(IRNode::id("Translation"), "TranslationKeyEnum"),
             IRNode::object(vec![
                 IRProperty {
-                    key: IRPropertyKey::Identifier("Translation1".to_string()),
+                    key: IRPropertyKey::Identifier("Translation1".into()),
                     value: IRNode::string("translation1"),
                     kind: IRPropertyKind::Init,
                 },
                 IRProperty {
-                    key: IRPropertyKey::Identifier("Translation2".to_string()),
+                    key: IRPropertyKey::Identifier("Translation2".into()),
                     value: IRNode::string("translation2"),
                     kind: IRPropertyKind::Init,
                 },

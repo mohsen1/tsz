@@ -184,7 +184,7 @@ impl<'a> ES5ClassTransformer<'a> {
             let is_comment =
                 trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/"));
             if is_comment {
-                body.push(IRNode::Raw(trimmed.to_string()));
+                body.push(IRNode::Raw(trimmed.to_string().into()));
             }
         }
     }
@@ -538,7 +538,9 @@ impl<'a> ES5ClassTransformer<'a> {
             raw.push_str(desc_str);
             raw.push(')');
 
-            body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(raw))));
+            body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
+                raw.into(),
+            ))));
         }
     }
 
@@ -570,7 +572,9 @@ impl<'a> ES5ClassTransformer<'a> {
         raw.push_str(&self.class_name);
         raw.push(')');
 
-        body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(raw))));
+        body.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
+            raw.into(),
+        ))));
     }
 
     /// Convert a block body to IR statements
@@ -631,7 +635,7 @@ impl<'a> ES5ClassTransformer<'a> {
             stmts.insert(
                 0,
                 IRNode::VarDecl {
-                    name: alias,
+                    name: alias.into(),
                     initializer: Some(Box::new(IRNode::This { captured: false })),
                 },
             );
@@ -694,7 +698,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // __extends(ClassName, _super);
         if self.has_extends {
             body.push(IRNode::ExtendsHelper {
-                class_name: self.class_name.clone(),
+                class_name: self.class_name.clone().into(),
             });
         }
 
@@ -718,7 +722,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         // return ClassName;
-        body.push(IRNode::ret(Some(IRNode::id(&self.class_name))));
+        body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // Build WeakMap declarations and instantiations
         let mut weakmap_decls: Vec<String> = self
@@ -773,7 +777,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // precede the class declaration. Extracting and re-emitting the same
         // comment in the IR printer would produce duplicate output.
         Some(IRNode::ES5ClassIIFE {
-            name: self.class_name.clone(),
+            name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),
             body,
             weakmap_decls,
@@ -961,7 +965,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         let ctor_fn = IRNode::FunctionDecl {
-            name: self.class_name.clone(),
+            name: self.class_name.clone().into(),
             parameters: params,
             body: ctor_body,
             body_source_range,
@@ -971,7 +975,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(comment) = trailing_comment {
             Some(IRNode::Sequence(vec![
                 ctor_fn,
-                IRNode::TrailingComment(comment),
+                IRNode::TrailingComment(comment.into()),
             ]))
         } else {
             Some(ctor_fn)
@@ -1250,8 +1254,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
                 // this.param = param; or _this.param = param;
                 body.push(IRNode::expr_stmt(IRNode::assign(
-                    IRNode::prop(receiver, &param_name),
-                    IRNode::id(&param_name),
+                    IRNode::prop(receiver, param_name.clone()),
+                    IRNode::id(param_name.clone()),
                 )));
             }
         }
@@ -1272,7 +1276,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
             // _ClassName_field.set(this, void 0);
             body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                weakmap_name: field.weakmap_name.clone(),
+                weakmap_name: field.weakmap_name.clone().into(),
                 key: Box::new(key.clone()),
                 value: Box::new(IRNode::Undefined),
             }));
@@ -1281,7 +1285,7 @@ impl<'a> ES5ClassTransformer<'a> {
             if field.has_initializer && field.initializer.is_some() {
                 body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
                     receiver: Box::new(key.clone()),
-                    weakmap_name: field.weakmap_name.clone(),
+                    weakmap_name: field.weakmap_name.clone().into(),
                     value: Box::new(self.convert_expression(field.initializer)),
                 }));
             }
@@ -1306,7 +1310,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 && let Some(getter_body) = acc.getter_body
             {
                 body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                    weakmap_name: get_var.clone(),
+                    weakmap_name: get_var.clone().into(),
                     key: Box::new(key.clone()),
                     value: Box::new(IRNode::FunctionExpr {
                         name: None,
@@ -1330,7 +1334,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
 
                 body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                    weakmap_name: set_var.clone(),
+                    weakmap_name: set_var.clone().into(),
                     key: Box::new(key.clone()),
                     value: Box::new(IRNode::FunctionExpr {
                         name: None,
@@ -1359,7 +1363,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
             // _Class_accessor_storage.set(this, void 0);
             body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                weakmap_name: accessor.weakmap_name.clone(),
+                weakmap_name: accessor.weakmap_name.clone().into(),
                 key: Box::new(key.clone()),
                 value: Box::new(IRNode::Undefined),
             }));
@@ -1367,7 +1371,7 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(initializer) = accessor.initializer {
                 body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
                     receiver: Box::new(key.clone()),
-                    weakmap_name: accessor.weakmap_name.clone(),
+                    weakmap_name: accessor.weakmap_name.clone().into(),
                     value: Box::new(self.convert_expression(initializer)),
                 }));
             }
@@ -1386,7 +1390,7 @@ impl<'a> ES5ClassTransformer<'a> {
             parameters: vec![],
             body: vec![IRNode::ret(Some(IRNode::PrivateFieldGet {
                 receiver: Box::new(IRNode::this()),
-                weakmap_name: weakmap_name.to_string(),
+                weakmap_name: weakmap_name.to_string().into(),
             }))],
             is_expression_body: true,
             body_source_range: None,
@@ -1399,7 +1403,7 @@ impl<'a> ES5ClassTransformer<'a> {
             parameters: vec![IRParam::new("value")],
             body: vec![IRNode::expr_stmt(IRNode::PrivateFieldSet {
                 receiver: Box::new(IRNode::this()),
-                weakmap_name: weakmap_name.to_string(),
+                weakmap_name: weakmap_name.to_string().into(),
                 value: Box::new(IRNode::id("value")),
             })],
             is_expression_body: true,

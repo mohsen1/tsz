@@ -83,10 +83,9 @@ impl<'a> CommonJsTransformContext<'a> {
         if !other_exports.is_empty() {
             for chunk in other_exports.chunks(50) {
                 let reversed: Vec<&str> = chunk.iter().rev().map(|s| s.as_str()).collect();
-                result.push(IRNode::Raw(format!(
-                    "exports.{} = void 0;",
-                    reversed.join(" = exports.")
-                )));
+                result.push(IRNode::Raw(
+                    format!("exports.{} = void 0;", reversed.join(" = exports.")).into(),
+                ));
             }
         }
         result.extend(lowered_statements);
@@ -130,7 +129,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // Side-effect import: `import "./x";` -> `require("./x");`
         if import.import_clause.is_none() {
-            return Some(IRNode::Raw(format!("require(\"{module_spec}\");")));
+            return Some(IRNode::Raw(format!("require(\"{module_spec}\");").into()));
         }
 
         let module_var = sanitize_module_name(&module_spec);
@@ -143,8 +142,8 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // var module_1 = require("./module");
         statements.push(IRNode::RequireStatement {
-            var_name: var_name.clone(),
-            module_spec: module_spec.clone(),
+            var_name: var_name.clone().into(),
+            module_spec: module_spec.clone().into(),
         });
 
         // Process import bindings
@@ -160,8 +159,8 @@ impl<'a> CommonJsTransformContext<'a> {
             && let Some(name) = get_identifier_text(self.arena, clause.name)
         {
             statements.push(IRNode::DefaultImport {
-                var_name: name,
-                module_var: var_name.clone(),
+                var_name: name.into(),
+                module_var: var_name.clone().into(),
             });
         }
 
@@ -175,8 +174,8 @@ impl<'a> CommonJsTransformContext<'a> {
             if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 if let Some(name) = get_identifier_text(self.arena, named_imports.name) {
                     statements.push(IRNode::NamespaceImport {
-                        var_name: name,
-                        module_var: var_name,
+                        var_name: name.into(),
+                        module_var: var_name.into(),
                     });
                 }
             } else {
@@ -199,9 +198,9 @@ impl<'a> CommonJsTransformContext<'a> {
                             local_name.clone()
                         };
                         statements.push(IRNode::NamedImport {
-                            var_name: local_name,
-                            module_var: var_name.clone(),
-                            import_name,
+                            var_name: local_name.into(),
+                            module_var: var_name.clone().into(),
+                            import_name: import_name.into(),
                         });
                     }
                 }
@@ -218,7 +217,7 @@ impl<'a> CommonJsTransformContext<'a> {
                 return None;
             }
             // `import {} from "x"` should preserve runtime side effects without temp module binding.
-            return Some(IRNode::Raw(format!("require(\"{module_spec}\");")));
+            return Some(IRNode::Raw(format!("require(\"{module_spec}\");").into()));
         }
 
         Some(IRNode::Block(statements))
@@ -261,8 +260,8 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // var module_1 = require("./module");
         statements.push(IRNode::RequireStatement {
-            var_name: var_name.clone(),
-            module_spec,
+            var_name: var_name.clone().into(),
+            module_spec: module_spec.into(),
         });
 
         // Get exported names
@@ -286,9 +285,9 @@ impl<'a> CommonJsTransformContext<'a> {
                     };
 
                     statements.push(IRNode::ReExportProperty {
-                        export_name,
-                        module_var: var_name.clone(),
-                        import_name,
+                        export_name: export_name.into(),
+                        module_var: var_name.clone().into(),
+                        import_name: import_name.into(),
                     });
                 }
             }
@@ -322,7 +321,7 @@ impl<'a> CommonJsTransformContext<'a> {
                             && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                             && let Some(name) = get_identifier_text(self.arena, decl.name)
                         {
-                            result.push(IRNode::ExportAssignment { name });
+                            result.push(IRNode::ExportAssignment { name: name.into() });
                         }
                     }
                 }
@@ -346,7 +345,9 @@ impl<'a> CommonJsTransformContext<'a> {
             let func_name = get_identifier_text(self.arena, func_data.name)?;
             let result = vec![
                 IRNode::ASTRef(func_idx),
-                IRNode::ExportAssignment { name: func_name },
+                IRNode::ExportAssignment {
+                    name: func_name.into(),
+                },
             ];
 
             Some(IRNode::Block(result))
@@ -367,7 +368,9 @@ impl<'a> CommonJsTransformContext<'a> {
             let class_name = get_identifier_text(self.arena, class_data.name)?;
             let result = vec![
                 IRNode::ASTRef(class_idx),
-                IRNode::ExportAssignment { name: class_name },
+                IRNode::ExportAssignment {
+                    name: class_name.into(),
+                },
             ];
 
             Some(IRNode::Block(result))
@@ -388,7 +391,9 @@ impl<'a> CommonJsTransformContext<'a> {
             let enum_name = get_identifier_text(self.arena, enum_data.name)?;
             let result = vec![
                 IRNode::ASTRef(enum_idx),
-                IRNode::ExportAssignment { name: enum_name },
+                IRNode::ExportAssignment {
+                    name: enum_name.into(),
+                },
             ];
 
             Some(IRNode::Block(result))
@@ -409,7 +414,9 @@ impl<'a> CommonJsTransformContext<'a> {
             let ns_name = get_identifier_text(self.arena, ns_data.name)?;
             let result = vec![
                 IRNode::ASTRef(ns_idx),
-                IRNode::ExportAssignment { name: ns_name },
+                IRNode::ExportAssignment {
+                    name: ns_name.into(),
+                },
             ];
 
             Some(IRNode::Block(result))

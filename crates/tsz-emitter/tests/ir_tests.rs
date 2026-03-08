@@ -127,7 +127,7 @@ fn test_ir_function_expr() {
         "+",
         IRNode::id("y"),
     )))];
-    let func = IRNode::func_expr(Some("add".to_string()), params, body);
+    let func = IRNode::func_expr(Some("add".into()), params, body);
 
     match func {
         IRNode::FunctionExpr {
@@ -136,7 +136,7 @@ fn test_ir_function_expr() {
             body,
             ..
         } => {
-            assert_eq!(name, Some("add".to_string()));
+            assert_eq!(name, Some("add".into()));
             assert_eq!(parameters.len(), 2);
             assert_eq!(body.len(), 1);
         }
@@ -212,7 +212,7 @@ fn test_ir_expr_stmt() {
 fn test_ir_es5_class_iife() {
     // Test the ES5 class IIFE structure
     let class_iife = IRNode::ES5ClassIIFE {
-        name: "Point".to_string(),
+        name: "Point".into(),
         base_class: None,
         body: vec![
             IRNode::func_decl(
@@ -263,7 +263,7 @@ fn test_ir_generator_body() {
                 statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                     opcode: 4,
                     value: Some(Box::new(IRNode::call(IRNode::id("fetch"), vec![]))),
-                    comment: Some("yield".to_string()),
+                    comment: Some("yield".into()),
                 }))],
             },
             IRGeneratorCase {
@@ -273,7 +273,7 @@ fn test_ir_generator_body() {
                     IRNode::ret(Some(IRNode::GeneratorOp {
                         opcode: 2,
                         value: None,
-                        comment: Some("return".to_string()),
+                        comment: Some("return".into()),
                     })),
                 ],
             },
@@ -303,7 +303,7 @@ fn test_ir_awaiter_call() {
                 statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
                     opcode: 2,
                     value: None,
-                    comment: Some("return".to_string()),
+                    comment: Some("return".into()),
                 }))],
             }],
         }),
@@ -317,21 +317,21 @@ fn test_ir_private_field_helpers() {
     // Test private field get
     let get = IRNode::PrivateFieldGet {
         receiver: Box::new(IRNode::this()),
-        weakmap_name: "_Foo_bar".to_string(),
+        weakmap_name: "_Foo_bar".into(),
     };
     assert!(matches!(get, IRNode::PrivateFieldGet { .. }));
 
     // Test private field set
     let set = IRNode::PrivateFieldSet {
         receiver: Box::new(IRNode::this()),
-        weakmap_name: "_Foo_bar".to_string(),
+        weakmap_name: "_Foo_bar".into(),
         value: Box::new(IRNode::number("42")),
     };
     assert!(matches!(set, IRNode::PrivateFieldSet { .. }));
 
     // Test WeakMap set
     let wm_set = IRNode::WeakMapSet {
-        weakmap_name: "_Foo_bar".to_string(),
+        weakmap_name: "_Foo_bar".into(),
         key: Box::new(IRNode::this()),
         value: Box::new(IRNode::void_0()),
     };
@@ -342,12 +342,12 @@ fn test_ir_private_field_helpers() {
 fn test_ir_object_literal() {
     let obj = IRNode::object(vec![
         IRProperty {
-            key: IRPropertyKey::Identifier("x".to_string()),
+            key: IRPropertyKey::Identifier("x".into()),
             value: IRNode::number("1"),
             kind: IRPropertyKind::Init,
         },
         IRProperty {
-            key: IRPropertyKey::StringLiteral("y".to_string()),
+            key: IRPropertyKey::StringLiteral("y".into()),
             value: IRNode::number("2"),
             kind: IRPropertyKind::Init,
         },

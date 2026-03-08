@@ -36,17 +36,17 @@ impl<'a> AsyncES5Transformer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    IRNode::NumericLiteral(lit.text.clone())
+                    IRNode::NumericLiteral(lit.text.clone().into())
                 } else {
-                    IRNode::NumericLiteral("0".to_string())
+                    IRNode::NumericLiteral("0".to_string().into())
                 }
             }
 
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    IRNode::StringLiteral(lit.text.clone())
+                    IRNode::StringLiteral(lit.text.clone().into())
                 } else {
-                    IRNode::StringLiteral("".to_string())
+                    IRNode::StringLiteral("".to_string().into())
                 }
             }
 
@@ -57,7 +57,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == SyntaxKind::Identifier as u16 => {
                 let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
-                IRNode::Identifier(text)
+                IRNode::Identifier(text.into())
             }
 
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
@@ -87,7 +87,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     );
                     IRNode::PropertyAccess {
                         object: Box::new(obj),
-                        property: prop,
+                        property: prop.into(),
                     }
                 } else {
                     IRNode::Undefined
@@ -101,7 +101,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     let op = self.get_operator_text(bin.operator_token);
                     IRNode::BinaryExpr {
                         left: Box::new(left),
-                        operator: op,
+                        operator: op.into(),
                         right: Box::new(right),
                     }
                 } else {
@@ -191,7 +191,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some(unary) = self.arena.get_unary_expr(node) {
                     let op = self.get_unary_operator_text(unary.operator);
                     IRNode::PrefixUnaryExpr {
-                        operator: op,
+                        operator: op.into(),
                         operand: Box::new(self.expression_to_ir(unary.operand)),
                     }
                 } else {
@@ -205,7 +205,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     let op = self.get_unary_operator_text(unary.operator);
                     IRNode::PostfixUnaryExpr {
                         operand: Box::new(self.expression_to_ir(unary.operand)),
-                        operator: op,
+                        operator: op.into(),
                     }
                 } else {
                     IRNode::Undefined
@@ -243,9 +243,9 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
                     // Return the text as a string literal with quotes
-                    IRNode::StringLiteral(lit.text.clone())
+                    IRNode::StringLiteral(lit.text.clone().into())
                 } else {
-                    IRNode::StringLiteral("".to_string())
+                    IRNode::StringLiteral("".to_string().into())
                 }
             }
 
@@ -288,8 +288,8 @@ impl<'a> AsyncES5Transformer<'a> {
                             self.arena, sp.name,
                         );
                         props.push(IRProperty {
-                            key: IRPropertyKey::Identifier(name.clone()),
-                            value: IRNode::Identifier(name),
+                            key: IRPropertyKey::Identifier(name.clone().into()),
+                            value: IRNode::Identifier(name.into()),
                             kind: IRPropertyKind::Init,
                         });
                     }
@@ -298,7 +298,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     if let Some(spread) = self.arena.get_spread(prop_node) {
                         // For spread in objects, use SpreadElement
                         props.push(IRProperty {
-                            key: IRPropertyKey::Identifier("...".to_string()),
+                            key: IRPropertyKey::Identifier("...".to_string().into()),
                             value: IRNode::SpreadElement(Box::new(
                                 self.expression_to_ir(spread.expression),
                             )),
@@ -316,25 +316,25 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Convert a property name node to `IRPropertyKey`
     fn convert_property_key(&self, idx: NodeIndex) -> IRPropertyKey {
         let Some(node) = self.arena.get(idx) else {
-            return IRPropertyKey::Identifier(String::new());
+            return IRPropertyKey::Identifier(String::new().into());
         };
 
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => IRPropertyKey::Identifier(
-                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx),
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx).into(),
             ),
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    IRPropertyKey::StringLiteral(lit.text.clone())
+                    IRPropertyKey::StringLiteral(lit.text.clone().into())
                 } else {
-                    IRPropertyKey::StringLiteral(String::new())
+                    IRPropertyKey::StringLiteral(String::new().into())
                 }
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    IRPropertyKey::NumericLiteral(lit.text.clone())
+                    IRPropertyKey::NumericLiteral(lit.text.clone().into())
                 } else {
-                    IRPropertyKey::NumericLiteral("0".to_string())
+                    IRPropertyKey::NumericLiteral("0".to_string().into())
                 }
             }
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
@@ -342,21 +342,21 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some(computed) = self.arena.get_computed_property(node) {
                     IRPropertyKey::Computed(Box::new(self.expression_to_ir(computed.expression)))
                 } else {
-                    IRPropertyKey::Identifier(String::new())
+                    IRPropertyKey::Identifier(String::new().into())
                 }
             }
-            _ => IRPropertyKey::Identifier(String::new()),
+            _ => IRPropertyKey::Identifier(String::new().into()),
         }
     }
 
     /// Convert a template expression to IR (concatenation of strings)
     fn convert_template_expression(&self, idx: NodeIndex) -> IRNode {
         let Some(node) = self.arena.get(idx) else {
-            return IRNode::StringLiteral("".to_string());
+            return IRNode::StringLiteral("".to_string().into());
         };
 
         let Some(template) = self.arena.get_template_expr(node) else {
-            return IRNode::StringLiteral("".to_string());
+            return IRNode::StringLiteral("".to_string().into());
         };
 
         // Get head (the initial string before first ${...})
@@ -365,7 +365,7 @@ impl<'a> AsyncES5Transformer<'a> {
             && let Some(lit) = self.arena.get_literal(head_node)
             && !lit.text.is_empty()
         {
-            parts.push(IRNode::StringLiteral(lit.text.clone()));
+            parts.push(IRNode::StringLiteral(lit.text.clone().into()));
         }
 
         // Process template spans (expression + literal pairs)
@@ -382,7 +382,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     && let Some(lit) = self.arena.get_literal(lit_node)
                     && !lit.text.is_empty()
                 {
-                    parts.push(IRNode::StringLiteral(lit.text.clone()));
+                    parts.push(IRNode::StringLiteral(lit.text.clone().into()));
                 }
             }
         }
@@ -394,14 +394,14 @@ impl<'a> AsyncES5Transformer<'a> {
 
         // Otherwise, build a concatenation chain: part1 + part2 + part3 + ...
         if parts.is_empty() {
-            return IRNode::StringLiteral("".to_string());
+            return IRNode::StringLiteral("".to_string().into());
         }
 
         let mut result = parts.remove(0);
         for part in parts {
             result = IRNode::BinaryExpr {
                 left: Box::new(result),
-                operator: "+".to_string(),
+                operator: "+".to_string().into(),
                 right: Box::new(part),
             };
         }
@@ -434,7 +434,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let body = self.convert_function_body(func.body);
 
         IRNode::FunctionExpr {
-            name,
+            name: name.map(Into::into),
             parameters: params,
             body,
             is_expression_body: false,
@@ -586,7 +586,7 @@ impl<'a> AsyncES5Transformer<'a> {
                                 Some(Box::new(self.expression_to_ir(decl.initializer)))
                             };
                             decls.push(IRNode::VarDecl {
-                                name,
+                                name: name.into(),
                                 initializer: init,
                             });
                         }

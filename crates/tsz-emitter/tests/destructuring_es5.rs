@@ -107,7 +107,7 @@ fn test_ir_var_decl_with_index_access() {
         "a",
         Some(IRNode::ElementAccess {
             object: Box::new(IRNode::id("_a")),
-            index: Box::new(IRNode::NumericLiteral("0".to_string())),
+            index: Box::new(IRNode::NumericLiteral("0".into())),
         }),
     );
 
@@ -131,7 +131,7 @@ fn test_ir_var_decl_with_property_access() {
         "x",
         Some(IRNode::PropertyAccess {
             object: Box::new(IRNode::id("_a")),
-            property: "x".to_string(),
+            property: "x".into(),
         }),
     );
 
@@ -175,16 +175,16 @@ fn test_ir_conditional_for_default_value() {
         condition: Box::new(IRNode::BinaryExpr {
             left: Box::new(IRNode::PropertyAccess {
                 object: Box::new(IRNode::id("_a")),
-                property: "x".to_string(),
+                property: "x".into(),
             }),
-            operator: "!==".to_string(),
+            operator: "!==".into(),
             right: Box::new(IRNode::Undefined),
         }),
         when_true: Box::new(IRNode::PropertyAccess {
             object: Box::new(IRNode::id("_a")),
-            property: "x".to_string(),
+            property: "x".into(),
         }),
-        when_false: Box::new(IRNode::NumericLiteral("10".to_string())),
+        when_false: Box::new(IRNode::NumericLiteral("10".into())),
     };
 
     let mut printer = IRPrinter::new();
@@ -204,9 +204,9 @@ fn test_ir_slice_for_rest_element() {
     let ir = IRNode::CallExpr {
         callee: Box::new(IRNode::PropertyAccess {
             object: Box::new(IRNode::id("_a")),
-            property: "slice".to_string(),
+            property: "slice".into(),
         }),
-        arguments: vec![IRNode::NumericLiteral("1".to_string())],
+        arguments: vec![IRNode::NumericLiteral("1".into())],
     };
 
     let mut printer = IRPrinter::new();
