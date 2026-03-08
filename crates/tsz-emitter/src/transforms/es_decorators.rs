@@ -52,6 +52,8 @@ pub struct TC39DecoratorEmitter<'a> {
     arena: &'a NodeArena,
     source_text: Option<&'a str>,
     indent: usize,
+    /// When true, uses `static { }` blocks (ES2022+) instead of IIFE pattern (ES2015).
+    use_static_blocks: bool,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -60,6 +62,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             arena,
             source_text: None,
             indent: 0,
+            use_static_blocks: false,
         }
     }
 
@@ -69,6 +72,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub const fn set_indent_level(&mut self, level: usize) {
         self.indent = level;
+    }
+
+    pub const fn set_use_static_blocks(&mut self, use_static: bool) {
+        self.use_static_blocks = use_static;
     }
 
     /// Emit the TC39 decorator transform for a class declaration.
@@ -90,9 +97,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let has_any_instance = decorated_members.iter().any(|m| !m.is_static);
         let has_any_static = decorated_members.iter().any(|m| m.is_static);
 
-        // Compute temp var allocation
+        // Compute temp var allocation.
+        // At ES2022+, no class alias is needed (use `this` in static blocks).
         let mut temp_counter: u32 = 0;
-        let class_alias = next_temp_var(&mut temp_counter); // _a
+        let class_alias = if self.use_static_blocks {
+            String::new()
+        } else {
+            next_temp_var(&mut temp_counter) // _a
+        };
 
         // Compute propKey temp vars for computed members
         let mut computed_key_vars: Vec<(usize, String)> = Vec::new();
@@ -115,8 +127,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // --- IIFE header ---
         out.push_str(&format!("let {class_name} = (() => {{\n"));
 
-        // Var declarations: class alias on its own line, computed key vars combined
-        out.push_str(&format!("{i1}var {class_alias};\n"));
+        // Var declarations
+        if !self.use_static_blocks {
+            out.push_str(&format!("{i1}var {class_alias};\n"));
+        }
         if !computed_key_vars.is_empty() {
             let key_names: Vec<&str> = computed_key_vars.iter().map(|(_, v)| v.as_str()).collect();
             out.push_str(&format!("{i1}var {};\n", key_names.join(", ")));
@@ -162,14 +176,51 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
 
+        // The ctor_ref is `this` for static blocks, `_a` for IIFE
+        let ctor_ref = if self.use_static_blocks {
+            "this".to_string()
+        } else {
+            class_alias.clone()
+        };
+
         // --- Class expression ---
-        out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
+        if self.use_static_blocks {
+            out.push_str(&format!("{i1}return class {class_name}"));
+        } else {
+            out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
+        }
         if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
             out.push_str(&format!(" extends {extends_text}"));
         }
         out.push_str(" {\n");
 
+        if self.use_static_blocks {
+            // ES2022: emit static block with decorator application FIRST
+            out.push_str(&format!("{i2}static {{\n"));
+            self.emit_decorator_application(
+                &decorated_members,
+                &member_vars,
+                &class_decorators,
+                &class_name,
+                &ctor_ref,
+                &computed_key_vars,
+                has_extends,
+                has_any_static,
+                class_data,
+                &i3,
+                &mut out,
+            );
+            out.push_str(&format!("{i2}}}\n"));
+        }
+
         // --- Emit class members ---
+        // At ES2022, class is at indent+1, so members at indent+2.
+        // At ES2015, class is at indent+2 (inside return _a = ...), so members at indent+3.
+        let (member_indent, member_inner_indent) = if self.use_static_blocks {
+            (&i2, &i3)
+        } else {
+            (&i3, &i4)
+        };
         self.emit_class_body(
             class_node,
             class_data,
@@ -178,27 +229,70 @@ impl<'a> TC39DecoratorEmitter<'a> {
             &computed_key_vars,
             has_any_instance,
             has_any_static,
-            &class_alias,
-            &i3,
-            &i4,
+            &ctor_ref,
+            member_indent,
+            member_inner_indent,
             &mut out,
         );
 
-        // Close class body at level 2
-        out.push_str(&format!("{i2}}},\n"));
+        if self.use_static_blocks {
+            // ES2022: close class with semicolon (it's the return value)
+            out.push_str(&format!("{i1}}};\n"));
+        } else {
+            // ES2015: close class body, then IIFE for decorator application
+            out.push_str(&format!("{i2}}},\n"));
 
-        // --- Decorator application IIFE ---
-        out.push_str(&format!("{i2}(() => {{\n"));
+            out.push_str(&format!("{i2}(() => {{\n"));
+            self.emit_decorator_application(
+                &decorated_members,
+                &member_vars,
+                &class_decorators,
+                &class_name,
+                &ctor_ref,
+                &computed_key_vars,
+                has_extends,
+                has_any_static,
+                class_data,
+                &i3,
+                &mut out,
+            );
+            out.push_str(&format!("{i2}}})(),\n"));
 
+            // Return class alias
+            out.push_str(&format!("{i2}{class_alias};\n"));
+        }
+
+        // Close IIFE
+        out.push_str("})();\n");
+
+        out
+    }
+
+    /// Emit the decorator application code (metadata, __esDecorate calls, etc.)
+    #[allow(clippy::too_many_arguments)]
+    fn emit_decorator_application(
+        &self,
+        decorated_members: &[DecoratedMember],
+        member_vars: &[MemberVarInfo],
+        class_decorators: &[String],
+        class_name: &str,
+        ctor_ref: &str,
+        computed_key_vars: &[(usize, String)],
+        has_extends: bool,
+        has_any_static: bool,
+        class_data: &tsz_parser::parser::node::ClassData,
+        indent: &str,
+        out: &mut String,
+    ) {
         // Metadata
         if has_extends {
             if let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({extends_text}[Symbol.metadata] ?? null) : void 0;\n"));
+                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({extends_text}[Symbol.metadata] ?? null) : void 0;\n"));
             } else {
-                out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
             }
         } else {
-            out.push_str(&format!("{i3}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+            out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
         }
 
         // __esDecorate calls for each member
@@ -207,41 +301,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
             self.emit_es_decorate_call(
                 member,
                 var_info,
-                &class_alias,
-                &computed_key_vars,
+                ctor_ref,
+                computed_key_vars,
                 i,
-                &i3,
-                &mut out,
+                indent,
+                out,
             );
         }
 
         // Class-level __esDecorate if needed
         if !class_decorators.is_empty() {
-            out.push_str(&format!("{i3}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
+            out.push_str(&format!("{indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
             out.push_str(&format!(
-                "{i3}{class_name} = _classThis = _classDescriptor.value;\n"
+                "{indent}{class_name} = _classThis = _classDescriptor.value;\n"
             ));
         }
 
         // Metadata assignment
-        out.push_str(&format!("{i3}if (_metadata) Object.defineProperty({class_alias}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
+        out.push_str(&format!("{indent}if (_metadata) Object.defineProperty({ctor_ref}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
 
         // Static extra initializers
         if has_any_static {
             out.push_str(&format!(
-                "{i3}__runInitializers({class_alias}, _staticExtraInitializers);\n"
+                "{indent}__runInitializers({ctor_ref}, _staticExtraInitializers);\n"
             ));
         }
-
-        out.push_str(&format!("{i2}}})(),\n"));
-
-        // Return class alias
-        out.push_str(&format!("{i2}{class_alias};\n"));
-
-        // Close IIFE
-        out.push_str("})();\n");
-
-        out
     }
 
     /// Emit class body members.
@@ -476,21 +560,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let name_pos = name_node.pos as usize;
             let is_accessor = member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR;
-            if is_accessor
-                && let Some(source) = self.source_text {
-                    // Scan backwards from name position to find 'get' or 'set' keyword
-                    let keyword = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        "get"
-                    } else {
-                        "set"
-                    };
-                    // Allow generous whitespace between keyword and name
-                    let search_start = name_pos.saturating_sub(keyword.len() + 20);
-                    // Look for the keyword in the text before the name
-                    if let Some(kw_offset) = source[search_start..name_pos].rfind(keyword) {
-                        return search_start + kw_offset;
-                    }
+            if is_accessor && let Some(source) = self.source_text {
+                // Scan backwards from name position to find 'get' or 'set' keyword
+                let keyword = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    "get"
+                } else {
+                    "set"
+                };
+                // Allow generous whitespace between keyword and name
+                let search_start = name_pos.saturating_sub(keyword.len() + 20);
+                // Look for the keyword in the text before the name
+                if let Some(kw_offset) = source[search_start..name_pos].rfind(keyword) {
+                    return search_start + kw_offset;
                 }
+            }
             return name_pos;
         }
 
