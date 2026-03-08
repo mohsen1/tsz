@@ -433,21 +433,21 @@ impl<'a> Printer<'a> {
             && !self.ctx.is_commonjs()
             && self.transforms.has_transform(export.export_clause)
             && let Some(class) = self.arena.get_class(clause_node)
-                && let Some(name) = self.get_identifier_text_opt(class.name)
-            {
-                self.emit(export.export_clause);
-                self.write_line();
-                if export.is_default_export {
-                    self.write("export default ");
-                    self.write(&name);
-                    self.write(";");
-                } else {
-                    self.write("export { ");
-                    self.write(&name);
-                    self.write(" };");
-                }
-                return;
+            && let Some(name) = self.get_identifier_text_opt(class.name)
+        {
+            self.emit(export.export_clause);
+            self.write_line();
+            if export.is_default_export {
+                self.write("export default ");
+                self.write(&name);
+                self.write(";");
+            } else {
+                self.write("export { ");
+                self.write(&name);
+                self.write(" };");
             }
+            return;
+        }
 
         // For merged enums/namespaces/classes/functions, the second+ declaration
         // should not be prefixed with `export`. The first declaration gets
