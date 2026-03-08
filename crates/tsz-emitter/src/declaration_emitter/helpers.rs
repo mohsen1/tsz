@@ -4995,31 +4995,6 @@ impl<'a> DeclarationEmitter<'a> {
                             return;
                         }
                     }
-
-                    if has_initializer
-                        && let Some(init_node) = self.arena.get(initializer)
-                        && init_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                        && let Some(call) = self.arena.get_call_expr(init_node)
-                        && let Some(args) = &call.arguments
-                        && args.nodes.len() == 1
-                    {
-                        let arg = args.nodes[0];
-                        if let Some(arg_node) = self.arena.get(arg) {
-                            let arg_kind = arg_node.kind;
-                            let is_literal_arg = arg_kind == SyntaxKind::StringLiteral as u16
-                                || arg_kind == SyntaxKind::NumericLiteral as u16
-                                || arg_kind == SyntaxKind::BigIntLiteral as u16
-                                || arg_kind == SyntaxKind::TrueKeyword as u16
-                                || arg_kind == SyntaxKind::FalseKeyword as u16
-                                || (arg_kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                                    && self.is_negative_literal(arg_node));
-                            if is_literal_arg {
-                                self.write(" = ");
-                                self.emit_expression(arg);
-                                return;
-                            }
-                        }
-                    }
                 }
 
                 if type_id == tsz_solver::types::TypeId::ANY

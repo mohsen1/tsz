@@ -2085,6 +2085,70 @@ var methodValue = C.s2;
 }
 
 #[test]
+fn test_const_call_initializer_does_not_collapse_to_literal_argument() {
+    let source = r#"
+type Box<T> = {
+    get: () => T;
+    set: (value: T) => void;
+};
+declare function box<T>(value: T): Box<T>;
+const bn1 = box(0);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let alias_idx = source_file.statements.nodes[0];
+    let alias = parser
+        .arena
+        .get(alias_idx)
+        .and_then(|node| parser.arena.get_type_alias(node))
+        .expect("missing Box alias");
+    let var_stmt_idx = source_file.statements.nodes[2];
+    let var_decl = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing variable declaration");
+
+    let interner = TypeInterner::new();
+    let box_def = tsz_solver::DefId(9002);
+    let box_number = interner.application(interner.lazy(box_def), vec![TypeId::NUMBER]);
+
+    let alias_sym = binder
+        .get_node_symbol(alias.name)
+        .or_else(|| binder.get_node_symbol(alias_idx))
+        .expect("missing Box symbol");
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(box_def, alias_sym);
+    type_cache.node_types.insert(var_decl.name.0, box_number);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const bn1: Box<number>;"),
+        "Expected const call initializer to preserve resolved type: {output}"
+    );
+    assert!(
+        !output.contains("declare const bn1 = 0;"),
+        "Did not expect const call initializer to collapse to its literal argument: {output}"
+    );
+}
+
+#[test]
 fn test_dataview_new_expression_falls_back_without_type_cache() {
     let output = emit_dts("const dataView = new DataView(new ArrayBuffer(80));");
     assert!(
