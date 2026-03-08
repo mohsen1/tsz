@@ -902,7 +902,12 @@ impl<'a> CheckerState<'a> {
                                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
                             != 0
                 });
-                if !is_merged_interface {
+                // For var redeclarations, do NOT overwrite the symbol type.
+                // The first declaration's type is canonical. Overwriting with a
+                // subsequent declaration's inferred type can corrupt recursive
+                // type resolution chains (e.g., `typeof k` indexers resolve to
+                // `any` after the symbol type is overwritten by a redeclaration).
+                if !is_merged_interface && !is_redeclaration {
                     self.cache_symbol_type(sym_id, final_type);
                 }
             }

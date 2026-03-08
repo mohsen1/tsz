@@ -34,37 +34,18 @@ impl<'a> CheckerState<'a> {
         } else {
             2
         };
-        let mut best_distance = name_len * 4 / 10 + 1;
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
         let mut best_candidate: Option<String> = None;
 
         for candidate in &property_names {
-            if candidate == prop_name {
-                continue;
-            }
-            let candidate_len = candidate.len();
-            let len_diff = name_len.abs_diff(candidate_len);
-            if len_diff > maximum_length_difference {
-                continue;
-            }
-            // tsc: skip short candidates (< 3 chars) unless they match the
-            // lowercased input name. This prevents short property names like "p1"
-            // from being falsely suggested for unrelated names like "p51".
-            if candidate_len < 3 && *candidate != prop_name.to_lowercase() {
-                continue;
-            }
-            if candidate.to_lowercase() == prop_name.to_lowercase() {
-                let distance = 1;
-                if distance < best_distance {
-                    best_distance = distance;
-                    best_candidate = Some(candidate.clone());
-                }
-                continue;
-            }
-            let distance = Self::levenshtein_distance(prop_name, candidate);
-            if distance < best_distance {
-                best_distance = distance;
-                best_candidate = Some(candidate.clone());
-            }
+            Self::consider_identifier_suggestion(
+                prop_name,
+                candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
         }
 
         best_candidate
@@ -238,39 +219,6 @@ impl<'a> CheckerState<'a> {
 
     fn chars_equal_ignore_case(a: char, b: char) -> bool {
         a.to_lowercase().eq(b.to_lowercase())
-    }
-
-    /// Calculate Levenshtein distance between two strings.
-    fn levenshtein_distance(a: &str, b: &str) -> usize {
-        let a_chars: Vec<char> = a.chars().collect();
-        let b_chars: Vec<char> = b.chars().collect();
-        let a_len = a_chars.len();
-        let b_len = b_chars.len();
-
-        if a_len == 0 {
-            return b_len;
-        }
-        if b_len == 0 {
-            return a_len;
-        }
-
-        let mut prev = vec![0usize; b_len + 1];
-        let mut curr = vec![0usize; b_len + 1];
-
-        for (j, item) in prev.iter_mut().enumerate().take(b_len + 1) {
-            *item = j;
-        }
-
-        for i in 1..=a_len {
-            curr[0] = i;
-            for j in 1..=b_len {
-                let cost = usize::from(a_chars[i - 1] != b_chars[j - 1]);
-                curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-            }
-            std::mem::swap(&mut prev, &mut curr);
-        }
-
-        prev[b_len]
     }
 
     /// Levenshtein distance with threshold pruning, matching tsc's behavior.

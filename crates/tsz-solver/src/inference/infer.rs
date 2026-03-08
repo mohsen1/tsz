@@ -989,6 +989,13 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
+    /// Check whether an inference variable has any candidates (covariant or contravariant).
+    pub fn var_has_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        !info.candidates.is_empty() || !info.contra_candidates.is_empty()
+    }
+
     /// Check if all inference candidates for a variable have `ReturnType` priority.
     /// This indicates the type was inferred from callback return types (Round 2),
     /// not from direct arguments (Round 1).

@@ -1100,7 +1100,7 @@ impl<'a> CheckerState<'a> {
         // Skip TDZ in ambient/type-only contexts (interfaces, type aliases,
         // declare class, .d.ts files) — these don't have runtime TDZ semantics.
         if self.find_enclosing_computed_property(usage_idx).is_some()
-            && !self.ctx.arena.is_in_ambient_context(usage_idx)
+            && !self.ctx.is_ambient_declaration(usage_idx)
         {
             return true;
         }

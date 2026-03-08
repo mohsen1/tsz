@@ -664,6 +664,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             })
             .collect();
 
+        // Handle union-of-tuple rest parameters in target.
+        // When target has `...args: [A] | [B, C] | [D]`, try each union member separately.
+        // Source matches if its params are compatible with ANY of the union member tuple shapes.
+        // This handles patterns like:
+        //   interface I { set(...args: [Record<string, unknown>] | [string, unknown]): void }
+        //   class C implements I { set(option: Record<string, unknown>): void; set(name: string, value: unknown): void; }
+        if let Some(last_target_param) = target_instantiated.params.last()
+            && last_target_param.rest
+        {
+            use crate::type_queries::data::get_union_members;
+            if let Some(union_members) = get_union_members(self.interner, last_target_param.type_id)
+            {
+                // Get non-rest prefix params from target
+                let prefix_count = target_params_unpacked.len().saturating_sub(1);
+                let prefix_params: &[ParamInfo] = &target_params_unpacked[..prefix_count];
+
+                for member_type_id in &union_members {
+                    // Try unpacking this union member as a tuple
+                    let member_param = ParamInfo {
+                        type_id: *member_type_id,
+                        rest: true,
+                        ..last_target_param.clone()
+                    };
+                    let member_unpacked = unpack_tuple_rest_parameter(self.interner, &member_param);
+
+                    // Build full param list for this variant
+                    let mut variant_params: Vec<ParamInfo> = prefix_params.to_vec();
+                    variant_params.extend(member_unpacked);
+
+                    // Try the comparison with this variant
+                    if self
+                        .check_params_compatible(
+                            &source_params_unpacked,
+                            &variant_params,
+                            is_method,
+                        )
+                        .is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+                return SubtypeResult::False;
+            }
+        }
+
         // Check rest parameter handling (after unpacking)
         let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
         let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
@@ -1147,6 +1192,135 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             is_method: target.is_method,
         };
         self.check_function_subtype(source, &target_fn)
+    }
+
+    /// Check if source params are compatible with target params.
+    /// Extracted to support union-of-tuple rest parameter handling,
+    /// where we need to try multiple target param variants.
+    fn check_params_compatible(
+        &mut self,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+        is_method: bool,
+    ) -> SubtypeResult {
+        let target_has_rest = target_params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params.last().is_some_and(|p| p.rest);
+        let rest_elem_type = if target_has_rest {
+            target_params
+                .last()
+                .map(|param| self.get_array_element_type(param.type_id))
+        } else {
+            None
+        };
+        let rest_is_top = self.allow_bivariant_rest
+            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
+
+        let target_fixed_count = if target_has_rest {
+            target_params.len().saturating_sub(1)
+        } else {
+            target_params.len()
+        };
+        let source_fixed_count = if source_has_rest {
+            source_params.len().saturating_sub(1)
+        } else {
+            source_params.len()
+        };
+
+        let source_required = self.required_param_count(source_params);
+        if !self.allow_bivariant_param_count
+            && !target_has_rest
+            && source_required > target_fixed_count
+        {
+            let extra_are_void = source_params
+                .iter()
+                .skip(target_fixed_count)
+                .take(source_required - target_fixed_count)
+                .all(|param| self.param_type_contains_void(param.type_id));
+            if !extra_are_void {
+                return SubtypeResult::False;
+            }
+        }
+
+        // Compare fixed parameters
+        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        for i in 0..fixed_compare_count {
+            let s_param = &source_params[i];
+            let t_param = &target_params[i];
+
+            let s_effective = if s_param.optional {
+                self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
+            } else {
+                s_param.type_id
+            };
+            let t_effective = if t_param.optional {
+                self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
+            } else {
+                t_param.type_id
+            };
+
+            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
+                return SubtypeResult::False;
+            }
+        }
+
+        // If target has rest parameter, check source's extra params against the rest type
+        if target_has_rest {
+            let Some(rest_elem_type) = rest_elem_type else {
+                return SubtypeResult::False;
+            };
+            if rest_is_top {
+                return SubtypeResult::True;
+            }
+
+            for s_param in source_params
+                .iter()
+                .skip(target_fixed_count)
+                .take(source_fixed_count.saturating_sub(target_fixed_count))
+            {
+                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
+                {
+                    return SubtypeResult::False;
+                }
+            }
+
+            if source_has_rest {
+                let Some(s_rest_param) = source_params.last() else {
+                    return SubtypeResult::False;
+                };
+                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
+                    return SubtypeResult::False;
+                }
+            }
+        }
+
+        if source_has_rest {
+            let rest_param = if let Some(rest_param) = source_params.last() {
+                rest_param
+            } else {
+                return SubtypeResult::False;
+            };
+            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
+            let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
+
+            if !rest_is_top {
+                for t_param in target_params
+                    .iter()
+                    .skip(source_fixed_count)
+                    .take(target_fixed_count.saturating_sub(source_fixed_count))
+                {
+                    if !self.are_parameters_compatible_impl(
+                        rest_elem_type,
+                        t_param.type_id,
+                        is_method,
+                    ) {
+                        return SubtypeResult::False;
+                    }
+                }
+            }
+        }
+
+        SubtypeResult::True
     }
 
     /// Evaluate a meta-type (conditional, index access, mapped, keyof, etc.) to its

@@ -69,12 +69,18 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        // Only parameters are eligible for "implicit const" treatment.
-        // `let`/`var` variables are excluded because they have edge cases
-        // (e.g., `let arguments = 100` shadowing built-in `arguments` with
-        // misresolved declared type). tsc also primarily targets parameters
-        // for this optimization.
-        let eligible = decl_node.kind == syntax_kind_ext::PARAMETER;
+        // Parameters and destructured parameter bindings are eligible for
+        // "implicit const" treatment. `let`/`var` variables are excluded
+        // because they have edge cases (e.g., `let arguments = 100` shadowing
+        // built-in `arguments` with misresolved declared type). tsc also applies
+        // this to local `let` variables via `isPastLastAssignment()`, but that
+        // requires more careful handling of all assignment sites.
+        //
+        // For destructured parameters like `function f({ a })`: the symbol's
+        // value_declaration points to the identifier `a`, whose parent chain is:
+        //   Identifier → BINDING_ELEMENT → OBJECT_BINDING_PATTERN → PARAMETER
+        let eligible = decl_node.kind == syntax_kind_ext::PARAMETER
+            || self.is_declaration_in_parameter(decl_id);
 
         if !eligible {
             return false;
@@ -89,6 +95,36 @@ impl<'a> FlowAnalyzer<'a> {
         // If never reassigned (0), or all reassignments are before the reference
         // position, the variable is effectively const at this point
         last_assign_pos == 0 || last_assign_pos < ref_pos
+    }
+
+    /// Check if a declaration node (typically an Identifier from a destructured
+    /// parameter) is part of a parameter. Walks up through the parent chain:
+    ///   Identifier → `BINDING_ELEMENT` → `OBJECT/ARRAY_BINDING_PATTERN` → PARAMETER
+    fn is_declaration_in_parameter(&self, node_idx: NodeIndex) -> bool {
+        // Start from the parent of the given node (which is typically an Identifier)
+        let mut current = node_idx;
+        for _ in 0..10 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::OBJECT_BINDING_PATTERN
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                | syntax_kind_ext::BINDING_ELEMENT => {
+                    current = parent_idx;
+                }
+                syntax_kind_ext::PARAMETER => return true,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Get the position of the last reassignment to a symbol.
@@ -419,12 +455,27 @@ impl<'a> FlowAnalyzer<'a> {
         let target_node =
             self.predicate_target_expression(call, &signature.predicate, &signature.params)?;
 
-        // 5. Construct the appropriate guard
-        let guard = if let Some(type_id) = signature.predicate.type_id {
+        // 5. Resolve generic predicates before constructing the guard.
+        // For `hasOwnProperty<P>(target, property: P): target is { [K in P]: unknown }`,
+        // the predicate type needs to be instantiated with inferred type args (P = "length").
+        let resolved_predicate = if let Some(node_types) = self.node_types {
+            self.resolve_generic_predicate(
+                &signature.predicate,
+                &signature.params,
+                call,
+                callee_type,
+                node_types,
+            )
+        } else {
+            signature.predicate
+        };
+
+        // 6. Construct the appropriate guard
+        let guard = if let Some(type_id) = resolved_predicate.type_id {
             // "x is T" or "asserts x is T"
             TypeGuard::Predicate {
                 type_id: Some(type_id),
-                asserts: signature.predicate.asserts,
+                asserts: resolved_predicate.asserts,
             }
         } else {
             // "asserts x" (no type annotation) - narrows to truthy

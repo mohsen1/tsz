@@ -708,6 +708,12 @@ impl BinderState {
             // now, so the target name is resolvable in current_scope.
             self.resolve_deferred_export_assignment(arena, &sf.statements.nodes);
 
+            // Re-process `export { X, Y }` statements that may have failed on
+            // the first pass due to forward references (e.g., `export { Hash }`
+            // appearing before `interface Hash<T> { ... }`). All declarations
+            // are bound now, so we can mark them as exported.
+            self.resolve_deferred_named_exports(arena, &sf.statements.nodes);
+
             // Populate module_exports for cross-file import resolution
             // This enables type-only import elision and proper import validation
             let file_name = sf.file_name.clone();
@@ -889,6 +895,70 @@ impl BinderState {
             }
 
             break; // Only process the first `export =` statement.
+        }
+    }
+
+    /// Re-process `export { X, Y }` (without `from`) statements for forward
+    /// references. On the first pass the target symbols may not have been bound
+    /// yet, so `is_exported` was never set. Now that all declarations are
+    /// bound we can mark them as exported.
+    fn resolve_deferred_named_exports(&mut self, arena: &NodeArena, statements: &[NodeIndex]) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for &stmt_idx in statements {
+            let Some(node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = arena.get_export_decl(node) else {
+                continue;
+            };
+            // Only handle local `export { X }`, not re-exports `export { X } from "mod"`
+            if export.module_specifier.is_some() {
+                continue;
+            }
+            if export.export_clause.is_none() {
+                continue;
+            }
+            let Some(clause_node) = arena.get(export.export_clause) else {
+                continue;
+            };
+            // get_named_imports is used for both NamedImports and NamedExports
+            let Some(named) = arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec_node) = arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                // The original (local) name:
+                // For `export { foo }`, property_name is NONE, name is "foo"
+                // For `export { foo as bar }`, property_name is "foo", name is "bar"
+                let orig_name = if spec.property_name.is_none() {
+                    Self::get_identifier_name(arena, spec.name)
+                } else {
+                    Self::get_identifier_name(arena, spec.property_name)
+                };
+                let Some(orig) = orig_name else {
+                    continue;
+                };
+                // Try to resolve the symbol now that all declarations are bound
+                let resolved = self
+                    .current_scope
+                    .get(orig)
+                    .or_else(|| self.file_locals.get(orig));
+                if let Some(sym_id) = resolved
+                    && let Some(sym) = self.symbols.get_mut(sym_id)
+                    && !sym.is_exported
+                {
+                    sym.is_exported = true;
+                }
+            }
         }
     }
 

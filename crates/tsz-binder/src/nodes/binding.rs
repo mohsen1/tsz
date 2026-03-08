@@ -565,6 +565,14 @@ impl BinderState {
                     let post_loop = self.create_branch_label();
                     self.break_targets.push(post_loop);
 
+                    // Match tsc's bindForInOrForOfStatement: post-loop only gets
+                    // the loop label as antecedent (representing "iterator exhausted").
+                    // The end-of-body flow only feeds back to the loop label, NOT
+                    // directly to post-loop. Previously, adding end-of-body to
+                    // post-loop bypassed the LOOP_LABEL's fixed-point analysis and
+                    // introduced un-narrowed types after the loop.
+                    self.add_antecedent(post_loop, loop_label);
+
                     self.bind_expression(arena, for_data.expression);
                     if for_data.initializer.is_some() {
                         let flow = self.create_flow_assignment(for_data.initializer);
@@ -572,8 +580,6 @@ impl BinderState {
                     }
                     self.bind_node(arena, for_data.statement);
                     self.add_antecedent(loop_label, self.current_flow);
-                    self.add_antecedent(post_loop, loop_label);
-                    self.add_antecedent(post_loop, self.current_flow);
 
                     self.break_targets.pop();
                     self.current_flow = post_loop;

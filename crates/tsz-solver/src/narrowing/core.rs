@@ -358,7 +358,8 @@ impl<'a> NarrowingContext<'a> {
                     }
                 }
                 // Fallback: use db.evaluate_type (works when resolver isn't needed)
-                type_id = self.db.evaluate_type(type_id);
+                let evaluated = self.db.evaluate_type(type_id);
+                type_id = evaluated;
                 continue;
             }
 
@@ -1259,12 +1260,12 @@ impl<'a> NarrowingContext<'a> {
         // CRITICAL: Resolve Lazy(DefId) types before the subtype check.
         // Without resolution, two unrelated interfaces (e.g., Cat and Dog)
         // remain as opaque Lazy types and the SubtypeChecker can't distinguish them.
-        let source = self.resolve_type(source);
-        let target = self.resolve_type(target);
-        if source == target {
+        let resolved_source = self.resolve_type(source);
+        let resolved_target = self.resolve_type(target);
+        if resolved_source == resolved_target {
             return true;
         }
-        crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
+        crate::relations::subtype::is_subtype_of_with_db(self.db, resolved_source, resolved_target)
     }
 
     /// Applies a type guard to narrow a type.

@@ -750,6 +750,8 @@ impl ParserState {
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
             SyntaxKind::FromKeyword => "from",
+            SyntaxKind::AsKeyword => "as",
+            SyntaxKind::OfKeyword => "of",
             _ => "token",
         }
     }

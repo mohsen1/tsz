@@ -1019,8 +1019,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         );
     }
 
-    fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId {
-        CheckerState::for_of_element_type(self, expr_type)
+    fn for_of_element_type(&mut self, expr_type: TypeId, is_async: bool) -> TypeId {
+        CheckerState::for_of_element_type(self, expr_type, is_async)
     }
 
     fn check_for_of_iterability(
@@ -1284,6 +1284,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         };
 
         if let Some(kind_name) = decl_kind {
+            // tsc does not emit TS1156 when there are parse errors on the same
+            // construct (e.g. TS1128 already reported for the malformed syntax).
+            if self.has_parse_errors() {
+                return;
+            }
             let msg = format!("'{kind_name}' declarations can only be declared inside a block.");
             self.error_at_node(
                 stmt_idx,

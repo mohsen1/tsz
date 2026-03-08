@@ -233,7 +233,16 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        Some(self.apply_type_predicate_narrowing(type_id, &signature.predicate, is_true_branch))
+        // Resolve generic predicates: for `hasOwnProperty<P>(target, property: P): target is { [K in P]: unknown }`,
+        // we need to instantiate the predicate type with inferred type arguments (e.g., P = "length").
+        let resolved_predicate = self.resolve_generic_predicate(
+            &signature.predicate,
+            &signature.params,
+            call,
+            callee_type,
+            node_types,
+        );
+        Some(self.apply_type_predicate_narrowing(type_id, &resolved_predicate, is_true_branch))
     }
 
     pub(crate) fn predicate_signature_for_type(
@@ -374,45 +383,76 @@ impl<'a> FlowAnalyzer<'a> {
             return predicate.clone();
         };
 
-        // Check if the callee is a generic function/callable with type params
-        let has_type_params = match classify_for_predicate_signature(self.interner, callee_type) {
-            PredicateSignatureKind::Function(shape_id) => !self
-                .interner
-                .function_shape(shape_id)
-                .type_params
-                .is_empty(),
+        // Extract type params from the generic function/callable
+        let classify_result = classify_for_predicate_signature(self.interner, callee_type);
+        let type_params = match classify_result {
+            PredicateSignatureKind::Function(shape_id) => {
+                self.interner.function_shape(shape_id).type_params.clone()
+            }
             PredicateSignatureKind::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 shape
                     .call_signatures
                     .iter()
-                    .any(|sig| !sig.type_params.is_empty())
+                    .find(|sig| sig.type_predicate.is_some())
+                    .map(|sig| sig.type_params.clone())
+                    .unwrap_or_default()
             }
-            _ => false,
+            _ => vec![],
         };
 
-        if !has_type_params {
+        if type_params.is_empty() {
             return predicate.clone();
         }
 
-        // Find which parameter has the same type as the predicate type
         let args = match call.arguments.as_ref() {
             Some(args) => args.nodes.as_slice(),
             None => return predicate.clone(),
         };
 
+        // Case 1: Direct match — predicate type IS a type parameter (e.g., `x is T`)
         for (i, param) in params.iter().enumerate() {
-            if param.type_id == pred_type {
-                // This parameter's declared type matches the predicate type (both are T)
-                // Get the corresponding argument's concrete type
-                if let Some(&arg_idx) = args.get(i)
-                    && let Some(&arg_type) = node_types.get(&arg_idx.0)
+            if param.type_id == pred_type
+                && let Some(&arg_idx) = args.get(i)
+                && let Some(&arg_type) = node_types.get(&arg_idx.0)
+            {
+                return TypePredicate {
+                    type_id: Some(arg_type),
+                    ..predicate.clone()
+                };
+            }
+        }
+
+        // Case 2: Complex predicate type CONTAINS type parameters (e.g., mapped types
+        // like `target is { readonly [K in P]: unknown }`). Build a substitution from
+        // function type params to call argument types and instantiate the predicate type.
+        let mut substitution = tsz_solver::TypeSubstitution::new();
+        for tp in &type_params {
+            for (i, param) in params.iter().enumerate() {
+                if let Some(info) =
+                    tsz_solver::type_queries::get_type_parameter_info(self.interner, param.type_id)
+                    && info.name == tp.name
                 {
-                    return TypePredicate {
-                        type_id: Some(arg_type),
-                        ..predicate.clone()
-                    };
+                    if let Some(&arg_idx) = args.get(i)
+                        && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                    {
+                        substitution.insert(tp.name, arg_type);
+                    }
+                    break;
                 }
+            }
+        }
+
+        if !substitution.is_empty() {
+            let instantiated =
+                tsz_solver::instantiate_type(self.interner, pred_type, &substitution);
+            if instantiated != pred_type {
+                // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` → `{ length: unknown }`)
+                let evaluated = tsz_solver::evaluate_type(self.interner, instantiated);
+                return TypePredicate {
+                    type_id: Some(evaluated),
+                    ..predicate.clone()
+                };
             }
         }
 

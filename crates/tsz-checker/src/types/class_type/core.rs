@@ -201,6 +201,7 @@ impl<'a> CheckerState<'a> {
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
         let mut has_nominal_members = false;
+        let mut has_late_bound_members = false;
         let mut merged_interface_type_for_class: Option<TypeId> = None;
 
         // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
@@ -226,6 +227,14 @@ impl<'a> CheckerState<'a> {
                         has_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name_resolved(prop.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(prop.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_late_bound_members = true;
+                        }
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -310,6 +319,14 @@ impl<'a> CheckerState<'a> {
                         has_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name_resolved(accessor.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(accessor.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_late_bound_members = true;
+                        }
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -584,6 +601,14 @@ impl<'a> CheckerState<'a> {
 
             for (member_idx, method) in deferred_methods {
                 let Some(name) = self.get_property_name_resolved(method.name) else {
+                    if self
+                        .ctx
+                        .arena
+                        .get(method.name)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                    {
+                        has_late_bound_members = true;
+                    }
                     continue;
                 };
                 let name_atom = self.ctx.types.intern_string(&name);
@@ -1070,9 +1095,13 @@ impl<'a> CheckerState<'a> {
 
         // Build the final instance type
         let props: Vec<PropertyInfo> = properties.into_values().collect();
+        let mut flags = ObjectFlags::empty();
+        if has_late_bound_members {
+            flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
+        }
         let mut instance_type = if string_index.is_some() || number_index.is_some() {
             factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+                flags,
                 properties: props,
                 string_index,
                 number_index,
@@ -1081,7 +1110,7 @@ impl<'a> CheckerState<'a> {
         } else {
             // Use object_with_index even without index signatures to set the symbol for nominal typing
             factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+                flags,
                 properties: props,
                 string_index: None,
                 number_index: None,
