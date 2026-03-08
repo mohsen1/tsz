@@ -336,6 +336,10 @@ export const x = () => 1;
         output.contains("export const x: Foo;"),
         "Expected JS @type alias reference to be preserved: {output}"
     );
+    assert!(
+        output.contains("export type Foo = (...args: string[]) => number;"),
+        "Expected JS @callback alias to be synthesized after the exported value: {output}"
+    );
 }
 
 #[test]

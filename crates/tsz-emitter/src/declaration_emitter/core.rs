@@ -114,6 +114,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
     pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
+    /// Synthetic JSDoc type aliases already emitted for the current file.
+    pub(super) emitted_jsdoc_type_aliases: FxHashSet<String>,
 }
 
 pub(super) struct SourceMapState {
@@ -190,6 +192,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_js_export_equals_names: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
+            emitted_jsdoc_type_aliases: FxHashSet::default(),
         }
     }
 
@@ -248,6 +251,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_js_export_equals_names: FxHashSet::default(),
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
+            emitted_jsdoc_type_aliases: FxHashSet::default(),
         }
     }
 
@@ -547,6 +551,7 @@ impl<'a> DeclarationEmitter<'a> {
         let (grouped_reexports, skipped_reexports) = self.collect_js_grouped_reexports(source_file);
         self.js_grouped_reexports = grouped_reexports;
         self.js_skipped_reexports = skipped_reexports;
+        self.emitted_jsdoc_type_aliases.clear();
         let deferred_js_namespace_objects =
             self.collect_js_namespace_object_statements(source_file);
 
@@ -586,6 +591,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_statement(stmt_idx);
             }
         }
+
+        self.emit_pending_jsdoc_callback_type_aliases(source_file);
 
         // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
         // Uses emission-time tracking instead of source-file analysis.

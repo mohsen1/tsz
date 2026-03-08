@@ -743,6 +743,251 @@ impl<'a> DeclarationEmitter<'a> {
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
 
+    fn leading_jsdoc_comment_chain_for_pos(&self, pos: u32) -> Vec<String> {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return Vec::new();
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let nearest = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .filter(|comment| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|comment| comment.end);
+
+        let Some(nearest) = nearest else {
+            return Vec::new();
+        };
+
+        let mut chain = vec![get_jsdoc_content(nearest, text)];
+        let mut current_start = nearest.pos as usize;
+        for comment in self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end <= nearest.pos)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            let between = &text[comment.end as usize..current_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+            chain.push(get_jsdoc_content(comment, text));
+            current_start = comment.pos as usize;
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn parse_jsdoc_callback_alias(jsdoc: &str) -> Option<(String, String)> {
+        let mut name = None;
+        let mut params = Vec::new();
+        let mut return_type = None;
+
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("@callback") {
+                let callback_name = rest.trim();
+                if !callback_name.is_empty() {
+                    name = Some(callback_name.to_string());
+                }
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("@param") {
+                let rest = rest.trim();
+                if rest.starts_with('{')
+                    && let Some(end) = rest[1..].find('}')
+                {
+                    let type_expr = rest[1..1 + end].trim();
+                    let param_name = rest[2 + end..]
+                        .split_whitespace()
+                        .next()
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("arg");
+                    let (rest_param, base_type) =
+                        if let Some(stripped) = type_expr.strip_prefix("...") {
+                            (true, stripped.trim())
+                        } else {
+                            (false, type_expr)
+                        };
+                    let ts_type = if base_type == "*" {
+                        "any".to_string()
+                    } else if rest_param {
+                        format!("{base_type}[]")
+                    } else {
+                        base_type.to_string()
+                    };
+                    if rest_param {
+                        params.push(format!("...{param_name}: {ts_type}"));
+                    } else {
+                        params.push(format!("{param_name}: {ts_type}"));
+                    }
+                }
+                continue;
+            }
+
+            if let Some(rest) = line
+                .strip_prefix("@returns")
+                .or_else(|| line.strip_prefix("@return"))
+            {
+                let rest = rest.trim();
+                if rest.starts_with('{')
+                    && let Some(end) = rest[1..].find('}')
+                {
+                    let type_expr = rest[1..1 + end].trim();
+                    return_type = Some(if type_expr == "*" {
+                        "any".to_string()
+                    } else {
+                        type_expr.to_string()
+                    });
+                }
+            }
+        }
+
+        let name = name?;
+        let return_type = return_type.unwrap_or_else(|| "void".to_string());
+        Some((name, format!("({}) => {return_type}", params.join(", "))))
+    }
+
+    pub(crate) fn emit_jsdoc_callback_type_aliases_for_variable_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+        force_exported: bool,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return;
+        };
+
+        let callback_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+        if callback_chain.is_empty() {
+            return;
+        }
+
+        let callback_aliases = callback_chain
+            .iter()
+            .filter_map(|jsdoc| Self::parse_jsdoc_callback_alias(jsdoc))
+            .collect::<FxHashMap<_, _>>();
+        if callback_aliases.is_empty() {
+            return;
+        }
+
+        let has_export_modifier = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                let is_exported = force_exported
+                    || has_export_modifier
+                    || self.is_js_named_exported_name(decl.name);
+                if !is_exported {
+                    continue;
+                }
+
+                let Some(type_name) = self
+                    .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl.name))
+                else {
+                    continue;
+                };
+
+                let Some(type_text) = callback_aliases.get(&type_name) else {
+                    continue;
+                };
+                if !self.emitted_jsdoc_type_aliases.insert(type_name.clone()) {
+                    continue;
+                }
+
+                self.write_indent();
+                self.write("export type ");
+                self.write(&type_name);
+                self.write(" = ");
+                self.write(type_text);
+                self.write(";");
+                self.write_line();
+            }
+        }
+    }
+
+    pub(crate) fn emit_pending_jsdoc_callback_type_aliases(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.emit_jsdoc_callback_type_aliases_for_variable_statement(stmt_idx, false);
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                        continue;
+                    };
+                    let Some(clause_node) = self.arena.get(export.export_clause) else {
+                        continue;
+                    };
+                    if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        self.emit_jsdoc_callback_type_aliases_for_variable_statement(
+                            export.export_clause,
+                            true,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn collect_js_export_equals_names(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
