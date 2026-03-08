@@ -361,6 +361,28 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         }
     }
 
+    // Pass 1.5: normalize --Flag names to canonical casing (case-insensitive, tsc compat).
+    // Only the flag name portion is lowercased; values and file paths are preserved as-is.
+    for arg in expanded.iter_mut().skip(1) {
+        let s = arg.to_string_lossy();
+        if s.starts_with("--") && s.len() > 2 {
+            if let Some(eq_pos) = s.find('=') {
+                let flag_part = &s[2..eq_pos];
+                let value_part = &s[eq_pos..];
+                let lower = flag_part.to_lowercase();
+                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
+                    *arg = OsString::from(format!("{canonical}{value_part}"));
+                }
+            } else {
+                let flag_part = &s[2..];
+                let lower = flag_part.to_lowercase();
+                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
+                    *arg = OsString::from(canonical.to_string());
+                }
+            }
+        }
+    }
+
     // Second pass: detect --help/-h/-?/--all/--version/-v/-V before clap
     // In build mode, -v means --build-verbose, not --version
     let is_build_mode = expanded
@@ -462,7 +484,239 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         result.push(arg.clone());
     }
 
-    result
+    // Fourth pass: handle boolean flag values ("true"/"false") and deduplicate flags.
+    // tsc treats `--strict false` as setting strict=false, and accepts duplicate flags silently.
+    let boolean_flags = build_boolean_flag_set();
+    let valued_flags = build_valued_flag_set();
+    let option_bool_flags = build_option_bool_flag_set();
+    let mut final_result = Vec::with_capacity(result.len());
+    let mut flag_positions: FxHashMap<String, usize> = FxHashMap::default();
+    let mut skip_positions: Vec<bool> = Vec::new();
+
+    let mut i = 0;
+    if !result.is_empty() {
+        final_result.push(result[0].clone());
+        skip_positions.push(false);
+        i = 1;
+    }
+
+    while i < result.len() {
+        let arg_str = result[i].to_string_lossy().to_string();
+
+        if arg_str.starts_with("--") {
+            let flag_name = if let Some(eq_pos) = arg_str.find('=') {
+                arg_str[..eq_pos].to_string()
+            } else {
+                arg_str.clone()
+            };
+
+            let is_boolean = boolean_flags.contains(flag_name.as_str());
+            let takes_value = valued_flags.contains(flag_name.as_str());
+
+            // Check if next arg is "true" or "false" for boolean flags
+            if is_boolean && !arg_str.contains('=') {
+                if let Some(next) = result.get(i + 1) {
+                    let next_str = next.to_string_lossy();
+                    let next_lower = next_str.to_lowercase();
+                    if next_lower == "false" {
+                        if option_bool_flags.contains(flag_name.as_str()) {
+                            // Option<bool> flag: emit --flag=false so clap gets the value
+                            let combined = format!("{flag_name}=false");
+                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                                skip_positions[prev_idx] = true;
+                            }
+                            let current_idx = final_result.len();
+                            flag_positions.insert(flag_name, current_idx);
+                            final_result.push(OsString::from(combined));
+                            skip_positions.push(false);
+                            i += 2;
+                            continue;
+                        } else {
+                            // Plain bool flag: skip both (flag is not set)
+                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                                skip_positions[prev_idx] = true;
+                            }
+                            flag_positions.remove(&flag_name);
+                            i += 2;
+                            continue;
+                        }
+                    } else if next_lower == "true" {
+                        if option_bool_flags.contains(flag_name.as_str()) {
+                            // Option<bool> flag: emit --flag=true so clap gets the value
+                            let combined = format!("{flag_name}=true");
+                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                                skip_positions[prev_idx] = true;
+                            }
+                            let current_idx = final_result.len();
+                            flag_positions.insert(flag_name, current_idx);
+                            final_result.push(OsString::from(combined));
+                            skip_positions.push(false);
+                            i += 2;
+                            continue;
+                        }
+                        // Plain bool flag: keep the flag, skip the "true" token
+                        i += 1;
+                    }
+                }
+            }
+
+            // Deduplicate: if we've seen this flag before, mark old position for skip
+            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                skip_positions[prev_idx] = true;
+                if takes_value
+                    && !final_result[prev_idx].to_string_lossy().contains('=')
+                    && prev_idx + 1 < skip_positions.len()
+                {
+                    skip_positions[prev_idx + 1] = true;
+                }
+            }
+
+            let current_idx = final_result.len();
+            flag_positions.insert(flag_name, current_idx);
+            final_result.push(OsString::from(&arg_str));
+            skip_positions.push(false);
+
+            if takes_value && !arg_str.contains('=') {
+                i += 1;
+                if i < result.len() {
+                    final_result.push(result[i].clone());
+                    skip_positions.push(false);
+                }
+            }
+        } else {
+            final_result.push(result[i].clone());
+            skip_positions.push(false);
+        }
+
+        i += 1;
+    }
+
+    final_result
+        .into_iter()
+        .zip(skip_positions)
+        .filter_map(|(arg, skip)| if skip { None } else { Some(arg) })
+        .collect()
+}
+
+/// Build a lookup table from lowercase flag names (without `--`) to their canonical
+/// `--flagName` forms. Used for case-insensitive flag normalization (tsc v6 compat).
+fn build_flag_lookup() -> FxHashMap<String, String> {
+    let cmd = CliArgs::command();
+    let mut map = FxHashMap::default();
+    for a in cmd.get_arguments() {
+        if let Some(long) = a.get_long() {
+            let canonical = format!("--{long}");
+            map.insert(long.to_lowercase(), canonical.clone());
+            if let Some(aliases) = a.get_all_aliases() {
+                for alias in aliases {
+                    map.insert(alias.to_lowercase(), canonical.clone());
+                }
+            }
+        }
+    }
+    for opt in KNOWN_TSC_OPTIONS {
+        let name = &opt[2..];
+        map.entry(name.to_lowercase())
+            .or_insert_with(|| opt.to_string());
+    }
+    map
+}
+
+/// Set of known boolean flags (flags that accept no value or optional true/false).
+fn build_boolean_flag_set() -> rustc_hash::FxHashSet<&'static str> {
+    [
+        "--all", "--build", "--init", "--listFilesOnly", "--showConfig",
+        "--ignoreConfig", "--libReplacement", "--watch", "--noLib",
+        "--useDefineForClassFields", "--experimentalDecorators",
+        "--emitDecoratorMetadata", "--resolveJsonModule",
+        "--resolvePackageJsonExports", "--resolvePackageJsonImports",
+        "--allowArbitraryExtensions", "--allowImportingTsExtensions",
+        "--rewriteRelativeImportExtensions", "--noResolve",
+        "--allowUmdGlobalAccess", "--noUncheckedSideEffectImports",
+        "--allowJs", "--checkJs", "--declaration", "--declarationMap",
+        "--emitDeclarationOnly", "--sourceMap", "--inlineSourceMap",
+        "--inlineSources", "--noEmit", "--noEmitOnError", "--noEmitHelpers",
+        "--importHelpers", "--downlevelIteration", "--removeComments",
+        "--preserveConstEnums", "--stripInternal", "--emitBOM",
+        "--esModuleInterop", "--allowSyntheticDefaultImports",
+        "--isolatedModules", "--isolatedDeclarations",
+        "--verbatimModuleSyntax", "--forceConsistentCasingInFileNames",
+        "--preserveSymlinks", "--erasableSyntaxOnly", "--strict",
+        "--noImplicitAny", "--strictNullChecks", "--strictFunctionTypes",
+        "--strictBindCallApply", "--strictPropertyInitialization",
+        "--strictBuiltinIteratorReturn", "--noImplicitThis",
+        "--useUnknownInCatchVariables", "--alwaysStrict",
+        "--noUnusedLocals", "--noUnusedParameters",
+        "--exactOptionalPropertyTypes", "--noImplicitReturns",
+        "--noFallthroughCasesInSwitch", "--sound",
+        "--noUncheckedIndexedAccess", "--noImplicitOverride",
+        "--noPropertyAccessFromIndexSignature",
+        "--allowUnreachableCode", "--allowUnusedLabels",
+        "--skipDefaultLibCheck", "--skipLibCheck", "--composite",
+        "--incremental", "--disableReferencedProjectLoad",
+        "--disableSolutionSearching",
+        "--disableSourceOfProjectReferenceRedirect",
+        "--diagnostics", "--extendedDiagnostics", "--explainFiles",
+        "--listFiles", "--listEmittedFiles", "--traceResolution",
+        "--traceDependencies", "--noCheck", "--pretty",
+        "--noErrorTruncation", "--preserveWatchOutput",
+        "--synchronousWatchDirectory", "--build-verbose", "--dry",
+        "--force", "--clean", "--stopBuildOnErrors",
+        "--assumeChangesOnlyAffectDirectDependencies",
+        "--keyofStringsOnly", "--noImplicitUseStrict",
+        "--noStrictGenericChecks", "--preserveValueImports",
+        "--suppressExcessPropertyErrors",
+        "--suppressImplicitAnyIndexErrors", "--disableSizeLimit",
+        "--batch",
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Set of flags that take a mandatory value argument (not boolean flags).
+fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
+    [
+        "--locale", "--project", "--target", "--module", "--lib",
+        "--jsx", "--jsxFactory", "--jsxFragmentFactory",
+        "--jsxImportSource", "--moduleDetection", "--moduleResolution",
+        "--baseUrl", "--typeRoots", "--types", "--rootDirs", "--paths",
+        "--plugins", "--moduleSuffixes", "--customConditions",
+        "--maxNodeModuleJsDepth", "--declarationDir", "--outDir",
+        "--rootDir", "--outFile", "--mapRoot", "--sourceRoot",
+        "--newLine", "--tsBuildInfoFile", "--generateTrace",
+        "--generateCpuProfile", "--watchFile", "--watchDirectory",
+        "--fallbackPolling", "--excludeDirectories", "--excludeFiles",
+        "--reactNamespace", "--charset", "--importsNotUsedAsValues",
+        "--out", "--typesVersions",
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Set of flags that are Option<bool> (tri-state: None, Some(true), Some(false)).
+/// These need --flag=true or --flag=false rather than flag removal.
+fn build_option_bool_flag_set() -> rustc_hash::FxHashSet<&'static str> {
+    [
+        "--useDefineForClassFields",
+        "--resolvePackageJsonExports",
+        "--resolvePackageJsonImports",
+        "--allowSyntheticDefaultImports",
+        "--forceConsistentCasingInFileNames",
+        "--noImplicitAny",
+        "--strictNullChecks",
+        "--strictFunctionTypes",
+        "--strictBindCallApply",
+        "--strictPropertyInitialization",
+        "--strictBuiltinIteratorReturn",
+        "--noImplicitThis",
+        "--useUnknownInCatchVariables",
+        "--alwaysStrict",
+        "--allowUnreachableCode",
+        "--allowUnusedLabels",
+        "--pretty",
+    ]
+    .into_iter()
+    .collect()
 }
 
 /// Split a response file line into arguments, respecting quoted strings.
@@ -1105,48 +1359,65 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     p.clone()
                 }
             })
-            .or_else(|| {
-                let default_path = cwd.join("tsconfig.json");
-                default_path.exists().then_some(default_path)
-            })
+            .or_else(|| Some(cwd.join("tsconfig.json")))
     };
 
+    // Issue 4: When no tsconfig.json is found (and --ignoreConfig is not set), emit TS5081
+    if let Some(ref path) = tsconfig_path {
+        if !path.exists() {
+            let display = path.display();
+            println!("error TS5081: Cannot read file '{display}'.");
+            std::process::exit(1);
+        }
+    }
+
+    // Issue 2: load_tsconfig already resolves extends chains, so the returned
+    // config is the fully merged result.
     let config = if let Some(path) = tsconfig_path.as_ref() {
         Some(load_tsconfig(path)?)
     } else {
         None
     };
 
-    // Parse raw JSON from the tsconfig file to extract explicitly set compilerOptions
-    // This avoids relying on struct field coverage -- we reflect back exactly what was set.
-    let raw_compiler_options: serde_json::Map<String, serde_json::Value> =
-        if let Some(ref path) = tsconfig_path {
-            let source = std::fs::read_to_string(path).unwrap_or_default();
-            let stripped = strip_jsonc(&source);
-            // Remove trailing commas for valid JSON parsing
-            let normalized = remove_trailing_commas_for_showconfig(&stripped);
-            if let Ok(raw_val) = serde_json::from_str::<serde_json::Value>(&normalized) {
-                raw_val
-                    .get("compilerOptions")
-                    .and_then(|v| v.as_object())
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                serde_json::Map::new()
-            }
+    // Build the compiler options map from the MERGED config (extends-resolved).
+    let mut compiler_options_map: serde_json::Map<String, serde_json::Value> =
+        if let Some(ref cfg) = config {
+            show_config_compiler_options_to_json(cfg.compiler_options.as_ref())
         } else {
             serde_json::Map::new()
         };
+
+    // Issue 1: Merge CLI-provided flags into the compiler options map.
+    show_config_apply_cli_overrides(&mut compiler_options_map, args);
+
+    // Issue 3: Compute and add implied options.
+    show_config_add_implied_options(&mut compiler_options_map);
+
+    // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
+    for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
+        if let Some(serde_json::Value::String(s)) = compiler_options_map.get(*path_key) {
+            if !s.starts_with("./") && !s.starts_with("../") && !s.starts_with('/') {
+                let normalized = format!("./{s}");
+                compiler_options_map
+                    .insert((*path_key).to_string(), serde_json::Value::String(normalized));
+            }
+        }
+    }
 
     let raw_opts = config
         .as_ref()
         .and_then(|cfg| cfg.compiler_options.as_ref());
 
     // We need resolved options for file discovery (allow_js, out_dir).
-    // For --showConfig, lib file resolution failure is non-fatal.
     let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false);
-    let out_dir = resolved.as_ref().and_then(|r| r.out_dir.clone());
+    let allow_js = raw_opts
+        .and_then(|o| o.allow_js)
+        .unwrap_or(false)
+        || args.allow_js;
+    let out_dir = args
+        .out_dir
+        .clone()
+        .or_else(|| resolved.as_ref().and_then(|r| r.out_dir.clone()));
 
     // Discover resolved file list
     let base_dir = tsconfig_path
@@ -1173,7 +1444,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         files_explicitly_set,
         include: config.as_ref().and_then(|c| c.include.clone()),
         exclude: config.as_ref().and_then(|c| c.exclude.clone()),
-        out_dir,
+        out_dir: out_dir.clone(),
         follow_links: false,
         allow_js,
     };
@@ -1214,16 +1485,39 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .collect();
 
+    // Issue 6: Auto-add outDir to exclude array (tsc behavior)
+    let effective_exclude = {
+        let mut excl = config
+            .as_ref()
+            .and_then(|c| c.exclude.clone())
+            .unwrap_or_default();
+        if let Some(ref od) = out_dir {
+            let od_str = od.display().to_string();
+            let normalized_od = if !od_str.starts_with("./")
+                && !od_str.starts_with("../")
+                && !od_str.starts_with('/')
+            {
+                format!("./{od_str}")
+            } else {
+                od_str
+            };
+            if !excl.iter().any(|e| e == &normalized_od) {
+                excl.push(normalized_od);
+            }
+        }
+        excl
+    };
+
     // Build the output manually with 4-space indentation (matching tsc --showConfig)
     let mut output = String::from("{\n");
 
-    // compilerOptions - reflect raw values from tsconfig (only explicitly set options)
+    // compilerOptions
     output.push_str("    \"compilerOptions\": {");
-    if raw_compiler_options.is_empty() {
+    if compiler_options_map.is_empty() {
         output.push('}');
     } else {
         output.push('\n');
-        let entries: Vec<_> = raw_compiler_options.iter().collect();
+        let entries: Vec<_> = compiler_options_map.iter().collect();
         for (i, (key, value)) in entries.iter().enumerate() {
             output.push_str("        ");
             output.push_str(&format_json_value_with_indent(key, value, 8));
@@ -1261,12 +1555,12 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             }
             output.push_str("    ]");
         }
-        // exclude
-        if let Some(ref exclude) = cfg.exclude {
+        // exclude (with auto-added outDir)
+        if !effective_exclude.is_empty() {
             output.push_str(",\n    \"exclude\": [\n");
-            for (i, v) in exclude.iter().enumerate() {
+            for (i, v) in effective_exclude.iter().enumerate() {
                 output.push_str(&format!("        \"{}\"", v));
-                if i + 1 < exclude.len() {
+                if i + 1 < effective_exclude.len() {
                     output.push(',');
                 }
                 output.push('\n');
@@ -1303,6 +1597,214 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Convert merged CompilerOptions (from extends-resolved TsConfig) into a JSON map
+/// for --showConfig output. Only includes options that are explicitly set (non-None).
+fn show_config_compiler_options_to_json(
+    opts: Option<&tsz_cli::config::CompilerOptions>,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::Value;
+    let mut map = serde_json::Map::new();
+    let Some(opts) = opts else { return map };
+
+    if let Some(ref v) = opts.target { map.insert("target".into(), Value::String(v.to_lowercase())); }
+    if let Some(ref v) = opts.module { map.insert("module".into(), Value::String(v.to_lowercase())); }
+    if let Some(ref v) = opts.module_resolution { map.insert("moduleResolution".into(), Value::String(v.to_lowercase())); }
+    if let Some(ref v) = opts.jsx { map.insert("jsx".into(), Value::String(v.to_lowercase())); }
+    if let Some(ref v) = opts.jsx_factory { map.insert("jsxFactory".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.jsx_fragment_factory { map.insert("jsxFragmentFactory".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.jsx_import_source { map.insert("jsxImportSource".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.react_namespace { map.insert("reactNamespace".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.base_url { map.insert("baseUrl".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.root_dir { map.insert("rootDir".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.out_dir { map.insert("outDir".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.out_file { map.insert("outFile".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.declaration_dir { map.insert("declarationDir".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.ts_build_info_file { map.insert("tsBuildInfoFile".into(), Value::String(v.clone())); }
+    if let Some(ref v) = opts.module_detection { map.insert("moduleDetection".into(), Value::String(v.to_lowercase())); }
+
+    macro_rules! set_bool { ($f:ident, $k:expr) => { if let Some(v) = opts.$f { map.insert($k.into(), Value::Bool(v)); } }; }
+    set_bool!(strict, "strict"); set_bool!(no_emit, "noEmit"); set_bool!(no_emit_on_error, "noEmitOnError");
+    set_bool!(declaration, "declaration"); set_bool!(source_map, "sourceMap"); set_bool!(declaration_map, "declarationMap");
+    set_bool!(composite, "composite"); set_bool!(incremental, "incremental"); set_bool!(isolated_modules, "isolatedModules");
+    set_bool!(verbatim_module_syntax, "verbatimModuleSyntax"); set_bool!(es_module_interop, "esModuleInterop");
+    set_bool!(allow_synthetic_default_imports, "allowSyntheticDefaultImports"); set_bool!(allow_js, "allowJs");
+    set_bool!(check_js, "checkJs"); set_bool!(skip_lib_check, "skipLibCheck"); set_bool!(strip_internal, "stripInternal");
+    set_bool!(no_lib, "noLib"); set_bool!(import_helpers, "importHelpers"); set_bool!(no_implicit_any, "noImplicitAny");
+    set_bool!(no_implicit_returns, "noImplicitReturns"); set_bool!(strict_null_checks, "strictNullChecks");
+    set_bool!(strict_function_types, "strictFunctionTypes"); set_bool!(strict_property_initialization, "strictPropertyInitialization");
+    set_bool!(no_implicit_this, "noImplicitThis"); set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_bool!(strict_bind_call_apply, "strictBindCallApply"); set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_bool!(no_unused_locals, "noUnusedLocals"); set_bool!(no_unused_parameters, "noUnusedParameters");
+    set_bool!(allow_unreachable_code, "allowUnreachableCode"); set_bool!(no_resolve, "noResolve");
+    set_bool!(no_unchecked_side_effect_imports, "noUncheckedSideEffectImports"); set_bool!(no_implicit_override, "noImplicitOverride");
+    set_bool!(always_strict, "alwaysStrict"); set_bool!(use_define_for_class_fields, "useDefineForClassFields");
+    set_bool!(experimental_decorators, "experimentalDecorators"); set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_bool!(resolve_package_json_exports, "resolvePackageJsonExports"); set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
+    set_bool!(resolve_json_module, "resolveJsonModule"); set_bool!(allow_arbitrary_extensions, "allowArbitraryExtensions");
+    set_bool!(allow_importing_ts_extensions, "allowImportingTsExtensions"); set_bool!(rewrite_relative_import_extensions, "rewriteRelativeImportExtensions");
+
+    if let Some(ref v) = opts.lib { map.insert("lib".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = opts.types { map.insert("types".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = opts.type_roots { map.insert("typeRoots".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = opts.module_suffixes { map.insert("moduleSuffixes".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = opts.custom_conditions { map.insert("customConditions".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref paths) = opts.paths {
+        let mut paths_obj = serde_json::Map::new();
+        for (pattern, targets) in paths {
+            paths_obj.insert(pattern.clone(), Value::Array(targets.iter().map(|s| Value::String(s.clone())).collect()));
+        }
+        map.insert("paths".into(), Value::Object(paths_obj));
+    }
+    map
+}
+
+/// Merge CLI-provided flags into the compiler options JSON map for --showConfig output.
+fn show_config_apply_cli_overrides(map: &mut serde_json::Map<String, serde_json::Value>, args: &CliArgs) {
+    use serde_json::Value;
+    if let Some(target) = args.target {
+        let s = match target { tsz_cli::args::Target::Es5 => "es5", tsz_cli::args::Target::Es2015 => "es2015", tsz_cli::args::Target::Es2016 => "es2016", tsz_cli::args::Target::Es2017 => "es2017", tsz_cli::args::Target::Es2018 => "es2018", tsz_cli::args::Target::Es2019 => "es2019", tsz_cli::args::Target::Es2020 => "es2020", tsz_cli::args::Target::Es2021 => "es2021", tsz_cli::args::Target::Es2022 => "es2022", tsz_cli::args::Target::Es2023 => "es2023", tsz_cli::args::Target::Es2024 => "es2024", tsz_cli::args::Target::Es2025 => "es2025", tsz_cli::args::Target::EsNext => "esnext" };
+        map.insert("target".into(), Value::String(s.into()));
+    }
+    if let Some(module) = args.module {
+        let s = match module { tsz_cli::args::Module::None => "none", tsz_cli::args::Module::CommonJs => "commonjs", tsz_cli::args::Module::Amd => "amd", tsz_cli::args::Module::Umd => "umd", tsz_cli::args::Module::System => "system", tsz_cli::args::Module::Es2015 => "es2015", tsz_cli::args::Module::Es2020 => "es2020", tsz_cli::args::Module::Es2022 => "es2022", tsz_cli::args::Module::EsNext => "esnext", tsz_cli::args::Module::Node16 => "node16", tsz_cli::args::Module::Node18 => "node18", tsz_cli::args::Module::Node20 => "node20", tsz_cli::args::Module::NodeNext => "nodenext", tsz_cli::args::Module::Preserve => "preserve" };
+        map.insert("module".into(), Value::String(s.into()));
+    }
+    if let Some(mr) = args.module_resolution {
+        let s = match mr { tsz_cli::args::ModuleResolution::Classic => "classic", tsz_cli::args::ModuleResolution::Node10 => "node10", tsz_cli::args::ModuleResolution::Node16 => "node16", tsz_cli::args::ModuleResolution::NodeNext => "nodenext", tsz_cli::args::ModuleResolution::Bundler => "bundler" };
+        map.insert("moduleResolution".into(), Value::String(s.into()));
+    }
+    if let Some(jsx) = args.jsx {
+        let s = match jsx { tsz_cli::args::JsxEmit::Preserve => "preserve", tsz_cli::args::JsxEmit::React => "react", tsz_cli::args::JsxEmit::ReactJsx => "react-jsx", tsz_cli::args::JsxEmit::ReactJsxDev => "react-jsxdev", tsz_cli::args::JsxEmit::ReactNative => "react-native" };
+        map.insert("jsx".into(), Value::String(s.into()));
+    }
+    if let Some(ref v) = args.jsx_factory { map.insert("jsxFactory".into(), Value::String(v.clone())); }
+    if let Some(ref v) = args.jsx_fragment_factory { map.insert("jsxFragmentFactory".into(), Value::String(v.clone())); }
+    if let Some(ref v) = args.jsx_import_source { map.insert("jsxImportSource".into(), Value::String(v.clone())); }
+    if let Some(ref v) = args.out_dir { map.insert("outDir".into(), Value::String(v.display().to_string())); }
+    if let Some(ref v) = args.out_file { map.insert("outFile".into(), Value::String(v.display().to_string())); }
+    if let Some(ref v) = args.root_dir { map.insert("rootDir".into(), Value::String(v.display().to_string())); }
+    if let Some(ref v) = args.declaration_dir { map.insert("declarationDir".into(), Value::String(v.display().to_string())); }
+    if let Some(ref v) = args.base_url { map.insert("baseUrl".into(), Value::String(v.display().to_string())); }
+
+    macro_rules! set_if_true { ($f:ident, $k:expr) => { if args.$f { map.insert($k.into(), Value::Bool(true)); } }; }
+    set_if_true!(strict, "strict"); set_if_true!(no_emit, "noEmit"); set_if_true!(no_emit_on_error, "noEmitOnError");
+    set_if_true!(declaration, "declaration"); set_if_true!(source_map, "sourceMap"); set_if_true!(declaration_map, "declarationMap");
+    set_if_true!(composite, "composite"); set_if_true!(incremental, "incremental"); set_if_true!(isolated_modules, "isolatedModules");
+    set_if_true!(verbatim_module_syntax, "verbatimModuleSyntax"); set_if_true!(es_module_interop, "esModuleInterop");
+    set_if_true!(allow_js, "allowJs"); set_if_true!(check_js, "checkJs"); set_if_true!(skip_lib_check, "skipLibCheck");
+    set_if_true!(skip_default_lib_check, "skipDefaultLibCheck"); set_if_true!(strip_internal, "stripInternal");
+    set_if_true!(no_lib, "noLib"); set_if_true!(import_helpers, "importHelpers"); set_if_true!(no_emit_helpers, "noEmitHelpers");
+    set_if_true!(no_unused_locals, "noUnusedLocals"); set_if_true!(no_unused_parameters, "noUnusedParameters");
+    set_if_true!(no_implicit_returns, "noImplicitReturns"); set_if_true!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
+    set_if_true!(exact_optional_property_types, "exactOptionalPropertyTypes"); set_if_true!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_if_true!(no_implicit_override, "noImplicitOverride"); set_if_true!(no_property_access_from_index_signature, "noPropertyAccessFromIndexSignature");
+    set_if_true!(no_resolve, "noResolve"); set_if_true!(no_unchecked_side_effect_imports, "noUncheckedSideEffectImports");
+    set_if_true!(allow_umd_global_access, "allowUmdGlobalAccess"); set_if_true!(downlevel_iteration, "downlevelIteration");
+    set_if_true!(experimental_decorators, "experimentalDecorators"); set_if_true!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_if_true!(preserve_const_enums, "preserveConstEnums"); set_if_true!(remove_comments, "removeComments");
+    set_if_true!(emit_bom, "emitBOM"); set_if_true!(inline_source_map, "inlineSourceMap"); set_if_true!(inline_sources, "inlineSources");
+    set_if_true!(resolve_json_module, "resolveJsonModule"); set_if_true!(allow_arbitrary_extensions, "allowArbitraryExtensions");
+    set_if_true!(allow_importing_ts_extensions, "allowImportingTsExtensions"); set_if_true!(rewrite_relative_import_extensions, "rewriteRelativeImportExtensions");
+    set_if_true!(preserve_symlinks, "preserveSymlinks"); set_if_true!(isolated_declarations, "isolatedDeclarations");
+    set_if_true!(erasable_syntax_only, "erasableSyntaxOnly");
+
+    macro_rules! set_opt_bool { ($f:ident, $k:expr) => { if let Some(v) = args.$f { map.insert($k.into(), Value::Bool(v)); } }; }
+    set_opt_bool!(no_implicit_any, "noImplicitAny"); set_opt_bool!(strict_null_checks, "strictNullChecks");
+    set_opt_bool!(strict_function_types, "strictFunctionTypes"); set_opt_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_opt_bool!(strict_property_initialization, "strictPropertyInitialization"); set_opt_bool!(strict_builtin_iterator_return, "strictBuiltinIteratorReturn");
+    set_opt_bool!(no_implicit_this, "noImplicitThis"); set_opt_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_opt_bool!(always_strict, "alwaysStrict"); set_opt_bool!(use_define_for_class_fields, "useDefineForClassFields");
+    set_opt_bool!(allow_unreachable_code, "allowUnreachableCode"); set_opt_bool!(allow_unused_labels, "allowUnusedLabels");
+    set_opt_bool!(allow_synthetic_default_imports, "allowSyntheticDefaultImports"); set_opt_bool!(force_consistent_casing_in_file_names, "forceConsistentCasingInFileNames");
+    set_opt_bool!(pretty, "pretty"); set_opt_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
+    set_opt_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
+
+    if let Some(ref v) = args.lib { map.insert("lib".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = args.types { map.insert("types".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = args.type_roots { map.insert("typeRoots".into(), Value::Array(v.iter().map(|s| Value::String(s.display().to_string())).collect())); }
+    if let Some(ref v) = args.root_dirs { map.insert("rootDirs".into(), Value::Array(v.iter().map(|s| Value::String(s.display().to_string())).collect())); }
+    if let Some(ref v) = args.module_suffixes { map.insert("moduleSuffixes".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(ref v) = args.custom_conditions { map.insert("customConditions".into(), Value::Array(v.iter().map(|s| Value::String(s.clone())).collect())); }
+    if let Some(md) = args.module_detection {
+        let s = match md { tsz_cli::args::ModuleDetection::Auto => "auto", tsz_cli::args::ModuleDetection::Force => "force", tsz_cli::args::ModuleDetection::Legacy => "legacy" };
+        map.insert("moduleDetection".into(), Value::String(s.into()));
+    }
+    if let Some(nl) = args.new_line {
+        let s = match nl { tsz_cli::args::NewLine::Crlf => "crlf", tsz_cli::args::NewLine::Lf => "lf" };
+        map.insert("newLine".into(), Value::String(s.into()));
+    }
+    if let Some(ref v) = args.map_root { map.insert("mapRoot".into(), Value::String(v.clone())); }
+    if let Some(ref v) = args.source_root { map.insert("sourceRoot".into(), Value::String(v.clone())); }
+    if let Some(v) = args.max_node_module_js_depth { map.insert("maxNodeModuleJsDepth".into(), Value::Number(serde_json::Number::from(v))); }
+}
+
+/// Add implied options that tsc v6 shows in --showConfig output.
+fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json::Value>) {
+    use serde_json::Value;
+    use tsz::emitter::ScriptTarget;
+
+    let target_explicitly_set = map.contains_key("target");
+    let module_explicitly_set = map.contains_key("module");
+    let module_resolution_explicitly_set = map.contains_key("moduleResolution");
+    let use_define_explicitly_set = map.contains_key("useDefineForClassFields");
+
+    let effective_target = if let Some(Value::String(t)) = map.get("target") {
+        match t.to_lowercase().as_str() {
+            "es3" => Some(ScriptTarget::ES3), "es5" => Some(ScriptTarget::ES5),
+            "es6" | "es2015" => Some(ScriptTarget::ES2015), "es2016" => Some(ScriptTarget::ES2016),
+            "es2017" => Some(ScriptTarget::ES2017), "es2018" => Some(ScriptTarget::ES2018),
+            "es2019" => Some(ScriptTarget::ES2019), "es2020" => Some(ScriptTarget::ES2020),
+            "es2021" => Some(ScriptTarget::ES2021), "es2022" => Some(ScriptTarget::ES2022),
+            "es2023" => Some(ScriptTarget::ES2023), "es2024" => Some(ScriptTarget::ES2024),
+            "es2025" => Some(ScriptTarget::ES2025), "esnext" => Some(ScriptTarget::ESNext),
+            _ => None,
+        }
+    } else { None };
+
+    if !module_explicitly_set && target_explicitly_set {
+        if let Some(target) = effective_target {
+            let implied = match target {
+                ScriptTarget::ES3 | ScriptTarget::ES5 => "commonjs",
+                ScriptTarget::ES2015 | ScriptTarget::ES2016 | ScriptTarget::ES2017 | ScriptTarget::ES2018 | ScriptTarget::ES2019 => "es2015",
+                ScriptTarget::ES2020 | ScriptTarget::ES2021 => "es2020",
+                ScriptTarget::ES2022 | ScriptTarget::ES2023 | ScriptTarget::ES2024 | ScriptTarget::ES2025 => "es2022",
+                ScriptTarget::ESNext => "esnext",
+            };
+            map.insert("module".into(), Value::String(implied.into()));
+        }
+    }
+
+    if !module_explicitly_set && !target_explicitly_set && module_resolution_explicitly_set {
+        if let Some(Value::String(mr)) = map.get("moduleResolution").cloned() {
+            match mr.to_lowercase().as_str() {
+                "node16" => { map.insert("module".into(), Value::String("node16".into())); }
+                "nodenext" => { map.insert("module".into(), Value::String("nodenext".into())); }
+                _ => {}
+            }
+        }
+    }
+
+    let effective_module = map.get("module").and_then(|v| v.as_str()).map(|s| s.to_lowercase());
+    if !module_resolution_explicitly_set {
+        if let Some(ref module_str) = effective_module {
+            let implied = match module_str.as_str() {
+                "none" | "amd" | "umd" | "system" => Some("classic"),
+                "nodenext" => Some("nodenext"),
+                "node16" | "node18" | "node20" => Some("node16"),
+                _ => Some("bundler"),
+            };
+            if let Some(mr) = implied { map.insert("moduleResolution".into(), Value::String(mr.into())); }
+        }
+    }
+
+    if !use_define_explicitly_set && target_explicitly_set {
+        if let Some(target) = effective_target {
+            let use_define = (target as u32) >= (ScriptTarget::ES2022 as u32);
+            map.insert("useDefineForClassFields".into(), Value::Bool(use_define));
+        }
+    }
+}
+
 /// Format a JSON key-value pair for --showConfig output with proper indentation.
 fn format_json_value_with_indent(key: &str, value: &serde_json::Value, _indent: usize) -> String {
     let formatted_value = format_json_value(value);
@@ -1332,30 +1834,6 @@ fn format_json_value(value: &serde_json::Value) -> String {
         }
         serde_json::Value::Null => "null".to_string(),
     }
-}
-
-/// Remove trailing commas from JSON strings (for showConfig raw JSON parsing).
-fn remove_trailing_commas_for_showconfig(s: &str) -> String {
-    // Simple approach: remove commas before } or ]
-    let mut result = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-    for i in 0..len {
-        let ch = chars[i];
-        if ch == ',' {
-            // Look ahead to see if the next non-whitespace character is } or ]
-            let mut j = i + 1;
-            while j < len && chars[j].is_whitespace() {
-                j += 1;
-            }
-            if j < len && (chars[j] == '}' || chars[j] == ']') {
-                // Skip this comma
-                continue;
-            }
-        }
-        result.push(ch);
-    }
-    result
 }
 
 fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
