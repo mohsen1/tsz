@@ -1,6 +1,7 @@
 use crate::context::emit::EmitContext;
 use crate::context::transform::{TransformContext, TransformDirective};
 use std::sync::Arc;
+use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -754,8 +755,11 @@ impl<'a> LoweringPass<'a> {
         }
 
         // TC39 (non-legacy) decorator detection
-        let has_tc39_decorators =
-            !self.ctx.options.legacy_decorators && self.class_has_decorators(class);
+        // At ESNext, TC39 decorators are native syntax — no transform needed.
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext;
+        let has_tc39_decorators = !self.ctx.options.legacy_decorators
+            && !target_supports_native_decorators
+            && self.class_has_decorators(class);
         if has_tc39_decorators {
             let needs_prop_key = self.class_has_computed_decorated_member(class);
             let needs_set_function_name = self.class_has_private_decorated_member(class);
@@ -773,7 +777,7 @@ impl<'a> LoweringPass<'a> {
         // Determine the base transform
         let needs_es5_transform = self.ctx.target_es5;
         let base_directive = if has_tc39_decorators && !needs_es5_transform {
-            // TC39 decorator transform (ES2015+ targets)
+            // TC39 decorator transform (ES2015+ targets, below ESNext)
             TransformDirective::TC39Decorators { class_node: idx }
         } else if needs_es5_transform {
             // ES5 class transform
