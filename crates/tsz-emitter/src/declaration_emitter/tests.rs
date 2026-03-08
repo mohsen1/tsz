@@ -824,6 +824,30 @@ function C() {
 }
 
 #[test]
+fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.y = exports.x = void 0;
+exports.x = 1;
+exports.y = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected x export declaration to survive past the void-zero preinit: {output}"
+    );
+    assert!(
+        output.contains("export const y: 2;"),
+        "Expected y export declaration to survive past the void-zero preinit: {output}"
+    );
+    assert!(
+        !output.contains("export const y: undefined;"),
+        "Did not expect chained void-zero preinit to synthesize an undefined export: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"

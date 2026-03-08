@@ -3378,7 +3378,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn is_void_expression(&self, node: &Node) -> bool {
+    pub(crate) fn is_void_expression(&self, node: &Node) -> bool {
         node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             && self
                 .arena
