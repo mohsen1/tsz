@@ -289,15 +289,19 @@ export function parseBaseline(content: string): BaselineContent {
     }
 
     if (segIndex >= outputStart && isJsLikeOutput(name)) {
-      // JavaScript output
-      if (!result.js) {
+      // JavaScript output.
+      // When stripped-path baselines contain duplicate output filenames
+      // (for example multiple `index.js` outputs from different directories),
+      // keep the later segment for that filename to stay aligned with the
+      // `files` map, which also preserves the last occurrence.
+      if (!result.js || result.jsFileName === name) {
         result.js = fileContent;
         result.jsFileName = name;
       }
     } else if (segIndex >= outputStart && name.endsWith('.d.ts')) {
       // Declaration segment: classify as emitted output when name matches an emitted d.ts path.
       if (dtsOutputCandidates.has(name)) {
-        if (!result.dts) {
+        if (!result.dts || result.dtsFileName === name) {
           result.dts = fileContent;
           result.dtsFileName = name;
         }
