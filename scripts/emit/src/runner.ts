@@ -169,7 +169,14 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}`);
+  let runnerSalt = '';
+  try {
+    const runnerStat = fs.statSync(fileURLToPath(import.meta.url));
+    runnerSalt = `${runnerStat.size}:${runnerStat.mtimeMs}`;
+  } catch {
+    runnerSalt = 'runner-unknown';
+  }
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();

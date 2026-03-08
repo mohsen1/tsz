@@ -357,7 +357,7 @@ export class CliTranspiler {
       // Use SIGKILL for timeout so the child can't ignore the signal and linger.
       const runWithArgs = async (cliArgs: string[]) => {
         const promise = execFile(this.tszPath, cliArgs, {
-          cwd: this.tempDir,
+          cwd: testDir,
           encoding: 'utf-8',
           timeout: this.timeoutMs,
           killSignal: 'SIGKILL',

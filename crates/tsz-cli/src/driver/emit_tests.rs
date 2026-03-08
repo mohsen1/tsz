@@ -106,6 +106,33 @@ fn test_declaration_file_name_for_js_inputs() {
 }
 
 #[test]
+fn test_declaration_bundle_output_path_uses_out_file_name() {
+    let bundle_path = declaration_bundle_output_path(
+        Path::new("/tmp/project"),
+        None,
+        Path::new("dist/out.js"),
+    );
+
+    assert_eq!(bundle_path, Some(Path::new("/tmp/project/dist/out.d.ts").into()));
+}
+
+#[test]
+fn test_bundle_declaration_output_wraps_named_amd_modules() {
+    let input = r#"/// <amd-module name="mynamespace::SomeModuleA" />
+export declare class Foo {
+}"#;
+
+    let output = bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD);
+    let expected = r#"/// <amd-module name="mynamespace::SomeModuleA" />
+declare module "mynamespace::SomeModuleA" {
+    export class Foo {
+    }
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_normalize_type_roots_keeps_existing_absolute_root() {
     let temp = tempdir().unwrap();
     let types_dir = temp.path().join("types");
