@@ -340,6 +340,21 @@ impl<'a> Printer<'a> {
             found
         };
 
+        // Pre-compute whether JSX auto-import will generate ESM `import` statements.
+        // When it does, the output becomes an ES module (implicitly strict), so we
+        // must suppress "use strict" and reorder header comments accordingly.
+        let jsx_will_add_esm_imports = matches!(
+            self.ctx.options.jsx,
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+        ) && !self.ctx.is_effectively_commonjs()
+            && {
+                let usage = self.scan_jsx_usage();
+                usage.needs_jsx
+                    || usage.needs_jsxs
+                    || usage.needs_fragment
+                    || usage.needs_create_element
+            };
+
         // TypeScript emits "use strict" when:
         // 1. CommonJS AND the file is actually an ES module (has import/export).
         //    Script files (no import/export) don't get "use strict".
@@ -392,7 +407,8 @@ impl<'a> Printer<'a> {
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
             && self.ctx.original_module_kind.is_none()
-            && !(is_es_module_output && is_file_module);
+            && !(is_es_module_output && is_file_module)
+            && !jsx_will_add_esm_imports;
 
         let should_emit_use_strict = !source_has_use_strict
             && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
@@ -469,6 +485,7 @@ impl<'a> Printer<'a> {
             });
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
+        let mut jsx_deferred_comments: Vec<(String, bool)> = Vec::new();
         let is_commonjs = self.ctx.is_commonjs();
         // Check upfront if runtime helpers will be injected — this affects
         // whether attached header comments should be deferred to after helpers.
@@ -613,7 +630,14 @@ impl<'a> Printer<'a> {
                     let should_defer = (is_commonjs
                         && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
                         || (will_emit_helpers && !is_detached && !is_amd_dependency);
-                    if should_defer {
+                    // When JSX auto-import will generate ESM imports, defer
+                    // /// <reference> directives so they appear AFTER the import,
+                    // matching tsc's ordering.
+                    let should_defer_for_jsx =
+                        jsx_will_add_esm_imports && is_triple_slash_reference;
+                    if should_defer_for_jsx {
+                        jsx_deferred_comments.push((comment_text.to_string(), c_trailing));
+                    } else if should_defer {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment_with_reindent(comment_text, Some(c_pos));
@@ -637,6 +661,13 @@ impl<'a> Printer<'a> {
             && let Some(ref jsx_import) = jsx_import_text
         {
             self.write(jsx_import);
+            // Emit comments that were deferred to appear after the JSX import
+            for (comment, has_trailing_new_line) in &jsx_deferred_comments {
+                self.write_comment(comment);
+                if *has_trailing_new_line {
+                    self.write_line();
+                }
+            }
         }
 
         // Emit runtime helpers (must come BEFORE __esModule marker)

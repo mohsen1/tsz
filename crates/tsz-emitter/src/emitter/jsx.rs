@@ -1339,7 +1339,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Scan the AST to determine which JSX runtime functions are needed.
-    fn scan_jsx_usage(&self) -> JsxUsage {
+    pub(super) fn scan_jsx_usage(&self) -> JsxUsage {
         let mut usage = JsxUsage {
             needs_jsx: false,
             needs_jsxs: false,
@@ -1493,11 +1493,11 @@ fn extract_jsx_import_source(source: &str) -> Option<String> {
 // Internal Data Types
 // =============================================================================
 
-struct JsxUsage {
-    needs_jsx: bool,
-    needs_jsxs: bool,
-    needs_fragment: bool,
-    needs_create_element: bool,
+pub(super) struct JsxUsage {
+    pub(super) needs_jsx: bool,
+    pub(super) needs_jsxs: bool,
+    pub(super) needs_fragment: bool,
+    pub(super) needs_create_element: bool,
 }
 
 #[derive(Clone)]
