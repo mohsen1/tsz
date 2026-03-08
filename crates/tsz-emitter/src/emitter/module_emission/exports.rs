@@ -46,6 +46,44 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            // Handle `export * as ns from "mod"` -> `exports.ns = require("mod")` or
+            // `exports.ns = __importStar(require("mod"))` when esModuleInterop is enabled.
+            if let Some(clause_node) = self.arena.get(export.export_clause)
+                && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
+            {
+                let ns_name = if clause_node.kind == SyntaxKind::StringLiteral as u16 {
+                    self.arena
+                        .get_literal(clause_node)
+                        .map(|lit| lit.text.clone())
+                        .unwrap_or_default()
+                } else {
+                    self.get_identifier_text_idx(export.export_clause)
+                };
+                if !ns_name.is_empty() {
+                    let needs_bracket = !super::super::is_valid_identifier_name(&ns_name);
+                    if needs_bracket {
+                        self.write("exports[\"");
+                        self.write(&ns_name);
+                        self.write("\"] = ");
+                    } else {
+                        self.write("exports.");
+                        self.write(&ns_name);
+                        self.write(" = ");
+                    }
+                    if self.ctx.options.es_module_interop {
+                        self.write("__importStar(require(\"");
+                        self.write(&module_spec);
+                        self.write("\"));");
+                    } else {
+                        self.write("require(\"");
+                        self.write(&module_spec);
+                        self.write("\");");
+                    }
+                    self.write_line();
+                }
+                return;
+            }
+
             // Then emit Object.defineProperty for each export
             if let Some(clause_node) = self.arena.get(export.export_clause)
                 && let Some(named_exports) = self.arena.get_named_imports(clause_node)
