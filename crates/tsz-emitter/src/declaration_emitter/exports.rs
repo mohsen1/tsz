@@ -332,6 +332,9 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if func_body.is_some()
+            && self.emit_js_returned_define_property_function_type(func_body)
+        {
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it from the type cache
             let func_type_id = cache
@@ -694,6 +697,9 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if func_body.is_some()
+            && self.emit_js_returned_define_property_function_type(func_body)
+        {
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it from the type cache
             let func_type_id = cache
