@@ -1,19 +1,25 @@
-# Project Zang
+# `tsz`
 
-Project Zang is a performance-first TypeScript compiler in Rust.<sup>[1](#footnote-1)</sup>
+`tsz` is a performance-first TypeScript compiler in Rust. _z_ is for _Zang_!<sup>[1](#footnote-1)</sup>
 The goal is a correct, fast, drop-in replacement for `tsc`, with both native and WASM targets.
 
-TypeScript is intentionally unsound. Zang keeps a sound core solver and layers a compatibility
+`tsz` is built the with help of AI-assistant coding. Many tools and AI models were used during its development.
+
+TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
-## Progress
+### Status
 
 > [!WARNING]
 > This project is not ready for general use yet.
 
+`tsz` will be released after TypeScript 6 stable is released. `tsz` will only be compatible with TypeScript 6, not any older versions.
+
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.0-dev.20260306`
 <!-- TS_VERSION_END -->
+
+## Progress
 
 ### Type Checker
 
