@@ -54,6 +54,25 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
+            // TS2550: Check if property exists in a newer lib version before
+            // trying spelling suggestions. This matches tsc's priority order.
+            if !self.has_syntax_parse_errors()
+                && let Some(lib_name) = self.get_lib_suggestion_for_property(prop_name, type_id)
+            {
+                let type_str = self.format_type(type_id);
+                let message = format!(
+                    "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
+                );
+                self.ctx.push_diagnostic(Diagnostic::error(
+                        &self.ctx.file_name,
+                        loc.start,
+                        loc.length(),
+                        message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CH,
+                    ));
+                return;
+            }
+
             // On files with syntax parse errors, TypeScript generally avoids TS2551
             // suggestion diagnostics and sticks with TS2339 to reduce cascades.
             let suggestion = if self.has_syntax_parse_errors() {
@@ -331,6 +350,24 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
+            // TS2561: Check for spelling suggestion on excess properties.
+            if !self.has_syntax_parse_errors()
+                && let Some(suggestion) = self.find_similar_property(prop_name, target)
+            {
+                let type_str = self.format_type(target);
+                let message = format!(
+                    "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
+                );
+                self.ctx.push_diagnostic(Diagnostic::error(
+                        &self.ctx.file_name,
+                        loc.start,
+                        loc.length(),
+                        message,
+                        diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                    ));
+                return;
+            }
+
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,

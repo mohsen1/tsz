@@ -717,8 +717,6 @@ impl<'a> CheckerState<'a> {
     /// Emits TS1380 "An import alias cannot reference a declaration that was imported using 'import type'."
     /// Emits TS1379 "An import alias cannot reference a declaration that was exported using 'export type'."
     fn check_namespace_import(&mut self, _stmt_idx: NodeIndex, module_ref: NodeIndex) {
-        use crate::diagnostics::diagnostic_codes;
-
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
         };
@@ -735,11 +733,7 @@ impl<'a> CheckerState<'a> {
                 // Try to resolve the identifier as a namespace/module
                 let resolved = self.resolve_identifier_symbol(module_ref);
                 if resolved.is_none() {
-                    self.error_at_node_msg(
-                        module_ref,
-                        diagnostic_codes::CANNOT_FIND_NAMESPACE,
-                        &[name],
-                    );
+                    self.error_cannot_find_namespace_with_suggestion(name, module_ref);
                     return;
                 }
                 // TS1380/TS1379: Check if the referenced declaration is type-only
@@ -760,11 +754,7 @@ impl<'a> CheckerState<'a> {
                 // Try to resolve the left identifier
                 let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
                 if left_resolved.is_none() {
-                    self.error_at_node_msg(
-                        qn.left,
-                        diagnostic_codes::CANNOT_FIND_NAMESPACE,
-                        &[&name],
-                    );
+                    self.error_cannot_find_namespace_with_suggestion(&name, qn.left);
                     return; // Don't check for TS2694 if left doesn't exist
                 }
 

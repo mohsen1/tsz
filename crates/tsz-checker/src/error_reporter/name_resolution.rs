@@ -1006,6 +1006,40 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Report TS2503 or TS2833 for a missing namespace.
+    /// If a similar namespace name is found in scope, emits TS2833
+    /// ("Cannot find namespace 'X'. Did you mean 'Y'?") instead of TS2503.
+    pub(crate) fn error_cannot_find_namespace_with_suggestion(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_binder::symbol_flags;
+
+        if name.is_empty() {
+            return;
+        }
+
+        if !self.has_syntax_parse_errors()
+            && let Some(suggestions) = self.find_similar_identifiers(
+                name,
+                idx,
+                symbol_flags::NAMESPACE | symbol_flags::TYPE,
+            )
+            && let Some(suggestion) = suggestions.first()
+        {
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::CANNOT_FIND_NAMESPACE_DID_YOU_MEAN,
+                &[name, suggestion],
+            );
+            return;
+        }
+
+        self.error_at_node_msg(idx, diagnostic_codes::CANNOT_FIND_NAMESPACE, &[name]);
+    }
 }
 
 // =============================================================================

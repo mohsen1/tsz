@@ -177,11 +177,9 @@ impl<'a> CheckerState<'a> {
                         self.resolve_qualified_name(qn.left)
                     } else if left_node.kind == SyntaxKind::Identifier as u16 {
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node_msg(
+                            self.error_cannot_find_namespace_with_suggestion(
+                                left_name.as_str(),
                                 qn.left,
-                                diagnostic_codes::CANNOT_FIND_NAMESPACE,
-                                &[left_name.as_str()],
                             );
                         }
                         TypeId::ERROR
@@ -332,12 +330,7 @@ impl<'a> CheckerState<'a> {
             && !self.is_unresolved_import_symbol(qn.left)
             && let Some(ident) = self.ctx.arena.get_identifier(left_node)
         {
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                qn.left,
-                diagnostic_codes::CANNOT_FIND_NAMESPACE,
-                &[ident.escaped_text.as_str()],
-            );
+            self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
     }
