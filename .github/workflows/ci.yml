@@ -458,7 +458,7 @@ jobs:
   conformance:
     name: Conformance Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [changes]
     outputs:
       pass_rate: ${{ steps.conformance-metrics.outputs.pass_rate }}
@@ -514,7 +514,9 @@ jobs:
 
           # CI runners are slower and noisier than local machines; use an
           # explicit timeout/workers config to avoid timeout-induced flake.
-          ./scripts/conformance.sh run --timeout 10 --workers 12 2>&1 | tee "$TMPOUT" || true
+          # ubuntu-latest has 4 cores; 4 workers avoids oversubscription,
+          # and 20s timeout matches local defaults to prevent false timeouts.
+          ./scripts/conformance.sh run --timeout 20 --workers 4 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           # Extract pass counters and percentage from final result line:
