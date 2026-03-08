@@ -811,6 +811,7 @@ pub fn resolve_compiler_options(
     // runtime bindings and are subject to TDZ checks.
     if options.verbatim_module_syntax == Some(true) {
         resolved.checker.isolated_modules = true;
+        resolved.checker.verbatim_module_syntax = true;
     }
 
     if let Some(always_strict) = options.always_strict {

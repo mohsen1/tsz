@@ -430,7 +430,6 @@ impl<'a> CheckerState<'a> {
             .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .is_some_and(|clause| clause.is_type_only);
-        let mut emitted_dts_import_error = false;
         let dts_ext = if module_name.ends_with(".d.ts") {
             Some((".d.ts", ".ts", ".js"))
         } else if module_name.ends_with(".d.mts") {
@@ -461,7 +460,6 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
             );
-            emitted_dts_import_error = true;
         }
 
         // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
@@ -605,7 +603,7 @@ impl<'a> CheckerState<'a> {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
-                let (is_declaration_file_flag, file_info) = {
+                let (_is_declaration_file_flag, file_info) = {
                     let arena = self.ctx.get_arena_for_file(target_idx as u32);
                     if let Some(source_file) = arena.source_files.first() {
                         let file_name = source_file.file_name.as_str();
@@ -705,36 +703,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if is_declaration_file_flag && !is_type_only_import && !emitted_dts_import_error {
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let (base, ts_ext, js_ext) = if module_name.ends_with(".d.ts") {
-                        (module_name.trim_end_matches(".d.ts"), ".ts", ".js")
-                    } else if module_name.ends_with(".d.mts") {
-                        (module_name.trim_end_matches(".d.mts"), ".mts", ".mjs")
-                    } else if module_name.ends_with(".d.cts") {
-                        (module_name.trim_end_matches(".d.cts"), ".cts", ".cjs")
-                    } else {
-                        (module_name.as_str(), ".ts", ".js")
-                    };
-                    let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                        ts_ext
-                    } else {
-                        js_ext
-                    };
-                    let suggested = format!("{base}{ext}");
-                    let message = format_message(
-                            diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                            &[&suggested],
-                        );
-                    self.error_at_position(
-                            spec_start,
-                            spec_length,
-                            &message,
-                            diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                        );
-                }
+                // TS2846 for resolved .d.ts files is only emitted when the import
+                // specifier explicitly uses a .d.ts extension (handled above at the
+                // dts_ext check). TSC does NOT emit TS2846 when an import like
+                // "./foo" resolves to "foo.d.ts" — even under verbatimModuleSyntax.
                 if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
                     let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
                     if !binder.is_external_module

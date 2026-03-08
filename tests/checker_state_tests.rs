@@ -29678,6 +29678,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
+            verbatim_module_syntax: false,
         },
     );
     assert!(

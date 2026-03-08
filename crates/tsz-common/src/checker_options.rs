@@ -127,6 +127,9 @@ pub struct CheckerOptions {
     /// `<source>/jsx-runtime` can be resolved. If not, TS2875 is emitted.
     /// Empty string means not set (default).
     pub jsx_import_source: String,
+    /// When true, do not transform or elide any imports or exports not marked as type-only.
+    /// Under this mode, importing a `.d.ts` file without `import type` is an error (TS2846).
+    pub verbatim_module_syntax: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -199,6 +202,7 @@ impl Default for CheckerOptions {
             rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
+            verbatim_module_syntax: false,
         }
     }
 }
