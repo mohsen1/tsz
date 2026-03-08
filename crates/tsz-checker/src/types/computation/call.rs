@@ -369,6 +369,24 @@ impl<'a> CheckerState<'a> {
             && !type_args_list.nodes.is_empty()
         {
             self.validate_call_type_arguments(callee_type, type_args_list, idx);
+
+            // `super<T>(...)` is always invalid (TS2754). Don't proceed with
+            // argument checking — it would emit a false TS2554 because the
+            // type-arg application fails and the resolved constructor has a
+            // different parameter shape than the user intended.
+            if is_super_call {
+                // Still evaluate argument expressions for side-effect errors
+                // (definite assignment, etc.) but don't type-check them against
+                // the constructor signature.
+                let check_excess_properties = false;
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |_i, _arg_count| Some(TypeId::ANY),
+                    check_excess_properties,
+                    None,
+                );
+                return TypeId::VOID;
+            }
         }
 
         // Apply explicit type arguments to the callee type before checking arguments.
