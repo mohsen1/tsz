@@ -1962,9 +1962,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(n) = self.ctx.arena.get(stmt_idx)
                     && let Some((_, leading_pos)) =
                         self.try_leading_jsdoc_with_pos(comments, n.pos, source_text)
-                    {
-                        return leading_pos == comment.pos;
-                    }
+                {
+                    return leading_pos == comment.pos;
+                }
                 false
             });
             if is_leading_of_any_stmt {

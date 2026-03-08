@@ -301,9 +301,10 @@ impl<'a> CheckerState<'a> {
         // tsc suppresses TS2774 in this case.
         if is_property_access
             && let Some(access) = self.ctx.arena.get_access_expr(node)
-                && self.expression_has_type_assertion(access.expression) {
-                    return;
-                }
+            && self.expression_has_type_assertion(access.expression)
+        {
+            return;
+        }
 
         // For identifiers, resolve the symbol
         let tested_sym = if !is_property_access {
