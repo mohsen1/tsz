@@ -260,7 +260,37 @@ impl BinderState {
                 }
             }
 
+            // Anonymous modules (`module { ... }` without a name, TS1437) still have
+            // their exported declarations bound into the inner scope.  tsc hoists
+            // these exports into the enclosing namespace so that e.g.
+            // `namespace Outer { module { export function f() {} } }` makes `Outer.f`
+            // visible.  Collect the exported symbols before exiting so we can promote
+            // them to the parent scope afterwards.
+            let anon_promoted: Vec<(String, SymbolId)> =
+                if module_symbol_id.is_none() && module.body.is_some() {
+                    self.current_scope
+                        .iter()
+                        .filter_map(|(name, &sym_id)| {
+                            let sym = self.symbols.get(sym_id)?;
+                            if sym.is_exported || (sym.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                                Some((name.clone(), sym_id))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
             self.exit_scope(arena);
+
+            // After exiting the anonymous module scope, promote exported symbols
+            // into the parent (enclosing namespace) scope so they are accessible
+            // as members of the parent namespace.
+            for (name, sym_id) in anon_promoted {
+                self.current_scope.set(name, sym_id);
+            }
         }
     }
 

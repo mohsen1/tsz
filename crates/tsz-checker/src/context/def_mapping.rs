@@ -207,6 +207,11 @@ impl<'a> CheckerContext<'a> {
     /// ```
     pub fn insert_def_type_params(&self, def_id: DefId, params: Vec<tsz_solver::TypeParamInfo>) {
         if !params.is_empty() {
+            // Sync type params into the DefinitionStore so the TypeFormatter
+            // can display generic types with their type parameter names
+            // (e.g., `MyClass<T>` instead of just `MyClass`).
+            self.definition_store
+                .set_type_params(def_id, params.clone());
             self.def_type_params.borrow_mut().insert(def_id, params);
         }
     }

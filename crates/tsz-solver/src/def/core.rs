@@ -452,6 +452,18 @@ impl DefinitionStore {
         }
     }
 
+    /// Update the type parameters for a definition.
+    ///
+    /// Type parameters may be computed lazily after initial registration.
+    /// This method synchronizes them into the `DefinitionInfo` so that
+    /// the `TypeFormatter` can display generic types with their type
+    /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
+    pub fn set_type_params(&self, id: DefId, params: Vec<TypeParamInfo>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.type_params = params;
+        }
+    }
+
     /// Update the instance shape for a type definition.
     ///
     /// This is used by checker code when a concrete object-like shape is computed
