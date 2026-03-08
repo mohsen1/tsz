@@ -1224,13 +1224,11 @@ impl BinderState {
         // Incremental binding mutates scopes; clear stale identifier resolutions.
         self.resolved_identifier_cache.write().unwrap().clear();
 
-        let last_prefix = match prefix_statements.last() {
-            Some(stmt) => *stmt,
-            None => return false,
+        let Some(&last_prefix) = prefix_statements.last() else {
+            return false;
         };
-        let start_flow = match self.top_level_flow.get(&last_prefix.0) {
-            Some(flow) => *flow,
-            None => return false,
+        let Some(&start_flow) = self.top_level_flow.get(&last_prefix.0) else {
+            return false;
         };
         if self.scopes.is_empty() {
             return false;

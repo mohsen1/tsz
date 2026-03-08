@@ -24,7 +24,7 @@ use tsz_common::interner::Atom;
 /// Uses a `HashSet` for O(1) lookups instead of O(n) contains checks.
 fn extend_dedup<T>(target: &mut Vec<T>, items: &[T])
 where
-    T: Clone + Eq + std::hash::Hash,
+    T: Copy + Eq + std::hash::Hash,
 {
     if items.is_empty() {
         return;
@@ -35,15 +35,15 @@ where
     if items.len() == 1 {
         let item = &items[0];
         if !target.contains(item) {
-            target.push(item.clone());
+            target.push(*item);
         }
         return;
     }
 
-    let mut existing: FxHashSet<_> = target.iter().cloned().collect();
+    let mut existing: FxHashSet<_> = target.iter().copied().collect();
     for item in items {
-        if existing.insert(item.clone()) {
-            target.push(item.clone());
+        if existing.insert(*item) {
+            target.push(*item);
         }
     }
 }
@@ -56,7 +56,7 @@ pub struct InferenceVar(pub u32);
 // Uses TypeScript-standard InferencePriority from types.rs
 
 /// A candidate type for an inference variable.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InferenceCandidate {
     pub type_id: TypeId,
     pub priority: InferencePriority,

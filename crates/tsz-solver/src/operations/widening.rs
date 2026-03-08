@@ -134,7 +134,7 @@ fn widen_type_cached(
                 if widened != elem.type_id {
                     changed = true;
                 }
-                let mut new_elem = elem.clone();
+                let mut new_elem = *elem;
                 new_elem.type_id = widened;
                 new_elements.push(new_elem);
             }

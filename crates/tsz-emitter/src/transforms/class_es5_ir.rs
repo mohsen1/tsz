@@ -268,17 +268,6 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
-    /// Deprecated shim kept for call sites in `class_es5_ir_members.rs` that
-    /// still use the old signature.  Delegates to the new single-argument form.
-    #[allow(dead_code)]
-    fn extract_leading_comment_from(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        _prev_end: Option<u32>,
-    ) -> Option<String> {
-        self.extract_leading_comment(node)
-    }
-
     /// Extract trailing comment on the same line as a class method's closing `}`.
     ///
     /// Finds the first `}` at brace depth 0 within the body block — that is, the

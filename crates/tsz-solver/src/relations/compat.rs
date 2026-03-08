@@ -1240,9 +1240,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
-        let target_shape_id = match extractor.extract(target) {
-            Some(id) => id,
-            None => return false,
+        let Some(target_shape_id) = extractor.extract(target) else {
+            return false;
         };
 
         let target_shape = self
@@ -1287,9 +1286,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Weak-union checks only apply when ALL union members are object-like.
             // If any member is primitive/non-object (e.g. `string | Function`),
             // TypeScript does not apply TS2559-style weak-type rejection.
-            let member_shape_id = match extractor.extract(resolved_member) {
-                Some(id) => id,
-                None => return false,
+            let Some(member_shape_id) = extractor.extract(resolved_member) else {
+                return false;
             };
 
             let member_shape = self
