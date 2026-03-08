@@ -149,7 +149,6 @@ type: boolean
 default: true
 
 You can learn about all of the compiler options at https://aka.ms/tsc
-
 "
     )
 }
@@ -830,9 +829,59 @@ Delete the outputs of all projects.
 
 --stopBuildOnErrors
 Skip building downstream projects on error in upstream project.
-
 "
     )
+}
+
+/// Post-process help output to add ANSI color codes matching tsc v6 TTY output.
+///
+/// tsc v6 uses:
+/// - `\x1b[1m` (bold) + `\x1b[22m` (unbold) for section headers
+/// - `\x1b[94m` (bright blue) + `\x1b[39m` (reset fg) for flag names and commands
+///
+/// Colors are applied when `colored::control::SHOULD_COLORIZE.should_colorize()` is true
+/// (i.e., stdout is a TTY or FORCE_COLOR is set).
+pub fn colorize_help(plain: &str) -> String {
+    use colored::control::SHOULD_COLORIZE;
+
+    let force_color = std::env::var("FORCE_COLOR")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    if !force_color && !SHOULD_COLORIZE.should_colorize() {
+        return plain.to_string();
+    }
+
+    let mut out = String::with_capacity(plain.len() + 256);
+    for line in plain.lines() {
+        if line.chars().all(|c| c.is_ascii_uppercase() || c == ' ') && !line.is_empty() {
+            // Section header (all caps): bold
+            out.push_str("\x1b[1m");
+            out.push_str(line);
+            out.push_str("\x1b[22m");
+        } else if line.starts_with("--") && !line.starts_with("---") {
+            // Flag name at column 0: bright blue
+            out.push_str("\x1b[94m");
+            out.push_str(line);
+            out.push_str("\x1b[39m");
+        } else if line.starts_with("  tsc") || line.starts_with("  tsc ") {
+            // Command example (indented "tsc ..."): bright blue
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let content = line.trim_start();
+            out.push_str(indent);
+            out.push_str("\x1b[94m");
+            out.push_str(content);
+            out.push_str("\x1b[39m");
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    // The lines() iterator drops the trailing newline, so we may have added
+    // one extra. Match the original ending.
+    if !plain.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -848,9 +897,11 @@ mod tests {
     #[test]
     fn render_help_ends_with_footer() {
         let output = render_help("6.0.0-dev.20260306");
-        assert!(output.ends_with(
-            "You can learn about all of the compiler options at https://aka.ms/tsc\n\n"
-        ));
+        assert!(
+            output.ends_with(
+                "You can learn about all of the compiler options at https://aka.ms/tsc\n"
+            )
+        );
     }
 
     #[test]
@@ -869,5 +920,21 @@ mod tests {
     fn render_help_all_has_build_options() {
         let output = render_help_all("6.0.0-dev.20260306");
         assert!(output.contains("BUILD OPTIONS"));
+    }
+
+    #[test]
+    fn colorize_help_adds_bold_to_headers() {
+        // Force color off to test plain path
+        colored::control::set_override(false);
+        let plain = render_help("6.0.0-dev.20260306");
+        let colorized = colorize_help(&plain);
+        assert!(!colorized.contains("\x1b[1m"));
+
+        // Force color on
+        colored::control::set_override(true);
+        let colorized = colorize_help(&plain);
+        assert!(colorized.contains("\x1b[1mCOMMON COMMANDS\x1b[22m"));
+        assert!(colorized.contains("\x1b[94m--help, -h\x1b[39m"));
+        colored::control::unset_override();
     }
 }
