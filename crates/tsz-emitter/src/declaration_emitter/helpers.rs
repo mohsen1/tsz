@@ -1194,7 +1194,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let name = name?;
-        let return_type = return_type.unwrap_or_else(|| "void".to_string());
+        let return_type = return_type.unwrap_or_else(|| "any".to_string());
         Some((name, format!("({}) => {return_type}", params.join(", "))))
     }
 

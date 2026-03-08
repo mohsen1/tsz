@@ -394,6 +394,28 @@ export {};
 }
 
 #[test]
+fn test_js_callback_without_return_tag_defaults_to_any() {
+    let source = r#"
+/**
+ * Callback to be invoked when test execution is complete.
+ *
+ * @callback DoneCB
+ * @param {number} failures - Number of failures that occurred.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("type DoneCB = (failures: number) => any;"),
+        "Expected JS @callback aliases without @returns to default to any: {output}"
+    );
+}
+
+#[test]
 fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
     let source = r#"
 /** @typedef {{x: string} | number} SomeType */
