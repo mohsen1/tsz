@@ -316,6 +316,47 @@ fn test_js_const_literal_uses_type_annotation() {
 }
 
 #[test]
+fn test_js_variable_preserves_name_like_jsdoc_type_reference() {
+    let source = r#"
+/**
+ * @callback Foo
+ * @param {...string} args
+ * @returns {number}
+ */
+/** @type {Foo} */
+export const x = () => 1;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: Foo;"),
+        "Expected JS @type alias reference to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_js_variable_preserves_unresolved_name_like_jsdoc_type_reference() {
+    let source = r#"
+/** @type {B} */
+var notOK = 0;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var notOK: B;"),
+        "Expected unresolved JSDoc type reference to be preserved in .d.ts emit: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;

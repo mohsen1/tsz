@@ -2306,12 +2306,11 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_node(decl.name);
                         self.emit_variable_decl_type_or_initializer(
                             keyword,
+                            stmt_node.pos,
                             *decl_idx,
                             decl.name,
                             decl.type_annotation,
                             decl.initializer,
-                            decl.type_annotation.is_some(),
-                            decl.initializer.is_some(),
                         );
 
                         // Skip comments within the declaration's omitted parts (initializer,

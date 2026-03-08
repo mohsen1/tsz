@@ -9,6 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
+use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -581,6 +582,165 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    fn leading_jsdoc_type_expr_for_pos(&self, pos: u32) -> Option<String> {
+        let text = self.source_file_text.as_deref()?;
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let nearest = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .filter(|comment| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|comment| comment.end)?;
+
+        let jsdoc = get_jsdoc_content(nearest, text);
+        if let Some(expr) = Self::extract_jsdoc_type_expression(&jsdoc) {
+            return Some(expr.trim().to_string());
+        }
+
+        None
+    }
+
+    fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
+        let trimmed = between.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+
+        trimmed.split_whitespace().all(|word| {
+            matches!(
+                word,
+                "export" | "declare" | "const" | "let" | "var" | "using" | "await"
+            )
+        })
+    }
+
+    fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
+        let typedef_pos = jsdoc.find("@typedef");
+        let mut tag_pos = jsdoc.find("@type");
+
+        while let Some(pos) = tag_pos {
+            let next_char = jsdoc[pos + "@type".len()..].chars().next();
+            if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
+                if let Some(td_pos) = typedef_pos
+                    && td_pos < pos
+                {
+                    let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
+                    let mut has_non_object_base = false;
+                    if let Some(open) = typedef_rest.find('{')
+                        && let Some(close) = typedef_rest[open..].find('}')
+                    {
+                        let base = typedef_rest[open + 1..open + close].trim();
+                        if base != "Object" && base != "object" && !base.is_empty() {
+                            has_non_object_base = true;
+                        }
+                    }
+                    if !has_non_object_base {
+                        return None;
+                    }
+                }
+                break;
+            }
+            tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);
+        }
+        let tag_pos = tag_pos?;
+        let rest = &jsdoc[tag_pos + "@type".len()..];
+
+        if let Some(open) = rest.find('{') {
+            let after_open = &rest[open + 1..];
+            let mut depth = 1usize;
+            let mut end_idx = None;
+            for (i, ch) in after_open.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_idx = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end_idx) = end_idx {
+                return Some(after_open[..end_idx].trim());
+            }
+        }
+
+        let rest = rest.trim_start();
+        if rest.is_empty() || rest.starts_with('@') || rest.starts_with('*') {
+            return None;
+        }
+        let end = rest
+            .find('\n')
+            .or_else(|| rest.find("*/"))
+            .unwrap_or(rest.len());
+        let expr = rest[..end].trim().trim_end_matches('*').trim();
+        if expr.is_empty() { None } else { Some(expr) }
+    }
+
+    fn jsdoc_name_like_type_reference(expr: &str) -> bool {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            return false;
+        }
+
+        if expr
+            .chars()
+            .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return true;
+        }
+
+        let Some(rest) = expr
+            .strip_prefix("import(\"")
+            .or_else(|| expr.strip_prefix("import('"))
+        else {
+            return false;
+        };
+
+        let quote = if expr.starts_with("import(\"") {
+            '"'
+        } else {
+            '\''
+        };
+        let Some(close) = rest.find(&format!("{quote})")) else {
+            return false;
+        };
+        let suffix = &rest[close + 2..];
+        let Some(member_path) = suffix.strip_prefix('.') else {
+            return false;
+        };
+        !member_path.is_empty()
+            && member_path
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+    }
+
+    fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
+        let expr = self.leading_jsdoc_type_expr_for_pos(pos)?;
+        if Self::jsdoc_name_like_type_reference(&expr) {
+            Some(expr)
+        } else {
+            None
+        }
+    }
+
+    fn jsdoc_name_like_type_expr_for_node(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
 
     pub(crate) fn collect_js_export_equals_names(
@@ -2434,13 +2594,15 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_variable_decl_type_or_initializer(
         &mut self,
         keyword: &str,
+        stmt_pos: u32,
         decl_idx: NodeIndex,
         decl_name: NodeIndex,
         type_annotation: NodeIndex,
         initializer: NodeIndex,
-        has_type_annotation: bool,
-        has_initializer: bool,
     ) {
+        let has_type_annotation = type_annotation.is_some();
+        let has_initializer = initializer.is_some();
+
         // Determine if we should emit a literal initializer for const
         let use_literal_initializer =
             if keyword == "const" && !has_type_annotation && has_initializer {
@@ -2491,6 +2653,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": unique symbol");
             } else if is_const_null_or_undefined {
                 self.write(": any");
+            } else if self.source_is_js_file
+                && let Some(type_text) = self
+                    .jsdoc_name_like_type_expr_for_pos(stmt_pos)
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
