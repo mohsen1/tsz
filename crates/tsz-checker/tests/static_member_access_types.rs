@@ -100,3 +100,103 @@ const getterValue = C.s3;
         "expected static getter property access type"
     );
 }
+
+#[test]
+fn auto_accessor_assignments_keep_concrete_types() {
+    let source = r#"
+class C {
+    accessor x;
+    accessor y;
+    accessor z;
+    accessor 0;
+
+    constructor(seed: number) {
+        this['x'] = [seed];
+        this['y'] = { seed };
+        this['z'] = `${seed}`;
+        this[0] = [seed];
+    }
+}
+const instance = new C(1);
+const xValue = instance.x;
+const yValue = instance.y;
+const zValue = instance.z;
+const zeroValue = instance[0];
+
+class StaticC {
+    static accessor x;
+    static {
+        this.x = 1;
+    }
+    static accessor y = this.x;
+    static accessor z;
+    static {
+        this.z = this.y;
+    }
+}
+const staticX = StaticC.x;
+const staticY = StaticC.y;
+const staticZ = StaticC.z;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let x_value = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 2));
+    let y_value = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 3));
+    let z_value = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 4));
+    let zero_value =
+        checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 5));
+    let static_x = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 7));
+    let static_y = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 8));
+    let static_z = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 9));
+
+    assert_eq!(
+        checker.format_type(x_value),
+        "number[]",
+        "expected instance auto-accessor array type"
+    );
+    assert!(
+        checker.format_type(y_value).contains("seed: number"),
+        "expected instance auto-accessor object type, got: {}",
+        checker.format_type(y_value)
+    );
+    assert_eq!(
+        checker.format_type(z_value),
+        "string",
+        "expected instance auto-accessor string type"
+    );
+    assert_eq!(
+        checker.format_type(zero_value),
+        "number[]",
+        "expected numeric auto-accessor array type"
+    );
+    assert_eq!(
+        checker.format_type(static_x),
+        "number",
+        "expected static auto-accessor type from static block"
+    );
+    assert_eq!(
+        checker.format_type(static_y),
+        "number",
+        "expected static auto-accessor initializer type"
+    );
+    assert_eq!(
+        checker.format_type(static_z),
+        "number",
+        "expected static auto-accessor type from later static block"
+    );
+}
