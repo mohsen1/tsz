@@ -224,17 +224,18 @@ impl<'a> CheckerState<'a> {
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
                 // Application(Lazy(DefId), [T]). This matches what TypeLowering does
                 // and ensures assignability with `T[]` / `readonly T[]`.
-                if is_builtin_array && type_param.is_none()
+                if is_builtin_array
+                    && type_param.is_none()
                     && let Some(args) = &type_ref.type_arguments
-                        && let Some(&first_arg) = args.nodes.first()
-                    {
-                        let elem_type = self.get_type_from_type_node_in_type_literal(first_arg);
-                        let array_type = factory.array(elem_type);
-                        if name == "ReadonlyArray" {
-                            return factory.readonly_type(array_type);
-                        }
-                        return array_type;
+                    && let Some(&first_arg) = args.nodes.first()
+                {
+                    let elem_type = self.get_type_from_type_node_in_type_literal(first_arg);
+                    let array_type = factory.array(elem_type);
+                    if name == "ReadonlyArray" {
+                        return factory.readonly_type(array_type);
                     }
+                    return array_type;
+                }
 
                 let base_type = if let Some(type_param) = type_param {
                     type_param
