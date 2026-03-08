@@ -2653,6 +2653,46 @@ fn test_parameter_properties() {
 }
 
 #[test]
+fn test_optional_parameter_property_emits_undefined_in_constructor_and_property() {
+    let output = emit_dts(
+        r#"
+    export class Point {
+        constructor(public x?: string) {}
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("x?: string | undefined;"),
+        "Expected optional parameter property to include undefined in property type: {output}"
+    );
+    assert!(
+        output.contains("constructor(x?: string | undefined);"),
+        "Expected optional parameter property to include undefined in constructor type: {output}"
+    );
+}
+
+#[test]
+fn test_parameter_property_initializer_infers_property_type() {
+    let output = emit_dts(
+        r#"
+    export class Point {
+        constructor(public x = "hello") {}
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("x: string;"),
+        "Expected initializer-backed parameter property to infer a property type: {output}"
+    );
+    assert!(
+        output.contains("constructor(x?: string);"),
+        "Expected initializer-backed parameter property constructor to stay optional: {output}"
+    );
+}
+
+#[test]
 fn test_getter_and_setter() {
     let output = emit_dts(
         r#"
