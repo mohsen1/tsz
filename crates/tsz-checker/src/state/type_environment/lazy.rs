@@ -202,7 +202,8 @@ impl<'a> CheckerState<'a> {
         let result = match classification {
             query::PropertyAccessResolutionKind::Lazy(def_id) => {
                 // Resolve lazy type from definition store
-                if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                let body_opt = self.ctx.definition_store.get_body(def_id);
+                if let Some(body) = body_opt {
                     if body == type_id {
                         type_id
                     } else {
@@ -241,20 +242,57 @@ impl<'a> CheckerState<'a> {
                             //   var f: (a: A) => void = (a) => a.foo;
                             // would fail because get_type_of_symbol returns the
                             // constructor type (Callable), not the instance type.
-                            if symbol.flags & symbol_flags::CLASS != 0
-                                && let Some(&instance_type) =
-                                    self.ctx.symbol_instance_types.get(&sym_id)
-                            {
-                                if instance_type != type_id {
-                                    let r = self.resolve_type_for_property_access_inner(
-                                        instance_type,
-                                        visited,
-                                    );
+                            if symbol.flags & symbol_flags::CLASS != 0 {
+                                // Try the symbol-indexed cache first (populated
+                                // after class building completes).
+                                let cached = self.ctx.symbol_instance_types.get(&sym_id).copied();
+
+                                // Fallback: check the node-indexed cache for
+                                // in-progress class builds.  During
+                                // get_class_instance_type_inner, the partial
+                                // instance type (properties + placeholder
+                                // methods) is cached in class_instance_type_cache
+                                // before method signatures are processed.  This
+                                // lets Lazy(DefId) resolve to the partial type so
+                                // property access on self-referential parameters
+                                // (e.g. `p.x` where `p: Point` inside class
+                                // Point) can find properties.
+                                let from_node_cache = if cached.is_none() {
+                                    let decl = if !symbol.value_declaration.is_none() {
+                                        Some(symbol.value_declaration)
+                                    } else {
+                                        symbol.declarations.first().copied()
+                                    };
+                                    decl.and_then(|idx| {
+                                        self.ctx.class_instance_type_cache.get(&idx).copied()
+                                    })
+                                } else {
+                                    None
+                                };
+
+                                // If neither cache has it, try building via
+                                // class_instance_type_from_symbol (will create
+                                // the instance type if the class isn't in the
+                                // resolution set).
+                                let from_build = if cached.is_none() && from_node_cache.is_none() {
+                                    self.class_instance_type_from_symbol(sym_id)
+                                } else {
+                                    None
+                                };
+
+                                let instance_type = cached.or(from_node_cache).or(from_build);
+                                if let Some(instance_type) = instance_type {
+                                    if instance_type != type_id {
+                                        let r = self.resolve_type_for_property_access_inner(
+                                            instance_type,
+                                            visited,
+                                        );
+                                        self.ctx.leave_recursion();
+                                        return r;
+                                    }
                                     self.ctx.leave_recursion();
-                                    return r;
+                                    return instance_type;
                                 }
-                                self.ctx.leave_recursion();
-                                return instance_type;
                             }
                         }
 

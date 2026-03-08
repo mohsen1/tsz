@@ -1064,6 +1064,11 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
             // Check if we're already resolving this class - return fallback to break cycle.
+            // Return a Lazy(DefId) placeholder so that the parameter type remains
+            // dynamically resolvable.  During class building the Lazy resolves to
+            // the partial instance type via class_instance_type_cache; after
+            // building completes it resolves to the final type via
+            // symbol_instance_types.
             if self.ctx.class_instance_resolution_set.contains(&sym_id) {
                 let fallback = self.ctx.create_lazy_type_ref(sym_id);
                 return Some((fallback, Vec::new()));
@@ -1077,6 +1082,15 @@ impl<'a> CheckerState<'a> {
 
             let instance_type = self.get_class_instance_type(decl_idx, class);
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+
+            // Register the class instance type in the TypeEnvironment immediately
+            // so that Lazy(DefId) fallbacks (created by the recursion guard above)
+            // can resolve via resolve_lazy during property access checks.
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                env.insert_class_instance_type(def_id, instance_type);
+            }
+
             self.pop_type_parameters(updates);
             return Some((instance_type, params));
         }
