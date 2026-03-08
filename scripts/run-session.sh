@@ -86,7 +86,7 @@ Available sessions:
   emit               Emit: JS output + declaration file generation
   architect          Conformance: narrowing / control-flow parity
   lsp                Conformance: JSDoc / JSX / Salsa regression baskets
-  perf               Performance: profile-driven optimization of tsz.dev regressions
+  perf               Performance benchmarking + optimization
 
 Runners are auto-discovered from:
   ~/.claude            Default Claude Code account
