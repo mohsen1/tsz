@@ -460,6 +460,13 @@ impl<'a> Printer<'a> {
                     // `(new a)` → `new a` is fine, but `(new a).b` must keep parens
                     // because `new a.b` has different semantics (constructs `a.b`).
                     || (k == syntax_kind_ext::NEW_EXPRESSION && !self.paren_in_access_position)
+                    // FunctionExpression and ClassExpression can strip parens when NOT in
+                    // expression statement position (where they'd be ambiguous with declarations).
+                    // `let a = (<T>function foo() {})` → `let a = function foo() {}`
+                    || ((k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION)
+                        && !self.ctx.flags.paren_leftmost_function_or_object
+                        && !self.paren_in_access_position)
             );
 
             if can_strip {
@@ -476,21 +483,52 @@ impl<'a> Printer<'a> {
             // Fall through to emit with parens preserved
         }
 
-        // If the inner expression is another ParenExpr, avoid double-parenthesization
-        // when the inner already handles object literal protection.
+        // If the inner expression is another ParenExpr wrapping a type assertion/instantiation,
+        // and the inner paren would be stripped during emit (because the unwrapped expression
+        // is simple), then the outer parens are also redundant.
         if let Some(inner) = self.arena.get(paren.expression)
             && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(inner_paren) = self.arena.get_parenthesized(inner)
             && let Some(inner_inner) = self.arena.get(inner_paren.expression)
             && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
-                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-            && self.type_assertion_wraps_object_literal(inner_paren.expression)
+                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || inner_inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
         {
-            // The inner ParenExpr already preserves parens for the object literal.
-            // Our outer parens are redundant.
-            self.emit(paren.expression);
-            return;
+            // Check if the inner paren would strip its own parens (object literal or simple expr)
+            if self.type_assertion_wraps_object_literal(inner_paren.expression) {
+                self.emit(paren.expression);
+                return;
+            }
+            // Also strip if the unwrapped expression is simple and the inner paren will be elided
+            let unwrapped_kind = self.unwrap_type_assertion_kind(inner_paren.expression);
+            let inner_can_strip = matches!(
+                unwrapped_kind,
+                Some(k) if k == SyntaxKind::Identifier as u16
+                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    || k == SyntaxKind::ThisKeyword as u16
+                    || k == SyntaxKind::SuperKeyword as u16
+                    || k == SyntaxKind::NullKeyword as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+                    || k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::RegularExpressionLiteral as u16
+                    || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                    || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || (k == syntax_kind_ext::CALL_EXPRESSION && !self.paren_in_new_callee)
+                    || (k == syntax_kind_ext::NEW_EXPRESSION && !self.paren_in_access_position)
+            );
+            if inner_can_strip {
+                // Inner paren will be stripped, so our outer paren is redundant
+                self.emit(paren.expression);
+                return;
+            }
         }
 
         self.write("(");
