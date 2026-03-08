@@ -1634,6 +1634,14 @@ pub(super) fn check_file_for_parallel<'a>(
                     if let Some(phase) = phase.strip_suffix(":start") {
                         let phase_name = format!("trace_exported_variable_hotspots::{phase}");
                         report_parallel_start(&phase_name);
+                    } else if let Some((phase, elapsed_ms)) = phase.split_once(":slow_ms=")
+                        && let Ok(elapsed_ms) = elapsed_ms.parse::<f64>()
+                    {
+                        let phase_name = format!("trace_exported_variable_hotspots::{phase}");
+                        report_parallel_elapsed(
+                            &phase_name,
+                            Duration::from_secs_f64(elapsed_ms / 1000.0),
+                        );
                     }
                 },
             );

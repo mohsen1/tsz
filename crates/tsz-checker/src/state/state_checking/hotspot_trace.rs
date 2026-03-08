@@ -1,13 +1,33 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use web_time::Instant;
 
 const HOTSPOT_TRACE_STATEMENT_LIMIT: usize = 10;
 const HOTSPOT_TRACE_DECLARATION_LIMIT: usize = 8;
 const HOTSPOT_TRACE_EXPRESSION_DEPTH_LIMIT: usize = 6;
 const HOTSPOT_TRACE_ARRAY_ELEMENT_LIMIT: usize = 8;
 const HOTSPOT_TRACE_CALL_ARG_LIMIT: usize = 6;
+#[cfg(test)]
+const HOTSPOT_TRACE_SLOW_PHASE_MS: f64 = 0.0;
+#[cfg(not(test))]
+const HOTSPOT_TRACE_SLOW_PHASE_MS: f64 = 5.0;
 
 impl<'a> CheckerState<'a> {
+    fn trace_slow_hotspot_phase<R>(
+        &mut self,
+        phase: &str,
+        report: &mut impl FnMut(&str),
+        action: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let start = Instant::now();
+        let result = action(self);
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        if elapsed_ms >= HOTSPOT_TRACE_SLOW_PHASE_MS {
+            report(&format!("{phase}:slow_ms={elapsed_ms:.2}"));
+        }
+        result
+    }
+
     pub fn trace_exported_variable_hotspots_with_progress(
         &mut self,
         root_idx: NodeIndex,
@@ -163,6 +183,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let type_parameters = function.type_parameters.clone();
+        let type_annotation = function.type_annotation;
+        let is_async = function.is_async;
+
         let body_idx = function.body;
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
             return;
@@ -171,6 +195,58 @@ impl<'a> CheckerState<'a> {
             "{prefix}::function_body::kind_{}:start",
             body_node.kind
         ));
+
+        if type_annotation.is_some() && body_node.kind != syntax_kind_ext::BLOCK {
+            let enclosing_type_param_updates = self.push_enclosing_type_parameters(fn_idx);
+            let (_type_params, type_param_updates) = self.push_type_parameters(&type_parameters);
+
+            let annotated_return_type = self.trace_slow_hotspot_phase(
+                &format!("{prefix}::return_type_annotation"),
+                report,
+                |this| this.get_type_from_type_node(type_annotation),
+            );
+            let body_return_type = self.trace_slow_hotspot_phase(
+                &format!("{prefix}::evaluate_return_type"),
+                report,
+                |this| this.evaluate_application_type(annotated_return_type),
+            );
+
+            let prev_contextual_type = self.ctx.contextual_type;
+            self.ctx.contextual_type = Some(body_return_type);
+            self.trace_slow_hotspot_phase(
+                &format!("{prefix}::clear_expression_body_cache"),
+                report,
+                |this| this.clear_type_cache_recursive(body_idx),
+            );
+            let actual_return = self.trace_slow_hotspot_phase(
+                &format!("{prefix}::expression_body_with_context"),
+                report,
+                |this| this.get_type_of_node(body_idx),
+            );
+            self.ctx.contextual_type = prev_contextual_type;
+
+            let actual_return = if is_async {
+                self.unwrap_promise_type(actual_return)
+                    .unwrap_or(actual_return)
+            } else {
+                actual_return
+            };
+            self.trace_slow_hotspot_phase(
+                &format!("{prefix}::expression_body_assignability"),
+                report,
+                |this| {
+                    let _ =
+                        this.check_assignable_or_report(actual_return, body_return_type, body_idx);
+                },
+            );
+
+            self.pop_type_parameters(type_param_updates);
+            self.pop_type_parameters(enclosing_type_param_updates);
+        } else {
+            self.trace_slow_hotspot_phase(&format!("{prefix}::get_type_of_node"), report, |this| {
+                this.get_type_of_node(fn_idx);
+            });
+        }
 
         if body_node.kind != syntax_kind_ext::BLOCK {
             self.trace_expression_hotspots_with_progress(
@@ -502,6 +578,54 @@ export const summarize = async (values: readonly string[]) => {
                 )
             }),
             "expected return expression spread tracing marker, got {phases:?}"
+        );
+        assert!(
+            phases
+                .iter()
+                .any(|phase| phase.contains("initializer::get_type_of_node:slow_ms=")),
+            "expected slow function initializer timing marker, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn trace_exported_variable_hotspots_with_progress_traces_annotated_expression_body_subphases() {
+        let source = r#"
+type Box<T> = { value: T };
+export const box = <T extends string>(value: T): Box<T> => ({ value });
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.trace_exported_variable_hotspots_with_progress(root, |phase| {
+            phases.push(phase.to_string());
+        });
+
+        assert!(
+            phases
+                .iter()
+                .any(|phase| phase.contains("initializer::return_type_annotation:slow_ms=")),
+            "expected timed return annotation marker, got {phases:?}"
+        );
+        assert!(
+            phases
+                .iter()
+                .any(|phase| phase.contains("initializer::expression_body_assignability:slow_ms=")),
+            "expected timed expression assignability marker, got {phases:?}"
         );
     }
 }
