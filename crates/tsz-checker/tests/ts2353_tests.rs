@@ -5,18 +5,54 @@
 //! - Discriminated union excess property checking (narrowed member)
 //! - Type alias name display in error messages
 
+use std::path::Path;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("scripts/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+    ];
+
+    for lib_path in &lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
+            return vec![Arc::new(lib_file)];
+        }
+    }
+
+    Vec::new()
+}
+
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -27,6 +63,17 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         CheckerOptions::default(),
     );
 
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
     checker.check_source_file(root);
 
     checker
