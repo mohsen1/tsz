@@ -92,6 +92,7 @@
 
 use crate::CheckerContext;
 use crate::context::CheckerOptions;
+use std::time::Duration;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -120,6 +121,34 @@ thread_local! {
 pub struct CheckerState<'a> {
     /// Shared checker context containing all state.
     pub ctx: CheckerContext<'a>,
+}
+
+/// Coarse timing slices for `CheckerState::check_source_file`.
+///
+/// These counters are intentionally phase-oriented rather than exhaustive.
+/// They exist to make large-repo bottlenecks visible without changing checker
+/// semantics or introducing a new execution model.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckSourceFileStats {
+    pub total: Duration,
+    pub resolve_compiler_options_from_source: Duration,
+    pub register_function_def_ids_early: Duration,
+    pub build_type_environment: Duration,
+    pub register_boxed_types: Duration,
+    pub check_top_level_statements: Duration,
+    pub check_reserved_await_identifier_in_module: Duration,
+    pub check_function_implementations: Duration,
+    pub check_export_assignment: Duration,
+    pub check_circular_import_aliases: Duration,
+    pub check_module_none_statements: Duration,
+    pub check_duplicate_identifiers: Duration,
+    pub check_constructor_parameter_property_conflicts: Duration,
+    pub check_built_in_global_identifier_conflicts: Duration,
+    pub check_missing_global_types: Duration,
+    pub check_triple_slash_references: Duration,
+    pub check_amd_module_names: Duration,
+    pub check_unused_declarations: Duration,
+    pub check_js_grammar_statements: Duration,
 }
 
 // Re-export from centralized limits — do NOT redefine these here.

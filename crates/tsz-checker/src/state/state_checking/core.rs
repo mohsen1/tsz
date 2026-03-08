@@ -1,7 +1,7 @@
 //! Core declaration and statement checking implementation.
 
 use crate::context::is_declaration_file_name;
-use crate::state::CheckerState;
+use crate::state::{CheckSourceFileStats, CheckerState};
 use crate::statements::StatementChecker;
 use tracing::{Level, span};
 use tsz_binder::symbol_flags;
@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use web_time::Instant;
 
 /// Check if a name is a strict mode reserved word (ES5 §7.6.1.2).
 /// These identifiers cannot be used as variable/function/class names in strict mode.
@@ -205,19 +206,33 @@ impl<'a> CheckerState<'a> {
     /// // check_source_file() would find all three errors above
     /// ```
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
+        let _ = self.check_source_file_with_progress(root_idx, |_| {});
+    }
+
+    pub fn check_source_file_with_progress(
+        &mut self,
+        root_idx: NodeIndex,
+        mut report: impl FnMut(&str),
+    ) -> CheckSourceFileStats {
         let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
+        let total_start = Instant::now();
+        let mut stats = CheckSourceFileStats::default();
 
         // Reset per-file flags
         self.ctx.is_in_ambient_declaration_file = false;
 
         let Some(node) = self.ctx.arena.get(root_idx) else {
-            return;
+            return stats;
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
+            report("resolve_compiler_options_from_source:start");
+            let phase_start = Instant::now();
             self.resolve_compiler_options_from_source(&sf.text);
+            stats.resolve_compiler_options_from_source = phase_start.elapsed();
             if self.has_ts_nocheck_pragma(&sf.text) {
-                return;
+                stats.total = total_start.elapsed();
+                return stats;
             }
 
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
@@ -228,13 +243,19 @@ impl<'a> CheckerState<'a> {
             // This ensures `T extends Function` constraint checks during type alias
             // processing can identify the Function interface by DefId.
             if self.needs_boxed_type_registration() {
+                report("register_function_def_ids_early:start");
+                let phase_start = Instant::now();
                 self.register_function_def_ids_early();
+                stats.register_function_def_ids_early = phase_start.elapsed();
             }
 
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
+            report("build_type_environment:start");
+            let phase_start = Instant::now();
             let populated_env = self.build_type_environment();
+            stats.build_type_environment = phase_start.elapsed();
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
             // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
             // back to it when the local def_kinds map is incomplete.
@@ -248,7 +269,10 @@ impl<'a> CheckerState<'a> {
             // IMPORTANT: Must run AFTER build_type_environment() because it replaces the
             // TypeEnvironment, which would erase the boxed/array type registrations.
             if self.needs_boxed_type_registration() {
+                report("register_boxed_types:start");
+                let phase_start = Instant::now();
                 self.register_boxed_types();
+                stats.register_boxed_types = phase_start.elapsed();
             }
 
             // Type check each top-level statement
@@ -265,9 +289,20 @@ impl<'a> CheckerState<'a> {
                 self.ctx.is_in_ambient_declaration_file = true;
             }
 
+            report("check_top_level_statements:start");
+            let phase_start = Instant::now();
             let prev_unreachable = self.ctx.is_unreachable;
             let prev_reported = self.ctx.has_reported_unreachable;
-            for &stmt_idx in &sf.statements.nodes {
+            for (stmt_position, &stmt_idx) in sf.statements.nodes.iter().enumerate() {
+                if (stmt_position < 5 || stmt_position % 25 == 0)
+                    && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                {
+                    let statement_phase = format!(
+                        "check_top_level_statements::statement_{stmt_position}::kind_{}",
+                        stmt_node.kind
+                    );
+                    report(&format!("{statement_phase}:start"));
+                }
                 if is_dts {
                     self.check_dts_statement_in_ambient_context(stmt_idx);
                 }
@@ -278,16 +313,29 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.is_unreachable = prev_unreachable;
             self.ctx.has_reported_unreachable = prev_reported;
+            stats.check_top_level_statements = phase_start.elapsed();
 
+            report("check_reserved_await_identifier_in_module:start");
+            let phase_start = Instant::now();
             self.check_reserved_await_identifier_in_module(root_idx);
+            stats.check_reserved_await_identifier_in_module = phase_start.elapsed();
             // Check for function overload implementations (2389, 2391)
+            report("check_function_implementations:start");
+            let phase_start = Instant::now();
             self.check_function_implementations(&sf.statements.nodes);
+            stats.check_function_implementations = phase_start.elapsed();
 
             // Check for export assignment with other exports (2309)
+            report("check_export_assignment:start");
+            let phase_start = Instant::now();
             self.check_export_assignment(&sf.statements.nodes);
+            stats.check_export_assignment = phase_start.elapsed();
 
             // Check for circular import aliases (2303)
+            report("check_circular_import_aliases:start");
+            let phase_start = Instant::now();
             self.check_circular_import_aliases();
+            stats.check_circular_import_aliases = phase_start.elapsed();
 
             // Check for TS1148: module none errors
             if matches!(
@@ -295,38 +343,64 @@ impl<'a> CheckerState<'a> {
                 tsz_common::common::ModuleKind::None
             ) && !is_dts
             {
+                report("check_module_none_statements:start");
+                let phase_start = Instant::now();
                 self.check_module_none_statements(&sf.statements.nodes);
+                stats.check_module_none_statements = phase_start.elapsed();
             }
 
             // Check for duplicate identifiers (2300)
+            report("check_duplicate_identifiers:start");
+            let phase_start = Instant::now();
             self.check_duplicate_identifiers();
+            stats.check_duplicate_identifiers = phase_start.elapsed();
 
             // Check for constructor parameter property vs explicit property conflicts (2300/2687)
+            report("check_constructor_parameter_property_conflicts:start");
+            let phase_start = Instant::now();
             self.check_constructor_parameter_property_conflicts();
+            stats.check_constructor_parameter_property_conflicts = phase_start.elapsed();
 
             // Check for built-in global identifier conflicts (2397)
+            report("check_built_in_global_identifier_conflicts:start");
+            let phase_start = Instant::now();
             self.check_built_in_global_identifier_conflicts();
+            stats.check_built_in_global_identifier_conflicts = phase_start.elapsed();
 
             // Check for missing global types (2318)
             // Emits errors at file start for essential types when libs are not loaded
+            report("check_missing_global_types:start");
+            let phase_start = Instant::now();
             self.check_missing_global_types();
+            stats.check_missing_global_types = phase_start.elapsed();
 
             // Check triple-slash reference directives (TS6053).
             // tsc suppresses TS6053 when the file has syntax errors (TS1011),
             // so only check when there are no parse errors.
             if !self.ctx.compiler_options.no_resolve && !self.ctx.has_parse_errors {
+                report("check_triple_slash_references:start");
+                let phase_start = Instant::now();
                 self.check_triple_slash_references(&sf.file_name, &sf.text);
+                stats.check_triple_slash_references = phase_start.elapsed();
             }
 
             // Check for duplicate AMD module name assignments (TS2458)
+            report("check_amd_module_names:start");
+            let phase_start = Instant::now();
             self.check_amd_module_names(&sf.text);
+            stats.check_amd_module_names = phase_start.elapsed();
 
             // Check for unused declarations (TS6133/TS6196)
             if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
+                report("check_unused_declarations:start");
+                let phase_start = Instant::now();
                 self.check_unused_declarations();
+                stats.check_unused_declarations = phase_start.elapsed();
             }
             // JS grammar checks: emit TS8xxx errors for TypeScript-only syntax in JS files
             if self.is_js_file() {
+                report("check_js_grammar_statements:start");
+                let phase_start = Instant::now();
                 self.check_js_grammar_statements(&sf.statements.nodes);
 
                 // TS8022: Check for orphaned @extends/@augments tags not attached to a class
@@ -340,8 +414,11 @@ impl<'a> CheckerState<'a> {
 
                 // TS2304: Check for @typedef base types that can't be resolved
                 self.check_jsdoc_typedef_base_types();
+                stats.check_js_grammar_statements = phase_start.elapsed();
             }
         }
+        stats.total = total_start.elapsed();
+        stats
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
@@ -1459,5 +1536,83 @@ impl<'a> CheckerState<'a> {
     /// while providing actual implementations via the `StatementCheckCallbacks` trait.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
         StatementChecker::check(stmt_idx, self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn diagnostic_fingerprint(
+        diagnostics: &[crate::diagnostics::Diagnostic],
+    ) -> Vec<(u32, u32, u32, String)> {
+        diagnostics
+            .iter()
+            .map(|diag| {
+                (
+                    diag.code,
+                    diag.start,
+                    diag.length,
+                    diag.message_text.clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn check_source_file_with_progress_matches_plain_check() {
+        let source = r#"
+const value: string = 1;
+function pick(flag: boolean) {
+    return flag ? value.trim() : 0;
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut progress_checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        progress_checker.ctx.set_lib_contexts(Vec::new());
+        let mut phases = Vec::new();
+        let stats = progress_checker.check_source_file_with_progress(root, |phase| {
+            phases.push(phase.to_string());
+        });
+        let progress_diags = diagnostic_fingerprint(&progress_checker.ctx.diagnostics);
+
+        let mut plain_checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        plain_checker.ctx.set_lib_contexts(Vec::new());
+        plain_checker.check_source_file(root);
+        let plain_diags = diagnostic_fingerprint(&plain_checker.ctx.diagnostics);
+
+        assert_eq!(progress_diags, plain_diags);
+        assert!(
+            phases.contains(&"resolve_compiler_options_from_source:start".to_string()),
+            "expected resolve_compiler_options progress marker, got {phases:?}"
+        );
+        assert!(
+            phases.contains(&"check_top_level_statements:start".to_string()),
+            "expected top-level statement progress marker, got {phases:?}"
+        );
+        assert!(stats.total >= stats.check_top_level_statements);
+        assert!(stats.total >= stats.build_type_environment);
     }
 }

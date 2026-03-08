@@ -59,7 +59,7 @@ pub(super) fn collect_diagnostics(
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
-    let report_progress = |phase: &'static str, start: Instant| {
+    let report_progress = |phase: &str, start: Instant| {
         if extended_progress_enabled {
             eprintln!(
                 "{}",
@@ -67,7 +67,7 @@ pub(super) fn collect_diagnostics(
             );
         }
     };
-    let report_elapsed = |phase: &'static str, elapsed: Duration| {
+    let report_elapsed = |phase: &str, elapsed: Duration| {
         if extended_progress_enabled {
             eprintln!(
                 "{}",
@@ -947,18 +947,31 @@ pub(super) fn collect_diagnostics(
             // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
             // even for JS files without checkJs. Only type-level errors are gated by checkJs.
             if !options.no_check {
-                let check_source_file_start = Instant::now();
                 if trace_first_incremental_file {
                     report_progress_start("incremental_first_file::check_source_file");
                 }
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
-                checker.check_source_file(file.source_file);
                 if trace_first_incremental_file {
-                    report_progress(
+                    let source_file_stats =
+                        checker.check_source_file_with_progress(file.source_file, |phase| {
+                            if let Some(phase) = phase.strip_suffix(":start") {
+                                let phase_name =
+                                    format!("incremental_first_file::check_source_file::{phase}");
+                                report_progress_start(&phase_name);
+                            }
+                        });
+                    report_elapsed(
                         "incremental_first_file::check_source_file",
-                        check_source_file_start,
+                        source_file_stats.total,
                     );
+                    report_check_source_file_stats(
+                        "incremental_first_file::check_source_file",
+                        &source_file_stats,
+                        |phase, elapsed| report_elapsed(phase, elapsed),
+                    );
+                } else {
+                    checker.check_source_file(file.source_file);
                 }
 
                 // Filter diagnostics for JS files without checkJs
@@ -1110,6 +1123,78 @@ fn format_extended_diagnostics_collect_cache_state(
     format!(
         "[extendedDiagnostics] collect_diagnostics::cache_state type_cache_entries={type_cache_entries} bind_cache_entries={bind_cache_entries} incremental_path={use_incremental_check_path}"
     )
+}
+
+fn report_check_source_file_stats(
+    base_phase: &str,
+    stats: &tsz::checker::state::CheckSourceFileStats,
+    mut report: impl FnMut(&str, Duration),
+) {
+    for (phase, elapsed) in [
+        (
+            "resolve_compiler_options_from_source",
+            stats.resolve_compiler_options_from_source,
+        ),
+        (
+            "register_function_def_ids_early",
+            stats.register_function_def_ids_early,
+        ),
+        ("build_type_environment", stats.build_type_environment),
+        ("register_boxed_types", stats.register_boxed_types),
+        (
+            "check_top_level_statements",
+            stats.check_top_level_statements,
+        ),
+        (
+            "check_reserved_await_identifier_in_module",
+            stats.check_reserved_await_identifier_in_module,
+        ),
+        (
+            "check_function_implementations",
+            stats.check_function_implementations,
+        ),
+        ("check_export_assignment", stats.check_export_assignment),
+        (
+            "check_circular_import_aliases",
+            stats.check_circular_import_aliases,
+        ),
+        (
+            "check_module_none_statements",
+            stats.check_module_none_statements,
+        ),
+        (
+            "check_duplicate_identifiers",
+            stats.check_duplicate_identifiers,
+        ),
+        (
+            "check_constructor_parameter_property_conflicts",
+            stats.check_constructor_parameter_property_conflicts,
+        ),
+        (
+            "check_built_in_global_identifier_conflicts",
+            stats.check_built_in_global_identifier_conflicts,
+        ),
+        (
+            "check_missing_global_types",
+            stats.check_missing_global_types,
+        ),
+        (
+            "check_triple_slash_references",
+            stats.check_triple_slash_references,
+        ),
+        ("check_amd_module_names", stats.check_amd_module_names),
+        ("check_unused_declarations", stats.check_unused_declarations),
+        (
+            "check_js_grammar_statements",
+            stats.check_js_grammar_statements,
+        ),
+    ] {
+        if elapsed.is_zero() {
+            continue;
+        }
+        let phase_name = format!("{base_phase}::{phase}");
+        report(&phase_name, elapsed);
+    }
 }
 
 fn collect_no_check_file_diagnostics(
@@ -1288,12 +1373,12 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
-    let report_parallel_start = |phase: &'static str| {
+    let report_parallel_start = |phase: &str| {
         if trace_first_file_progress {
             eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
         }
     };
-    let report_parallel_elapsed = |phase: &'static str, elapsed: Duration| {
+    let report_parallel_elapsed = |phase: &str, elapsed: Duration| {
         if trace_first_file_progress {
             eprintln!(
                 "{}",
@@ -1396,13 +1481,28 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
-        let check_source_file_start = Instant::now();
         report_parallel_start("parallel_check_files::first_file::check_source_file");
-        checker.check_source_file(file.source_file);
-        report_parallel_elapsed(
-            "parallel_check_files::first_file::check_source_file",
-            check_source_file_start.elapsed(),
-        );
+        if trace_first_file_progress {
+            let source_file_stats =
+                checker.check_source_file_with_progress(file.source_file, |phase| {
+                    if let Some(phase) = phase.strip_suffix(":start") {
+                        let phase_name =
+                            format!("parallel_check_files::first_file::check_source_file::{phase}");
+                        report_parallel_start(&phase_name);
+                    }
+                });
+            report_parallel_elapsed(
+                "parallel_check_files::first_file::check_source_file",
+                source_file_stats.total,
+            );
+            report_check_source_file_stats(
+                "parallel_check_files::first_file::check_source_file",
+                &source_file_stats,
+                |phase, elapsed| report_parallel_elapsed(phase, elapsed),
+            );
+        } else {
+            checker.check_source_file(file.source_file);
+        }
 
         // Filter diagnostics for JS files without checkJs
         let is_js = is_js_file(Path::new(&file.file_name));
