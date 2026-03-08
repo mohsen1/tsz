@@ -108,7 +108,46 @@ impl<'a> CheckerContext<'a> {
 
     /// Set all arenas for cross-file resolution.
     pub fn set_all_arenas(&mut self, arenas: Arc<Vec<Arc<NodeArena>>>) {
+        // Build module specifiers map from arena file names.
+        // Each file (other than the current file) gets its name stem as the module specifier.
+        // This enables import-qualified type display like `import("a").F`.
+        self.module_specifiers = Self::build_module_specifiers(&arenas);
         self.all_arenas = Some(arenas);
+    }
+
+    /// Build a mapping from `file_id` -> module specifier for import-qualified type display.
+    /// Returns `file_idx -> stem` for each source file in the arenas.
+    fn build_module_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {
+        let mut map = FxHashMap::default();
+        for (idx, arena) in arenas.iter().enumerate() {
+            for sf in &arena.source_files {
+                let file_name = &sf.file_name;
+                // Strip .ts/.tsx/.d.ts/.js/.jsx extension to get the module specifier
+                let specifier = Self::strip_ts_extension(file_name);
+                // Use just the filename component (without directory path) to match tsc's
+                // diagnostic display. tsc shows `import("a").F` not `import("/full/path/a").F`.
+                let basename = specifier
+                    .rsplit_once('/')
+                    .map(|(_, name)| name)
+                    .unwrap_or(specifier);
+                map.insert(idx as u32, basename.to_string());
+            }
+        }
+        map
+    }
+
+    /// Strip TypeScript/JavaScript extension from a file path to get the module specifier.
+    fn strip_ts_extension(path: &str) -> &str {
+        // Check extensions in order: longer extensions first to avoid partial matches
+        for ext in &[
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+            ".mjs", ".cjs",
+        ] {
+            if let Some(stripped) = path.strip_suffix(ext) {
+                return stripped;
+            }
+        }
+        path
     }
 
     /// Set all binders for cross-file resolution.

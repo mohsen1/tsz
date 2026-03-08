@@ -464,14 +464,16 @@ impl<'a> CheckerState<'a> {
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 // In tsc, `object` type uses its apparent type `{}` in property-missing
                 // diagnostics (getApparentType(object) = {}).
-                let src_str = if *source_type == TypeId::OBJECT {
-                    "{}".to_string()
+                // Use format_type_pair for import-qualification when the source and target
+                // types have the same name but come from different modules.
+                let (src_str, tgt_str_qualified) = if *source_type == TypeId::OBJECT {
+                    ("{}".to_string(), tgt_str)
                 } else {
-                    self.format_type(*source_type)
+                    self.format_type_pair(*source_type, target)
                 };
                 let message = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[&prop_name, &src_str, &tgt_str],
+                    &[&prop_name, &src_str, &tgt_str_qualified],
                 );
                 Diagnostic::error(
                     file_name,
