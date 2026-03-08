@@ -98,7 +98,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Strategy 1: Try default constraint of the conditional type.
         // This matches tsc's getConstraintOfConditionalType / getDefaultConstraintOfConditionalType.
-        if let Some(constraint) = self.get_conditional_constraint(cond)
+        let constraint = self.get_conditional_constraint(cond);
+        if let Some(constraint) = constraint
             && self.check_subtype(constraint, target).is_true()
         {
             return SubtypeResult::True;
@@ -231,8 +232,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             cond.true_type
         };
 
-        // Default constraint = inferred_true | false_type
-        let constraint = self.interner.union2(inferred_true, cond.false_type);
+        // Default constraint: matches tsc's getDefaultConstraintOfConditionalType.
+        // When either branch is `any`, tsc returns just the inferred true type
+        // to avoid collapsing the constraint to `any` (since `X | any = any`).
+        // This preserves the type information needed for proper assignability checks.
+        let constraint = if inferred_true == TypeId::ANY || cond.false_type == TypeId::ANY {
+            inferred_true
+        } else {
+            self.interner.union2(inferred_true, cond.false_type)
+        };
         Some(constraint)
     }
 
