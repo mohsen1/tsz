@@ -1093,6 +1093,61 @@ impl TypeInterner {
         // comparison hash-dependent. Semantic comparison ensures deterministic order.
         if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
             match (&data_a, &data_b) {
+                // Short string literals (1-2 chars): sort by content to match tsc's
+                // lib.d.ts pre-allocation order. tsc pre-creates common short string
+                // literal types during lib processing, giving them lower type IDs
+                // than user-code types. Since these happen to be ordered by content
+                // in tsc, content-based sorting matches tsc's display. For longer
+                // strings, alloc_order fallback preserves source encounter order.
+                //
+                // Short strings sort BEFORE long strings (matching tsc where
+                // lib-pre-allocated types have lower IDs). This ensures transitivity.
+                (
+                    TypeData::Literal(LiteralValue::String(sa)),
+                    TypeData::Literal(LiteralValue::String(sb)),
+                ) => {
+                    let str_a = self.string_interner.resolve(*sa);
+                    let str_b = self.string_interner.resolve(*sb);
+                    let a_short = str_a.len() <= 2;
+                    let b_short = str_b.len() <= 2;
+                    match (a_short, b_short) {
+                        (true, true) => {
+                            // Both short: sort by content
+                            let cmp = str_a.cmp(&str_b);
+                            if cmp != Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        (true, false) => return Ordering::Less, // short < long
+                        (false, true) => return Ordering::Greater, // long > short
+                        (false, false) => {
+                            // Both long: fall through to allocation order
+                        }
+                    }
+                }
+                // Small number literals (0-9): sort numerically to match tsc's
+                // lib.d.ts pre-allocation order for common small numbers.
+                // Small numbers sort BEFORE large numbers for transitivity.
+                (
+                    TypeData::Literal(LiteralValue::Number(na)),
+                    TypeData::Literal(LiteralValue::Number(nb)),
+                ) => {
+                    let a_small = na.0.abs() < 10.0;
+                    let b_small = nb.0.abs() < 10.0;
+                    match (a_small, b_small) {
+                        (true, true) => {
+                            let cmp = na.0.partial_cmp(&nb.0).unwrap_or(Ordering::Equal);
+                            if cmp != Ordering::Equal {
+                                return cmp;
+                            }
+                        }
+                        (true, false) => return Ordering::Less,
+                        (false, true) => return Ordering::Greater,
+                        (false, false) => {
+                            // Both large: fall through to allocation order
+                        }
+                    }
+                }
                 // Lazy type references and Enum types: sort by DefId (source declaration order)
                 (TypeData::Lazy(d1), TypeData::Lazy(d2))
                 | (TypeData::Enum(d1, _), TypeData::Enum(d2, _)) => {
