@@ -85,6 +85,7 @@ impl ParserState {
                     modifiers: None,
                     is_type_only: false,
                     is_default_export: false,
+                    default_keyword_pos: None,
                     export_clause: import_decl,
                     module_specifier: NodeIndex::NONE,
                     attributes: NodeIndex::NONE,
@@ -150,6 +151,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause: declaration,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
@@ -162,6 +164,7 @@ impl ParserState {
         start_pos: u32,
         decorators: Option<crate::parser::NodeList>,
     ) -> NodeIndex {
+        let default_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
         let expression = match self.token() {
@@ -226,6 +229,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: true,
+                default_keyword_pos: Some(default_pos),
                 export_clause: expression,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
@@ -249,6 +253,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause: import_decl,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
@@ -298,6 +303,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause: name,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
@@ -307,6 +313,7 @@ impl ParserState {
 
     // Parse export default
     pub(crate) fn parse_export_default(&mut self, start_pos: u32) -> NodeIndex {
+        let default_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
         // Parse the default expression or declaration
@@ -368,6 +375,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: true,
+                default_keyword_pos: Some(default_pos),
                 export_clause: expression,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
@@ -408,6 +416,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause,
                 module_specifier,
                 attributes,
@@ -443,6 +452,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause,
                 module_specifier,
                 attributes,
@@ -509,6 +519,7 @@ impl ParserState {
                 modifiers: None,
                 is_type_only: false,
                 is_default_export: false,
+                default_keyword_pos: None,
                 export_clause: declaration,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
