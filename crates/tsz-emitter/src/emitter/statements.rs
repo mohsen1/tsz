@@ -268,9 +268,9 @@ impl<'a> Printer<'a> {
                 false
             };
         let prev_block_using_env = self.block_using_env.take();
-        let block_using_names: Option<(String, String, bool)> = if block_using_lowered {
+        let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
-            let (env_name, error_name) = self.next_disposable_env_names();
+            let (env_name, error_name, result_name) = self.next_disposable_env_names();
 
             // Block-level using: tsc uses `const` for the __addDisposableResource calls
             // inside the try block (no var hoisting needed since the entire try/catch/finally
@@ -283,7 +283,7 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.increase_indent();
             self.block_using_env = Some((env_name.clone(), using_async));
-            Some((env_name, error_name, using_async))
+            Some((env_name, error_name, result_name, using_async))
         } else {
             None
         };
@@ -426,7 +426,7 @@ impl<'a> Printer<'a> {
         }
 
         // Close the block-level using try/catch/finally if active
-        if let Some((env_name, error_name, using_async)) = block_using_names {
+        if let Some((env_name, error_name, result_name, using_async)) = block_using_names {
             self.decrease_indent();
             self.write("}");
             self.write_line();
@@ -450,13 +450,33 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.increase_indent();
             if using_async {
+                // tsc emits: const result_N = __disposeResources(env_N);
+                //            if (result_N) await result_N;
+                self.write("const ");
+                self.write(&result_name);
+                self.write(" = ");
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+                self.write("if (");
+                self.write(&result_name);
+                self.write(")");
+                self.write_line();
+                self.increase_indent();
                 self.write("await ");
+                self.write(&result_name);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+            } else {
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
             }
-            self.write_helper("__disposeResources");
-            self.write("(");
-            self.write(&env_name);
-            self.write(");");
-            self.write_line();
             self.decrease_indent();
             self.write("}");
             self.write_line();
@@ -642,7 +662,7 @@ impl<'a> Printer<'a> {
         flags: u32,
     ) {
         let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
-        let (env_name, error_name) = self.next_disposable_env_names();
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
 
         let initialized_decls: Vec<_> = decl_list
             .declarations
@@ -733,13 +753,33 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
         if using_async {
+            // tsc emits: const result_N = __disposeResources(env_N);
+            //            if (result_N) await result_N;
+            self.write("const ");
+            self.write(&result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
             self.write("await ");
+            self.write(&result_name);
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
         }
-        self.write_helper("__disposeResources");
-        self.write("(");
-        self.write(&env_name);
-        self.write(");");
-        self.write_line();
         self.decrease_indent();
         self.write("}");
     }

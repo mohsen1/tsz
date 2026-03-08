@@ -101,7 +101,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let (env_name, error_name) = self.next_disposable_env_names();
+        let (env_name, error_name, _result_name) = self.next_disposable_env_names();
 
         // Hoist variable declarations before the try block (tsc hoists `var name;` separately)
         let mut hoisted_names: Vec<String> = Vec::new();
@@ -201,10 +201,11 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    pub(in crate::emitter) fn next_disposable_env_names(&mut self) -> (String, String) {
+    pub(in crate::emitter) fn next_disposable_env_names(&mut self) -> (String, String, String) {
         loop {
             let env_name = format!("env_{}", self.next_disposable_env_id);
             let error_name = format!("e_{}", self.next_disposable_env_id);
+            let result_name = format!("result_{}", self.next_disposable_env_id);
             self.next_disposable_env_id += 1;
 
             if self.file_identifiers.contains(&env_name)
@@ -217,7 +218,8 @@ impl<'a> Printer<'a> {
 
             self.generated_temp_names.insert(env_name.clone());
             self.generated_temp_names.insert(error_name.clone());
-            return (env_name, error_name);
+            self.generated_temp_names.insert(result_name.clone());
+            return (env_name, error_name, result_name);
         }
     }
 
