@@ -1784,8 +1784,6 @@ impl<'a> DeclarationEmitter<'a> {
     /// Parameter properties (e.g., `constructor(public x: number)`) should be emitted
     /// as property declarations in the class body, then stripped from constructor params
     pub(super) fn emit_parameter_properties(&mut self, members: &tsz_parser::parser::NodeList) {
-        use tsz_scanner::SyntaxKind;
-
         // Find the constructor
         let ctor_idx = members.nodes.iter().find(|&&idx| {
             self.arena
@@ -1813,35 +1811,41 @@ impl<'a> DeclarationEmitter<'a> {
                 let has_modifier = self.parameter_has_property_modifier(&param.modifiers);
 
                 if has_modifier {
-                    // Emit as a property declaration
-                    self.write_indent();
+                    let is_destructuring = self.arena.get(param.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
 
-                    // Track if we have private modifier (special handling: no type annotation)
-                    let mut is_private = false;
-
-                    // Emit modifiers (keep readonly, strip accessibility in property)
-                    if let Some(ref modifiers) = param.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            if let Some(mod_node) = self.arena.get(mod_idx) {
-                                match mod_node.kind {
-                                    k if k == SyntaxKind::PrivateKeyword as u16 => {
-                                        self.write("private ");
-                                        is_private = true;
-                                    }
-                                    k if k == SyntaxKind::ProtectedKeyword as u16 => {
-                                        self.write("protected ");
-                                    }
-                                    k if k == SyntaxKind::ReadonlyKeyword as u16 => {
-                                        self.write("readonly ");
-                                    }
-                                    // Skip public - it's the default and omitted
-                                    _ => {}
-                                }
+                    if is_destructuring {
+                        let bindings = self.collect_flattened_binding_entries(
+                            param.name,
+                            self.preferred_binding_source_type(
+                                param.type_annotation,
+                                param.initializer,
+                                &[param_idx, param.name, param.initializer],
+                            ),
+                        );
+                        for (ident_idx, type_id) in bindings {
+                            self.write_indent();
+                            let is_private =
+                                self.emit_parameter_property_modifiers(&param.modifiers);
+                            self.emit_node(ident_idx);
+                            if param.question_token {
+                                self.write("?");
                             }
+                            if !is_private {
+                                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                            }
+                            self.write(";");
+                            self.write_line();
                         }
+                        continue;
                     }
 
-                    // Parameter name
+                    // Emit as a property declaration
+                    self.write_indent();
+                    let is_private = self.emit_parameter_property_modifiers(&param.modifiers);
+
                     self.emit_node(param.name);
 
                     // Optional
@@ -2619,7 +2623,7 @@ impl<'a> DeclarationEmitter<'a> {
                             let is_exported =
                                 has_export_modifier || self.is_js_named_exported_name(decl.name);
                             self.emit_flattened_variable_declaration(
-                                decl.name,
+                                decl_idx,
                                 keyword,
                                 is_exported,
                             );
@@ -3615,39 +3619,276 @@ impl<'a> DeclarationEmitter<'a> {
             == Some(reference_text)
     }
 
-    /// Recursively collects all Identifier `NodeIndices` from a `BindingPattern`.
-    ///
-    /// This handles nested destructuring like `const { a: { b } } = obj;`
-    /// by traversing into nested patterns and collecting all leaf identifiers.
-    fn collect_bindings_recursive(&self, node_idx: NodeIndex, bindings: &mut Vec<NodeIndex>) {
+    fn preferred_binding_source_type(
+        &self,
+        type_annotation: NodeIndex,
+        initializer: NodeIndex,
+        related_nodes: &[NodeIndex],
+    ) -> Option<tsz_solver::types::TypeId> {
+        if type_annotation.is_some()
+            && let Some(type_id) = self.get_node_type(type_annotation)
+        {
+            return Some(type_id);
+        }
+        if initializer.is_some()
+            && let Some(type_id) = self.get_node_type(initializer)
+        {
+            return Some(type_id);
+        }
+        self.get_node_type_or_names(related_nodes)
+    }
+
+    fn destructuring_property_lookup_text(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(node_idx)?;
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(node_idx),
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                self.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(node)
+                .map(|lit| Self::normalize_numeric_literal(lit.text.as_ref())),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(node)?;
+                let operand_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(unary.operand);
+                let operand_node = self.arena.get(operand_idx)?;
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let literal = self.arena.get_literal(operand_node)?;
+                let normalized = Self::normalize_numeric_literal(literal.text.as_ref());
+                match unary.operator {
+                    k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{normalized}")),
+                    k if k == SyntaxKind::PlusToken as u16 => Some(normalized),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn array_binding_element_type(
+        &self,
+        tuple_elements: Option<&[tsz_solver::types::TupleElement]>,
+        tuple_index: usize,
+        array_element_type: Option<tsz_solver::types::TypeId>,
+    ) -> Option<tsz_solver::types::TypeId> {
+        if let Some(tuple_elements) = tuple_elements
+            && let Some(tuple_element) = tuple_elements.get(tuple_index)
+        {
+            let mut type_id = if tuple_element.rest {
+                self.type_interner.and_then(|interner| {
+                    type_queries::get_array_element_type(interner, tuple_element.type_id)
+                        .or(Some(tuple_element.type_id))
+                })?
+            } else {
+                tuple_element.type_id
+            };
+            if tuple_element.optional
+                && let Some(interner) = self.type_interner
+            {
+                type_id = interner.union(vec![type_id, tsz_solver::types::TypeId::UNDEFINED]);
+            }
+            return Some(type_id);
+        }
+
+        if array_element_type == Some(tsz_solver::types::TypeId::NEVER) {
+            return Some(tsz_solver::types::TypeId::UNDEFINED);
+        }
+
+        array_element_type
+    }
+
+    fn array_rest_binding_type(
+        &self,
+        source_type: Option<tsz_solver::types::TypeId>,
+        tuple_elements: Option<&[tsz_solver::types::TupleElement]>,
+        tuple_index: usize,
+        array_element_type: Option<tsz_solver::types::TypeId>,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+
+        if tuple_index == 0
+            && let Some(source_type) = source_type
+            && let Some(union_type) =
+                type_queries::get_tuple_element_type_union(interner, source_type)
+        {
+            return Some(interner.array(union_type));
+        }
+
+        if let Some(tuple_elements) = tuple_elements {
+            let remaining = tuple_elements
+                .get(tuple_index..)
+                .map_or_else(Vec::new, ToOwned::to_owned);
+            return Some(interner.tuple(remaining));
+        }
+
+        array_element_type.map(|element_type| interner.array(element_type))
+    }
+
+    fn object_binding_element_type(
+        &self,
+        source_type: Option<tsz_solver::types::TypeId>,
+        element: &tsz_parser::parser::node::BindingElementData,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        let source_type = type_queries::unwrap_readonly(interner, source_type?);
+        let property_name_idx = if element.property_name.is_some() {
+            element.property_name
+        } else {
+            element.name
+        };
+        let property_name = self.destructuring_property_lookup_text(property_name_idx)?;
+        let property =
+            type_queries::find_property_in_type_by_str(interner, source_type, &property_name)?;
+        if property.optional {
+            Some(interner.union(vec![property.type_id, tsz_solver::types::TypeId::UNDEFINED]))
+        } else {
+            Some(property.type_id)
+        }
+    }
+
+    fn collect_typed_bindings_recursive(
+        &self,
+        node_idx: NodeIndex,
+        source_type: Option<tsz_solver::types::TypeId>,
+        bindings: &mut Vec<(NodeIndex, Option<tsz_solver::types::TypeId>)>,
+    ) {
         let Some(node) = self.arena.get(node_idx) else {
             return;
         };
 
         match node.kind {
-            // Leaf case: simple identifier
             k if k == SyntaxKind::Identifier as u16 => {
-                bindings.push(node_idx);
+                let type_id = source_type
+                    .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                    .or_else(|| self.get_node_type(node_idx))
+                    .or_else(|| self.get_type_via_symbol(node_idx));
+                bindings.push((node_idx, type_id));
             }
-            // Recursive case: object or array binding pattern
-            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-            {
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                if let Some(element) = self.arena.get_binding_element(node) {
+                    let effective_type = source_type
+                        .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                        .or_else(|| {
+                            if element.initializer.is_some() {
+                                self.get_node_type(element.initializer)
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| {
+                            self.get_node_type_or_names(&[
+                                node_idx,
+                                element.name,
+                                element.initializer,
+                            ])
+                        });
+                    self.collect_typed_bindings_recursive(element.name, effective_type, bindings);
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                let tuple_elements = self.type_interner.and_then(|interner| {
+                    source_type
+                        .and_then(|type_id| type_queries::get_tuple_elements(interner, type_id))
+                });
+                let array_element_type = self.type_interner.and_then(|interner| {
+                    source_type.and_then(|type_id| {
+                        type_queries::get_array_element_type(interner, type_id).or_else(|| {
+                            type_queries::get_tuple_element_type_union(interner, type_id)
+                        })
+                    })
+                });
+
                 if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    let mut tuple_index = 0usize;
                     for &element_idx in &pattern.elements.nodes {
-                        // element_idx is the NodeIndex for the BindingElement
-                        // Recurse into the BindingElement node
-                        self.collect_bindings_recursive(element_idx, bindings);
+                        let Some(element_node) = self.arena.get(element_idx) else {
+                            continue;
+                        };
+                        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                            tuple_index += 1;
+                            continue;
+                        }
+                        if element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                            continue;
+                        }
+                        let Some(element) = self.arena.get_binding_element(element_node) else {
+                            continue;
+                        };
+                        let element_type = if element.dot_dot_dot_token {
+                            self.array_rest_binding_type(
+                                source_type,
+                                tuple_elements.as_deref(),
+                                tuple_index,
+                                array_element_type,
+                            )
+                        } else {
+                            self.array_binding_element_type(
+                                tuple_elements.as_deref(),
+                                tuple_index,
+                                array_element_type,
+                            )
+                        };
+                        self.collect_typed_bindings_recursive(element_idx, element_type, bindings);
+                        if !element.dot_dot_dot_token {
+                            tuple_index += 1;
+                        }
                     }
                 }
             }
-            // BindingElement: recurse into its name (which might be a pattern)
-            k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                if let Some(element) = self.arena.get_binding_element(node) {
-                    self.collect_bindings_recursive(element.name, bindings);
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    for &element_idx in &pattern.elements.nodes {
+                        let Some(element_node) = self.arena.get(element_idx) else {
+                            continue;
+                        };
+                        if element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                            continue;
+                        }
+                        let Some(element) = self.arena.get_binding_element(element_node) else {
+                            continue;
+                        };
+                        let element_type = if element.dot_dot_dot_token {
+                            source_type
+                        } else {
+                            self.object_binding_element_type(source_type, element)
+                        };
+                        self.collect_typed_bindings_recursive(element_idx, element_type, bindings);
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    fn collect_flattened_binding_entries(
+        &self,
+        pattern_idx: NodeIndex,
+        source_type: Option<tsz_solver::types::TypeId>,
+    ) -> Vec<(NodeIndex, Option<tsz_solver::types::TypeId>)> {
+        let mut bindings = Vec::new();
+        self.collect_typed_bindings_recursive(pattern_idx, source_type, &mut bindings);
+        bindings
+    }
+
+    fn emit_flattened_binding_type_annotation(
+        &mut self,
+        ident_idx: NodeIndex,
+        type_id: Option<tsz_solver::types::TypeId>,
+    ) {
+        let type_id = type_id
+            .or_else(|| self.get_node_type(ident_idx))
+            .or_else(|| self.get_type_via_symbol(ident_idx));
+        self.write(": ");
+        if let Some(type_id) = type_id {
+            self.write(&self.print_type_id(type_id));
+        } else {
+            self.write("any");
         }
     }
 
@@ -3659,40 +3900,71 @@ impl<'a> DeclarationEmitter<'a> {
     /// `export declare const b: Type;`
     pub(super) fn emit_flattened_variable_declaration(
         &mut self,
-        pattern_idx: NodeIndex,
+        decl_idx: NodeIndex,
         keyword: &str,
         is_exported: bool,
     ) {
-        let mut bindings = Vec::new();
-        self.collect_bindings_recursive(pattern_idx, &mut bindings);
-
-        for ident_idx in bindings {
-            self.write_indent();
-            if is_exported {
-                self.write("export ");
-            }
-            if self.should_emit_declare_keyword(is_exported) {
-                self.write("declare ");
-            }
-            self.write(keyword);
-            self.write(" ");
-
-            // Emit the identifier name
-            self.emit_node(ident_idx);
-
-            // Get the type of the specific identifier from the cache
-            // The checker associates the inferred type with the Identifier node
-            if let Some(type_id) = self.get_node_type(ident_idx) {
-                self.write(": ");
-                self.write(&self.print_type_id(type_id));
-            } else {
-                // Fallback to 'any' if no type information available
-                self.write(": any");
-            }
-
-            self.write(";");
-            self.write_line();
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return;
+        };
+        let bindings = self.collect_flattened_binding_entries(
+            decl.name,
+            self.preferred_binding_source_type(
+                decl.type_annotation,
+                decl.initializer,
+                &[decl_idx, decl.name, decl.initializer],
+            ),
+        );
+        if bindings.is_empty() {
+            return;
         }
+
+        self.write_indent();
+        if is_exported && (!self.inside_declare_namespace || self.ambient_module_has_scope_marker) {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(is_exported) {
+            self.write("declare ");
+        }
+        self.write(keyword);
+        self.write(" ");
+
+        for (index, (ident_idx, type_id)) in bindings.into_iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.emit_node(ident_idx);
+            self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+        }
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_parameter_property_modifiers(&mut self, modifiers: &Option<NodeList>) -> bool {
+        let mut is_private = false;
+        if let Some(modifiers) = modifiers {
+            for &mod_idx in &modifiers.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    match mod_node.kind {
+                        k if k == SyntaxKind::PrivateKeyword as u16 => {
+                            self.write("private ");
+                            is_private = true;
+                        }
+                        k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                            self.write("protected ");
+                        }
+                        k if k == SyntaxKind::ReadonlyKeyword as u16 => {
+                            self.write("readonly ");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        is_private
     }
 
     // Export/import emission → exports.rs

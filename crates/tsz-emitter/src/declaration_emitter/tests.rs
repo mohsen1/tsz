@@ -4,7 +4,7 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{
     CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
-    TypeId, TypeInterner,
+    TupleElement, TypeId, TypeInterner,
 };
 
 // =============================================================================
@@ -3396,5 +3396,137 @@ fn test_multiple_variable_declarators() {
     assert!(
         output.contains("y: string"),
         "Expected second variable: {output}"
+    );
+}
+
+#[test]
+fn test_destructuring_variable_declaration_groups_typed_bindings() {
+    let source = r#"var [x, y] = [1, "hello"];"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let stmt_idx = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file")
+        .statements
+        .nodes[0];
+    let stmt = parser
+        .arena
+        .get(stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing variable statement");
+    let decl_list = parser
+        .arena
+        .get(stmt.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl = parser
+        .arena
+        .get(decl_list.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.initializer.0, tuple_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var x: number, y: string;"),
+        "Expected destructured bindings to emit in one typed declaration: {output}"
+    );
+}
+
+#[test]
+fn test_destructuring_parameter_properties_emit_individual_class_properties() {
+    let source = "class C { constructor(public [x, y]: [string, number]) {} }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let stmt_idx = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file")
+        .statements
+        .nodes[0];
+    let class_decl = parser
+        .arena
+        .get(stmt_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class declaration");
+    let ctor_idx = class_decl.members.nodes[0];
+    let ctor = parser
+        .arena
+        .get(ctor_idx)
+        .and_then(|node| parser.arena.get_constructor(node))
+        .expect("missing constructor");
+    let param_idx = ctor.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing parameter");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(param.type_annotation.0, tuple_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("x: string;"),
+        "Expected first destructured parameter property to be emitted: {output}"
+    );
+    assert!(
+        output.contains("y: number;"),
+        "Expected second destructured parameter property to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("[x, y]: [string, number];"),
+        "Did not expect destructuring pattern to be emitted as a property name: {output}"
     );
 }

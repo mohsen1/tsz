@@ -1016,7 +1016,7 @@ impl<'a> DeclarationEmitter<'a> {
                         });
 
                         if is_destructuring {
-                            self.emit_flattened_variable_declaration(decl.name, keyword, true);
+                            self.emit_flattened_variable_declaration(decl_idx, keyword, true);
                         } else {
                             regular_decls.push((decl_idx, decl));
                         }
