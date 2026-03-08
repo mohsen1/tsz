@@ -15,5 +15,6 @@ mod declarations_utils;
 mod duplicate_identifiers;
 mod duplicate_identifiers_constructor;
 mod global;
+mod indexed_access;
 mod property_init;
 mod unused;

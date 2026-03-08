@@ -226,6 +226,10 @@ pub struct CheckerContext<'a> {
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
 
+    /// Shared lib type resolution cache across parallel file checks.
+    /// Uses `DashMap` for thread-safe concurrent access.
+    pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
+
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
 

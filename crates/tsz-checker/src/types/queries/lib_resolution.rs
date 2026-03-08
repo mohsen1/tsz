@@ -79,18 +79,6 @@ impl<'a> CheckerState<'a> {
             return derived_type;
         };
 
-        // Seed type-parameter scope with the derived interface's generic params so
-        // heritage args like `extends IteratorObject<T, ...>` resolve `T` correctly.
-        // Without this, lib heritage substitution falls back to `unknown` and loses
-        // member types (e.g. `ArrayIterator<T>.next().value` becomes `unknown`).
-        let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
-        for param in self.get_type_params_for_symbol(sym_id) {
-            let name = self.ctx.types.resolve_atom(param.name).to_string();
-            let param_ty = self.ctx.types.type_param(param.clone());
-            let prev = self.ctx.type_parameter_scope.insert(name.clone(), param_ty);
-            scope_restore.push((name, prev));
-        }
-
         let fallback_arena: &NodeArena = self
             .ctx
             .binder
@@ -114,6 +102,38 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
+
+        // Early exit: skip expensive type parameter scope setup and heritage merge
+        // if no declarations have extends clauses
+        let has_any_heritage = decls_with_arenas.iter().any(|&(decl_idx, arena)| {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            interface
+                .heritage_clauses
+                .as_ref()
+                .is_some_and(|hc| !hc.nodes.is_empty())
+        });
+
+        if !has_any_heritage {
+            self.ctx.leave_recursion();
+            return derived_type;
+        }
+
+        // Seed type-parameter scope with the derived interface's generic params so
+        // heritage args like `extends IteratorObject<T, ...>` resolve `T` correctly.
+        // Without this, lib heritage substitution falls back to `unknown` and loses
+        // member types (e.g. `ArrayIterator<T>.next().value` becomes `unknown`).
+        let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
+        for param in self.get_type_params_for_symbol(sym_id) {
+            let name = self.ctx.types.resolve_atom(param.name).to_string();
+            let param_ty = self.ctx.types.type_param(param.clone());
+            let prev = self.ctx.type_parameter_scope.insert(name.clone(), param_ty);
+            scope_restore.push((name, prev));
+        }
 
         // Collect base type info: name and type argument node indices with their arena.
         // We collect these first to avoid borrow conflicts during resolution.
@@ -332,6 +352,16 @@ impl<'a> CheckerState<'a> {
         if name == "BuiltinIteratorReturn" {
             return Some(TypeId::UNDEFINED);
         }
+
+        // Check shared cross-file lib cache first
+        if let Some(ref shared_cache) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared_cache.get(name) {
+                let result = *entry;
+                self.ctx
+                    .lib_type_resolution_cache
+                    .insert(name.to_string(), result);
+                return result;
+            }
 
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
@@ -761,6 +791,19 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), lib_type_id);
+
+        // Store in shared cross-file cache for other parallel file checks.
+        let has_augmentations = self
+            .ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty());
+        if !has_augmentations
+            && let Some(ref shared_cache) = self.ctx.shared_lib_type_cache {
+                shared_cache.insert(name.to_string(), lib_type_id);
+            }
+
         lib_type_id
     }
 }
