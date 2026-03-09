@@ -1,6 +1,6 @@
 //! Unit tests for the symbols module in tsz-binder.
 //!
-//! Tests cover SymbolId, Symbol, SymbolTable, SymbolArena, and symbol_flags.
+//! Tests cover SymbolId, Symbol, `SymbolTable`, `SymbolArena`, and `symbol_flags`.
 
 use tsz_binder::{Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};
 
@@ -458,6 +458,7 @@ mod symbol_arena_tests {
 // Symbol Flag Composite Tests
 // =============================================================================
 
+#[allow(clippy::assertions_on_constants)]
 mod symbol_flags_tests {
     use super::*;
 

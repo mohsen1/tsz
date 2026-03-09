@@ -310,16 +310,16 @@ fn getter_setter_pair_allowed() {
 /// Test that numeric class members with equivalent numeric values are detected as duplicates.
 #[test]
 fn numeric_class_member_duplicates() {
-    // 0 and 0.0 are duplicates
+    // 0 and 0.0 are duplicates — message preserves source text per TSC's declarationNameToString
     verify_errors(
         "class C { 0 = 1; 0.0 = 2; }",
-        &[(1, 18, "Duplicate identifier '0'.")],
+        &[(1, 18, "Duplicate identifier '0.0'.")],
     );
 
-    // 0.0 and '0' are duplicates
+    // 0.0 and '0' are duplicates — string literal wrapped in single quotes
     verify_errors(
         "class C { 0.0 = 1; '0' = 2; }",
-        &[(1, 20, "Duplicate identifier '0'.")],
+        &[(1, 20, "Duplicate identifier ''0''.")],
     );
 
     // '0.0' and '0' are NOT duplicates

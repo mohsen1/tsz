@@ -1,7 +1,7 @@
 //! Unit tests for tsz-scanner token types, numeric literals, and token classification.
 //!
 //! This file provides test coverage for:
-//! - Numeric literals (decimal, hex, octal, binary, BigInt)
+//! - Numeric literals (decimal, hex, octal, binary, `BigInt`)
 //! - Numeric separators
 //! - Exponential notation
 //! - String literals
@@ -13,8 +13,6 @@
 use tsz_scanner::scanner_impl::ScannerState;
 use tsz_scanner::scanner_impl::TokenFlags;
 use tsz_scanner::{SyntaxKind, token_is_keyword, token_is_literal, token_is_punctuation};
-
-use tsz_common::interner::Atom;
 
 // =============================================================================
 // Numeric Literal Tests
@@ -215,7 +213,8 @@ fn test_string_literal_single_quotes() {
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::StringLiteral);
-    assert_eq!(scanner.get_token_value(), "'hello world'");
+    // get_token_value() returns the unquoted string content
+    assert_eq!(scanner.get_token_value(), "hello world");
 }
 
 #[test]
@@ -224,7 +223,8 @@ fn test_string_literal_double_quotes() {
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::StringLiteral);
-    assert_eq!(scanner.get_token_value(), "\"hello world\"");
+    // get_token_value() returns the unquoted string content
+    assert_eq!(scanner.get_token_value(), "hello world");
 }
 
 #[test]
@@ -245,7 +245,8 @@ fn test_template_literal_no_substitution() {
         scanner.get_token(),
         SyntaxKind::NoSubstitutionTemplateLiteral
     );
-    assert_eq!(scanner.get_token_value(), "`hello world`");
+    // get_token_value() returns the unquoted template content
+    assert_eq!(scanner.get_token_value(), "hello world");
 }
 
 // =============================================================================
