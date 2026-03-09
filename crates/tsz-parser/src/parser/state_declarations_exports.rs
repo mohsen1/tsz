@@ -721,10 +721,12 @@ impl ParserState {
         let raw_text = self.scanner.get_token_text_ref().to_string();
 
         // Check for unterminated string literal (TS1002)
+        // tsc emits this diagnostic from the scanner at the position where scanning stopped
+        // (at the newline or EOF), with length 0. We match that by using end_pos.
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
             self.parse_error_at(
-                start_pos,
-                1,
+                end_pos,
+                0,
                 diagnostic_messages::UNTERMINATED_STRING_LITERAL,
                 diagnostic_codes::UNTERMINATED_STRING_LITERAL,
             );
