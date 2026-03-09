@@ -203,6 +203,56 @@ declare module "react" {
 }
 
 #[test]
+fn ambient_module_export_import_populates_module_exports() {
+    let source = r#"
+declare module "a" {
+    export type T = number;
+}
+declare module "b" {
+    export import a = require("a");
+    export const x: a.T;
+}
+"#;
+    let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let b_sym_id = binder
+        .file_locals
+        .get("b")
+        .expect("expected ambient module symbol for b");
+    let b_symbol = binder
+        .symbols
+        .get(b_sym_id)
+        .expect("expected symbol data for module b");
+    let exports = b_symbol
+        .exports
+        .as_ref()
+        .expect("expected exports table for module b");
+    let a_sym_id = exports
+        .get("a")
+        .expect("expected export-import alias a in module b exports");
+    let a_symbol = binder
+        .symbols
+        .get(a_sym_id)
+        .expect("expected symbol data for alias a");
+
+    assert_ne!(a_symbol.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(a_symbol.import_module.as_deref(), Some("a"));
+
+    let module_exports = binder
+        .module_exports
+        .get("b")
+        .expect("expected cached module exports for module b");
+    assert!(
+        module_exports.has("a"),
+        "expected export-import alias a in cached module exports"
+    );
+}
+
+#[test]
 fn iife_no_flow_start_node() {
     // For a non-async, non-generator IIFE, the binder should NOT create a
     // FlowStart node for the function body. This means the IIFE body runs

@@ -250,14 +250,6 @@ impl BinderState {
                     module_symbol_id,
                     is_ambient_module,
                 );
-                if let Some(module_specifier) = declared_module_specifier.as_ref()
-                    && let Some(symbol) = self.symbols.get(module_symbol_id)
-                    && let Some(exports) = symbol.exports.as_ref()
-                    && !exports.is_empty()
-                {
-                    self.module_exports
-                        .insert(module_specifier.clone(), exports.as_ref().clone());
-                }
             }
 
             // Anonymous modules (`module { ... }` without a name, TS1437) still have
@@ -284,6 +276,20 @@ impl BinderState {
                 };
 
             self.exit_scope(arena);
+
+            // `exit_scope` finalizes module exports for ambient modules by promoting
+            // the scope's exported members into the module symbol. Snapshot
+            // `module_exports` only after that pass, otherwise cache entries can go
+            // stale and miss ambient `export import` aliases.
+            if module_symbol_id.is_some()
+                && let Some(module_specifier) = declared_module_specifier.as_ref()
+                && let Some(symbol) = self.symbols.get(module_symbol_id)
+                && let Some(exports) = symbol.exports.as_ref()
+                && !exports.is_empty()
+            {
+                self.module_exports
+                    .insert(module_specifier.clone(), exports.as_ref().clone());
+            }
 
             // After exiting the anonymous module scope, promote exported symbols
             // into the parent (enclosing namespace) scope so they are accessible
@@ -340,6 +346,10 @@ impl BinderState {
                     syntax_kind_ext::ENUM_DECLARATION => arena
                         .get_enum(stmt_node)
                         .and_then(|e| e.modifiers.as_ref())
+                        .is_some_and(|mods| Self::has_export_modifier_any(arena, mods)),
+                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION => arena
+                        .get_import_decl(stmt_node)
+                        .and_then(|i| i.modifiers.as_ref())
                         .is_some_and(|mods| Self::has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::MODULE_DECLARATION => arena
                         .get_module(stmt_node)
@@ -432,6 +442,17 @@ impl BinderState {
                                 && let Some(name) = Self::get_identifier_name(arena, alias.name)
                             {
                                 exported_names.push(name.to_string());
+                            }
+                        }
+                        syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                            if let Some(import_decl) = arena.get_import_decl(stmt_node)
+                                && let Some(name) =
+                                    Self::get_identifier_name(arena, import_decl.import_clause)
+                            {
+                                exported_names.push(name.to_string());
+                                if let Some(&sym_id) = self.node_symbols.get(&stmt_idx.0) {
+                                    exported_symbols.push((name.to_string(), sym_id));
+                                }
                             }
                         }
                         syntax_kind_ext::MODULE_DECLARATION => {
