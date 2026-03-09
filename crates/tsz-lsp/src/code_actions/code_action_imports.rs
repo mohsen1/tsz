@@ -384,15 +384,10 @@ impl<'a> CodeActionProvider<'a> {
         &self,
         diag: &LspDiagnostic,
     ) -> Option<(String, ImportUsage)> {
-        let start_offset = self
-            .line_map
-            .position_to_offset(diag.range.start, self.source)?;
-        let node_idx = find_node_at_offset(self.arena, start_offset);
-        if node_idx.is_none() {
-            return None;
-        }
-        let node = self.arena.get(node_idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
+        if let Some(node_idx) = self.identifier_node_at_range(diag.range)
+            && let Some(node) = self.arena.get(node_idx)
+            && node.kind == SyntaxKind::Identifier as u16
+        {
             let name = self.arena.get_identifier_text(node_idx)?.to_string();
             let usage = self.import_usage_for_node(node_idx);
             return Some((name, usage));
@@ -403,6 +398,24 @@ impl<'a> CodeActionProvider<'a> {
             .find_identifier_usage_by_name(&name)
             .unwrap_or(ImportUsage::Value);
         Some((name, usage))
+    }
+
+    fn identifier_node_at_range(&self, range: Range) -> Option<NodeIndex> {
+        let start_offset = self.line_map.position_to_offset(range.start, self.source)?;
+        let end_offset = self
+            .line_map
+            .position_to_offset(range.end, self.source)
+            .unwrap_or(start_offset);
+
+        let mut try_offset = |offset: u32| {
+            let node_idx = find_node_at_offset(self.arena, offset);
+            let node = self.arena.get(node_idx)?;
+            (node.kind == SyntaxKind::Identifier as u16).then_some(node_idx)
+        };
+
+        try_offset(start_offset)
+            .or_else(|| end_offset.checked_sub(1).and_then(&mut try_offset))
+            .or_else(|| start_offset.checked_sub(1).and_then(&mut try_offset))
     }
 
     fn missing_name_from_diag(&self, diag: &LspDiagnostic) -> Option<String> {

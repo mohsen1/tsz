@@ -2545,6 +2545,55 @@ fn test_project_code_actions_missing_import_tsx() {
 }
 
 #[test]
+fn test_project_code_actions_missing_type_only_import_at_point_range() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "react.ts".to_string(),
+        "export interface ComponentProps {}\n".to_string(),
+    );
+    project.set_file(
+        "main.ts".to_string(),
+        "type _ = ComponentProps;\n".to_string(),
+    );
+
+    let file = project.file("main.ts").unwrap();
+    let source = file.source_text();
+    let line_map = file.line_map();
+    let point = source.find("ComponentProps").unwrap() + "ComponentProps".len();
+    let position = line_map.offset_to_position(point as u32, source);
+    let range = Range::new(position, position);
+
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'ComponentProps'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let actions = project
+        .get_code_actions(
+            "main.ts",
+            range,
+            vec![diag],
+            Some(vec![CodeActionKind::QuickFix]),
+        )
+        .expect("Expected missing type-only import quick fix");
+
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["main.ts"];
+    let updated = apply_text_edits(source, line_map, edits);
+    assert_eq!(
+        updated,
+        "import type { ComponentProps } from \"./react\";\n\ntype _ = ComponentProps;\n"
+    );
+}
+
+#[test]
 fn test_project_code_actions_missing_import_default_reexport() {
     let mut project = Project::new();
 
