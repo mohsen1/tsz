@@ -375,9 +375,36 @@ impl<'a> CheckerState<'a> {
             // fall through to TS2362/TS2363 below.
         }
 
+        // For the `+` operator diagnostic, tsc preserves literal types when both
+        // operands are literals (e.g., `1 + 2n` shows `'1' and '2n'`). When one
+        // operand is not a literal (e.g., `0 + key`), tsc uses widened base types.
+        // For other operators (-, *, /, etc.), tsc always uses widened base types.
+        // Since get_type_of_node widens literals by default, recover the
+        // original literal type from the expression node when both are literals.
+        // Enum member types (E.a) should still widen to the parent enum (E).
+        let (left_diag, right_diag) = if op == "+" {
+            let left_lit = self.literal_type_from_initializer(left_idx);
+            let right_lit = self.literal_type_from_initializer(right_idx);
+            if let (Some(l), Some(r)) = (left_lit, right_lit) {
+                (
+                    self.widen_enum_member_type(l),
+                    self.widen_enum_member_type(r),
+                )
+            } else {
+                (
+                    self.widen_enum_member_type(left_type),
+                    self.widen_enum_member_type(right_type),
+                )
+            }
+        } else {
+            (
+                self.widen_enum_member_type(left_type),
+                self.widen_enum_member_type(right_type),
+            )
+        };
         let mut formatter = self.ctx.create_type_formatter();
-        let left_str = formatter.format(left_type);
-        let right_str = formatter.format(right_type);
+        let left_str = formatter.format(left_diag);
+        let right_str = formatter.format(right_diag);
 
         // Check if this is an arithmetic or bitwise operator
         // These operators require integer operands and emit TS2362/TS2363

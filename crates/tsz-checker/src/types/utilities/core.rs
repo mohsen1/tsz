@@ -336,6 +336,42 @@ impl<'a> CheckerState<'a> {
         self.widen_literal_type(type_id)
     }
 
+    /// Widen only enum member types to their parent enum type.
+    ///
+    /// Unlike `widen_initializer_type_for_mutable_binding`, this does NOT widen
+    /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
+    /// error messages where tsc preserves literal types but widens enum members.
+    pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_solver::type_queries;
+
+        // Check if this is an enum member type that should widen to parent enum
+        if let Some(def_id) = type_queries::get_enum_def_id(self.ctx.types, type_id) {
+            let parent_def_id = self
+                .ctx
+                .type_env
+                .try_borrow()
+                .ok()
+                .and_then(|env| env.get_enum_parent(def_id));
+
+            if let Some(parent_def_id) = parent_def_id {
+                if let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id) {
+                    return self.get_type_of_symbol(parent_sym_id);
+                }
+            }
+        }
+
+        // Fallback: check via symbol flags (legacy path)
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        {
+            return self.get_type_of_symbol(symbol.parent);
+        }
+
+        // Do NOT widen literal types - return as-is
+        type_id
+    }
+
     /// Check if a type is an enum member type (not the parent enum type).
     ///
     /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
