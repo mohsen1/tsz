@@ -3043,6 +3043,44 @@ function f10() {
     );
 }
 
+/// Conditional expressions assigned into literal unions should preserve their
+/// literal branch types instead of widening to `number`.
+/// From: controlFlowNoIntermediateErrors.ts
+#[test]
+fn test_conditional_expression_preserves_literal_union_context() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f1() {
+    let code: 0 | 1 | 2 = 0;
+    const otherCodes: (0 | 1 | 2)[] = [2, 0, 1];
+    for (const code2 of otherCodes) {
+        if (code2 === 0) {
+            code = code === 2 ? 1 : 0;
+        } else {
+            code = 2;
+        }
+    }
+}
+
+function f2() {
+    let code: 0 | 1 = 0;
+    while (true) {
+        code = code === 1 ? 0 : 1;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322 for ternaries under literal-union context, got diagnostics: {diagnostics:#?}"
+    );
+}
+
 // TS2882: Cannot find module or type declarations for side-effect import
 
 /// TS2882 should fire by default (tsc 6.0 default: noUncheckedSideEffectImports = true).
