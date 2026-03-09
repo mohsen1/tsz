@@ -125,13 +125,13 @@ impl Server {
         let Some(offset) = line_map.position_to_offset(position, source_text) else {
             return false;
         };
-        let end = if let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, offset)
-        {
-            marker_start.saturating_sub(1) as usize
-        } else {
-            offset as usize
-        }
-        .min(source_text.len());
+        let end =
+            if let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, offset) {
+                marker_start.saturating_sub(1) as usize
+            } else {
+                offset as usize
+            }
+            .min(source_text.len());
         let text = &source_text[..end];
         let Some(class_pos) = text.rfind("class ") else {
             return false;
@@ -1665,7 +1665,10 @@ impl Server {
                     .and_then(serde_json::Value::as_str)
                     == Some("ClassMemberSnippet/")
             });
-            if allow_class_member_snippets && requested_class_member_snippet && project_items.is_empty() {
+            if allow_class_member_snippets
+                && requested_class_member_snippet
+                && project_items.is_empty()
+            {
                 let forced_auto_import_prefs =
                     serde_json::json!({ "includeCompletionsForModuleExports": true });
                 project_items = self.project_completion_items(
