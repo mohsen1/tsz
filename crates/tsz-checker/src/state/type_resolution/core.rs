@@ -1395,12 +1395,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // For type aliases, resolve the body type using the correct arena
+            // For type aliases, resolve the body type using the correct arena.
+            // Search declarations[] for the actual type alias decl (merged symbols
+            // may have value_declaration pointing to a var decl, not the type alias).
             if flags & symbol_flags::TYPE_ALIAS != 0 {
-                // When a type alias name collides with a global value declaration
-                // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
-                // the merged symbol's value_declaration may point to the var decl.
-                // Search declarations[] to find the actual type alias declaration first.
                 let has_type_alias_decl = declarations.iter().any(|&d| {
                     self.ctx
                         .arena
@@ -1422,19 +1420,22 @@ impl<'a> CheckerState<'a> {
                     // Return structural type directly for type aliases (not Lazy) so
                     // conditional types are fully resolved during assignability checking.
                     let structural_type = self.get_type_of_symbol(sym_id);
-
-                    // Register the body type for the DefId so that the type
-                    // formatter can look up the alias name when formatting
-                    // diagnostics (e.g., show "Color" instead of "{ r: number; ... }").
+                    // Register for alias-name formatting in diagnostics
                     self.ctx
                         .register_resolved_type(sym_id, structural_type, Vec::new());
-
                     self.ctx.leave_recursion();
                     return structural_type;
                 }
             }
         }
         let result = self.get_type_of_symbol(sym_id);
+        // TYPE_ALIAS + ALIAS merge: prefer the type alias body in type reference position
+        let result = self
+            .ctx
+            .import_type_alias_types
+            .get(&sym_id)
+            .copied()
+            .unwrap_or(result);
         self.ctx.leave_recursion();
         result
     }

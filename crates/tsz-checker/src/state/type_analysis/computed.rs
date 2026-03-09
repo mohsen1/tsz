@@ -1611,12 +1611,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // First, try local binder's module_exports
-                let export_sym_id = self
-                    // Prefer canonical cross-file resolution first. Driver-copied
-                    // `module_exports` tables can contain foreign SymbolIds for
-                    // re-exported declarations, and those ids may not be owned by
-                    // the current binder even when the table lookup succeeds.
-                    .resolve_cross_file_export(module_name, export_name)
+                let cross_file_result = self.resolve_cross_file_export(module_name, export_name);
+                let export_sym_id = cross_file_result
                     .or_else(|| {
                         self.ctx
                             .binder
@@ -1647,17 +1643,21 @@ impl<'a> CheckerState<'a> {
                         module_name,
                     );
 
+                    // TYPE_ALIAS + ALIAS merge: cache type alias body for type contexts,
+                    // return namespace type for value contexts.
+                    if let Some(&alias_id) = self.ctx.binder.alias_partners.get(&export_sym_id) {
+                        let ta_type = self.get_type_of_symbol(export_sym_id);
+                        self.ctx.import_type_alias_types.insert(sym_id, ta_type);
+                        self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
+                        let mut result = self.get_type_of_symbol(alias_id);
+                        result = self.apply_module_augmentations(module_name, export_name, result);
+                        self.ctx.symbol_types.insert(export_sym_id, result);
+                        return (result, Vec::new());
+                    }
+
                     let mut result = self.get_type_of_symbol(export_sym_id);
-
-                    // Rule #44: Apply module augmentations to the imported type
-                    // If there are augmentations for this module+interface, merge them in
                     result = self.apply_module_augmentations(module_name, export_name, result);
-
-                    // CRITICAL: Update the symbol type cache with the augmented type
-                    // This ensures that when the type annotation uses the symbol (e.g., `let x: Observable<number>`),
-                    // it gets the augmented type with all merged members
                     self.ctx.symbol_types.insert(export_sym_id, result);
-
                     return (result, Vec::new());
                 }
 

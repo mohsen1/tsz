@@ -1040,6 +1040,7 @@ pub(super) fn create_binder_from_bound_file(
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
+            alias_partners: program.alias_partners.clone(),
         },
     );
 
