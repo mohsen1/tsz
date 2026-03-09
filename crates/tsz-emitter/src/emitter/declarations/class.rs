@@ -1267,6 +1267,10 @@ impl<'a> Printer<'a> {
                         }
                         self.emit_heritage_expression(extends_type);
                     }
+                } else {
+                    // Error recovery: source has `extends` with no base type.
+                    // Preserve the keyword to match tsc output.
+                    self.write(" extends ");
                 }
             }
         }

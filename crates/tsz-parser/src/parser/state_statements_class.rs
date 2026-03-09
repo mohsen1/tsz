@@ -1138,7 +1138,18 @@ impl ParserState {
                 "'extends' list cannot be empty.",
                 diagnostic_codes::LIST_CANNOT_BE_EMPTY,
             );
-            return None;
+            // Still create the heritage clause with empty types list for error recovery.
+            // tsc preserves the `extends` keyword in the output even when the list is empty.
+            let end_pos = self.token_full_start();
+            return Some(self.arena.add_heritage(
+                syntax_kind_ext::HERITAGE_CLAUSE,
+                start_pos,
+                end_pos,
+                crate::parser::node::HeritageData {
+                    token: SyntaxKind::ExtendsKeyword as u16,
+                    types: self.make_node_list(Vec::new()),
+                },
+            ));
         }
 
         let type_ref = self.parse_heritage_type_reference();

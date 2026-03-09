@@ -132,6 +132,11 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 // .cts/.cjs files always emit as CJS regardless of --module setting.
                 // This handles cases like module=esnext with .cts files.
                 if !printer_options.module.is_commonjs() {
+                    // module=preserve doesn't add "use strict" even for .cts files
+                    // because it preserves module syntax without transformation.
+                    if matches!(printer_options.module, ModuleKind::Preserve) {
+                        printer_options.suppress_use_strict = true;
+                    }
                     printer_options.module = ModuleKind::CommonJS;
                 }
             }
