@@ -1084,8 +1084,7 @@ impl<'a> CheckerState<'a> {
 
         let mut decls = symbol.declarations.clone();
         let value_decl = symbol.value_declaration;
-        if value_decl != NodeIndex::NONE && !decls.contains(&value_decl)
-        {
+        if value_decl != NodeIndex::NONE && !decls.contains(&value_decl) {
             decls.push(value_decl);
         }
 

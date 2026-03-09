@@ -546,9 +546,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if !self.is_array_like_type(source)
-            && !self.has_structural_array_surface(source, target)
-        {
+        if !self.is_array_like_type(source) && !self.has_structural_array_surface(source, target) {
             return false;
         }
 
