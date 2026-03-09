@@ -1507,13 +1507,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     if let Some(ref path) = tsconfig_path
         && !path.exists()
     {
-        if args.project.is_none() {
-            println!(
-                "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
-                cwd.display()
-            );
-        } else {
-            let project_val = args.project.as_ref().unwrap();
+        if let Some(project_val) = args.project.as_ref() {
             if project_val.is_dir() {
                 println!(
                     "error TS5057: Cannot find a tsconfig.json file at the specified directory: '{}'.",
@@ -1525,6 +1519,11 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     project_val.display()
                 );
             }
+        } else {
+            println!(
+                "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+                cwd.display()
+            );
         }
         std::process::exit(1);
     }
@@ -2241,9 +2240,8 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
             "es2022" => 9,
             "es2023" => 10,
             "es2024" => 11,
-            "es2025" => 12,
             "esnext" => 99,
-            _ => 12, // default ES2025
+            _ => 12, // default ES2025 (also covers "es2025" explicitly)
         }
     }
 

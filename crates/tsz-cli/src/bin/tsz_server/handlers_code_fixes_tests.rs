@@ -254,7 +254,7 @@ fn collect_import_candidates_uses_external_project_files() {
         .insert(main_path.clone(), "externalValue;".to_string());
     server.external_project_files.insert(
         "/tsconfig.json".to_string(),
-        vec![main_path.clone(), dep_path.clone()],
+        vec![main_path.clone(), dep_path],
     );
 
     let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
