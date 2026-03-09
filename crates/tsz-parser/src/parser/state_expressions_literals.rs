@@ -358,7 +358,13 @@ impl ParserState {
                 // TS1121: Legacy octal literal (e.g., 01, 0777)
                 use tsz_common::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
-                let suggested = format!("0o{}", &integer_part[1..]);
+                // Parse the octal value and format without leading zeros (tsc behavior)
+                let octal_digits = &integer_part[1..];
+                let octal_value = octal_digits
+                    .bytes()
+                    .filter(|&b| b != b'_')
+                    .fold(0u64, |acc, b| acc * 8 + (b - b'0') as u64);
+                let suggested = format!("0o{octal_value:o}");
                 let message =
                     format!("Octal literals are not allowed. Use the syntax '{suggested}'.");
                 self.parse_error_at(
