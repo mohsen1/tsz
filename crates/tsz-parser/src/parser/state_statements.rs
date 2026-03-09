@@ -1148,6 +1148,7 @@ impl ParserState {
 
         // Parse declarations with enhanced error recovery
         let mut declarations = Vec::new();
+        let mut had_decl_expected_error = false;
         loop {
             // Check if we can start a variable declaration
             // Can be: identifier, keyword as identifier, or binding pattern (object/array)
@@ -1167,6 +1168,7 @@ impl ParserState {
                         "Variable declaration expected.",
                         diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                     );
+                    had_decl_expected_error = true;
                 }
                 break;
             }
@@ -1234,9 +1236,13 @@ impl ParserState {
 
         // Check for empty declaration list: var ;
         // TSC emits TS1123 "Variable declaration list cannot be empty"
-        if declarations.is_empty() && !self.is_token(SyntaxKind::Unknown) {
+        // Skip when TS1134 was already emitted (e.g., `using 1` — TSC only emits TS1134)
+        if declarations.is_empty()
+            && !had_decl_expected_error
+            && !self.is_token(SyntaxKind::Unknown)
+        {
             use tsz_common::diagnostics::diagnostic_codes;
-            let pos = self.token_pos();
+            let pos = self.token_full_start();
             self.parse_error_at(
                 pos,
                 0,

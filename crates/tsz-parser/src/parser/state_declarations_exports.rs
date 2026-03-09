@@ -1057,7 +1057,7 @@ impl ParserState {
 
     fn parse_for_variable_declarations(&mut self) -> Vec<NodeIndex> {
         if self.is_for_variable_declaration_empty() {
-            let pos = self.token_pos();
+            let pos = self.token_full_start();
             self.parse_error_at(
                 pos,
                 0,
