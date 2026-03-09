@@ -2,7 +2,10 @@
 
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -597,6 +600,25 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        let computed_expr = self
+            .ctx
+            .arena
+            .get(element_data.property_name)
+            .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
+            .map(|computed| computed.expression);
+
+        if let Some(computed_expr) = computed_expr {
+            let key_type = self.get_binding_element_computed_key_type(pattern_idx, computed_expr);
+            if let Some(property_type) = self.get_binding_element_literal_key_type(
+                parent_type,
+                key_type,
+                element_data,
+                defer_property_not_found,
+            ) {
+                return property_type;
+            }
+        }
+
         // Extract the static property name from binding element.
         // Handles: { x }, { x: a }, { 'b': a }, { ['b']: a }, { [ident]: a }.
         let property_name = self.extract_binding_property_name(element_data);
@@ -605,18 +627,12 @@ impl<'a> CheckerState<'a> {
         // check index signatures when the key resolves to a dynamic type
         // (string or number, not a literal matching a known property).
         if element_data.property_name.is_some() {
-            let computed_expr = self
-                .ctx
-                .arena
-                .get(element_data.property_name)
-                .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
-                .map(|computed| computed.expression);
-
             // Only check index signatures for truly dynamic keys (not identifiers
             // or string/numeric literals that resolve to known properties).
             if computed_expr.is_some() && property_name.is_none() {
-                let key_type =
-                    computed_expr.map_or(TypeId::ANY, |expr_idx| self.get_type_of_node(expr_idx));
+                let key_type = computed_expr.map_or(TypeId::ANY, |expr_idx| {
+                    self.get_binding_element_computed_key_type(pattern_idx, expr_idx)
+                });
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
@@ -777,6 +793,243 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    fn get_binding_element_literal_key_type(
+        &mut self,
+        parent_type: TypeId,
+        key_type: TypeId,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+        defer_property_not_found: bool,
+    ) -> Option<TypeId> {
+        let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
+
+        if let Some(members) = query::union_members(self.ctx.types, parent_type)
+            && members.len() > 1
+        {
+            let mut member_types = Vec::new();
+            for &member in &members {
+                if let Some(member_type) = self.get_binding_element_literal_key_type_for_parent(
+                    query::unwrap_readonly_deep(self.ctx.types, member),
+                    &string_keys,
+                    &number_keys,
+                    member,
+                    element_data,
+                    defer_property_not_found,
+                ) {
+                    member_types.push(member_type);
+                }
+            }
+
+            return if member_types.is_empty() {
+                None
+            } else if member_types.len() == 1 {
+                Some(member_types[0])
+            } else {
+                Some(self.ctx.types.factory().union(member_types))
+            };
+        }
+
+        self.get_binding_element_literal_key_type_for_parent(
+            query::unwrap_readonly_deep(self.ctx.types, parent_type),
+            &string_keys,
+            &number_keys,
+            parent_type,
+            element_data,
+            defer_property_not_found,
+        )
+    }
+
+    fn get_binding_element_literal_key_type_for_parent(
+        &mut self,
+        literal_parent_type: TypeId,
+        string_keys: &[Atom],
+        number_keys: &[f64],
+        error_parent_type: TypeId,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+        defer_property_not_found: bool,
+    ) -> Option<TypeId> {
+        let mut key_types = Vec::with_capacity(
+            usize::from(!string_keys.is_empty()) + usize::from(!number_keys.is_empty()),
+        );
+        let error_node = if element_data.property_name.is_some() {
+            element_data.property_name
+        } else if element_data.name.is_some() {
+            element_data.name
+        } else {
+            NodeIndex::NONE
+        };
+
+        if !string_keys.is_empty() {
+            let keys_result =
+                self.get_element_access_type_for_literal_keys(literal_parent_type, string_keys);
+            if let Some(result_type) = keys_result.result_type {
+                key_types.push(result_type);
+            }
+            if element_data.initializer.is_none() && !defer_property_not_found {
+                for key in keys_result.missing_keys {
+                    self.error_property_not_exist_at(&key, error_parent_type, error_node);
+                }
+            }
+        }
+
+        if !number_keys.is_empty()
+            && let Some(result_type) = self
+                .get_element_access_type_for_literal_number_keys(literal_parent_type, number_keys)
+        {
+            key_types.push(result_type);
+        }
+
+        if key_types.is_empty() {
+            None
+        } else if key_types.len() == 1 {
+            Some(key_types[0])
+        } else {
+            Some(self.ctx.types.factory().union(key_types))
+        }
+    }
+
+    fn get_binding_element_computed_key_type(
+        &mut self,
+        pattern_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> TypeId {
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let prev_checking = self.ctx.checking_computed_property_name.take();
+        self.ctx.checking_computed_property_name = Some(expr_idx);
+        let mut key_type = self.get_type_of_node(expr_idx);
+        self.ctx.checking_computed_property_name = prev_checking;
+        self.ctx.preserve_literal_types = prev_preserve;
+
+        let is_identifier = self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
+        if is_identifier && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) {
+            let base_key_type = self
+                .get_binding_identifier_initializer_key_type(sym_id)
+                .unwrap_or(key_type);
+            let mut key_types = vec![base_key_type];
+            self.collect_enclosing_default_assignment_key_types(
+                pattern_idx,
+                sym_id,
+                &mut key_types,
+            );
+            if key_types.len() > 1 {
+                key_type = self.ctx.types.factory().union(key_types);
+            } else {
+                key_type = base_key_type;
+            }
+        }
+
+        key_type
+    }
+
+    fn collect_enclosing_default_assignment_key_types(
+        &mut self,
+        pattern_idx: NodeIndex,
+        sym_id: SymbolId,
+        key_types: &mut Vec<TypeId>,
+    ) {
+        let mut current = pattern_idx;
+        let mut visited = 0usize;
+
+        while visited < 32 {
+            visited += 1;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+
+            if let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding) = self.ctx.arena.get_binding_element(parent_node)
+                && binding.initializer.is_some()
+            {
+                self.collect_assignment_types_for_symbol(binding.initializer, sym_id, key_types);
+            }
+
+            current = parent_idx;
+        }
+    }
+
+    fn collect_assignment_types_for_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        sym_id: SymbolId,
+        key_types: &mut Vec<TypeId>,
+    ) {
+        let mut stack = vec![expr_idx];
+
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    continue;
+                }
+                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                    if let Some(binary) = self.ctx.arena.get_binary_expr(node)
+                        && binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && self.binding_assignment_target_matches_symbol(binary.left, sym_id)
+                    {
+                        let prev_preserve = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
+                        let assigned_type = self.get_type_of_node(binary.right);
+                        self.ctx.preserve_literal_types = prev_preserve;
+                        key_types.push(assigned_type);
+                    }
+                }
+                _ => {}
+            }
+
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+    }
+
+    fn binding_assignment_target_matches_symbol(
+        &self,
+        target_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        self.resolve_identifier_symbol(target_idx) == Some(sym_id)
+    }
+
+    fn get_binding_identifier_initializer_key_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let init_type = self.get_type_of_node(var_decl.initializer);
+        self.ctx.preserve_literal_types = prev_preserve;
+        Some(init_type)
     }
 
     /// During contextual typing of unannotated callback parameters, inferred

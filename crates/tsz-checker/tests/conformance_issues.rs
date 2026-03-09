@@ -5628,3 +5628,55 @@ fn test_computed_binding_element_literal_key_does_not_require_index_signature() 
         "Computed binding-element keys that resolve to a literal property name should not require an index signature.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_computed_binding_element_assignment_key_uses_exact_tuple_index() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+{
+    let a: 0 | 1 = 0;
+    const [{ [(a = 1)]: b } = [9, a] as const] = [];
+    const bb: 0 = b;
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Computed assignment keys in binding patterns should use the exact tuple index without leaking sibling elements or undefined.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignment_values() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+{
+    let a: 0 | 1 | 2 = 1;
+    const [{ [a]: b } = [9, a = 0, 5] as const] = [];
+    const bb: 0 | 9 = b;
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Bare identifier computed keys should keep the old-or-assigned key union from enclosing binding defaults, without widening to unrelated tuple elements.\nGot: {diagnostics:?}"
+    );
+}
