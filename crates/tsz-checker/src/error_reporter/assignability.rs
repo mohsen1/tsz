@@ -225,6 +225,17 @@ impl<'a> CheckerState<'a> {
 
         match reason {
             Some(failure_reason) => {
+                // Skip ExcessProperty diagnostics here — they are handled by
+                // check_object_literal_excess_properties which also checks for
+                // spelling suggestions (TS2561). Emitting here would cause
+                // duplicate diagnostics: TS2353 from the solver reason + TS2561
+                // from the explicit checker.
+                if matches!(
+                    failure_reason,
+                    tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
+                ) {
+                    return;
+                }
                 let diag =
                     self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
                 self.ctx.diagnostics.push(diag);
