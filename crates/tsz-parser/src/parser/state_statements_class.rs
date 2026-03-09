@@ -473,10 +473,15 @@ impl ParserState {
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
         // AND reserved words like 'void', 'null' which cannot be identifiers
-        let name = if self.is_identifier_or_keyword()
-            && !self.is_token(SyntaxKind::ExtendsKeyword)
-            && !self.is_token(SyntaxKind::ImplementsKeyword)
-        {
+        //
+        // Special case: `class implements {` and `class extends {` — if the next
+        // token after extends/implements is `{`, the keyword is the class name
+        // (the class body follows immediately), not a heritage clause start.
+        // tsc uses the same disambiguation via isImplementsClause() lookahead.
+        let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
+            || self.is_token(SyntaxKind::ImplementsKeyword))
+            && !self.next_token_is_open_brace();
+        let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -533,10 +538,14 @@ impl ParserState {
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
         // AND reserved words like 'void', 'null' which cannot be identifiers
-        let name = if self.is_identifier_or_keyword()
-            && !self.is_token(SyntaxKind::ExtendsKeyword)
-            && !self.is_token(SyntaxKind::ImplementsKeyword)
-        {
+        //
+        // Special case: `class implements {` and `class extends {` — if the next
+        // token after extends/implements is `{`, the keyword is the class name
+        // (the class body follows immediately), not a heritage clause start.
+        let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
+            || self.is_token(SyntaxKind::ImplementsKeyword))
+            && !self.next_token_is_open_brace();
+        let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;

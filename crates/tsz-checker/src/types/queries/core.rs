@@ -1218,59 +1218,57 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
     ) -> Option<String> {
         // Try primary path: get class declaration from object type's brand/instance map
-        let class_idx = self
-            .get_class_decl_from_type(object_type)
-            .or_else(|| {
-                // Fallback: resolve Lazy(DefId) -> SymbolId -> class declaration.
-                // This handles cases where the class instance type hasn't been registered
-                // in class_instance_type_to_decl (e.g., type annotation references).
-                let def_id =
-                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
-                let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-                self.get_class_declaration_from_symbol(sym_id)
-            })
-            .or_else(|| {
-                // Fallback for static/constructor-side types: reverse-lookup the
-                // constructor type cache. When accessing `A2.#field` outside the
-                // class, object_type is the constructor type (not the instance
-                // type), so instance-based lookups above fail.
-                self.ctx
-                    .class_constructor_type_cache
-                    .iter()
-                    .find_map(|(&class_idx, &ctor_type)| {
-                        if ctor_type == object_type {
-                            Some(class_idx)
-                        } else {
-                            None
-                        }
-                    })
-            })
-            .or_else(|| {
-                // Fallback: for constructor types obtained via `typeof ClassName`
-                // annotations, the TypeId may differ from the cached constructor
-                // type. Look at the construct signatures' return type to find the
-                // class instance type, then resolve the class declaration from that.
-                let sigs = crate::query_boundaries::common::construct_signatures_for_type(
-                    self.ctx.types,
-                    object_type,
-                )?;
-                for sig in &sigs {
-                    if let Some(class_idx) = self.get_class_decl_from_type(sig.return_type) {
-                        return Some(class_idx);
-                    }
-                    // Also try Lazy(DefId) -> symbol path on the return type
-                    if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
-                        self.ctx.types,
-                        sig.return_type,
-                    )
-                        && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
-                            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                            {
-                                return Some(class_idx);
+        let class_idx =
+            self.get_class_decl_from_type(object_type)
+                .or_else(|| {
+                    // Fallback: resolve Lazy(DefId) -> SymbolId -> class declaration.
+                    // This handles cases where the class instance type hasn't been registered
+                    // in class_instance_type_to_decl (e.g., type annotation references).
+                    let def_id =
+                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
+                    let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+                    self.get_class_declaration_from_symbol(sym_id)
+                })
+                .or_else(|| {
+                    // Fallback for static/constructor-side types: reverse-lookup the
+                    // constructor type cache. When accessing `A2.#field` outside the
+                    // class, object_type is the constructor type (not the instance
+                    // type), so instance-based lookups above fail.
+                    self.ctx.class_constructor_type_cache.iter().find_map(
+                        |(&class_idx, &ctor_type)| {
+                            if ctor_type == object_type {
+                                Some(class_idx)
+                            } else {
+                                None
                             }
-                }
-                None
-            })?;
+                        },
+                    )
+                })
+                .or_else(|| {
+                    // Fallback: for constructor types obtained via `typeof ClassName`
+                    // annotations, the TypeId may differ from the cached constructor
+                    // type. Look at the construct signatures' return type to find the
+                    // class instance type, then resolve the class declaration from that.
+                    let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        object_type,
+                    )?;
+                    for sig in &sigs {
+                        if let Some(class_idx) = self.get_class_decl_from_type(sig.return_type) {
+                            return Some(class_idx);
+                        }
+                        // Also try Lazy(DefId) -> symbol path on the return type
+                        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            sig.return_type,
+                        ) && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+                            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                        {
+                            return Some(class_idx);
+                        }
+                    }
+                    None
+                })?;
         let mut current = class_idx;
         let mut visited = rustc_hash::FxHashSet::default();
 

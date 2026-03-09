@@ -109,31 +109,31 @@ impl<'a> CheckerState<'a> {
         // displays it as "typeof ClassName" instead of expanding the object shape.
         if result != TypeId::ERROR
             && let Some(sym_id) = current_sym
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                let name = self.ctx.types.intern_string(&symbol.escaped_name);
-                let ctor_def_id =
-                    self.ctx
-                        .definition_store
-                        .register(tsz_solver::def::DefinitionInfo {
-                            kind: tsz_solver::def::DefKind::ClassConstructor,
-                            name,
-                            type_params: Vec::new(),
-                            body: Some(result),
-                            instance_shape: None,
-                            static_shape: None,
-                            extends: None,
-                            implements: Vec::new(),
-                            enum_members: Vec::new(),
-                            exports: Vec::new(),
-                            file_id: None,
-                            span: None,
-                            symbol_id: Some(sym_id.0),
-                        });
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(result, ctor_def_id);
-            }
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let name = self.ctx.types.intern_string(&symbol.escaped_name);
+            let ctor_def_id = self
+                .ctx
+                .definition_store
+                .register(tsz_solver::def::DefinitionInfo {
+                    kind: tsz_solver::def::DefKind::ClassConstructor,
+                    name,
+                    type_params: Vec::new(),
+                    body: Some(result),
+                    instance_shape: None,
+                    static_shape: None,
+                    extends: None,
+                    implements: Vec::new(),
+                    enum_members: Vec::new(),
+                    exports: Vec::new(),
+                    file_id: None,
+                    span: None,
+                    symbol_id: Some(sym_id.0),
+                });
+            self.ctx
+                .definition_store
+                .register_type_to_def(result, ctor_def_id);
+        }
 
         result
     }

@@ -354,9 +354,10 @@ impl<'a> CheckerState<'a> {
                 .and_then(|env| env.get_enum_parent(def_id));
 
             if let Some(parent_def_id) = parent_def_id
-                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id) {
-                    return self.get_type_of_symbol(parent_sym_id);
-                }
+                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
+            {
+                return self.get_type_of_symbol(parent_sym_id);
+            }
         }
 
         // Fallback: check via symbol flags (legacy path)
