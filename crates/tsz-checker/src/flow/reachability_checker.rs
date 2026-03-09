@@ -12,6 +12,101 @@ use tsz_solver::{NarrowingContext, TypeId};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn call_expression_terminates_control_flow(&mut self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            syntax_kind_ext::CALL_EXPRESSION => {
+                if !self.get_type_of_node(expr_idx).is_never() {
+                    return false;
+                }
+
+                let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
+                    return false;
+                };
+
+                let callee = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(call.expression);
+                self.never_returning_callee_is_control_flow_significant(callee)
+            }
+            syntax_kind_ext::NEW_EXPRESSION => self.get_type_of_node(expr_idx).is_never(),
+            _ => false,
+        }
+    }
+
+    fn never_returning_callee_is_control_flow_significant(
+        &mut self,
+        callee_idx: NodeIndex,
+    ) -> bool {
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+
+        match callee_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .resolve_identifier_symbol(callee_idx)
+                .is_some_and(|sym_id| self.symbol_explicitly_returns_never(sym_id)),
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => true,
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
+                self.declaration_explicitly_returns_never(callee_idx)
+            }
+            _ => false,
+        }
+    }
+
+    fn symbol_explicitly_returns_never(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        self.declaration_explicitly_returns_never(decl_idx)
+    }
+
+    fn declaration_explicitly_returns_never(&mut self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if let Some(func) = self.ctx.arena.get_function(decl_node) {
+            return func.type_annotation.is_some()
+                && self.get_type_from_type_node(func.type_annotation) == TypeId::NEVER;
+        }
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+            if var_decl.type_annotation.is_none() {
+                return false;
+            }
+
+            let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
+            return tsz_solver::type_queries::get_return_type(self.ctx.types, declared_type)
+                == Some(TypeId::NEVER);
+        }
+
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+            if param.type_annotation.is_none() {
+                return false;
+            }
+
+            let declared_type = self.get_type_from_type_node(param.type_annotation);
+            return tsz_solver::type_queries::get_return_type(self.ctx.types, declared_type)
+                == Some(TypeId::NEVER);
+        }
+
+        false
+    }
+
     fn nullish_coalescing_switch_type(&mut self, switch_expr: NodeIndex) -> Option<TypeId> {
         let switch_expr = self.ctx.arena.skip_parenthesized(switch_expr);
         let node = self.ctx.arena.get(switch_expr)?;
@@ -278,8 +373,7 @@ impl<'a> CheckerState<'a> {
                 let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
                     return true;
                 };
-                let expr_type = self.get_type_of_node(expr_stmt.expression);
-                !expr_type.is_never()
+                !self.call_expression_terminates_control_flow(expr_stmt.expression)
             }
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 let Some(var_stmt) = self.ctx.arena.get_variable(node) else {
@@ -306,14 +400,8 @@ impl<'a> CheckerState<'a> {
                         // Only treat call/new expressions as non-falling-through when
                         // they return never. Type assertions like `null as never` still
                         // complete normally at runtime.
-                        if let Some(init_node) = self.ctx.arena.get(decl.initializer)
-                            && (init_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::NEW_EXPRESSION)
-                        {
-                            let init_type = self.get_type_of_node(decl.initializer);
-                            if init_type.is_never() {
-                                return false;
-                            }
+                        if self.call_expression_terminates_control_flow(decl.initializer) {
+                            return false;
                         }
                     }
                 }

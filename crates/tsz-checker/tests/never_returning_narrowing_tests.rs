@@ -15,13 +15,7 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn check_strict(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        strict: true,
-        strict_null_checks: true,
-        no_implicit_any: true,
-        ..Default::default()
-    };
+fn check_with_options(source: &str, options: CheckerOptions) -> Vec<u32> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -37,6 +31,18 @@ fn check_strict(source: &str) -> Vec<u32> {
     checker.ctx.set_lib_contexts(Vec::new());
     checker.check_source_file(root);
     checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+}
+
+fn check_strict(source: &str) -> Vec<u32> {
+    check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    )
 }
 
 /// After `if (x === undefined) fail()`, x should be narrowed to exclude undefined.
@@ -108,6 +114,35 @@ function f(x: { a: string }) {
     assert!(
         !codes.contains(&2339),
         "Expected no TS2339 in unreachable code after never-returning call, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn test_inferred_never_local_identifier_does_not_trigger_unreachable() {
+    let source = r#"
+function f() {
+    const fail = (): never => {
+        throw undefined;
+    };
+    const fns = [fail];
+    fail();
+    fns[0]();
+    fns;
+}
+"#;
+    let codes = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    assert!(
+        !codes.contains(&7027),
+        "Expected no TS7027 after calling an inferred-never local identifier, got codes: {codes:?}"
     );
 }
 
