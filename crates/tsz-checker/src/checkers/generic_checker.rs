@@ -390,13 +390,18 @@ impl<'a> CheckerState<'a> {
                     let db = self.ctx.types.as_type_database();
                     let is_bare_type_param =
                         matches!(db.lookup(type_arg), Some(TypeData::TypeParameter(_)));
+                    if !is_bare_type_param {
+                        // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
+                        // `Parameters<Target[K]>`). Defer constraint checking to
+                        // instantiation time — the type parameters are not yet resolved
+                        // and cannot be reliably checked against the constraint.
+                        // This avoids false positive TS2344 in conditional type narrowing
+                        // contexts where the true branch narrows the type parameter.
+                        continue;
+                    }
                     if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
-                        // Composite generic arguments like `T[K]` or `GetProps<C>`
-                        // must still flow through the full relation check below; tsc
-                        // reports TS2344 for those when the generic structure itself
-                        // fails the target constraint.
                         // If the base constraint is `unknown`, the type parameter has no
                         // usable constraint (e.g., unconstrained params or call-signature
                         // type params whose constraints aren't populated). Skip.
@@ -469,6 +474,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
+
+                // Skip if the instantiated constraint still contains type parameters.
+                // This avoids false positive TS2344 when the constraint cannot be fully
+                // resolved (e.g., conditional type narrowing contexts like
+                // `Parameters<Target[K]>` inside a `Target[K] extends Function` branch).
+                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
+                    continue;
+                }
 
                 let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
