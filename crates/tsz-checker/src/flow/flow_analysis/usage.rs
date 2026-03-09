@@ -406,21 +406,32 @@ impl<'a> CheckerState<'a> {
             };
 
         // Skip TS2454 when the variable is used from a different function scope
-        // than where it is declared.  The nested function could be called after
-        // external code assigns the variable, so tsc suppresses TS2454 here
-        // for captured locals. Source-file globals are different: tsc still
-        // reports TS2454 for uninitialized globals read inside functions.
+        // than where it is declared. The nested function could be called later,
+        // so tsz conservatively suppresses TS2454 for captured locals.
+        //
+        // Source-file globals are more nuanced:
+        // - In scripts, tsc suppresses TS2454 for reads in deferred nested
+        //   functions, but still reports it when every crossed function boundary
+        //   is an IIFE that executes immediately.
+        // - In external modules, source-file globals still get TS2454 in nested
+        //   functions because the module body defines the initialization order.
         let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
         let usage_scope = self.find_enclosing_function_or_source_file(idx);
-        if decl_scope != usage_scope
-            && !decl_scope.is_none()
-            && self
+        if decl_scope != usage_scope && !decl_scope.is_none() {
+            let decl_is_source_file = self
                 .ctx
                 .arena
                 .get(decl_scope)
-                .is_none_or(|node| node.kind != syntax_kind_ext::SOURCE_FILE)
-        {
-            return false;
+                .is_some_and(|node| node.kind == syntax_kind_ext::SOURCE_FILE);
+            if !decl_is_source_file {
+                return false;
+            }
+
+            if !self.ctx.binder.is_external_module()
+                && self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope)
+            {
+                return false;
+            }
         }
 
         // If there's an initializer, skip definite assignment check — unless the variable
@@ -1558,5 +1569,32 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         current
+    }
+
+    /// Check whether a use site crosses a deferred function boundary before
+    /// reaching the target scope. IIFEs execute immediately and therefore do
+    /// not count as deferred boundaries.
+    fn is_usage_in_deferred_function_relative_to_scope(
+        &self,
+        usage_idx: NodeIndex,
+        target_scope: NodeIndex,
+    ) -> bool {
+        let mut current = usage_idx;
+        while current.is_some() && current != target_scope {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.is_function_like() && !self.ctx.arena.is_immediately_invoked(current) {
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
     }
 }
