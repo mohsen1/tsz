@@ -25,6 +25,11 @@ fn needs_property_name_quotes(name: &str) -> bool {
     if name.is_empty() {
         return true;
     }
+    // Computed property names wrapped in brackets (e.g. [Symbol.asyncIterator])
+    // are displayed as-is without quotes, matching tsc behavior.
+    if name.starts_with('[') && name.ends_with(']') {
+        return false;
+    }
     // Numeric property names don't need quotes
     if name.chars().all(|ch| ch.is_ascii_digit()) {
         return false;
@@ -2479,6 +2484,21 @@ mod tests {
         assert!(super::needs_property_name_quotes("."));
         assert!(super::needs_property_name_quotes("@"));
         assert!(super::needs_property_name_quotes("#private"));
+    }
+
+    #[test]
+    fn needs_property_name_quotes_bracket_wrapped() {
+        // Computed symbol property names wrapped in brackets should not be quoted
+        assert!(!super::needs_property_name_quotes("[Symbol.asyncIterator]"));
+        assert!(!super::needs_property_name_quotes("[Symbol.iterator]"));
+        assert!(!super::needs_property_name_quotes("[Symbol.hasInstance]"));
+        assert!(!super::needs_property_name_quotes("[Symbol.toPrimitive]"));
+        // Single bracket only (not a computed property) should still need quotes
+        assert!(super::needs_property_name_quotes("["));
+        assert!(super::needs_property_name_quotes("]"));
+        // Bracket at start but not end (not computed property syntax)
+        assert!(super::needs_property_name_quotes("[foo"));
+        assert!(super::needs_property_name_quotes("foo]"));
     }
 
     // =================================================================
