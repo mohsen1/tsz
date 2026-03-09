@@ -137,10 +137,7 @@ impl<'a> Printer<'a> {
 
         // Children
         let filtered_children = self.collect_jsx_children(&children);
-        for child in &filtered_children {
-            self.write(", ");
-            self.emit_jsx_child_as_expression(*child);
-        }
+        self.emit_jsx_children_interleaved(&children, &filtered_children, JsxChildSep::CommaSpace);
 
         self.write(")");
     }
@@ -181,17 +178,12 @@ impl<'a> Printer<'a> {
             self.write(",");
             self.increase_indent();
         }
-        for (i, child) in filtered_children.iter().enumerate() {
-            if multiline_children {
-                self.write_line();
-            } else {
-                self.write(", ");
-            }
-            self.emit_jsx_child_as_expression(*child);
-            if multiline_children && i < filtered_children.len() - 1 {
-                self.write(",");
-            }
-        }
+        let child_sep = if multiline_children {
+            JsxChildSep::CommaNewline
+        } else {
+            JsxChildSep::CommaSpace
+        };
+        self.emit_jsx_children_interleaved(children, &filtered_children, child_sep);
         self.write(")");
         if multiline_children {
             self.decrease_indent();
@@ -272,19 +264,21 @@ impl<'a> Printer<'a> {
         self.write(", { ");
         if !filtered_children.is_empty() {
             self.write("children: ");
+            let child_sep = if is_jsxs {
+                JsxChildSep::CommaBetween
+            } else {
+                JsxChildSep::None
+            };
             if is_jsxs {
                 self.write("[");
-                for (i, child) in filtered_children.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.emit_jsx_child_as_expression(*child);
-                }
+            }
+            self.emit_jsx_children_interleaved(&children, &filtered_children, child_sep);
+            if is_jsxs {
                 self.write("]");
-            } else {
-                self.emit_jsx_child_as_expression(filtered_children[0]);
             }
             self.write(" ");
+        } else {
+            self.skip_empty_jsx_children_comments(&children);
         }
         self.write("}");
 
@@ -390,18 +384,20 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 self.write("children: ");
+                let child_sep = if is_jsxs {
+                    JsxChildSep::CommaBetween
+                } else {
+                    JsxChildSep::None
+                };
                 if is_jsxs {
                     self.write("[");
-                    for (i, child) in filtered_children.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        self.emit_jsx_child_as_expression(*child);
-                    }
-                    self.write("]");
-                } else {
-                    self.emit_jsx_child_as_expression(filtered_children[0]);
                 }
+                self.emit_jsx_children_interleaved(children, &filtered_children, child_sep);
+                if is_jsxs {
+                    self.write("]");
+                }
+            } else {
+                self.skip_empty_jsx_children_comments(children);
             }
             self.write(" }");
         }
@@ -467,10 +463,7 @@ impl<'a> Printer<'a> {
         }
 
         // Children as separate args (classic style)
-        for child in &filtered_children {
-            self.write(", ");
-            self.emit_jsx_child_as_expression(*child);
-        }
+        self.emit_jsx_children_interleaved(children, &filtered_children, JsxChildSep::CommaSpace);
 
         self.write(")");
     }
@@ -696,6 +689,96 @@ impl<'a> Printer<'a> {
         result
     }
 
+    /// Skip comments for a single empty JSX expression node.
+    /// Uses the full node range since the comment IS the content.
+    fn skip_comments_for_empty_jsx_expr(&mut self, node: &Node) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c = &self.all_comments[self.comment_emit_idx];
+            if c.pos >= node.pos && c.end <= node.end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Skip comments for all empty JSX expression containers in a children list.
+    /// Iterates children in source order to maintain monotonic `comment_emit_idx`.
+    fn skip_empty_jsx_children_comments(&mut self, children: &[NodeIndex]) {
+        for &child in children {
+            if self.is_empty_jsx_expression(child)
+                && let Some(node) = self.arena.get(child) {
+                    self.skip_comments_for_empty_jsx_expr(node);
+                }
+        }
+    }
+
+    /// Check if a JSX child is an empty expression container (no expression,
+    /// only comments/whitespace).
+    fn is_empty_jsx_expression(&self, child: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(child) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_jsx_expression(node)
+            .is_some_and(|e| e.expression.is_none())
+    }
+
+    /// Walk all JSX children in source order, emitting non-empty children and
+    /// consuming comments from empty expressions.  This ensures `comment_emit_idx`
+    /// advances monotonically.
+    ///
+    /// `separator` controls what's written before each child:
+    ///  - `JsxChildSep::CommaSpace`: writes `, ` before each child (classic createElement extra args)
+    ///  - `JsxChildSep::CommaNewline`: writes `,\n` before each child (multiline classic)
+    ///  - `JsxChildSep::CommaBetween`: writes `, ` only between children, not before first (automatic array)
+    ///  - `JsxChildSep::None`: no separator (single-child automatic)
+    fn emit_jsx_children_interleaved(
+        &mut self,
+        all_children: &[NodeIndex],
+        filtered_children: &[NodeIndex],
+        sep: JsxChildSep,
+    ) {
+        let mut filtered_idx = 0;
+        for &child in all_children {
+            if filtered_idx >= filtered_children.len() {
+                // All filtered children emitted; skip remaining empty exprs
+                if self.is_empty_jsx_expression(child)
+                    && let Some(node) = self.arena.get(child) {
+                        self.skip_comments_for_empty_jsx_expr(node);
+                    }
+                continue;
+            }
+
+            if child == filtered_children[filtered_idx] {
+                // Write separator
+                match sep {
+                    JsxChildSep::CommaSpace => self.write(", "),
+                    JsxChildSep::CommaNewline => self.write_line(),
+                    JsxChildSep::CommaBetween => {
+                        if filtered_idx > 0 {
+                            self.write(", ");
+                        }
+                    }
+                    JsxChildSep::None => {}
+                }
+                self.emit_jsx_child_as_expression(child);
+                if matches!(sep, JsxChildSep::CommaNewline)
+                    && filtered_idx < filtered_children.len() - 1
+                {
+                    self.write(",");
+                }
+                filtered_idx += 1;
+            } else if self.is_empty_jsx_expression(child)
+                && let Some(node) = self.arena.get(child) {
+                    self.skip_comments_for_empty_jsx_expr(node);
+                }
+        }
+    }
+
     /// Emit a JSX child as an expression in the `createElement` args.
     fn emit_jsx_child_as_expression(&mut self, child: NodeIndex) {
         let Some(node) = self.arena.get(child) else {
@@ -718,6 +801,14 @@ impl<'a> Printer<'a> {
             && expr.expression.is_some()
         {
             self.emit(expr.expression);
+            // Emit trailing comments between expression and closing `}` of the
+            // JSX expression container, e.g. `{null /* preserved */}` should
+            // produce `null /* preserved */` in the createElement args.
+            if let Some(expr_node) = self.arena.get(expr.expression) {
+                let expr_token_end =
+                    self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+                self.emit_comments_in_range(expr_token_end, node.end, true, false);
+            }
             return;
         }
 
@@ -1505,6 +1596,19 @@ pub(super) struct JsxUsage {
     pub(super) needs_jsxs: bool,
     pub(super) needs_fragment: bool,
     pub(super) needs_create_element: bool,
+}
+
+#[derive(Clone)]
+/// Separator style for JSX child emission.
+enum JsxChildSep {
+    /// `, ` before every child (classic createElement separate args)
+    CommaSpace,
+    /// newline before every child, `,` after all but last (multiline classic)
+    CommaNewline,
+    /// `, ` only between children (automatic `children: [a, b]`)
+    CommaBetween,
+    /// No separator (single-child automatic)
+    None,
 }
 
 #[derive(Clone)]
