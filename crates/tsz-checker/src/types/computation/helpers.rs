@@ -2,7 +2,6 @@
 //! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
-use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -847,10 +846,12 @@ impl<'a> CheckerState<'a> {
                     if !is_valid {
                         arithmetic_ok = false;
                         // Emit TS2356 for invalid increment/decrement operand type
-                        if let Some(loc) = self.get_source_location(unary.operand) {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE.to_string(), diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE));
-                        }
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            unary.operand,
+                            diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                            diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                        );
                     }
                 }
 

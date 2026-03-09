@@ -2,7 +2,6 @@
 //! Extracted from `core.rs` — handles all binary operators including
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
-use crate::diagnostics::Diagnostic;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -136,13 +135,11 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 "&&"
                             };
-                            if let Some(loc) = self.get_source_location(left_idx) {
-                                use crate::diagnostics::{
-                                    Diagnostic, diagnostic_codes, diagnostic_messages,
-                                    format_message,
-                                };
-                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[left_op_str, right_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
-                            }
+                            self.error_at_node_msg(
+                                left_idx,
+                                crate::diagnostics::diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                &[left_op_str, right_op_str],
+                            );
                         }
                     }
 
@@ -173,13 +170,11 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 "&&"
                             };
-                            if let Some(loc) = self.get_source_location(right_idx) {
-                                use crate::diagnostics::{
-                                    Diagnostic, diagnostic_codes, diagnostic_messages,
-                                    format_message,
-                                };
-                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[outer_op_str, inner_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
-                            }
+                            self.error_at_node_msg(
+                                right_idx,
+                                crate::diagnostics::diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                &[outer_op_str, inner_op_str],
+                            );
                         }
                     }
                 }
@@ -301,24 +296,16 @@ impl<'a> CheckerState<'a> {
             }
             // instanceof always produces boolean
             if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                use crate::diagnostics::diagnostic_codes;
                 let eval_left = self.evaluate_type_for_assignability(left_type);
                 if eval_left != TypeId::ERROR {
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    if !evaluator.is_valid_instanceof_left_operand(eval_left)
-                        && let Some(left_node) = self.ctx.arena.get(left_idx)
-                    {
-                        let message = format_message(
-                                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
-                                &[],
-                            );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                left_node.pos,
-                                left_node.end - left_node.pos,
-                                message,
-                                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
-                            ));
+                    if !evaluator.is_valid_instanceof_left_operand(eval_left) {
+                        self.error_at_node_msg(
+                            left_idx,
+                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
+                            &[],
+                        );
                     }
                 }
 
@@ -361,18 +348,12 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    if !is_valid_rhs && let Some(right_node) = self.ctx.arena.get(right_idx) {
-                        let message = format_message(
-                                diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
-                                &[],
-                            );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                right_node.pos,
-                                right_node.end - right_node.pos,
-                                message,
-                                diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
-                            ));
+                    if !is_valid_rhs {
+                        self.error_at_node_msg(
+                            right_idx,
+                            diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
+                            &[],
+                        );
                     }
                 }
 
@@ -812,28 +793,22 @@ impl<'a> CheckerState<'a> {
                             if left_any_like
                                 && !evaluator.is_arithmetic_operand(eval_right)
                                 && !self.is_enum_type(right_type)
-                                && let Some(loc) = self.get_source_location(right_idx)
                             {
-                                self.ctx.diagnostics.push(Diagnostic::error(
-                                        self.ctx.file_name.clone(),
-                                        loc.start,
-                                        loc.length(),
-                                        "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                                        crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                                    ));
+                                self.error_at_node(
+                                    right_idx,
+                                    "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                                    crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                );
                             }
                             if right_any_like
                                 && !evaluator.is_arithmetic_operand(eval_left)
                                 && !self.is_enum_type(left_type)
-                                && let Some(loc) = self.get_source_location(left_idx)
                             {
-                                self.ctx.diagnostics.push(Diagnostic::error(
-                                        self.ctx.file_name.clone(),
-                                        loc.start,
-                                        loc.length(),
-                                        "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                                        crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                                    ));
+                                self.error_at_node(
+                                    left_idx,
+                                    "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                                    crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                );
                             }
                         }
                     }
@@ -1003,23 +978,13 @@ impl<'a> CheckerState<'a> {
                 let left_is_symbol = evaluator.is_symbol_like(left_type);
                 let right_is_symbol = evaluator.is_symbol_like(right_type);
                 if left_is_symbol || right_is_symbol {
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
+                    use crate::diagnostics::diagnostic_codes;
                     let target_idx = if left_is_symbol { left_idx } else { right_idx };
-                    if let Some(loc) = self.get_source_location(target_idx) {
-                        let message = format_message(
-                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                            &[op_str],
-                        );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                            self.ctx.file_name.clone(),
-                            loc.start,
-                            loc.length(),
-                            message,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        ));
-                    }
+                    self.error_at_node_msg(
+                        target_idx,
+                        diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        &[op_str],
+                    );
                     type_stack.push(TypeId::BOOLEAN);
                     continue;
                 }
@@ -1045,28 +1010,22 @@ impl<'a> CheckerState<'a> {
                     if left_any_like
                         && !evaluator.is_arithmetic_operand(eval_right)
                         && !self.is_enum_type(right_type)
-                        && let Some(loc) = self.get_source_location(right_idx)
                     {
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                loc.start,
-                                loc.length(),
-                                "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                                crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            ));
+                        self.error_at_node(
+                            right_idx,
+                            "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                            crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        );
                     }
                     if right_any_like
                         && !evaluator.is_arithmetic_operand(eval_left)
                         && !self.is_enum_type(left_type)
-                        && let Some(loc) = self.get_source_location(left_idx)
                     {
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                loc.start,
-                                loc.length(),
-                                "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            ));
+                        self.error_at_node(
+                            left_idx,
+                            "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                            crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        );
                     }
                 }
             }
