@@ -2995,18 +2995,53 @@ func(x);
     );
 }
 
-/// TS7034 should NOT fire for block-scoped `let` variables, even when captured by arrow functions.
-/// tsc only emits TS7034 for function-scoped `var` declarations.
+/// TS7034/TS7005 should fire for block-scoped `let` variables when captured by nested functions
+/// before they become definitely assigned on all paths.
 /// From: controlFlowNoImplicitAny.ts (f10)
 #[test]
-fn test_ts7034_not_emitted_for_let_captured_by_arrow_function() {
+fn test_ts7034_emitted_for_let_captured_by_arrow_function() {
     let opts = CheckerOptions {
         no_implicit_any: true,
         ..CheckerOptions::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
+declare let cond: boolean;
 function f10() {
+    let x;
+    if (cond) {
+        x = 1;
+    }
+    if (cond) {
+        x = 'hello';
+    }
+    const y = x;
+    const f = () => { const z = x; };
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 for block-scoped `let` variable.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7005),
+        "Should emit TS7005 at the captured `let` reference.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7034/TS7005 should NOT fire for block-scoped `let` variables that are assigned
+/// before the closure is created and remain definitely assigned at the capture point.
+#[test]
+fn test_ts7034_not_emitted_for_let_assigned_before_capture() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f() {
     let x;
     x = 'hello';
     const f = () => { x; };
@@ -3016,7 +3051,11 @@ function f10() {
     );
     assert!(
         !has_error(&diagnostics, 7034),
-        "Should NOT emit TS7034 for block-scoped `let` variable.\nActual errors: {diagnostics:#?}"
+        "Should NOT emit TS7034 once the captured `let` is definitely assigned.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7005),
+        "Should NOT emit TS7005 at the captured reference once the `let` is definitely assigned.\nActual errors: {diagnostics:#?}"
     );
 }
 

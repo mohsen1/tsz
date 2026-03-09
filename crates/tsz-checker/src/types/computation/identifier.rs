@@ -4,11 +4,15 @@
 //! the binder, checking TDZ violations, validating definite assignment,
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
+use crate::FlowAnalyzer;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use std::rc::Rc;
 use tracing::trace;
-use tsz_parser::parser::NodeIndex;
+use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -241,7 +245,9 @@ impl<'a> CheckerState<'a> {
                 let ref_fn = self.find_enclosing_function(idx);
                 let decl_name_node = self.ctx.pending_implicit_any_vars[&sym_id];
                 let decl_fn = self.find_enclosing_function(decl_name_node);
-                if ref_fn != decl_fn {
+                if ref_fn != decl_fn
+                    && self.should_emit_pending_implicit_any_capture_diagnostic(idx, sym_id)
+                {
                     // Variable is captured by a nested function — emit TS7034 at declaration.
                     let decl_name_node =
                         self.ctx.pending_implicit_any_vars.remove(&sym_id).unwrap();
@@ -1266,6 +1272,157 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn should_emit_pending_implicit_any_capture_diagnostic(
+        &self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+            return true;
+        }
+
+        if !self.has_non_initializer_assignment_for_reference(idx, sym_id) {
+            return false;
+        }
+
+        let Some(outer_flow) = self.captured_reference_outer_flow(idx) else {
+            return true;
+        };
+
+        let analyzer = self.flow_analyzer();
+        analyzer
+            .reference_symbol_cache
+            .borrow_mut()
+            .insert(idx.0, Some(sym_id));
+        self.ctx
+            .flow_reference_match_cache
+            .borrow_mut()
+            .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+
+        !analyzer.is_definitely_assigned(idx, outer_flow)
+    }
+
+    fn has_non_initializer_assignment_for_reference(
+        &self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let analyzer = self.flow_analyzer();
+        analyzer
+            .reference_symbol_cache
+            .borrow_mut()
+            .insert(idx.0, Some(sym_id));
+        self.ctx
+            .flow_reference_match_cache
+            .borrow_mut()
+            .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+
+        for i in 0..self.ctx.binder.flow_nodes.len() {
+            let flow_id = FlowNodeId(i as u32);
+            let Some(flow) = self.ctx.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+            if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                continue;
+            }
+
+            let Some(node) = self.ctx.arena.get(flow.node) else {
+                continue;
+            };
+            if matches!(
+                node.kind,
+                syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    | syntax_kind_ext::PARAMETER
+            ) {
+                continue;
+            }
+
+            if analyzer.assignment_targets_reference(flow.node, idx) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn captured_reference_outer_flow(&self, idx: NodeIndex) -> Option<FlowNodeId> {
+        let flow_node = self.flow_node_for_identifier_usage(idx)?;
+        let mut worklist = vec![flow_node];
+        let mut visited = FxHashSet::default();
+
+        while let Some(current) = worklist.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::START) {
+                return flow
+                    .antecedent
+                    .first()
+                    .copied()
+                    .filter(|flow| flow.is_some());
+            }
+
+            for &antecedent in flow.antecedent.iter().rev() {
+                if antecedent.is_some() {
+                    worklist.push(antecedent);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn flow_node_for_identifier_usage(&self, idx: NodeIndex) -> Option<FlowNodeId> {
+        if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
+            return Some(flow);
+        }
+
+        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        while let Some(parent) = current {
+            if parent.is_none() {
+                break;
+            }
+            if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                return Some(flow);
+            }
+            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+        }
+
+        None
+    }
+
+    fn flow_analyzer(&self) -> FlowAnalyzer<'_> {
+        FlowAnalyzer::with_node_types(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+            &self.ctx.node_types,
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
+        .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
+        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_narrowing_cache(&self.ctx.narrowing_cache)
+        .with_call_type_predicates(&self.ctx.call_type_predicates)
+        .with_flow_buffers(
+            &self.ctx.flow_worklist,
+            &self.ctx.flow_in_worklist,
+            &self.ctx.flow_visited,
+            &self.ctx.flow_results,
+        )
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
     }
 
     /// Extract the module specifier string from an import declaration.
