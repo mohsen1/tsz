@@ -6,6 +6,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
@@ -29,6 +30,78 @@ fn same_object_key_space(db: &dyn tsz_solver::TypeDatabase, left: TypeId, right:
 }
 
 impl<'a> CheckerState<'a> {
+    fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = self.ctx.arena.get_type_ref(node)?;
+            let name_node = self.ctx.arena.get(type_ref.type_name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            return Some(ident.escaped_text.clone());
+        }
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(node)?;
+            return Some(ident.escaped_text.clone());
+        }
+        None
+    }
+
+    fn is_mapped_key_index_for_current_object(
+        &self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+    ) -> bool {
+        let Some(index_name) = self.simple_type_reference_name(index_node_idx) else {
+            return false;
+        };
+        let Some(object_name) = self.simple_type_reference_name(object_node_idx) else {
+            return false;
+        };
+
+        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        while current.is_some() {
+            let parent_idx = current.unwrap();
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::MAPPED_TYPE {
+                let Some(mapped) = self.ctx.arena.get_mapped_type(parent_node) else {
+                    return false;
+                };
+                let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter) else {
+                    return false;
+                };
+                let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+                    return false;
+                };
+                let Some(name_node) = self.ctx.arena.get(tp.name) else {
+                    return false;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    return false;
+                };
+                if ident.escaped_text != index_name || tp.constraint == NodeIndex::NONE {
+                    return false;
+                }
+                let Some(constraint_node) = self.ctx.arena.get(tp.constraint) else {
+                    return false;
+                };
+                let Some(type_operator) = self.ctx.arena.get_type_operator(constraint_node) else {
+                    return false;
+                };
+                if type_operator.operator != SyntaxKind::KeyOfKeyword as u16 {
+                    return false;
+                }
+                return self.simple_type_reference_name(type_operator.type_node)
+                    .as_deref()
+                    .is_some_and(|name| name == object_name);
+            }
+            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+        }
+
+        false
+    }
+
     fn is_keyof_for_current_object(
         &mut self,
         ty: TypeId,
@@ -201,6 +274,10 @@ impl<'a> CheckerState<'a> {
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
         if self.is_assignable_to(index_type_for_check, keyof_object) {
+            return;
+        }
+        if self.is_mapped_key_index_for_current_object(node_idx, data.object_type, data.index_type)
+        {
             return;
         }
         // Follow the constraint chain transitively (P -> K -> keyof T) so that
