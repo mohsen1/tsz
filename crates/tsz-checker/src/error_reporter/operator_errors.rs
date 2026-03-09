@@ -1,6 +1,6 @@
 //! Binary operator error reporting (TS2362, TS2363, TS2365, TS2469).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -13,23 +13,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
         let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
-        let message =
-            diagnostic_messages::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE.replace("{0}", &type_str);
-
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
-            message,
+        self.error_at_node_msg(
+            idx,
             diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
-        ));
+            &[&type_str],
+        );
     }
 
     // =========================================================================
@@ -156,49 +147,24 @@ impl<'a> CheckerState<'a> {
             } else {
                 "null | undefined"
             };
-            if let Some(loc) = self.get_source_location(idx) {
-                let message = format_message(
-                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
-                    &[value_name],
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
-                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                ));
-            }
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                &[value_name],
+            );
         } else {
             // Variable/expression with nullish type → TS18047/TS18048/TS18049
             let name = self.expression_text(idx);
 
             if let Some(ref name) = name {
-                let (code, message) = if cause == TypeId::NULL {
-                    (
-                        diagnostic_codes::IS_POSSIBLY_NULL,
-                        format!("'{name}' is possibly 'null'."),
-                    )
+                let code = if cause == TypeId::NULL {
+                    diagnostic_codes::IS_POSSIBLY_NULL
                 } else if cause == TypeId::UNDEFINED {
-                    (
-                        diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                        format!("'{name}' is possibly 'undefined'."),
-                    )
+                    diagnostic_codes::IS_POSSIBLY_UNDEFINED
                 } else {
-                    (
-                        diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                        format!("'{name}' is possibly 'null' or 'undefined'."),
-                    )
+                    diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
                 };
-                if let Some(loc) = self.get_source_location(idx) {
-                    self.ctx.diagnostics.push(Diagnostic::error(
-                        self.ctx.file_name.clone(),
-                        loc.start,
-                        loc.length(),
-                        message,
-                        code,
-                    ));
-                }
+                self.error_at_node_msg(idx, code, &[name]);
             } else {
                 // Non-identifier expression with nullish type — fall back to TS18050
                 let value_name = if cause == TypeId::NULL {
@@ -208,19 +174,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     "null | undefined"
                 };
-                if let Some(loc) = self.get_source_location(idx) {
-                    let message = format_message(
-                        diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
-                        &[value_name],
-                    );
-                    self.ctx.diagnostics.push(Diagnostic::error(
-                        self.ctx.file_name.clone(),
-                        loc.start,
-                        loc.length(),
-                        message,
-                        diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                    ));
-                }
+                self.error_at_node_msg(
+                    idx,
+                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                );
             }
         }
     }
@@ -306,24 +264,12 @@ impl<'a> CheckerState<'a> {
             if is_relational {
                 // For relational operators: emit TS2469 on the first (leftmost) symbol
                 // operand and return — tsc does not also emit TS2365.
-                let (target_idx, _) = if left_is_symbol {
-                    (left_idx, left_type)
-                } else {
-                    (right_idx, right_type)
-                };
-                if let Some(loc) = self.get_source_location(target_idx) {
-                    let message = format_message(
-                        diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        &[op],
-                    );
-                    self.ctx.diagnostics.push(Diagnostic::error(
-                        self.ctx.file_name.clone(),
-                        loc.start,
-                        loc.length(),
-                        message,
-                        diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                    ));
-                }
+                let target_idx = if left_is_symbol { left_idx } else { right_idx };
+                self.error_at_node_msg(
+                    target_idx,
+                    diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    &[op],
+                );
                 return;
             }
 
@@ -340,31 +286,19 @@ impl<'a> CheckerState<'a> {
 
                 if should_emit_2469 {
                     // Emit TS2469 on each symbol operand
-                    if left_is_symbol && let Some(loc) = self.get_source_location(left_idx) {
-                        let message = format_message(
-                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    if left_is_symbol {
+                        self.error_at_node_msg(
+                            left_idx,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
                             &[op],
                         );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                            self.ctx.file_name.clone(),
-                            loc.start,
-                            loc.length(),
-                            message,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        ));
                     }
-                    if right_is_symbol && let Some(loc) = self.get_source_location(right_idx) {
-                        let message = format_message(
-                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    if right_is_symbol {
+                        self.error_at_node_msg(
+                            right_idx,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
                             &[op],
                         );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                            self.ctx.file_name.clone(),
-                            loc.start,
-                            loc.length(),
-                            message,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        ));
                     }
                     return;
                 }
@@ -446,12 +380,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     "!=="
                 };
-                if let Some(loc) = self.get_source_location(node_idx) {
-                    let message = format!(
-                        "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
-                    );
-                    self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD));
-                }
+                self.error_at_node_msg(
+                    node_idx,
+                    diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+                    &[op, suggestion],
+                );
                 return;
             }
         }
@@ -514,17 +447,12 @@ impl<'a> CheckerState<'a> {
             if snc_off && left_is_nullish && right_is_nullish {
                 return;
             }
-            if !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
+            if !emitted_nullish_error {
+                self.error_at_node_msg(
+                    node_idx,
                     diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                ));
+                    &[op, &left_str, &right_str],
+                );
             }
             return;
         }
@@ -539,10 +467,12 @@ impl<'a> CheckerState<'a> {
                     && left_non_null_is_valid_arithmetic
                     && should_emit_nullish_error)
                 || (emitted_nullish_error && left_is_nullish))
-                && let Some(loc) = self.get_source_location(left_idx)
             {
-                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+                self.error_at_node_msg(
+                    left_idx,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                    &[],
+                );
                 emitted_specific_error = true;
             }
             if !(right_is_valid_arithmetic
@@ -550,25 +480,22 @@ impl<'a> CheckerState<'a> {
                     && right_non_null_is_valid_arithmetic
                     && should_emit_nullish_error)
                 || (emitted_nullish_error && right_is_nullish))
-                && let Some(loc) = self.get_source_location(right_idx)
             {
-                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+                self.error_at_node_msg(
+                    right_idx,
+                    diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                    &[],
+                );
                 emitted_specific_error = true;
             }
             // If both operands are valid arithmetic types but the operation still failed
             // (e.g., mixing number and bigint), emit TS2365
-            if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
+            if !emitted_specific_error {
+                self.error_at_node_msg(
+                    node_idx,
                     diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                ));
+                    &[op, &left_str, &right_str],
+                );
             }
             return;
         }
@@ -576,20 +503,12 @@ impl<'a> CheckerState<'a> {
         // Handle relational operators: <, >, <=, >=
         // These require both operands to be comparable. When types have no relationship,
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
-        if is_relational
-            && !emitted_nullish_error
-            && let Some(loc) = self.get_source_location(node_idx)
-        {
-            let message = format!(
-                "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
+        if is_relational && !emitted_nullish_error {
+            self.error_at_node_msg(
+                node_idx,
                 diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-            ));
+                &[op, &left_str, &right_str],
+            );
         }
     }
 }
