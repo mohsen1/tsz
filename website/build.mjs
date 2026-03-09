@@ -220,7 +220,7 @@ function generateBenchmarkCharts(data) {
   if (!data?.results?.length) {
     return `<div class="bench-placeholder">
       <p>No benchmark data available.</p>
-      <p>Run <code>./scripts/bench-vs-tsgo.sh --json</code> to generate benchmarks,<br>
+      <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks,<br>
       then copy the output to <code>website/data/benchmarks.json</code>.</p>
     </div>`;
   }

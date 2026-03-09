@@ -7,15 +7,15 @@
 #   2) Re-run this script without rebuilding while tuning code
 #
 # Usage:
-#   ./scripts/bench-large-control-flow-micro.sh
-#   ./scripts/bench-large-control-flow-micro.sh --rebuild
-#   ./scripts/bench-large-control-flow-micro.sh --min-runs 3 --max-runs 6
-#   ./scripts/bench-large-control-flow-micro.sh --json /tmp/lcfg.json
+#   ./scripts/bench/bench-large-control-flow-micro.sh
+#   ./scripts/bench/bench-large-control-flow-micro.sh --rebuild
+#   ./scripts/bench/bench-large-control-flow-micro.sh --min-runs 3 --max-runs 6
+#   ./scripts/bench/bench-large-control-flow-micro.sh --json /tmp/lcfg.json
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 BENCH_TARGET_DIR="${BENCH_TARGET_DIR:-$PROJECT_ROOT/.target-bench}"
 TSZ="$BENCH_TARGET_DIR/dist/tsz"
@@ -30,7 +30,7 @@ JSON_OUT=""
 
 usage() {
     cat << 'EOF'
-Usage: ./scripts/bench-large-control-flow-micro.sh [OPTIONS]
+Usage: ./scripts/bench/bench-large-control-flow-micro.sh [OPTIONS]
 
 Options:
   --rebuild          Force rebuild tsz binary using dist profile

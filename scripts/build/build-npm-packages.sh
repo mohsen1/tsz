@@ -2,13 +2,13 @@
 # Build and assemble all npm packages for @mohsen-azimi/tsz distribution.
 #
 # Usage:
-#   ./scripts/build-npm-packages.sh                  # build for current platform only (default)
-#   ./scripts/build-npm-packages.sh --local           # same as above
-#   ./scripts/build-npm-packages.sh --all             # build for all 6 platforms
-#   ./scripts/build-npm-packages.sh --wasm-only       # only build WASM, skip native binaries
-#   ./scripts/build-npm-packages.sh --native-only     # only build native, skip WASM
-#   ./scripts/build-npm-packages.sh --dry-run         # show what would be built
-#   ./scripts/build-npm-packages.sh --skip-build      # assemble only (binaries already built)
+#   ./scripts/build/build-npm-packages.sh                  # build for current platform only (default)
+#   ./scripts/build/build-npm-packages.sh --local           # same as above
+#   ./scripts/build/build-npm-packages.sh --all             # build for all 6 platforms
+#   ./scripts/build/build-npm-packages.sh --wasm-only       # only build WASM, skip native binaries
+#   ./scripts/build/build-npm-packages.sh --native-only     # only build native, skip WASM
+#   ./scripts/build/build-npm-packages.sh --dry-run         # show what would be built
+#   ./scripts/build/build-npm-packages.sh --skip-build      # assemble only (binaries already built)
 #
 # CI workflow:
 #   Each platform runner builds its own native binary, then a final job
@@ -17,7 +17,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 NPM_DIR="$PROJECT_ROOT/npm"
 MAIN_PKG="$NPM_DIR/tsz"
 CARGO_PROFILE="${CARGO_PROFILE:-dist-fast}"

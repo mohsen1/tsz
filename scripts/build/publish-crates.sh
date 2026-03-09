@@ -2,9 +2,9 @@
 # Publish tsz crates to crates.io in correct dependency order.
 #
 # Usage:
-#   ./scripts/publish-crates.sh            # publish all crates
-#   ./scripts/publish-crates.sh --dry-run  # list files that would be published
-#   ./scripts/publish-crates.sh tsz-common # publish a single named crate
+#   ./scripts/build/publish-crates.sh            # publish all crates
+#   ./scripts/build/publish-crates.sh --dry-run  # list files that would be published
+#   ./scripts/build/publish-crates.sh tsz-common # publish a single named crate
 #
 # Publish order respects the dependency graph:
 #   tsz-common -> tsz-scanner -> tsz-parser -> tsz-binder -> tsz-solver
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CRATES=(
     tsz-common

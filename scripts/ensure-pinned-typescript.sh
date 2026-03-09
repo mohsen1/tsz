@@ -4,14 +4,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-VERSIONS_FILE="$ROOT_DIR/scripts/typescript-versions.json"
+VERSIONS_FILE="$ROOT_DIR/scripts/conformance/typescript-versions.json"
 
 usage() {
     cat <<'EOF'
 Usage: ./scripts/ensure-pinned-typescript.sh <project_dir>
 
 Ensures a project directory has a TypeScript installation matching the
-currently pinned version in scripts/typescript-versions.json.
+currently pinned version in scripts/conformance/typescript-versions.json.
 EOF
 }
 

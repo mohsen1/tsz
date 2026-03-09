@@ -25,7 +25,7 @@ function renderMeanChart(results) {
   if (!results.length) {
     return `<div class="bench-placeholder">
   <p>No benchmark data available.</p>
-  <p>Run <code>./scripts/bench-vs-tsgo.sh --json</code> to generate benchmarks.</p>
+  <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks.</p>
 </div>`;
   }
 

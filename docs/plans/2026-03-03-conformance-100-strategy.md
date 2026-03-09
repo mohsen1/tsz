@@ -194,7 +194,7 @@ Tests that pass if we emit one additional diagnostic:
 ## Measurement & Tracking
 
 ### Snapshot cadence
-- Run `./scripts/conformance.sh snapshot` after each batch of changes
+- Run `./scripts/conformance/conformance.sh snapshot` after each batch of changes
 - Track delta per wave in `docs/todos/conformance.md`
 
 ### Exit criteria per wave

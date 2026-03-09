@@ -7,12 +7,12 @@
 # tsgo is auto-installed locally (pinned) unless TSGO is explicitly provided.
 #
 # Usage:
-#   ./scripts/bench-vs-tsgo.sh                    # Full benchmark suite
-#   ./scripts/bench-vs-tsgo.sh --quick            # Quick smoke test (fewer runs, fewer files)
-#   ./scripts/bench-vs-tsgo.sh --json             # Export results to JSON
-#   ./scripts/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
-#   ./scripts/bench-vs-tsgo.sh --filter 'utility-types' # Run only utility-types benchmarks
-#   ./scripts/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
+#   ./scripts/bench/bench-vs-tsgo.sh                    # Full benchmark suite
+#   ./scripts/bench/bench-vs-tsgo.sh --quick            # Quick smoke test (fewer runs, fewer files)
+#   ./scripts/bench/bench-vs-tsgo.sh --json             # Export results to JSON
+#   ./scripts/bench/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
+#   ./scripts/bench/bench-vs-tsgo.sh --filter 'utility-types' # Run only utility-types benchmarks
+#   ./scripts/bench/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
 #
 # The benchmark uses an isolated target directory (.target-bench/) to prevent
 # interference from other cargo builds. The binary is built with the 'dist' profile
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Default lib assets for fresh checkouts (tsz expects a lib directory)
 TSZ_LIB_DIR_DEFAULT="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
@@ -207,7 +207,7 @@ resolve_tsc_npm_spec() {
         return
     fi
 
-    node -e "const v=require('./scripts/typescript-versions.json'); const sha=process.argv[1]; const m=v.mappings?.[sha]; console.log(m?.npm || v.default?.npm || '');" "$sha"
+    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const m=v.mappings?.[sha]; console.log(m?.npm || v.default?.npm || '');" "$sha"
 }
 
 ensure_tsc() {
@@ -613,7 +613,7 @@ const errorCases = rows.filter((row) => row.status).length;
 
 const payload = {
   generated_at: new Date().toISOString(),
-  benchmark_runner: "scripts/bench-vs-tsgo.sh",
+  benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   quick_mode: process.env.QUICK_MODE_VALUE === "true",
   filter: process.env.FILTER_VALUE || null,
   binaries: {
@@ -2326,8 +2326,8 @@ main() {
     if [ "$BENCHMARKS_RUN" -eq 0 ]; then
         echo -e "${RED}No benchmarks matched filter /$FILTER/.${NC}"
         echo "Try one of:"
-        echo "  ./scripts/bench-vs-tsgo.sh --quick --filter 'utility-types'"
-        echo "  ./scripts/bench-vs-tsgo.sh --quick --filter 'BCT|CFA'"
+        echo "  ./scripts/bench/bench-vs-tsgo.sh --quick --filter 'utility-types'"
+        echo "  ./scripts/bench/bench-vs-tsgo.sh --quick --filter 'BCT|CFA'"
         return
     fi
 

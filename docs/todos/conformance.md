@@ -1,7 +1,7 @@
 # Conformance TODO
 
-**Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: **10,139 / 12,581 (80.6%)** — full suite, error-code level (from `scripts/conformance-snapshot.json`)
+**Goal**: `./scripts/conformance/conformance.sh` prints ZERO failures.
+**Current score**: **10,139 / 12,581 (80.6%)** — full suite, error-code level (from `scripts/conformance/conformance-snapshot.json`)
 
 ---
 
@@ -6220,7 +6220,7 @@ All items below have been validated against the codebase (implementations + test
 
 ### Locked area
 - **Assigned area (rank 2, fallback-applied)**: `classes`
-- Snapshot selection basis (`scripts/conformance-snapshot.json` @ `a2de619efddb8a95059040adfee20173342ff1c8`):
+- Snapshot selection basis (`scripts/conformance/conformance-snapshot.json` @ `a2de619efddb8a95059040adfee20173342ff1c8`):
   - No areas matched `<30% pass_rate && failed >= 15`
   - No areas matched `<50% pass_rate && failed >= 15`
   - Fallback to all areas sorted worst-first, index `1` => `classes`
@@ -6261,7 +6261,7 @@ OTHER TESTS AFFECTED:
 
 ### Technical findings
 - Conformance-runner direct reproduction command:
-  - `./.target/dist-fast/tsz-conformance --test-dir ./TypeScript/tests/cases --cache-file ./scripts/tsc-cache-full.json --tsz-binary ./.target/dist-fast/tsz --workers 4 --print-test --print-fingerprints --verbose --filter staticIndexSignature2`
+  - `./.target/dist-fast/tsz-conformance --test-dir ./TypeScript/tests/cases --cache-file ./scripts/conformance/tsc-cache-full.json --tsz-binary ./.target/dist-fast/tsz --workers 4 --print-test --print-fingerprints --verbose --filter staticIndexSignature2`
 - The missing TS2322 occurs specifically on numeric element write with dual string+number static index signatures on `typeof C`.
 - Attempts to bypass checker property-fallback path for numeric writes caused regressions (extra TS7053/TS2542), indicating the bug is not isolated to one branch; readonly short-circuit and write-target type computation must be changed together.
 
@@ -6276,8 +6276,8 @@ OTHER TESTS AFFECTED:
 5. Validate with:
    - `cargo nextest run -p tsz-checker`
    - targeted conformance:
-     - `./scripts/conformance.sh run --filter "staticIndexSignature" --verbose`
-     - `./scripts/conformance.sh run --filter "classes/staticIndexSignature"`
+     - `./scripts/conformance/conformance.sh run --filter "staticIndexSignature" --verbose`
+     - `./scripts/conformance/conformance.sh run --filter "classes/staticIndexSignature"`
 
 ### Outcome
 - No code changes kept.
@@ -6288,7 +6288,7 @@ OTHER TESTS AFFECTED:
 
 ### Locked area
 - **Assigned area (rank 2, fallback-applied)**: `types/mapped`
-- Snapshot selection basis (`scripts/conformance-snapshot.json` @ `6cdaca7f32422e293b7d21df220d47601cff3cfc`):
+- Snapshot selection basis (`scripts/conformance/conformance-snapshot.json` @ `6cdaca7f32422e293b7d21df220d47601cff3cfc`):
   - No areas matched `<30% pass_rate && failed >= 15`
   - No areas matched `<50% pass_rate && failed >= 15`
   - Fallback to all areas sorted worst-first, index `1` => `types/mapped` (`57.69%`, `11` failed)
@@ -6335,10 +6335,10 @@ OTHER TESTS AFFECTED:
 
 ### What was validated this session
 - Area drilldown and target test run:
-  - `./scripts/conformance.sh areas --depth 3 --drilldown types`
+  - `./scripts/conformance/conformance.sh areas --depth 3 --drilldown types`
   - `./.target/dist-fast/tsz-conformance --filter mappedTypeRelationships --print-fingerprints --verbose`
 - Area baseline remains unchanged after experiments:
-  - `./scripts/conformance.sh run --filter "conformance/types/mapped/"`
+  - `./scripts/conformance/conformance.sh run --filter "conformance/types/mapped/"`
   - Result unchanged: `15/26` (`57.7%`), `TS2536` still missing in mapped tests.
 
 ### Attempted fixes and why they were reverted
@@ -6366,7 +6366,7 @@ Both attempts were reverted to avoid leaving partial/non-improving behavior in t
    - negative: `T[K]` with `K extends keyof U`, `U extends T` should emit TS2536.
 4. Re-run:
    - `cargo nextest run -p tsz-checker`
-   - `./scripts/conformance.sh run --filter "conformance/types/mapped/"`
+   - `./scripts/conformance/conformance.sh run --filter "conformance/types/mapped/"`
    - `./.target/dist-fast/tsz-conformance --filter mappedTypeRelationships --print-fingerprints --verbose`
 
 ### Outcome
@@ -6429,9 +6429,9 @@ For optional-chain comparisons to `undefined` (e.g. `o?.foo === undefined` and t
 
 ### What was verified
 - Offline triage first:
-  - `./scripts/conformance.sh analyze --campaigns`
-  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
+  - `./scripts/conformance/conformance.sh analyze --campaigns`
+  - `./scripts/conformance/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --campaign narrowing-flow`
 - Targeted verbose runs (no full suite):
   - `.target/dist-fast/tsz-conformance --filter controlFlowOptionalChain --verbose --print-fingerprints`
   - `.target/dist-fast/tsz-conformance --filter exhaustiveSwitchStatements1 --verbose --print-fingerprints`
@@ -6534,16 +6534,16 @@ When a call-argument mismatch comes from object-literal member value incompatibi
 
 ### Validation
 - `cargo nextest run -p tsz-checker --test ts2322_tests test_call_object_literal_optional_param_prefers_property_ts2322_over_ts2345`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter optionalBindingParameters2 --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter optionalBindingParameters2 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
 
 ### Result
 - **Flipped to PASS**: `optionalBindingParameters2.ts`
 - **Still failing**: `coAndContraVariantInferences6.ts` (separate call inference/index routing path)
 - Snapshot refreshed:
-  - `scripts/conformance-snapshot.json`
-  - `scripts/conformance-detail.json`
-  - `scripts/conformance-baseline.txt`
+  - `scripts/conformance/conformance-snapshot.json`
+  - `scripts/conformance/conformance-detail.json`
+  - `scripts/conformance/conformance-baseline.txt`
 
 ## Session 2026-03-07k — narrowing-flow re-attempt: optional-chain assertion path still unresolved (no commit)
 
@@ -6560,14 +6560,14 @@ Optional-chain guard transport must preserve nullish short-circuit semantics thr
 
 ### What was verified
 - Offline triage and campaign view:
-  - `./scripts/conformance.sh analyze --campaigns`
-  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
+  - `./scripts/conformance/conformance.sh analyze --campaigns`
+  - `./scripts/conformance/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --campaign narrowing-flow`
 - Targeted runs:
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter controlFlowOptionalChain --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
 - Observed unchanged mismatch in `controlFlowOptionalChain.ts`:
   - extra `TS2339` at `test.ts:486:11` (`Property 'foo' does not exist on type 'never'`)
   - broad TS18047/TS18048 fingerprint skew remained
@@ -6610,10 +6610,10 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
 For nested object/callability mismatches in call arguments, tsz frequently emits top-level `TS2345` where tsc emits nested/member-level `TS2322`; this is diagnostic routing/selection after relation failure, not only relation truth value.
 
 ### What was verified
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
 
 ### Key diffs
 - `coAndContraVariantInferences6.ts`:
@@ -6718,9 +6718,9 @@ Switches without `default` should still be treated as exhaustive when case cover
 ### Targeted validation run
 - `cargo nextest run -p tsz-checker ...` (new focused tests passed in unit scope)
 - `CARGO_TARGET_DIR=.target cargo build --profile dist-fast -p tsz-conformance`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
 
 ### Result
 - **No movement** on representative conformance failures.
@@ -6769,14 +6769,14 @@ Nullish-aware CFA facts must be present when binary operands are typed; otherwis
 
 ### What was validated
 - Re-ran mandatory targeted basket with verbose fingerprints:
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter optionalParamArgsTest --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter jsDeclarationsOptionalTypeLiteralProps1 --verbose --print-fingerprints`
 - Confirmed unchanged deltas:
   - `optionalParamArgsTest.ts`: missing `TS18048` (3), extra `TS2365` (3)
   - `contextuallyTypedOptionalProperty.ts`: missing `TS18048` (2)
   - `jsDeclarationsOptionalTypeLiteralProps1.ts`: missing `TS18048` (2), extra `TS2365` (1)
-- Queried `scripts/tsc-cache-full.json` to confirm expected `TS18048` presence for `compiler/optionalParamArgsTest.ts`.
+- Queried `scripts/conformance/tsc-cache-full.json` to confirm expected `TS18048` presence for `compiler/optionalParamArgsTest.ts`.
 
 ### Investigation result
 - A checker-side binary nullish gate tweak can pass focused unit probes but still does not move conformance for this basket.
@@ -6835,15 +6835,15 @@ Nullish-aware CFA facts must be present when binary operands are typed; otherwis
 
 ### What was tried in this run
 - Offline triage + campaign analysis:
-  - `./scripts/conformance.sh analyze --campaigns`
-  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --code TS18048`
+  - `./scripts/conformance/conformance.sh analyze --campaigns`
+  - `./scripts/conformance/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --code TS18048`
 - Targeted verbose conformance basket:
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
 - Attempted patch (reverted): route optional binary extracted guards through `narrow_by_binary_expr` in `condition_narrowing.rs`.
 - Added focused checker regressions for optional-chain assertion/equality variants during investigation; all passed in unit scope but did not reflect conformance harness behavior. Investigation tests were reverted.
 
@@ -6868,13 +6868,13 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
 In several call/inference contexts, tsz emits top-level argument mismatch `TS2345` where tsc reports nested/member-level assignability (`TS2322`), indicating post-relation diagnostic routing/elaboration drift in call paths.
 
 ### What was verified
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `python3 scripts/query-conformance.py --code TS2345`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --code TS2345`
 - Targeted verbose conformance:
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
 
 ### Observed diffs
 - `coAndContraVariantInferences6.ts`: missing nested `TS2322` (`"C"` vs `"A" | "B"`) + extra top-level `TS2345`.
@@ -6923,9 +6923,9 @@ No code changes were made for big3 in this run.
 ### Validation run and outcome
 - Unit tests passed in isolation (`cargo nextest run -p tsz-checker --test spread_rest_tests ...`).
 - Rebuilt `dist-fast` and reran targeted conformance:
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter destructureTupleWithVariableElement --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter useRegexpGroups --verbose --print-fingerprints`
 - **Result**: No conformance movement; `destructureTupleWithVariableElement.ts` unchanged (extra `TS2339`, missing `TS18048`).
 - Also reproduced directly with CLI:
   - `./.target/dist-fast/tsz --strict --noUncheckedIndexedAccess --target es2015 --noEmit --pretty false TypeScript/tests/cases/compiler/destructureTupleWithVariableElement.ts`
@@ -6967,14 +6967,14 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
 For several generic call sites, tsz emits top-level argument mismatch `TS2345` where tsc emits nested/member-level `TS2322` (or no top-level call error), indicating post-relation diagnostic routing/elaboration drift in call paths.
 
 ### What was verified
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `python3 scripts/query-conformance.py --code TS2345`
-- `python3 scripts/query-conformance.py --extra-code TS2345`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --code TS2345`
+- `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 - Targeted verbose conformance:
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file scripts/tsc-cache-full.json --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
 
 ### Key diffs observed
 - `coAndContraVariantInferences6.ts`:
@@ -7027,10 +7027,10 @@ For several generic call sites, tsz emits top-level argument mismatch `TS2345` w
 
 ### Validation run and outcome
 - Required offline triage executed:
-  - `./scripts/conformance.sh analyze --campaigns`
-  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --code TS18048`
+  - `./scripts/conformance/conformance.sh analyze --campaigns`
+  - `./scripts/conformance/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --code TS18048`
 - Checker tests:
   - `cargo nextest run -p tsz-solver contextual --status-level fail`
   - `cargo nextest run -p tsz-checker --status-level fail`
@@ -7075,11 +7075,11 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
 For call-site relation failures, tsz prefers top-level argument mismatch (`TS2345`) while tsc prefers nested/member-level assignability (`TS2322`) or alternative routing, indicating drift in post-relation diagnostic selection/elaboration.
 
 ### What was verified
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter genericContextualTypes1 --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter genericRestParameters1 --verbose --print-fingerprints`
 
 ### Key diffs observed
 - `coAndContraVariantInferences6.ts`:
@@ -7113,13 +7113,13 @@ Narrowing facts established by predicate/equality guards must remain available t
 
 ### What was verified
 - Required offline triage:
-  - `./scripts/conformance.sh analyze --campaigns`
-  - `./scripts/conformance.sh analyze --campaign narrowing-flow`
-  - `python3 scripts/query-conformance.py --campaign narrowing-flow`
+  - `./scripts/conformance/conformance.sh analyze --campaigns`
+  - `./scripts/conformance/conformance.sh analyze --campaign narrowing-flow`
+  - `python3 scripts/conformance/query-conformance.py --campaign narrowing-flow`
 - Targeted conformance checks:
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter typePredicateInLoop --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter typePredicateInLoop --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowForCatchAndFinally --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch --verbose --print-fingerprints`
 
 ### Attempted fix (reverted)
 - `crates/tsz-checker/src/flow/control_flow/core.rs`
@@ -7189,16 +7189,16 @@ Narrowing facts established by predicate/equality guards must remain available t
 
 ### Verification Run (targeted)
 - `cargo nextest run -p tsz-checker test_ts2366_not_emitted_for_exhaustive_switch_without_default test_ts2454_not_emitted_for_exhaustive_switch_implicit_default_path` (pass)
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints` (unchanged)
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints` (unchanged)
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints` (unchanged)
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints` (unchanged)
 
 ## Session 2026-03-07z — follow-on campaign claim after narrowing-flow block (big3 triage, no commit)
 
 - **Status**: Narrowing-flow remains blocked on shared switch-domain acquisition; claimed follow-on campaign `big3` per queue order.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
 
 ### Campaign Classification (pre-code)
 
@@ -7226,9 +7226,9 @@ Narrowing-flow remained blocked in this run, so follow-on campaign claimed per q
 
 ### Follow-on triage status
 - Ran:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
-  - `python3 scripts/query-conformance.py --extra-code TS2345`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 - Sampled basket:
   - `coAndContraVariantInferences6.ts`
   - `genericContextualTypes1.ts`
@@ -7275,14 +7275,14 @@ BLAST RADIUS: assertion optional-chain CFA cases where false `TS2339`/`TS2345`/`
 - Targeted checker tests:
   - `cargo nextest run -p tsz-checker test_assert_optional_chain_discriminant_narrows_base_union_member test_assert_nonnull_optional_chain_narrows_base_reference test_assert_optional_chain_then_assert_nonnull_keeps_base_narrowed`
 - Targeted conformance:
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter assertionFunctionsCanNarrowByDiscriminant --verbose --print-fingerprints` → PASS (was extra `TS2339`)
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain2 --verbose --print-fingerprints` → PASS
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain3 --verbose --print-fingerprints` → PASS
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints` → still failing (large TS18048/TS18047 fingerprint lane; separate root cause)
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter assertionFunctionsCanNarrowByDiscriminant --verbose --print-fingerprints` → PASS (was extra `TS2339`)
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain2 --verbose --print-fingerprints` → PASS
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain3 --verbose --print-fingerprints` → PASS
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints` → still failing (large TS18048/TS18047 fingerprint lane; separate root cause)
 
 ### Snapshot
 - Ran full snapshot after fix:
-  - `./scripts/conformance.sh snapshot`
+  - `./scripts/conformance/conformance.sh snapshot`
 - Result: **10,126 / 12,581 (80.5%)**
 - Net from this lane: +1 passing test with no targeted regressions observed.
 
@@ -7357,9 +7357,9 @@ SPECIFIC GAP INVESTIGATED:
 
 - **Status**: Narrowing-flow lane above remained blocked (no targeted basket movement), so follow-on campaign claimed: **big3**.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
-  - `python3 scripts/query-conformance.py --extra-code TS2345`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 
 ### Representative basket sampled
 - `arrayToLocaleStringES2015.ts`
@@ -7432,7 +7432,7 @@ FIX BELONGS IN:
   - `./.target/dist-fast/tsz-conformance --filter contextuallyTypedOptionalProperty --verbose --print-fingerprints` → still missing `TS18048`
 
 ### Snapshot
-- Ran: `./scripts/conformance.sh snapshot`
+- Ran: `./scripts/conformance/conformance.sh snapshot`
 - Result: **10,118 / 12,581 (80.4%)**
 - Representative movement: `callChainInference.ts` now PASS; adjacent TS18047/TS18048 optional-chain/nullish lanes remain open.
 
@@ -7537,9 +7537,9 @@ STATUS: no conformance-affecting code change committed in this session.
 
 - **Status**: Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed: **big3**.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
-  - `python3 scripts/query-conformance.py --extra-code TS2345`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 
 ### Representative basket sampled
 - `contextualTypeTupleEnd.ts`
@@ -7562,9 +7562,9 @@ Big3 call-family parity is still drifting in call resolution reporting order: ts
 
 - **Status**: Narrowing-flow remained blocked (no targeted basket movement), so follow-on campaign claimed: **big3**.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
-  - `python3 scripts/query-conformance.py --extra-code TS2345`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 
 ### Representative basket sampled
 - `arrayToLocaleStringES2020.ts`
@@ -7694,9 +7694,9 @@ STATUS: narrowing-flow remained blocked in this run (no representative basket mo
 
 - **Status**: Narrowing-flow above remained blocked, so follow-on campaign claimed per queue: **big3**.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
-  - `python3 scripts/query-conformance.py --campaign big3`
-  - `python3 scripts/query-conformance.py --extra-code TS2345`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --campaign big3`
+  - `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 
 ### Representative basket sampled
 - `arrayConcatMap.ts`
@@ -7746,9 +7746,9 @@ FIX ATTEMPTED IN (reverted):
 TARGETED VALIDATION RUNS:
 - `cargo nextest run -p tsz-checker test_object_rest_keeps_index_signature_under_no_unchecked_indexed_access`
 - `cargo nextest run -p tsz-solver test_contextual_optional_parameter_includes_undefined`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter noUncheckedIndexedAccessDestructuring.ts --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter destructureTupleWithVariableElement.ts --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedOptionalProperty.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter noUncheckedIndexedAccessDestructuring.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter destructureTupleWithVariableElement.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter contextuallyTypedOptionalProperty.ts --verbose --print-fingerprints`
 
 RESULT:
 - Unit-level behavior improved for the isolated probes, but representative conformance basket showed **no movement**.
@@ -7783,12 +7783,12 @@ Narrowing-flow remained blocked in this run (no representative basket movement),
 Big3 call-family drift is still centered on top-level call-site compatibility (`TS2345`) being emitted where tsc either accepts the call or reports deeper nested/member-level incompatibility (`TS2322`), indicating mismatch in call-resolution/diagnostic routing after inference.
 
 ### What was verified
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `python3 scripts/query-conformance.py --extra-code TS2345`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter arrayToLocaleStringES2020.ts --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter coAndContraVariantInferences6.ts --verbose --print-fingerprints`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter contextuallyTypedSymbolNamedProperties.ts --verbose --print-fingerprints`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter arrayToLocaleStringES2020.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter coAndContraVariantInferences6.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter contextuallyTypedSymbolNamedProperties.ts --verbose --print-fingerprints`
 
 ### Key diffs observed
 - `arrayToLocaleStringES2020.ts`: extra `TS2345` remains (error-code mismatch, no fingerprint output).
@@ -7842,10 +7842,10 @@ ATTEMPTED FIXES (all reverted due no basket movement):
 VALIDATION RUNS:
 - `cargo nextest run -p tsz-checker test_optional_chain_not_undefined_narrows_to_object test_optional_chain_truthiness_does_not_over_narrow_false_branch`
 - `cargo nextest run -p tsz-checker test_ts2454_optional_chain_rhs_assignment_not_definite`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints --max 20`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowGenericTypes.ts --verbose --print-fingerprints --max 20`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints --max 20`
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowOptionalChain.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowGenericTypes.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter exhaustiveSwitchStatements1.ts --verbose --print-fingerprints --max 20`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints --max 20`
 
 RESULT:
 - Representative basket unchanged.
@@ -7873,9 +7873,9 @@ STATUS: no conformance-affecting code change committed in this session.
 - **Status**: Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed per queue: **big3**.
 
 ### Campaign queries run
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `python3 scripts/query-conformance.py --extra-code TS2345`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --extra-code TS2345`
 
 ### Quick triage result
 - Big3 still dominated by missing-code families (`TS2322`/`TS2339`/`TS2345`) in snapshot campaign output.
@@ -8061,10 +8061,10 @@ SHARED INVARIANT: switch-flow transport must carry discriminant-domain exclusion
   - PASS (all 4 tests).
 - Rebuilt conformance binary: `cargo build --profile dist-fast -p tsz-conformance`
 - Targeted conformance re-run (unchanged):
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter exhaustiveSwitchStatements1 --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter assignmentTypeNarrowing --verbose --print-fingerprints`
-  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowAliasedDiscriminants --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter exhaustiveSwitchStatements1 --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter assignmentTypeNarrowing --verbose --print-fingerprints`
+  - `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowAliasedDiscriminants --verbose --print-fingerprints`
 
 ### Result / why blocked
 - No representative-basket movement after targeted validation.
@@ -8091,9 +8091,9 @@ SHARED INVARIANT: switch-flow transport must carry discriminant-domain exclusion
 - **Status**: Narrowing-flow remained blocked in this run (no representative basket movement), so follow-on campaign claimed per queue: **big3**.
 
 ### Campaign queries run
-- `./scripts/conformance.sh analyze --campaign big3`
-- `python3 scripts/query-conformance.py --campaign big3`
-- `python3 scripts/query-conformance.py --one-extra`
+- `./scripts/conformance/conformance.sh analyze --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --campaign big3`
+- `python3 scripts/conformance/query-conformance.py --one-extra`
 
 ### Representative basket sampled
 - `TypeScript/tests/cases/compiler/arrayToLocaleStringES2015.ts`
@@ -8270,7 +8270,7 @@ STATUS: narrowing-flow remained blocked in this run (no representative basket mo
 
 - **Status**: Narrowing-flow above remained blocked, so follow-on campaign claimed per queue: **big3**.
 - **Campaign query**:
-  - `./scripts/conformance.sh analyze --campaign big3`
+  - `./scripts/conformance/conformance.sh analyze --campaign big3`
 
 ## Session 2026-03-08d — narrowing-flow assignment/switch transport probe (investigation only, reverted)
 
@@ -8353,11 +8353,11 @@ WHAT WAS TRIED (reverted due no conformance movement):
 - Local unit tests passed after adjustment, but targeted conformance basket remained unchanged.
 
 TARGETED VALIDATION (after rebuild):
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowByClauseExpressionInSwitchTrue3.ts --verbose --print-fingerprints`
   - Unchanged: missing TS2367 at `test.ts:13:9` and `test.ts:16:14`.
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
   - Unchanged: extra `TS2322`, `TS2345`.
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
   - Unchanged: extra `TS2322`, `TS2339`, `TS7053`.
 
 TSC DIFFERENCE (still present):
@@ -8525,13 +8525,13 @@ WHAT WAS TRIED (reverted due no conformance movement):
 - Unit test passed locally under `cargo nextest run -p tsz-checker definite_assignment_tests::test_nested_destructured_alias_does_not_correlate_with_top_level_discriminant`.
 
 TARGETED VALIDATION (after rebuilding `dist-fast`):
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter controlFlowAliasedDiscriminants.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter controlFlowAliasedDiscriminants.ts --verbose --print-fingerprints`
   - unchanged: missing TS1360 at `test.ts:87:14` and `test.ts:99:19`.
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter assignmentTypeNarrowing.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter assignmentTypeNarrowing.ts --verbose --print-fingerprints`
   - unchanged: extra TS2339 (`arr.push`).
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter typeGuardNarrowsIndexedAccessOfKnownProperty1.ts --verbose --print-fingerprints`
   - unchanged: extra TS2322/TS2339/TS7053.
-- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
+- `./.target/dist-fast/tsz-conformance --cache-file ./scripts/conformance/tsc-cache-full.json --filter narrowingByTypeofInSwitch.ts --verbose --print-fingerprints`
   - unchanged: extra TS2322/TS2345.
 
 TSC DIFFERENCE (still present):

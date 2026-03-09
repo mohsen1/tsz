@@ -110,7 +110,7 @@ JSON
   echo "Benchmarks: generating quick benchmark data..."
   (
     cd "$ROOT"
-    ./scripts/bench-vs-tsgo.sh --quick --json --json-file "$BENCH_JSON"
+    ./scripts/bench/bench-vs-tsgo.sh --quick --json --json-file "$BENCH_JSON"
   ) || {
     echo "Benchmarks: quick generation failed; writing sample benchmark dataset for local preview."
     cat > "$BENCH_JSON" <<'JSON'

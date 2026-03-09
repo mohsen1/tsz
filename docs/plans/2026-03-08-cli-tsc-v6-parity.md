@@ -20,13 +20,13 @@
 - Modify: `crates/tsz-cli/Cargo.toml` (if build.rs needed)
 - Test: `crates/tsz-cli/tests/tsc_compat_tests.rs`
 
-**Goal:** `tsz --version` prints `Version 6.0.0-dev.20260306` (matching pinned TS version from `scripts/typescript-versions.json`).
+**Goal:** `tsz --version` prints `Version 6.0.0-dev.20260306` (matching pinned TS version from `scripts/conformance/typescript-versions.json`).
 
 **Step 1:** In `args.rs`, remove clap's `#[command(version)]` attribute or override it. The version string should come from the pinned TypeScript version, not Cargo.toml.
 
 **Step 2:** In `preprocess_args()` in `tsz.rs`, intercept `--version` and `-v` (and `-V`) before clap processes them. Print `Version {pinned_version}\n` to stdout and exit 0.
 
-**Step 3:** The pinned version should be read from `scripts/typescript-versions.json` at build time via a `build.rs` that sets a `TSZ_TSC_VERSION` env var, or hardcoded as a const that's updated when the pin changes.
+**Step 3:** The pinned version should be read from `scripts/conformance/typescript-versions.json` at build time via a `build.rs` that sets a `TSZ_TSC_VERSION` env var, or hardcoded as a const that's updated when the pin changes.
 
 **Step 4:** Add/update test in `tsc_compat_tests.rs`:
 ```rust

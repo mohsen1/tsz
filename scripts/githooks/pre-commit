@@ -395,7 +395,7 @@ echo "  Tests passed"
 #     echo "5/5 Microbenchmark check skipped (conformance-relevant crates unchanged)"
 # else
 #     echo "5/5 Microbenchmark regression check..."
-#     BENCH_CMD="$ROOT_DIR/scripts/precommit-microbench.sh"
+#     BENCH_CMD="$ROOT_DIR/scripts/bench/precommit-microbench.sh"
 #     BENCH_ARGS=""
 #     if [ "${TSZ_BENCH_UPDATE_BASELINE:-}" = "1" ]; then
 #         BENCH_ARGS="--update-baseline"
@@ -423,4 +423,4 @@ echo "All pre-commit checks passed!"
 touch "$ROOT_DIR/.git/pre-commit-ok" 2>/dev/null || true
 
 # NOTE: Conformance regression check was removed from pre-commit (too slow).
-# Run manually when needed: ./scripts/conformance.sh run
+# Run manually when needed: ./scripts/conformance/conformance.sh run

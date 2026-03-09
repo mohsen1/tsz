@@ -6,17 +6,17 @@
 # and consistently while preserving compatibility with bench-vs-tsgo output.
 #
 # Usage:
-#   ./scripts/perf-hotspots.sh
-#   ./scripts/perf-hotspots.sh --quick
-#   ./scripts/perf-hotspots.sh --rebuild
-#   ./scripts/perf-hotspots.sh --json-file artifacts/perf/hotspots-baseline.json
-#   ./scripts/perf-hotspots.sh --filter 'BCT candidates|Constraint conflicts'
+#   ./scripts/bench/perf-hotspots.sh
+#   ./scripts/bench/perf-hotspots.sh --quick
+#   ./scripts/bench/perf-hotspots.sh --rebuild
+#   ./scripts/bench/perf-hotspots.sh --json-file artifacts/perf/hotspots-baseline.json
+#   ./scripts/bench/perf-hotspots.sh --filter 'BCT candidates|Constraint conflicts'
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench-vs-tsgo.sh"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench/bench-vs-tsgo.sh"
 
 DEFAULT_FILTER='^(BCT candidates=50|BCT candidates=100|BCT candidates=200|Constraint conflicts N=50|Constraint conflicts N=100|Constraint conflicts N=200|CFA branches=50|CFA branches=100|CFA branches=150)$'
 FILTER="$DEFAULT_FILTER"
@@ -27,7 +27,7 @@ EXTRA_ARGS=()
 
 usage() {
     cat <<'USAGE'
-Usage: ./scripts/perf-hotspots.sh [OPTIONS] [-- <extra bench-vs-tsgo args>]
+Usage: ./scripts/bench/perf-hotspots.sh [OPTIONS] [-- <extra bench-vs-tsgo args>]
 
 Options:
   --quick            Use quick mode for faster iteration
@@ -37,7 +37,7 @@ Options:
   --help             Show this help
 
 Notes:
-  - This script delegates execution to scripts/bench-vs-tsgo.sh.
+  - This script delegates execution to scripts/bench/bench-vs-tsgo.sh.
   - JSON output is always enabled.
 USAGE
 }

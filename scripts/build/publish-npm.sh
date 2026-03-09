@@ -2,13 +2,13 @@
 # Publish @mohsen-azimi/tsz-dev to npm.
 #
 # Usage:
-#   ./scripts/publish-npm.sh            # publish (requires `npm login` first)
-#   ./scripts/publish-npm.sh --dry-run  # verify tarball contents without publishing
+#   ./scripts/build/publish-npm.sh            # publish (requires `npm login` first)
+#   ./scripts/build/publish-npm.sh --dry-run  # verify tarball contents without publishing
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PKG="$PROJECT_ROOT/pkg"
 
 DRY_RUN=0

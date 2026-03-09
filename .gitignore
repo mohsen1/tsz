@@ -95,7 +95,7 @@ scripts/conformance/.tsc-cache
 
 # TSC conformance cache files (ignore generated, keep the committed one)
 tsc-cache*.json
-!scripts/tsc-cache-full.json
+!scripts/conformance/tsc-cache-full.json
 
 # Debug tests
 tests/debug/
@@ -104,7 +104,7 @@ tests/debug/
 .conformance-value
 
 # Conformance last-run (ephemeral, regenerated each run)
-scripts/conformance-last-run.txt
+scripts/conformance/conformance-last-run.txt
 
 # Benchmark and conformance temp files
 scripts/conformance/dist
@@ -122,7 +122,7 @@ session.sh
 # Gemini fleet manager marker
 /.gemini-fleet-manager
 
-# npm packages and editor extensions (assembled by scripts/build-npm-packages.sh)
+# npm packages and editor extensions (assembled by scripts/build/build-npm-packages.sh)
 npm/
 editors/
 

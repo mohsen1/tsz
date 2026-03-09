@@ -1,15 +1,15 @@
 #!/bin/bash
 # Conformance Test Runner
-# Usage: ./scripts/conformance.sh [generate|run|all] [options]
+# Usage: ./scripts/conformance/conformance.sh [generate|run|all] [options]
 
 set -e
 
 # Get the repository root directory
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Default values (relative to repo root)
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
-CACHE_FILE="$REPO_ROOT/scripts/tsc-cache-full.json"
+CACHE_FILE="$REPO_ROOT/scripts/conformance/tsc-cache-full.json"
 
 # Build profile (dist-fast = fast build + good runtime perf)
 BUILD_PROFILE="dist-fast"
@@ -30,7 +30,7 @@ print_help() {
     cat << EOF
 ${YELLOW}TSZ Conformance Test Runner${NC}
 
-Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
+Usage: ./scripts/conformance/conformance.sh [COMMAND] [OPTIONS]
 
 Commands:
   generate    Generate TSC cache locally (if not checked in)
@@ -40,8 +40,8 @@ Commands:
   diff        Show regressions/improvements vs last snapshot baseline
   all         Generate cache (if needed) and run tests (default)
   snapshot    Run tests + analyze + areas, save structured results to
-              scripts/conformance-snapshot.json, per-test detail to
-              scripts/conformance-detail.json, and per-test baseline
+              scripts/conformance/conformance-snapshot.json, per-test detail to
+              scripts/conformance/conformance-detail.json, and per-test baseline
   clean       Remove cache file
 
 Run options:
@@ -73,18 +73,18 @@ Areas options:
   --drilldown AREA  Drill into a specific area (e.g., "types", "statements")
 
 Examples:
-  ./scripts/conformance.sh run --max 100              # Quick smoke test
-  ./scripts/conformance.sh run --max 20 --verbose     # Verbose with file bodies
-  ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
-  ./scripts/conformance.sh analyze                    # Offline strategy overview
-  ./scripts/conformance.sh analyze --campaigns        # Ranked root-cause campaigns
-  ./scripts/conformance.sh analyze --campaign big3    # Deep dive one campaign
-  ./scripts/conformance.sh areas --depth 2            # Sub-area breakdown
+  ./scripts/conformance/conformance.sh run --max 100              # Quick smoke test
+  ./scripts/conformance/conformance.sh run --max 20 --verbose     # Verbose with file bodies
+  ./scripts/conformance/conformance.sh run --filter "strict"      # Run tests matching "strict"
+  ./scripts/conformance/conformance.sh analyze                    # Offline strategy overview
+  ./scripts/conformance/conformance.sh analyze --campaigns        # Ranked root-cause campaigns
+  ./scripts/conformance/conformance.sh analyze --campaign big3    # Deep dive one campaign
+  ./scripts/conformance/conformance.sh areas --depth 2            # Sub-area breakdown
 
 Note: Fingerprint comparison (code + location + message) is always enabled.
       Binaries are automatically built if not found.
-      Cache: scripts/tsc-cache-full.json
-      Offline analysis reads scripts/conformance-detail.json from the last snapshot.
+      Cache: scripts/conformance/tsc-cache-full.json
+      Offline analysis reads scripts/conformance/conformance-detail.json from the last snapshot.
 EOF
 }
 
@@ -262,13 +262,13 @@ ensure_cache() {
     fi
 
     local pinned_version=""
-    if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"; then
-        echo -e "${YELLOW}Failed to read pinned TypeScript version from scripts/typescript-versions.json${NC}"
+    if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/conformance/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"; then
+        echo -e "${YELLOW}Failed to read pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}"
         echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
         return
     fi
     if [ -z "$pinned_version" ]; then
-        echo -e "${YELLOW}Could not resolve pinned TypeScript version from scripts/typescript-versions.json${NC}"
+        echo -e "${YELLOW}Could not resolve pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}"
         echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
         return
     fi
@@ -384,7 +384,7 @@ run_tests() {
 
     # Always capture per-test results for diffing against baseline.
     # Use --print-test and tee to both show output and save results.
-    local last_run="$REPO_ROOT/scripts/conformance-last-run.txt"
+    local last_run="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
     local tmpout
     tmpout=$(mktemp)
 
@@ -399,11 +399,11 @@ run_tests() {
         "${extra_args[@]}" 2>/dev/null | tee "$tmpout" || true
 
     # Extract sorted PASS/FAIL lines with expected/actual codes for diffing
-    python3 "$REPO_ROOT/scripts/extract-baseline.py" "$tmpout" > "$last_run" 2>/dev/null || true
+    python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpout" > "$last_run" 2>/dev/null || true
     rm -f "$tmpout"
 
     # Auto-diff against baseline if it exists and this was an unfiltered run
-    local baseline="$REPO_ROOT/scripts/conformance-baseline.txt"
+    local baseline="$REPO_ROOT/scripts/conformance/conformance-baseline.txt"
     local has_filter=false
     for arg in "${extra_args[@]}"; do
         if [[ "$arg" == "--filter" ]] || [[ "$arg" == --filter=* ]]; then
@@ -420,12 +420,12 @@ run_tests() {
 
 analyze_tests() {
     echo -e "${GREEN}Analyzing saved conformance snapshot...${NC}"
-    echo "Source: scripts/conformance-detail.json"
+    echo "Source: scripts/conformance/conformance-detail.json"
     echo "Method: root-cause campaigns first, quick wins second"
     echo ""
 
     cd "$REPO_ROOT"
-    python3 "$REPO_ROOT/scripts/query-conformance.py" "$@"
+    python3 "$REPO_ROOT/scripts/conformance/query-conformance.py" "$@"
 }
 
 areas_analysis() {
@@ -476,7 +476,7 @@ areas_analysis() {
         "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
 
     # Use python to analyze by area
-    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" \
+    python3 "$REPO_ROOT/scripts/conformance/analyze-conformance-areas.py" "$tmpfile" \
         ${depth:+--depth "$depth"} \
         ${min_tests:+--min-tests "$min_tests"} \
         ${drilldown:+--drilldown "$drilldown"}
@@ -556,10 +556,10 @@ check_submodule_clean() {
     expected_sha=$(cd "$REPO_ROOT" && git ls-tree HEAD TypeScript 2>/dev/null | awk '{print $3}')
 
     # Prefer repository pinned TypeScript SHA so local workflow can proceed with
-    # the intended submodule version tracked in scripts/typescript-versions.json
+    # the intended submodule version tracked in scripts/conformance/typescript-versions.json
     # even before the superproject commit is updated.
     local pinned_sha
-    pinned_sha=$(node -e "const fs = require('fs'); const p = 'scripts/typescript-versions.json'; try { const v = JSON.parse(fs.readFileSync(p, 'utf8')); process.stdout.write(v.current || ''); } catch {}" | tr -d '\n')
+    pinned_sha=$(node -e "const fs = require('fs'); const p = 'scripts/conformance/typescript-versions.json'; try { const v = JSON.parse(fs.readFileSync(p, 'utf8')); process.stdout.write(v.current || ''); } catch {}" | tr -d '\n')
     if [ -n "$pinned_sha" ]; then
         expected_sha="$pinned_sha"
     fi
@@ -584,7 +584,7 @@ check_submodule_clean() {
 }
 
 snapshot_tests() {
-    local snapshot_file="$REPO_ROOT/scripts/conformance-snapshot.json"
+    local snapshot_file="$REPO_ROOT/scripts/conformance/conformance-snapshot.json"
     local git_sha
     git_sha="$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo 'unknown')"
 
@@ -669,20 +669,20 @@ print(f'{prev - curr:.1f}')
     fi
 
     # 3) Build per-test detail snapshot (compact JSON with all failure data)
-    local detail_file="$REPO_ROOT/scripts/conformance-detail.json"
-    python3 "$REPO_ROOT/scripts/build-snapshot-detail.py" "$tmpfile" \
+    local detail_file="$REPO_ROOT/scripts/conformance/conformance-detail.json"
+    python3 "$REPO_ROOT/scripts/conformance/build-snapshot-detail.py" "$tmpfile" \
         --output "$detail_file" || true
 
     # 4) Run analyze with JSON output
     local analyze_json
     analyze_json=$(mktemp)
-    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" \
+    python3 "$REPO_ROOT/scripts/conformance/analyze-conformance.py" "$tmpfile" \
         --json-output "$analyze_json" || true
 
     # 5) Run areas with JSON output (depth 2, min 10 tests)
     local areas_json
     areas_json=$(mktemp)
-    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" \
+    python3 "$REPO_ROOT/scripts/conformance/analyze-conformance-areas.py" "$tmpfile" \
         --depth 2 --min-tests 10 --json-output "$areas_json" || true
 
     # 6) Assemble snapshot JSON (all data passed as arguments, not interpolated)
@@ -746,15 +746,15 @@ print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
     python3 -m json.tool "$snapshot_file" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
 
     # 6) Save per-test baseline for regression diffing (with expected/actual codes)
-    local baseline_file="$REPO_ROOT/scripts/conformance-baseline.txt"
-    python3 "$REPO_ROOT/scripts/extract-baseline.py" "$tmpfile" > "$baseline_file" 2>/dev/null || true
+    local baseline_file="$REPO_ROOT/scripts/conformance/conformance-baseline.txt"
+    python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpfile" > "$baseline_file" 2>/dev/null || true
     local baseline_count
     baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
     echo -e "${GREEN}Baseline saved: $baseline_file ($baseline_count tests)${NC}"
 
     echo -e "${GREEN}Detail written to: $detail_file${NC}"
     echo -e "${GREEN}Snapshot written to: $snapshot_file${NC}"
-    echo -e "${GREEN}Query offline: python3 scripts/query-conformance.py${NC}"
+    echo -e "${GREEN}Query offline: python3 scripts/conformance/query-conformance.py${NC}"
 }
 
 # Parse arguments
@@ -833,14 +833,14 @@ case "$COMMAND" in
         ;;
     diff)
         # Diff last run against baseline (no need to re-run tests)
-        baseline="$REPO_ROOT/scripts/conformance-baseline.txt"
-        last_run="$REPO_ROOT/scripts/conformance-last-run.txt"
+        baseline="$REPO_ROOT/scripts/conformance/conformance-baseline.txt"
+        last_run="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
         if [ ! -f "$baseline" ]; then
-            echo "No baseline found. Run './scripts/conformance.sh snapshot' first."
+            echo "No baseline found. Run './scripts/conformance/conformance.sh snapshot' first."
             exit 1
         fi
         if [ ! -f "$last_run" ]; then
-            echo "No last-run results. Run './scripts/conformance.sh run' first."
+            echo "No last-run results. Run './scripts/conformance/conformance.sh run' first."
             exit 1
         fi
         diff_results "$baseline" "$last_run"

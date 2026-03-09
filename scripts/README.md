@@ -1,68 +1,70 @@
 # Scripts
 
-Testing and build scripts for Project Zang.
+Testing, build, and development scripts for tsz.
 
-## Quick Start
+## Directory Structure
 
-```bash
-# Show all available commands
-node scripts/help.mjs
-
-# Run unit tests
-./scripts/test.sh
-
-# Run conformance tests (500 tests)
-./scripts/conformance/run.sh
-
-# Run with options
-./scripts/conformance/run.sh --max=100           # Fewer tests
-./scripts/conformance/run.sh --all               # All tests
-./scripts/conformance/run.sh --verbose           # Detailed output
-./scripts/conformance/run.sh --category=compiler # Compiler tests only
+```
+scripts/
+  conformance/     # Conformance testing, analysis, and data
+  bench/           # Benchmarking and performance
+  build/           # Build, WASM, and publishing
+  ci/              # CI-specific scripts
+  emit/            # Emit test harness (JS + DTS output)
+  fourslash/       # Language service fourslash tests
+  githooks/        # Git hooks (pre-commit, pre-push, etc.)
+  tests/           # Tests for scripts (e.g. arch_guard)
 ```
 
-## Scripts
+## Key Scripts
 
+### Conformance Testing
 | Script | Purpose |
 |--------|---------|
-| `scripts/conformance/run.sh` | Run type checker conformance tests |
+| `scripts/conformance/conformance.sh` | Run type checker conformance tests |
+| `scripts/conformance/query-conformance.py` | Offline conformance analysis and querying |
+| `scripts/conformance/conformance-snapshot.json` | Snapshot aggregates (offline analysis) |
+| `scripts/conformance/conformance-detail.json` | Per-test failure data (offline analysis) |
+| `scripts/conformance/tsc-cache-full.json` | TSC expected diagnostics cache |
+
+### Emit & Fourslash
+| Script | Purpose |
+|--------|---------|
 | `scripts/emit/run.sh` | Run emit tests (JS + declaration output) |
 | `scripts/run-fourslash.sh` | Run language service fourslash tests |
-| `scripts/test.sh` | Run Rust unit tests |
-| `scripts/bench.sh` | Run benchmarks |
-| `scripts/precommit-microbench.sh` | Fast local microbenchmark regression gate |
-| `scripts/build-wasm.sh` | Build WASM module |
+
+### Benchmarking
+| Script | Purpose |
+|--------|---------|
+| `scripts/bench/bench-vs-tsgo.sh` | Comparative benchmark (tsz vs tsgo) |
+| `scripts/bench/perf-hotspots.sh` | Targeted hotspot profiling |
+| `scripts/bench/precommit-microbench.sh` | Pre-commit regression gate |
+| `scripts/ci/bench-compare.sh` | PR benchmark comparison (CI) |
+
+### Build & Publishing
+| Script | Purpose |
+|--------|---------|
+| `scripts/build/build-wasm.sh` | Build WASM module |
+| `scripts/build/build-npm-packages.sh` | Assemble npm packages |
+| `scripts/build/publish-crates.sh` | Publish to crates.io |
+| `scripts/build/publish-npm.sh` | Publish to npm |
+
+### Architecture & Linting
+| Script | Purpose |
+|--------|---------|
+| `scripts/arch_guard.py` | Architecture boundary violation detection |
+| `scripts/check-checker-boundaries.sh` | Checker boundary enforcement |
+
+### Setup & Maintenance
+| Script | Purpose |
+|--------|---------|
 | `scripts/setup.sh` | One-stop setup (submodule, deps, hooks) |
-| `scripts/run-single-test.mjs` | Debug single file (host) |
-| `scripts/validate-wasm.mjs` | Validate WASM loads |
-| `scripts/help.mjs` | Show all commands |
-| `scripts/arch_guard.py` | Run architecture boundary checks used by CI |
-| `scripts/arch_guard.py --json-report <path>` | Run architecture checks and emit machine-readable report JSON |
+| `scripts/clean.sh` | Build artifact cleanup |
+| `scripts/reset-ts-submodule.sh` | Reset TypeScript submodule to pinned SHA |
 
-## Loop Runners
-
-Use these for continuous agent-driven improvement loops:
-
-```bash
-# Codex
-./scripts/codex-loop.sh --conformance --session 1
-
-# Gemini
-./scripts/gemini-loop.sh --conformance --session 1
-
-# Claude (supports aliases/functions via --claude-command)
-./scripts/claude-loop.sh --conformance --session 1 --claude-command "my-claude-alias"
-```
-
-Loop logs are separated by provider under:
-
-- `logs/loops/codex/`
-- `logs/loops/gemini/`
-- `logs/loops/claude/`
-
-## Resource Protection
-
-Test and benchmark scripts apply resource limits to protect the host:
-- **Memory**: 8GB default via ulimit (configurable with `TSZ_MAX_RSS_MB`)
-- **Timeout**: 300s for tests, 600s for benchmarks
-- **Per-test timeout**: Configured in `.config/nextest.toml` profiles
+### Other
+| Script | Purpose |
+|--------|---------|
+| `scripts/gen_diagnostics.mjs` | Generate diagnostic code data |
+| `scripts/start-website.sh` | Local website preview |
+| `scripts/ask-gemini.mjs` | LLM integration helper |
