@@ -52,10 +52,10 @@ fn test_format_object_type() {
 
     let formatted = formatter.format(obj);
     assert!(formatted.contains("x: number"));
-    // Optional properties display without `| undefined` — the `?` already implies optionality
+    // tsc displays optional object properties WITH `| undefined`
     assert!(
-        formatted.contains("y?: string;"),
-        "Expected 'y?: string;', got: {formatted}"
+        formatted.contains("y?: string | undefined;"),
+        "Expected 'y?: string | undefined;', got: {formatted}"
     );
 }
 
@@ -537,8 +537,8 @@ fn test_optional_property_shows_undefined() {
 
     let formatted = formatter.format(obj);
     assert_eq!(
-        formatted, "{ x: number; y?: string; }",
-        "Optional properties should NOT include '| undefined' in display"
+        formatted, "{ x: number; y?: string | undefined; }",
+        "tsc displays optional object properties WITH '| undefined'"
     );
 }
 
@@ -557,8 +557,8 @@ fn test_optional_property_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(obj);
     assert_eq!(
-        formatted, "{ val?: string; }",
-        "Should strip '| undefined' when property is optional (? implies it)"
+        formatted, "{ val?: string | undefined; }",
+        "tsc keeps '| undefined' for optional object properties"
     );
 }
 
