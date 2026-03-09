@@ -63,6 +63,38 @@ impl Diagnostic {
         }
     }
 
+    /// Create a diagnostic by looking up the message template and category from
+    /// the diagnostic code. The template's `{0}`, `{1}`, ... placeholders are
+    /// replaced with the provided `args`.
+    ///
+    /// Panics (debug) if the code is not found in the generated diagnostic table.
+    pub fn from_code(
+        code: u32,
+        file: impl Into<String>,
+        start: u32,
+        length: u32,
+        args: &[&str],
+    ) -> Self {
+        let info = lookup_diagnostic(code).unwrap_or(DiagnosticMessage {
+            code,
+            category: DiagnosticCategory::Error,
+            message: "Unknown diagnostic",
+        });
+        debug_assert!(
+            lookup_diagnostic(code).is_some(),
+            "diagnostic code {code} not found in generated table"
+        );
+        Self {
+            category: info.category,
+            code,
+            file: file.into(),
+            start,
+            length,
+            message_text: format_message(info.message, args),
+            related_information: Vec::new(),
+        }
+    }
+
     pub fn with_related(
         mut self,
         file: impl Into<String>,
@@ -82,12 +114,18 @@ impl Diagnostic {
     }
 }
 
-pub fn get_message_template(code: u32) -> Option<&'static str> {
+/// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
+/// Uses binary search over the sorted generated table — O(log n).
+pub fn lookup_diagnostic(code: u32) -> Option<DiagnosticMessage> {
     use self::data::DIAGNOSTIC_MESSAGES;
     DIAGNOSTIC_MESSAGES
-        .iter()
-        .find(|m| m.code == code)
-        .map(|m| m.message)
+        .binary_search_by_key(&code, |m| m.code)
+        .ok()
+        .map(|idx| DIAGNOSTIC_MESSAGES[idx])
+}
+
+pub fn get_message_template(code: u32) -> Option<&'static str> {
+    lookup_diagnostic(code).map(|m| m.message)
 }
 
 pub fn format_message(message: &str, args: &[&str]) -> String {
