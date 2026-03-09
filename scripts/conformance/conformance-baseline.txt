@@ -11,7 +11,7 @@ FAIL TypeScript/tests/cases/compiler/arrayBestCommonTypes.ts | expected:[TS2322,
 FAIL TypeScript/tests/cases/compiler/arrayCast.ts | expected:[TS2352] actual:[TS2352]
 FAIL TypeScript/tests/cases/compiler/arrayConcatMap.ts | expected:[TS2339,TS2769] actual:[TS2322,TS7006]
 FAIL TypeScript/tests/cases/compiler/arrayDestructuringInSwitch1.ts | expected:[] actual:[TS2488]
-FAIL TypeScript/tests/cases/compiler/arrayFakeFlatNoCrashInferenceDeclarations.ts | expected:[TS5088] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/arrayFakeFlatNoCrashInferenceDeclarations.ts | expected:[TS5088] actual:[]
 FAIL TypeScript/tests/cases/compiler/arraySigChecking.ts | expected:[TS1268,TS2322] actual:[TS1268,TS2322]
 FAIL TypeScript/tests/cases/compiler/arrowFunctionsMissingTokens.ts | expected:[TS1005,TS1109,TS1128] actual:[TS1005,TS1109,TS1128]
 FAIL TypeScript/tests/cases/compiler/assertionFunctionWildcardImport1.ts | expected:[] actual:[TS2339]
@@ -34,11 +34,10 @@ FAIL TypeScript/tests/cases/compiler/badInferenceLowerPriorityThanGoodInference.
 FAIL TypeScript/tests/cases/compiler/baseClassImprovedMismatchErrors.ts | expected:[TS2416,TS2564] actual:[TS2416,TS2564]
 FAIL TypeScript/tests/cases/compiler/bestChoiceType.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/betterErrorForUnionCall.ts | expected:[TS2349] actual:[TS2349]
-FAIL TypeScript/tests/cases/compiler/bindingPatternCannotBeOnlyInferenceSource.ts | expected:[TS2339,TS2488,TS2571] actual:[TS2344,TS2556,TS7019]
+FAIL TypeScript/tests/cases/compiler/bindingPatternCannotBeOnlyInferenceSource.ts | expected:[TS2339,TS2488,TS2571] actual:[TS2556,TS7019]
 FAIL TypeScript/tests/cases/compiler/bluebirdStaticThis.ts | expected:[TS2420,TS2694] actual:[TS2345,TS2420,TS2694]
 FAIL TypeScript/tests/cases/compiler/builtinIterator.ts | expected:[TS2322,TS2345,TS2416,TS2511,TS2515] actual:[TS2339,TS2416,TS2511,TS2769,TS7006]
 FAIL TypeScript/tests/cases/compiler/cachedContextualTypes.ts | expected:[] actual:[TS7006]
-FAIL TypeScript/tests/cases/compiler/callOfConditionalTypeWithConcreteBranches.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/capturedLetConstInLoop8.ts | expected:[TS2367] actual:[TS2367]
 FAIL TypeScript/tests/cases/compiler/capturedLetConstInLoop8_ES6.ts | expected:[TS2367] actual:[TS2367]
 FAIL TypeScript/tests/cases/compiler/caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts | expected:[] actual:[TS2352]
@@ -49,6 +48,7 @@ FAIL TypeScript/tests/cases/compiler/checkSuperCallBeforeThisAccess.ts | expecte
 FAIL TypeScript/tests/cases/compiler/checkerInitializationCrash.ts | expected:[TS2300] actual:[]
 FAIL TypeScript/tests/cases/compiler/checkingObjectWithThisInNamePositionNoCrash.ts | expected:[TS2339,TS7023] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/circularAccessorAnnotations.ts | expected:[TS2502] actual:[TS2502]
+FAIL TypeScript/tests/cases/compiler/circularBaseConstraint.ts | expected:[TS2304] actual:[TS2304,TS2536]
 FAIL TypeScript/tests/cases/compiler/circularInlineMappedGenericTupleTypeNoCrash.ts | expected:[TS2589] actual:[TS2345,TS2488]
 FAIL TypeScript/tests/cases/compiler/circularTypeArgumentsLocalAndOuterNoCrash1.ts | expected:[TS4109] actual:[]
 FAIL TypeScript/tests/cases/compiler/circularlyConstrainedMappedTypeContainingConditionalNoInfiniteInstantiationDepth.ts | expected:[TS2344] actual:[]
@@ -71,23 +71,23 @@ FAIL TypeScript/tests/cases/compiler/cloduleWithDuplicateMember1.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts | expected:[TS2322,TS2417,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences5.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences6.ts | expected:[TS2322] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences7.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/commonJsExportTypeDeclarationError.ts | expected:[TS1005,TS1110] actual:[TS1005,TS1110]
 FAIL TypeScript/tests/cases/compiler/commonMissingSemicolons.ts | expected:[TS1003,TS1005,TS1068,TS1128,TS1359,TS1434,TS1435,TS1438,TS2427] actual:[TS1005,TS1068,TS1128,TS1435,TS1438]
 FAIL TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts | expected:[TS2339,TS2506,TS2554] actual:[TS2339,TS2506,TS2554]
-FAIL TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2344,TS2345]
+FAIL TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/complicatedIndexesOfIntersectionsAreInferencable.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1_ES6.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
 FAIL TypeScript/tests/cases/compiler/computedPropertiesNarrowed.ts | expected:[TS9010,TS9038] actual:[TS9010]
 FAIL TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/compiler/conditionalDoesntLeakUninstantiatedTypeParameter.ts | expected:[TS2322] actual:[TS2322,TS2344]
+FAIL TypeScript/tests/cases/compiler/conditionalDoesntLeakUninstantiatedTypeParameter.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/conditionalReturnExpression.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
+FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345,TS2536]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeDoesntSpinForever.ts | expected:[TS2322,TS2769] actual:[TS2322,TS2769]
-FAIL TypeScript/tests/cases/compiler/conditionalTypeSubclassExtendsTypeParam.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia3.tsx | expected:[TS1005,TS1185] actual:[TS1003,TS1005,TS1185,TS17008]
 FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia4.ts | expected:[TS1109,TS1185] actual:[TS1109,TS1185]
 FAIL TypeScript/tests/cases/compiler/conflictingDeclarationsImportFromNamespace1.ts | expected:[TS2440,TS2497,TS7023] actual:[TS2304,TS2440,TS2497,TS7023]
@@ -96,7 +96,7 @@ FAIL TypeScript/tests/cases/compiler/consistentAliasVsNonAliasRecordBehavior.ts 
 FAIL TypeScript/tests/cases/compiler/constDeclarationShadowedByVarDeclaration.ts | expected:[TS2481] actual:[TS2403,TS2451,TS2481]
 FAIL TypeScript/tests/cases/compiler/constDeclarations-invalidContexts.ts | expected:[TS1101,TS1156,TS1344,TS2410,TS5024] actual:[TS1101,TS1156,TS1344,TS2410,TS5024]
 FAIL TypeScript/tests/cases/compiler/constEnums.ts | expected:[TS2366] actual:[TS2474]
-FAIL TypeScript/tests/cases/compiler/constraintWithIndexedAccess.ts | expected:[TS2344,TS2536] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/constraintWithIndexedAccess.ts | expected:[TS2344,TS2536] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/constructorOverloads1.ts | expected:[TS2392,TS2769] actual:[TS2392,TS2769]
 FAIL TypeScript/tests/cases/compiler/constructorParametersInVariableDeclarations.ts | expected:[TS2301] actual:[TS2304,TS2663]
 FAIL TypeScript/tests/cases/compiler/constructorParametersThatShadowExternalNamesInVariableDeclarations.ts | expected:[TS2301] actual:[TS2301]
@@ -131,17 +131,19 @@ FAIL TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts | expected:[TS234
 FAIL TypeScript/tests/cases/compiler/controlFlowArrays.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/controlFlowForIndexSignatures.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
-FAIL TypeScript/tests/cases/compiler/correlatedUnions.ts | expected:[] actual:[TS2322,TS2345,TS2349,TS2353,TS2488,TS7006,TS18048]
+FAIL TypeScript/tests/cases/compiler/correlatedUnions.ts | expected:[] actual:[TS2322,TS2345,TS2349,TS2353,TS2488,TS2536,TS7006,TS18048]
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2502]
 FAIL TypeScript/tests/cases/compiler/crashInYieldStarInAsyncFunction.ts | expected:[TS1320] actual:[TS7055]
 FAIL TypeScript/tests/cases/compiler/crashInsourcePropertyIsRelatableToTargetProperty.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/crashRegressionTest.ts | expected:[TS2322,TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/dataViewConstructor.ts | expected:[TS2345] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/declarationAssertionNodeNotReusedWhenTypeNotEquivalent1.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/declarationEmitClassMixinLocalClassDeclaration.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/declarationEmitCommonJsModuleReferencedType.ts | expected:[TS2883] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitComputedPropertyNameEnum3.ts | expected:[TS2464] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitComputedPropertyNameSymbol1.ts | expected:[TS4023] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitComputedPropertyNameSymbol2.ts | expected:[TS4023] actual:[]
+FAIL TypeScript/tests/cases/compiler/declarationEmitDistributiveConditionalWithInfer.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/declarationEmitEnumReferenceViaImportEquals.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends4.ts | expected:[TS2304,TS2315] actual:[TS2304,TS2315,TS2508]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionWithNonlocalPrivateUniqueSymbol.ts | expected:[TS2527] actual:[]
@@ -149,7 +151,7 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitForModuleImportingModuleAugm
 FAIL TypeScript/tests/cases/compiler/declarationEmitInferredTypeAlias9.ts | expected:[] actual:[TS2454]
 FAIL TypeScript/tests/cases/compiler/declarationEmitLocalClassHasRequiredDeclare.ts | expected:[] actual:[TS2662]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts | expected:[TS2304] actual:[]
-FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypeDistributivityPreservesConstraints.ts | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypePreservesTypeParameterConstraint.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts | expected:[TS4118] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitNoInvalidCommentReuse2.ts | expected:[] actual:[TS2307]
@@ -157,7 +159,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.
 FAIL TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts | expected:[TS7056] actual:[TS2304]
 FAIL TypeScript/tests/cases/compiler/declarationEmitPrivateSymbolCausesVarDeclarationEmit2.ts | expected:[TS2415] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitReadonlyComputedProperty.ts | expected:[TS4023] actual:[]
-FAIL TypeScript/tests/cases/compiler/declarationEmitRecursiveConditionalAliasPreserved.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/declarationEmitRetainedAnnotationRetainsImportInOutput.ts | expected:[] actual:[TS2339,TS2693,TS2702]
 FAIL TypeScript/tests/cases/compiler/declarationEmitSymlinkPaths.ts | expected:[TS5107,TS6059] actual:[TS5107]
 FAIL TypeScript/tests/cases/compiler/declarationEmitTripleSlashReferenceAmbientModule.ts | expected:[TS2591] actual:[]
@@ -178,8 +179,8 @@ FAIL TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts | expecte
 FAIL TypeScript/tests/cases/compiler/deepElaborationsIntoArrowExpressions.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/deepKeysIndexing.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/deeplyNestedAssignabilityIssue.ts | expected:[TS2741] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/deeplyNestedCheck.ts | expected:[TS2322,TS2741] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts | expected:[TS2322] actual:[TS2322,TS2344,TS2456,TS2464]
+FAIL TypeScript/tests/cases/compiler/deeplyNestedCheck.ts | expected:[TS2322,TS2741] actual:[TS2322,TS2536]
+FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts | expected:[TS2322] actual:[TS2322,TS2456,TS2464,TS2536]
 FAIL TypeScript/tests/cases/compiler/defaultIsNotVisibleInLocalScope.ts | expected:[TS2304] actual:[]
 FAIL TypeScript/tests/cases/compiler/defaultPropsEmptyCurlyBecomesAnyForJs.ts | expected:[] actual:[TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/defaultValueInFunctionTypes.ts | expected:[TS2352,TS2371] actual:[TS2352,TS2371]
@@ -250,7 +251,7 @@ FAIL TypeScript/tests/cases/compiler/emitMemberAccessExpression.ts | expected:[]
 FAIL TypeScript/tests/cases/compiler/emitSkipsThisWithRestParameter.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat3.ts | expected:[TS2322] actual:[TS2322]
@@ -297,6 +298,7 @@ FAIL TypeScript/tests/cases/compiler/esModuleInteropPrettyErrorRelatedInformatio
 FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts | expected:[] actual:[TS2488]
 FAIL TypeScript/tests/cases/compiler/escapedIdentifiers.ts | expected:[TS1540,TS2564] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/esmNoSynthesizedDefault.ts | expected:[TS1192,TS2339] actual:[TS2339]
+FAIL TypeScript/tests/cases/compiler/eventEmitterPatternWithRecordOfFunction.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/evolvingArrayResolvedAssert.ts | expected:[TS7005,TS7034] actual:[]
 FAIL TypeScript/tests/cases/compiler/exactOptionalPropertyTypesIdentical.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/compiler/excessPropertiesInOverloads.ts | expected:[TS2769] actual:[TS2769]
@@ -379,7 +381,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFu
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts | expected:[TS2300,TS2374] actual:[TS2300]
 FAIL TypeScript/tests/cases/compiler/genericCloduleInModule2.ts | expected:[TS2314] actual:[TS2314]
 FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes2.ts | expected:[TS2322,TS2454] actual:[TS2454]
-FAIL TypeScript/tests/cases/compiler/genericConditionalConstrainedToUnknownNotAssignableToConcreteObject.ts | expected:[TS2322] actual:[TS2322,TS2344]
 FAIL TypeScript/tests/cases/compiler/genericConstraintOnExtendedBuiltinTypes.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/genericConstraintOnExtendedBuiltinTypes2.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/genericConstructorFunction1.ts | expected:[TS2348] actual:[TS2348]
@@ -415,7 +416,6 @@ FAIL TypeScript/tests/cases/compiler/getterSetterSubtypeAssignment.ts | expected
 FAIL TypeScript/tests/cases/compiler/gettersAndSettersErrors.ts | expected:[TS1054,TS1095,TS2300,TS2322,TS2717,TS2808] actual:[TS1054,TS1095,TS2300,TS2322,TS2717,TS2808]
 FAIL TypeScript/tests/cases/compiler/globalIsContextualKeyword.ts | expected:[] actual:[TS2669,TS2670]
 FAIL TypeScript/tests/cases/compiler/globalThisDeclarationEmit.ts | expected:[TS4025] actual:[]
-FAIL TypeScript/tests/cases/compiler/homomorphicMappedTypeNesting.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/homomorphicMappedTypeWithNonHomomorphicInstantiationSpreadable1.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/hugeDeclarationOutputGetsTruncatedWithError.ts | expected:[TS7056] actual:[]
 FAIL TypeScript/tests/cases/compiler/identicalTypesNoDifferByCheckOrder.ts | expected:[TS2322] actual:[TS2345]
@@ -463,26 +463,26 @@ FAIL TypeScript/tests/cases/compiler/indexSignatureInOtherFile.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/indexSignatureInOtherFile1.ts | expected:[TS2411] actual:[TS2411]
 FAIL TypeScript/tests/cases/compiler/indexSignatureWithInitializer.ts | expected:[TS1166,TS1169,TS2304,TS2564] actual:[TS1166,TS1169,TS2304,TS2564]
 FAIL TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts | expected:[] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/indexedAccessKeyofNestedSimplifiedSubstituteUnwrapped.ts | expected:[TS2564] actual:[TS2536,TS2564]
 FAIL TypeScript/tests/cases/compiler/indexedAccessPrivateMemberOfGenericConstraint.ts | expected:[TS2564,TS4105] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/indexedAccessTypeConstraints.ts | expected:[] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithVariableElement.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/compiler/indexerConstraints.ts | expected:[TS2413] actual:[TS2413]
 FAIL TypeScript/tests/cases/compiler/indexerConstraints2.ts | expected:[TS1021,TS1268,TS1337,TS2413,TS2564] actual:[TS1268,TS2413,TS2564]
+FAIL TypeScript/tests/cases/compiler/indexingTypesWithNever.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/inexistentPropertyInsideToStringType.ts | expected:[TS2339,TS2394] actual:[]
 FAIL TypeScript/tests/cases/compiler/inferFromAnnotatedReturn1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes1.ts | expected:[TS2339,TS2564] actual:[TS2345,TS2564,TS18046]
 FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes2.ts | expected:[TS2564] actual:[TS2345,TS2564,TS18046]
 FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes3.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345,TS2769]
 FAIL TypeScript/tests/cases/compiler/inferPropertyWithContextSensitiveReturnStatement.ts | expected:[] actual:[TS2322,TS2365]
-FAIL TypeScript/tests/cases/compiler/inferTInParentheses.ts | expected:[] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/inferTypeConstraintInstantiationCircularity.ts | expected:[] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/inferTypeParameterConstraints.ts | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/inferTypeConstraintInstantiationCircularity.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2339,TS2345,TS2741,TS18048]
-FAIL TypeScript/tests/cases/compiler/inferenceAndHKTs.ts | expected:[] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/inferenceAndHKTs.ts | expected:[] actual:[TS2345,TS2536]
 FAIL TypeScript/tests/cases/compiler/inferenceAndSelfReferentialConstraint.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion3.ts | expected:[] actual:[TS2345,TS7006]
+FAIL TypeScript/tests/cases/compiler/inferenceDoesNotAddUndefinedOrNull.ts | expected:[] actual:[TS2339,TS2345,TS7006]
 FAIL TypeScript/tests/cases/compiler/inferenceExactOptionalProperties2.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceOptionalPropertiesToIndexSignatures.ts | expected:[] actual:[TS2345]
@@ -492,7 +492,7 @@ FAIL TypeScript/tests/cases/compiler/inferentialTypingWithObjectLiteralPropertie
 FAIL TypeScript/tests/cases/compiler/inferentiallyTypingAnEmptyArray.ts | expected:[TS2339] actual:[TS2571]
 FAIL TypeScript/tests/cases/compiler/inferredRestTypeFixedOnce.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/inferringAnyFunctionType1.ts | expected:[] actual:[TS2322,TS7006]
-FAIL TypeScript/tests/cases/compiler/infiniteConstraints.ts | expected:[TS2322,TS2536] actual:[TS2322,TS2344]
+FAIL TypeScript/tests/cases/compiler/infiniteConstraints.ts | expected:[TS2322,TS2536] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inheritedConstructorWithRestParams2.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
 FAIL TypeScript/tests/cases/compiler/inheritedModuleMembersForClodule.ts | expected:[TS2417] actual:[TS2300]
 FAIL TypeScript/tests/cases/compiler/inheritedOverloadedSpecializedSignatures.ts | expected:[TS2454] actual:[TS2322,TS2454,TS2532]
@@ -528,7 +528,7 @@ FAIL TypeScript/tests/cases/compiler/invalidLetInForOfAndForIn_ES6.ts | expected
 FAIL TypeScript/tests/cases/compiler/invalidOptionalChainFromNewExpression.ts | expected:[TS1209] actual:[]
 FAIL TypeScript/tests/cases/compiler/invalidReferenceSyntax1.ts | expected:[TS1084] actual:[]
 FAIL TypeScript/tests/cases/compiler/invalidSplice.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/invariantGenericErrorElaboration.ts | expected:[TS2322] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/invariantGenericErrorElaboration.ts | expected:[TS2322] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorTypes1.ts | expected:[TS2307] actual:[TS2307,TS9010]
 FAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrors.ts | expected:[TS9007,TS9023] actual:[]
 FAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsAugmentation.ts | expected:[TS9007,TS9026] actual:[TS2345]
@@ -614,7 +614,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx | expecte
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx | expected:[TS7026] actual:[]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult2.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts | expected:[TS5102] actual:[TS2345,TS5102]
 FAIL TypeScript/tests/cases/compiler/keyofGenericExtendingClassDoubleLayer.ts | expected:[TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
@@ -641,16 +640,15 @@ FAIL TypeScript/tests/cases/compiler/manyCompilerErrorsInTheTwoFiles.ts | expect
 FAIL TypeScript/tests/cases/compiler/mapGroupBy.ts | expected:[] actual:[TS2322,TS2769]
 FAIL TypeScript/tests/cases/compiler/mapUpsert.ts | expected:[TS2322,TS2339,TS2345,TS2554] actual:[TS2339,TS2345,TS2554]
 FAIL TypeScript/tests/cases/compiler/mappedToToIndexSignatureInference.ts | expected:[] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/mappedTypeAndIndexSignatureRelation.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/mappedTypeAsStringTemplate.ts | expected:[TS2345] actual:[TS2345]
+FAIL TypeScript/tests/cases/compiler/mappedTypeCircularReferenceInAccessor.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericIndexedAccess.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericWithKnownKeys.ts | expected:[TS2551,TS2862] actual:[]
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccess.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts | expected:[TS2532,TS2722,TS18048] actual:[TS2344,TS2345,TS2739]
+FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts | expected:[TS2532,TS2722,TS18048] actual:[TS2345,TS2739]
 FAIL TypeScript/tests/cases/compiler/mappedTypeNotMistakenlyHomomorphic.ts | expected:[TS2741] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts | expected:[TS2345] actual:[TS18046]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference2.ts | expected:[] actual:[TS7006]
-FAIL TypeScript/tests/cases/compiler/mappedTypeTupleConstraintAssignability.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArrayLike.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts | expected:[TS2741] actual:[TS2739]
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts | expected:[TS2322] actual:[TS2741]
@@ -779,7 +777,6 @@ FAIL TypeScript/tests/cases/compiler/nodeNextPackageImportMapRootDir.ts | expect
 FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirRootDir.ts | expected:[TS6059] actual:[TS2307]
 FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirRootDir.ts | expected:[] actual:[TS2307]
 FAIL TypeScript/tests/cases/compiler/nonIdenticalTypeConstraints.ts | expected:[TS2428,TS2564] actual:[TS2564]
-FAIL TypeScript/tests/cases/compiler/nonNullableWithNullableGenericIndexedAccessArg.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/nonObjectUnionNestedExcessPropertyCheck.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/nonnullAssertionPropegatesContextualType.ts | expected:[] actual:[TS2740]
 FAIL TypeScript/tests/cases/compiler/normalizedIntersectionTooComplex.ts | expected:[TS2590,TS7006] actual:[]
@@ -864,7 +861,7 @@ FAIL TypeScript/tests/cases/compiler/promiseIdentity.ts | expected:[TS2403] actu
 FAIL TypeScript/tests/cases/compiler/promiseTest.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/promiseTry.ts | expected:[] actual:[TS2578,TS2769]
 FAIL TypeScript/tests/cases/compiler/promisesWithConstraints.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/compiler/propTypeValidatorInference.ts | expected:[] actual:[TS2322]
+FAIL TypeScript/tests/cases/compiler/propTypeValidatorInference.ts | expected:[] actual:[TS2322,TS2536]
 FAIL TypeScript/tests/cases/compiler/propertiesAndIndexers.ts | expected:[TS2411,TS2413,TS2564] actual:[TS2411,TS2413,TS2564]
 FAIL TypeScript/tests/cases/compiler/propertiesAndIndexers2.ts | expected:[TS2411,TS2413] actual:[TS2411,TS2413]
 FAIL TypeScript/tests/cases/compiler/propertiesAndIndexersForNumericNames.ts | expected:[TS2411] actual:[TS2411]
@@ -873,7 +870,7 @@ FAIL TypeScript/tests/cases/compiler/propertyWrappedInTry.ts | expected:[TS1005,
 FAIL TypeScript/tests/cases/compiler/protectedAccessThroughContextualThis.ts | expected:[TS2341] actual:[TS2341]
 FAIL TypeScript/tests/cases/compiler/pushTypeGetTypeOfAlias.ts | expected:[TS2303,TS2339] actual:[]
 FAIL TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts | expected:[TS2339] actual:[TS2322,TS2345]
-FAIL TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts | expected:[] actual:[TS2344,TS2536]
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks2.ts | expected:[TS7027] actual:[TS7027]
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks3.ts | expected:[TS7028] actual:[]
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts | expected:[TS7027] actual:[]
@@ -890,14 +887,15 @@ FAIL TypeScript/tests/cases/compiler/recursiveBaseConstructorCreation3.ts | expe
 FAIL TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts | expected:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564] actual:[TS2300,TS2322,TS2345,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/recursiveConditionalCrash3.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/recursiveConditionalCrash4.ts | expected:[TS2304,TS2503,TS2589] actual:[TS2304,TS2503]
-FAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2344,TS2345]
+FAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2345]
+FAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes2.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType5.ts | expected:[TS2303] actual:[]
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType6.ts | expected:[TS2303] actual:[]
 FAIL TypeScript/tests/cases/compiler/recursiveFunctionTypes.ts | expected:[TS2322,TS2345,TS2355,TS2394,TS2554,TS2769] actual:[TS2322,TS2345,TS2355,TS2554,TS2769]
 FAIL TypeScript/tests/cases/compiler/recursiveResolveDeclaredMembers.ts | expected:[] actual:[TS2304]
 FAIL TypeScript/tests/cases/compiler/recursiveResolveTypeMembers.ts | expected:[TS2304,TS2577] actual:[]
 FAIL TypeScript/tests/cases/compiler/recursiveTupleTypeInference.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/compiler/recursiveTypeRelations.ts | expected:[TS2345,TS2391,TS2552] actual:[TS2344,TS2345,TS2391,TS2552]
+FAIL TypeScript/tests/cases/compiler/recursiveTypeRelations.ts | expected:[TS2345,TS2391,TS2552] actual:[TS2345,TS2391,TS2552]
 FAIL TypeScript/tests/cases/compiler/redefineArray.ts | expected:[TS2739] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/reexportedMissingAlias.ts | expected:[TS2503] actual:[TS2497,TS2503]
 FAIL TypeScript/tests/cases/compiler/referenceTypesPreferedToPathIfPossible.ts | expected:[TS2580] actual:[]
@@ -930,12 +928,12 @@ FAIL TypeScript/tests/cases/compiler/restUnion.ts | expected:[TS2339,TS2454] act
 FAIL TypeScript/tests/cases/compiler/restUnion3.ts | expected:[TS2700] actual:[]
 FAIL TypeScript/tests/cases/compiler/returnConditionalExpressionJSDocCast.ts | expected:[] actual:[TS2352]
 FAIL TypeScript/tests/cases/compiler/returnInConstructor1.ts | expected:[TS2322,TS2409,TS2564] actual:[TS2322,TS2409,TS2564]
-FAIL TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/returnTypeTypeArguments.ts | expected:[TS2314,TS2564] actual:[TS2314,TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/reuseTypeAnnotationImportTypeInGlobalThisTypeArgument.ts | expected:[TS2304] actual:[TS2304,TS2305,TS2503]
 FAIL TypeScript/tests/cases/compiler/reverseMappedIntersectionInference2.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/compiler/reverseMappedPartiallyInferableTypes.ts | expected:[TS18046] actual:[]
-FAIL TypeScript/tests/cases/compiler/reverseMappedTupleContext.ts | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/reverseMappedTupleContext.ts | expected:[] actual:[TS2536]
+FAIL TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts | expected:[] actual:[TS2536]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening1.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts | expected:[TS2322,TS2353] actual:[TS2322,TS2353]
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeLimitedConstraint.ts | expected:[TS2353] actual:[TS2353]
@@ -963,7 +961,6 @@ FAIL TypeScript/tests/cases/compiler/spreadInvalidArgumentType.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/spreadOfObjectLiteralAssignableToIndexSignature.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/spreadOfParamsFromGeneratorMakesRequiredParams.ts | expected:[TS2554] actual:[]
 FAIL TypeScript/tests/cases/compiler/spreadUnionPropOverride.ts | expected:[TS2783] actual:[]
-FAIL TypeScript/tests/cases/compiler/spuriousCircularityOnTypeImport.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/compiler/spyComparisonChecking.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/compiler/stableTypeOrdering.ts | expected:[TS5025] actual:[TS5023]
 FAIL TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts | expected:[TS2322,TS2339,TS2454] actual:[TS2322,TS2345,TS2454]
@@ -986,15 +983,11 @@ FAIL TypeScript/tests/cases/compiler/strictModeReservedWordInImportEqualDeclarat
 FAIL TypeScript/tests/cases/compiler/strictModeWordInImportDeclaration.ts | expected:[TS1214,TS2307] actual:[TS1214,TS2307]
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties1.ts | expected:[TS2322,TS2375,TS2411,TS2412,TS2451] actual:[TS2322,TS2345,TS2411,TS2451]
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties3.ts | expected:[TS2375] actual:[TS2322,TS2561]
-FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts | expected:[TS2353] actual:[TS2322,TS2353]
+FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts | expected:[TS2353] actual:[TS2322,TS2353,TS2536]
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts | expected:[TS1002,TS1125] actual:[TS1002,TS1125]
-FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2420,TS2430]
-FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts | expected:[] actual:[TS2322,TS2344,TS2416,TS2430]
-FAIL TypeScript/tests/cases/compiler/substituteReturnTypeSatisfiesConstraint.ts | expected:[] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/substitutionTypeForIndexedAccessType2.ts | expected:[] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/substitutionTypeNoMergeOfAssignableType.ts | expected:[] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/substitutionTypePassedToExtends.ts | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2416,TS2420,TS2430]
+FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts | expected:[] actual:[TS2322,TS2416,TS2430]
 FAIL TypeScript/tests/cases/compiler/subtypeReductionWithAnyFunctionType.ts | expected:[TS7006] actual:[]
 FAIL TypeScript/tests/cases/compiler/superAccess2.ts | expected:[TS1034] actual:[TS1034,TS2336,TS2339,TS2576,TS17011]
 FAIL TypeScript/tests/cases/compiler/superErrors.ts | expected:[TS1034] actual:[TS1034,TS2660]
@@ -1081,8 +1074,7 @@ FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS10
 FAIL TypeScript/tests/cases/compiler/unicodeIdentifierName2.ts | expected:[TS1127,TS1134] actual:[]
 FAIL TypeScript/tests/cases/compiler/unionErrorMessageOnMatchingDiscriminant.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/unionOfArraysFilterCall.ts | expected:[TS18048] actual:[TS2345,TS18048]
-FAIL TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts | expected:[TS2339] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/unionReductionWithStringMappingAndIdenticalBaseTypeExistsNoCrash.tsx | expected:[] actual:[TS2344]
+FAIL TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/compiler/unionSubtypeReductionErrors.ts | expected:[TS2590] actual:[]
 FAIL TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/unionWithIndexSignature.ts | expected:[] actual:[TS2314,TS7053]
@@ -1343,8 +1335,9 @@ FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringVariableD
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringVariableDeclaration1ES6.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringVariableDeclaration2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringWithLiteralInitializers2.ts | expected:[TS7031] actual:[TS7031]
-FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern26.ts | expected:[TS2345] actual:[TS2769]
+FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern27.ts | expected:[] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern28.ts | expected:[TS2769] actual:[TS2769]
+FAIL TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern29.ts | expected:[TS2345] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/missingAndExcessProperties.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/nonIterableRestElement3.ts | expected:[TS2741] actual:[]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers01.ts | expected:[TS1005] actual:[TS1005]
@@ -1370,6 +1363,7 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of45.ts | expec
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of46.ts | expected:[TS2322] actual:[TS2322,TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts | expected:[TS2322] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts | expected:[] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of55.ts | expected:[TS2448,TS7022] actual:[]
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts | expected:[TS1005] actual:[TS1005,TS1212,TS2523]
 FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration3_es6.ts | expected:[TS1212,TS2372,TS7022] actual:[TS1212,TS2372]
@@ -1576,7 +1570,7 @@ FAIL TypeScript/tests/cases/conformance/generators/generatorReturnContextualType
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeFallback.2.ts | expected:[TS2318] actual:[]
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeIndirectReferenceToGlobalType.ts | expected:[] actual:[TS2741]
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeInferenceNonStrict.ts | expected:[TS7025,TS7055,TS7057] actual:[TS7025,TS7055,TS7057]
-FAIL TypeScript/tests/cases/conformance/generators/generatorYieldContextualType.ts | expected:[] actual:[TS2322,TS2344]
+FAIL TypeScript/tests/cases/conformance/generators/generatorYieldContextualType.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes10.ts | expected:[TS1005,TS1128,TS1478] actual:[]
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes9.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/importDefer/dynamicImportDefer.ts | expected:[] actual:[TS7006]
@@ -1723,6 +1717,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxFragmentErrors.tsx | expected:[TS
 FAIL TypeScript/tests/cases/conformance/jsx/tsxGenericArrowFunctionParsing.tsx | expected:[TS1382] actual:[TS1005,TS1109,TS1110]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxIntrinsicAttributeErrors.tsx | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxLibraryManagedAttributes.tsx | expected:[TS2322] actual:[TS4109]
+FAIL TypeScript/tests/cases/conformance/jsx/tsxReactComponentWithDefaultTypeParameter3.tsx | expected:[TS2322,TS2739] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit1.tsx | expected:[TS7005,TS7034,TS18048] actual:[TS7005,TS7034]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit5.tsx | expected:[TS7005] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadChildrenInvalidType.tsx | expected:[TS2609] actual:[]
@@ -1762,7 +1757,6 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesNoDirectoryModule.ts | e
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackageExports.ts | expected:[TS1479,TS2307,TS2835] actual:[TS1479,TS2835]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesPackageImportsRootWildcardNode16.ts | expected:[TS2307] actual:[]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts | expected:[TS1471,TS1479] actual:[TS1479]
-FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts | expected:[] actual:[TS1155,TS2307,TS2391]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForTsJsImport.ts | expected:[TS2307] actual:[TS2307,TS2846,TS5097]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFilesForNodeNativeModules.ts | expected:[TS5024,TS6263] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS4113,TS4117] actual:[TS4113,TS4117]
@@ -1946,10 +1940,9 @@ FAIL TypeScript/tests/cases/conformance/statements/throwStatements/invalidThrowS
 FAIL TypeScript/tests/cases/conformance/statements/tryStatements/catchClauseWithTypeAnnotation.ts | expected:[TS1196,TS2339,TS2403,TS2492,TS18046] actual:[TS1196,TS2339,TS2403,TS18046]
 FAIL TypeScript/tests/cases/conformance/statements/tryStatements/invalidTryStatements.ts | expected:[TS1003,TS1005,TS1472] actual:[TS1005,TS1472]
 FAIL TypeScript/tests/cases/conformance/types/any/narrowFromAnyWithInstanceof.ts | expected:[TS2551] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2310,TS2322,TS2339,TS2344,TS2403,TS2589]
-FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts | expected:[TS2322,TS2345] actual:[TS2310,TS2322,TS2344,TS2345,TS2416]
+FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2310,TS2322,TS2339,TS2403,TS2536,TS2589]
+FAIL TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts | expected:[TS2322,TS2345] actual:[TS2310,TS2322,TS2345,TS2416,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2322,TS2344]
-FAIL TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionReturnType.ts | expected:[] actual:[TS2322,TS2554]
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx | expected:[TS2322,TS2683,TS2769] actual:[TS2322,TS2683,TS2769]
 FAIL TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations/contextuallyTypedBindingInitializerNegative.ts | expected:[TS2322] actual:[TS2322]
@@ -1965,8 +1958,8 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssig
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts | expected:[TS2322,TS2339] actual:[TS2322,TS7053]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts | expected:[TS2313,TS2502,TS2536,TS2564,TS2589] actual:[TS2564]
-FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts | expected:[TS2322] actual:[TS2322,TS2341,TS2344,TS2345,TS2407,TS2445]
-FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[TS2322,TS7006,TS7053]
+FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts | expected:[TS2322] actual:[TS2322,TS2341,TS2345,TS2407,TS2445,TS2536]
+FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[TS2322,TS2536,TS7006,TS7053]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts | expected:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564] actual:[TS2304,TS2322,TS2345,TS2536,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes1.ts | expected:[] actual:[TS2356]
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes2.ts | expected:[] actual:[TS2356]
@@ -1978,23 +1971,22 @@ FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsIn
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts | expected:[TS2678,TS2695,TS2872] actual:[TS2678,TS2695,TS2872]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringMappingOverPatternLiterals.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes1.ts | expected:[TS1338,TS2322,TS2590] actual:[TS1338,TS2322,TS2345]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes1.ts | expected:[TS1338,TS2322,TS2590] actual:[TS1338,TS2322,TS2345,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes2.ts | expected:[TS2322] actual:[TS1351]
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes3.ts | expected:[TS2322,TS2345,TS2367] actual:[TS2322,TS2345,TS2367]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts | expected:[TS2345] actual:[TS2344,TS2345,TS2474]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts | expected:[TS2345] actual:[TS2345,TS2474,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes7.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatterns.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts | expected:[] actual:[TS2345]
-FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRecursiveNoCrash1.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauses.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts | expected:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536] actual:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536]
-FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors2.ts | expected:[TS2322,TS2536] actual:[TS2536]
+FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors2.ts | expected:[TS2322,TS2536] actual:[TS2322,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeInferenceErrors.ts | expected:[TS2322] actual:[TS2322,TS2571]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeProperties.ts | expected:[TS5107] actual:[TS1005,TS1128,TS1166,TS1169,TS1170]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts | expected:[TS2322,TS2536,TS2542] actual:[TS2322,TS2344,TS2536,TS2542]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeWithAny.ts | expected:[TS2322,TS2339,TS2740] actual:[TS2322,TS2339]
-FAIL TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts | expected:[TS2313,TS2456,TS2502,TS2589,TS2615] actual:[TS2322,TS2344]
+FAIL TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts | expected:[TS2313,TS2456,TS2502,TS2589,TS2615] actual:[TS2322,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/members/duplicateNumericIndexers.ts | expected:[TS2374] actual:[TS2374]
 FAIL TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts | expected:[TS1268,TS1337,TS2322,TS2353,TS2374,TS2413,TS7053] actual:[TS1268,TS2322,TS2339,TS2345,TS2411]
 FAIL TypeScript/tests/cases/conformance/types/members/objectTypeHidingMembersOfObjectAssignmentCompat2.ts | expected:[TS2322,TS2696] actual:[TS2322]
@@ -2022,7 +2014,7 @@ FAIL TypeScript/tests/cases/conformance/types/primitives/void/invalidVoidAssignm
 FAIL TypeScript/tests/cases/conformance/types/primitives/void/invalidVoidValues.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/rest/genericObjectRest.ts | expected:[] actual:[TS2339,TS2538]
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters1.ts | expected:[TS2322,TS2344] actual:[TS2344,TS2345]
-FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts | expected:[TS2322,TS2345,TS2554] actual:[TS2322,TS2344,TS2345,TS2554]
+FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts | expected:[TS2322,TS2345,TS2554] actual:[TS2322,TS2345,TS2554]
 FAIL TypeScript/tests/cases/conformance/types/rest/objectRestNegative.ts | expected:[TS2322,TS2462,TS2701,TS7008] actual:[TS2698]
 FAIL TypeScript/tests/cases/conformance/types/rest/restTuplesFromContextualTypes.ts | expected:[TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/unionTypeLiterals.ts | expected:[TS2403] actual:[TS2403]
@@ -2047,7 +2039,6 @@ FAIL TypeScript/tests/cases/conformance/types/thisType/contextualThisType.ts | e
 FAIL TypeScript/tests/cases/conformance/types/thisType/looseThisTypeInFunctions.ts | expected:[TS2322,TS2339,TS2684] actual:[TS2322,TS2684]
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeAccessibility.ts | expected:[TS2341,TS2445,TS2564] actual:[TS2341,TS2445,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors.ts | expected:[TS2331,TS2526,TS2564,TS2683] actual:[TS2322,TS2331,TS2526,TS2683]
-FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInBasePropertyAndDerivedContainerOfBase01.ts | expected:[] actual:[TS2344]
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInClasses.ts | expected:[TS2322,TS2352,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctionsNegative.ts | expected:[TS1005,TS1109,TS1128,TS1359,TS1433,TS1434] actual:[TS1090,TS1433,TS2322,TS2339,TS2345,TS2353,TS2370,TS2684]
 FAIL TypeScript/tests/cases/conformance/types/thisType/typeRelationships.ts | expected:[TS2322,TS2403,TS2739] actual:[TS2403]
@@ -2069,7 +2060,7 @@ FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/c
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts | expected:[TS1005,TS1109,TS1477] actual:[TS1005,TS1109,TS1477]
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts | expected:[TS1099,TS2344,TS2635] actual:[TS1099,TS1109]
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/wrappedAndRecursiveConstraints4.ts | expected:[TS2345] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiers.ts | expected:[TS1277] actual:[TS2322,TS2345]
+FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiers.ts | expected:[TS1277] actual:[TS2322,TS2345,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReturnsAndYields.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/typeParametersAvailableInNestedScope.ts | expected:[TS2454,TS2564] actual:[TS2454,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts | expected:[TS1029,TS1030,TS1273,TS1274,TS2322,TS2345,TS2636,TS2637] actual:[TS1005,TS1434]
@@ -2679,6 +2670,7 @@ PASS TypeScript/tests/cases/compiler/cachedModuleResolution9.ts
 PASS TypeScript/tests/cases/compiler/callConstructAssignment.ts
 PASS TypeScript/tests/cases/compiler/callExpressionWithMissingTypeArgument1.ts
 PASS TypeScript/tests/cases/compiler/callExpressionWithTypeParameterConstrainedToOuterTypeParameter.ts
+PASS TypeScript/tests/cases/compiler/callOfConditionalTypeWithConcreteBranches.ts
 PASS TypeScript/tests/cases/compiler/callOnClass.ts
 PASS TypeScript/tests/cases/compiler/callOnInstance.ts
 PASS TypeScript/tests/cases/compiler/callOverloadViaElementAccessExpression.ts
@@ -2779,7 +2771,6 @@ PASS TypeScript/tests/cases/compiler/checkSuperCallBeforeThisAccessing9.ts
 PASS TypeScript/tests/cases/compiler/checkSwitchStatementIfCaseTypeIsString.ts
 PASS TypeScript/tests/cases/compiler/checkTypePredicateForRedundantProperties.ts
 PASS TypeScript/tests/cases/compiler/checkingObjectDefinePropertyOnFunctionNonexistentPropertyNoCrash1.ts
-PASS TypeScript/tests/cases/compiler/circularBaseConstraint.ts
 PASS TypeScript/tests/cases/compiler/circularBaseTypes.ts
 PASS TypeScript/tests/cases/compiler/circularConstrainedMappedTypeNoCrash.ts
 PASS TypeScript/tests/cases/compiler/circularConstraintYieldsAppropriateError.ts
@@ -3150,6 +3141,7 @@ PASS TypeScript/tests/cases/compiler/conditionalTypeDiscriminatingLargeUnionRegu
 PASS TypeScript/tests/cases/compiler/conditionalTypeGenericInSignatureTypeParameterConstraint.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypeRelaxingConstraintAssignability.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypeSimplification.ts
+PASS TypeScript/tests/cases/compiler/conditionalTypeSubclassExtendsTypeParam.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypesASI.ts
 PASS TypeScript/tests/cases/compiler/conditionalTypesSimplifyWhenTrivial.ts
 PASS TypeScript/tests/cases/compiler/conditionallyDuplicateOverloadsCausedByOverloadResolution.ts
@@ -3514,7 +3506,6 @@ PASS TypeScript/tests/cases/compiler/declInput-2.ts
 PASS TypeScript/tests/cases/compiler/declInput.ts
 PASS TypeScript/tests/cases/compiler/declInput3.ts
 PASS TypeScript/tests/cases/compiler/declInput4.ts
-PASS TypeScript/tests/cases/compiler/declarationAssertionNodeNotReusedWhenTypeNotEquivalent1.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAliasExportStar.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAliasFromIndirectFile.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAliasInlineing.ts
@@ -3586,7 +3577,6 @@ PASS TypeScript/tests/cases/compiler/declarationEmitDestructuringPrivacyError.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitDestructuringWithOptionalBindingParameters.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitDetachedComment1.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitDetachedComment2.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitDistributiveConditionalWithInfer.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitDoesNotUseReexportedNamespaceAsLocal.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitDuplicateParameterDestructuring.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitEnumReadonlyProperty.ts
@@ -3645,7 +3635,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitLateBoundAssignments.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLateBoundAssignments2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLateBoundJSAssignments.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLocalClassDeclarationMixin.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePreservesTypeParameterConstraint.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypeDistributivityPreservesConstraints.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMappedTypePropertyFromNumericStringKey.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMergedAliasWithConst.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitMethodDeclaration.ts
@@ -3692,6 +3682,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitPromise.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPropertyNumericStringKey.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitProtectedMembers.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitQualifiedAliasTypeArgument.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitRecursiveConditionalAliasPreserved.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitRedundantTripleSlashModuleAugmentation.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitReexportedSymlinkReference.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitReexportedSymlinkReference2.ts
@@ -4289,7 +4280,6 @@ PASS TypeScript/tests/cases/compiler/escapedReservedCompilerNamedIdentifier.ts
 PASS TypeScript/tests/cases/compiler/esmModeDeclarationFileWithExportAssignment.ts
 PASS TypeScript/tests/cases/compiler/evalAfter0.ts
 PASS TypeScript/tests/cases/compiler/evalOrArgumentsInDeclarationFunctions.ts
-PASS TypeScript/tests/cases/compiler/eventEmitterPatternWithRecordOfFunction.ts
 PASS TypeScript/tests/cases/compiler/evolvingArrayTypeInAssert.ts
 PASS TypeScript/tests/cases/compiler/exactSpellingSuggestion.ts
 PASS TypeScript/tests/cases/compiler/excessPropertyCheckWithNestedArrayIntersection.ts
@@ -4683,6 +4673,7 @@ PASS TypeScript/tests/cases/compiler/genericClassesInModule2.ts
 PASS TypeScript/tests/cases/compiler/genericCloduleInModule.ts
 PASS TypeScript/tests/cases/compiler/genericCloneReturnTypes.ts
 PASS TypeScript/tests/cases/compiler/genericCombinators2.ts
+PASS TypeScript/tests/cases/compiler/genericConditionalConstrainedToUnknownNotAssignableToConcreteObject.ts
 PASS TypeScript/tests/cases/compiler/genericConstraint1.ts
 PASS TypeScript/tests/cases/compiler/genericConstraint2.ts
 PASS TypeScript/tests/cases/compiler/genericConstraint3.ts
@@ -4807,6 +4798,7 @@ PASS TypeScript/tests/cases/compiler/hidingConstructSignatures.ts
 PASS TypeScript/tests/cases/compiler/hidingIndexSignatures.ts
 PASS TypeScript/tests/cases/compiler/higherOrderMappedIndexLookupInference.ts
 PASS TypeScript/tests/cases/compiler/homomorphicMappedTypeIntersectionAssignability.ts
+PASS TypeScript/tests/cases/compiler/homomorphicMappedTypeNesting.ts
 PASS TypeScript/tests/cases/compiler/i3.ts
 PASS TypeScript/tests/cases/compiler/icomparable.ts
 PASS TypeScript/tests/cases/compiler/idInProp.ts
@@ -4964,8 +4956,8 @@ PASS TypeScript/tests/cases/compiler/indexWithoutParamType2.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessCanBeHighOrder.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessConstraints.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessImplicitlyAny.ts
-PASS TypeScript/tests/cases/compiler/indexedAccessKeyofNestedSimplifiedSubstituteUnwrapped.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessNormalization.ts
+PASS TypeScript/tests/cases/compiler/indexedAccessRetainsIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessToThisTypeOnIntersection01.ts
 PASS TypeScript/tests/cases/compiler/indexedAccessWithFreshObjectLiteral.ts
 PASS TypeScript/tests/cases/compiler/indexer.ts
@@ -4977,7 +4969,6 @@ PASS TypeScript/tests/cases/compiler/indexerAsOptional.ts
 PASS TypeScript/tests/cases/compiler/indexerAssignability.ts
 PASS TypeScript/tests/cases/compiler/indexerReturningTypeParameter1.ts
 PASS TypeScript/tests/cases/compiler/indexerSignatureWithRestParam.ts
-PASS TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
 PASS TypeScript/tests/cases/compiler/indirectDiscriminantAndExcessProperty.ts
 PASS TypeScript/tests/cases/compiler/indirectGlobalSymbolPartOfObjectType.ts
 PASS TypeScript/tests/cases/compiler/indirectSelfReference.ts
@@ -4992,8 +4983,10 @@ PASS TypeScript/tests/cases/compiler/inferRestArgumentsMappedTuple.ts
 PASS TypeScript/tests/cases/compiler/inferSecondaryParameter.ts
 PASS TypeScript/tests/cases/compiler/inferSetterParamType.ts
 PASS TypeScript/tests/cases/compiler/inferStringLiteralUnionForBindingElement.ts
+PASS TypeScript/tests/cases/compiler/inferTInParentheses.ts
 PASS TypeScript/tests/cases/compiler/inferTupleFromBindingPattern.ts
 PASS TypeScript/tests/cases/compiler/inferTypeArgumentsInSignatureWithRestParameters.ts
+PASS TypeScript/tests/cases/compiler/inferTypeParameterConstraints.ts
 PASS TypeScript/tests/cases/compiler/inferTypesWithFixedTupleExtendsAtVariadicPosition.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion1.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion4.ts
@@ -5028,14 +5021,14 @@ PASS TypeScript/tests/cases/compiler/inferringAnyFunctionType4.ts
 PASS TypeScript/tests/cases/compiler/inferringAnyFunctionType5.ts
 PASS TypeScript/tests/cases/compiler/inferringReturnTypeFromConstructSignatureGeneric.ts
 PASS TypeScript/tests/cases/compiler/infiniteExpandingTypeThroughInheritanceInstantiation.ts
-PASS TypeScript/tests/cases/compiler/infinitelyExpandingBaseTypes1.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingBaseTypes2.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingOverloads.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypeAssignability.ts
-PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypes3.ts
+PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypes2.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypes4.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypes5.ts
 PASS TypeScript/tests/cases/compiler/infinitelyExpandingTypesNonGenericBase.ts
+PASS TypeScript/tests/cases/compiler/infinitelyGenerativeInheritance1.ts
 PASS TypeScript/tests/cases/compiler/inheritFromGenericTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/inheritSameNamePrivatePropertiesFromDifferentOrigins.ts
 PASS TypeScript/tests/cases/compiler/inheritSameNamePrivatePropertiesFromSameOrigin.ts
@@ -5420,6 +5413,7 @@ PASS TypeScript/tests/cases/compiler/keepImportsInDts1.ts
 PASS TypeScript/tests/cases/compiler/keepImportsInDts2.ts
 PASS TypeScript/tests/cases/compiler/keepImportsInDts3.ts
 PASS TypeScript/tests/cases/compiler/keepImportsInDts4.ts
+PASS TypeScript/tests/cases/compiler/keyRemappingKeyofResult2.ts
 PASS TypeScript/tests/cases/compiler/keyofModuleObjectHasCorrectKeys.ts
 PASS TypeScript/tests/cases/compiler/keyofObjectWithGlobalSymbolIncluded.ts
 PASS TypeScript/tests/cases/compiler/keywordExpressionInternalComments.ts
@@ -5501,7 +5495,7 @@ PASS TypeScript/tests/cases/compiler/mapConstructorOnReadonlyTuple.ts
 PASS TypeScript/tests/cases/compiler/mapOnTupleTypes01.ts
 PASS TypeScript/tests/cases/compiler/mapOnTupleTypes02.ts
 PASS TypeScript/tests/cases/compiler/mappedArrayTupleIntersections.ts
-PASS TypeScript/tests/cases/compiler/mappedTypeCircularReferenceInAccessor.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeAndIndexSignatureRelation.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeContextualTypesApplied.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesHomomorphism.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesInlineForm.ts
@@ -5516,6 +5510,7 @@ PASS TypeScript/tests/cases/compiler/mappedTypeOverArrayWithBareAnyRestCanBeUsed
 PASS TypeScript/tests/cases/compiler/mappedTypeParameterConstraint.ts
 PASS TypeScript/tests/cases/compiler/mappedTypePartialConstraints.ts
 PASS TypeScript/tests/cases/compiler/mappedTypePartialNonHomomorphicBaseConstraint.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeTupleConstraintAssignability.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeUnionConstraintInferences.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty2.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithNameClauseAppliedToArrayType.ts
@@ -5575,7 +5570,6 @@ PASS TypeScript/tests/cases/compiler/missingReturnStatement1.ts
 PASS TypeScript/tests/cases/compiler/missingSelf.ts
 PASS TypeScript/tests/cases/compiler/missingSemicolonInModuleSpecifier.ts
 PASS TypeScript/tests/cases/compiler/missingTypeArguments2.ts
-PASS TypeScript/tests/cases/compiler/missingTypeArguments3.ts
 PASS TypeScript/tests/cases/compiler/misspelledJsDocTypedefTags.ts
 PASS TypeScript/tests/cases/compiler/mixedExports.ts
 PASS TypeScript/tests/cases/compiler/mixedStaticAndInstanceClassMembers.ts
@@ -5997,6 +5991,7 @@ PASS TypeScript/tests/cases/compiler/nonNullableAndObjectIntersections.ts
 PASS TypeScript/tests/cases/compiler/nonNullableReduction.ts
 PASS TypeScript/tests/cases/compiler/nonNullableReductionNonStrict.ts
 PASS TypeScript/tests/cases/compiler/nonNullableTypes1.ts
+PASS TypeScript/tests/cases/compiler/nonNullableWithNullableGenericIndexedAccessArg.ts
 PASS TypeScript/tests/cases/compiler/nondistributiveConditionalTypeInfer.ts
 PASS TypeScript/tests/cases/compiler/nonexistentPropertyOnUnion.ts
 PASS TypeScript/tests/cases/compiler/nonexistentPropertyUnavailableOnPromisedType.ts
@@ -6425,7 +6420,6 @@ PASS TypeScript/tests/cases/compiler/recursiveCloduleReference.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalCrash1.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalCrash2.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalEvaluationNonInfinite.ts
-PASS TypeScript/tests/cases/compiler/recursiveConditionalTypes2.ts
 PASS TypeScript/tests/cases/compiler/recursiveExcessPropertyChecks.ts
 PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType1.ts
 PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType2.ts
@@ -6461,7 +6455,7 @@ PASS TypeScript/tests/cases/compiler/recursiveSpecializationOfSignatures.ts
 PASS TypeScript/tests/cases/compiler/recursiveTupleTypes1.ts
 PASS TypeScript/tests/cases/compiler/recursiveTupleTypes2.ts
 PASS TypeScript/tests/cases/compiler/recursiveTypeAliasWithSpreadConditionalReturnNotCircular.ts
-PASS TypeScript/tests/cases/compiler/recursiveTypeComparison2.ts
+PASS TypeScript/tests/cases/compiler/recursiveTypeComparison.ts
 PASS TypeScript/tests/cases/compiler/recursiveTypeIdentity.ts
 PASS TypeScript/tests/cases/compiler/recursiveTypeParameterConstraintReferenceLacksTypeArgs.ts
 PASS TypeScript/tests/cases/compiler/recursiveTypeParameterReferenceError1.ts
@@ -6541,6 +6535,7 @@ PASS TypeScript/tests/cases/compiler/resolveModuleNameWithSameLetDeclarationName
 PASS TypeScript/tests/cases/compiler/resolveModuleNameWithSameLetDeclarationName2.ts
 PASS TypeScript/tests/cases/compiler/resolveNameWithNamspace.ts
 PASS TypeScript/tests/cases/compiler/resolveTypeAliasWithSameLetDeclarationName1.ts
+PASS TypeScript/tests/cases/compiler/resolvingClassDeclarationWhenInBaseTypeResolution.ts
 PASS TypeScript/tests/cases/compiler/restArgAssignmentCompat.ts
 PASS TypeScript/tests/cases/compiler/restArgMissingName.ts
 PASS TypeScript/tests/cases/compiler/restElementAssignable.ts
@@ -6560,6 +6555,7 @@ PASS TypeScript/tests/cases/compiler/restTypeRetainsMappyness.ts
 PASS TypeScript/tests/cases/compiler/restUnion2.ts
 PASS TypeScript/tests/cases/compiler/returnInfiniteIntersection.ts
 PASS TypeScript/tests/cases/compiler/returnStatement1.ts
+PASS TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts
 PASS TypeScript/tests/cases/compiler/returnTypeInferenceContextualTypeIgnoreAnyUnknown1.ts
 PASS TypeScript/tests/cases/compiler/returnTypeInferenceNotTooBroad.ts
 PASS TypeScript/tests/cases/compiler/returnTypeParameter.ts
@@ -6571,7 +6567,6 @@ PASS TypeScript/tests/cases/compiler/reverseMappedContravariantInference.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedIntersectionInference1.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeAssignableToIndex.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypeNotCircular.ts
-PASS TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeDeepDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeInferenceSameSource1.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening2.ts
@@ -6760,6 +6755,7 @@ PASS TypeScript/tests/cases/compiler/spreadParameterTupleType.ts
 PASS TypeScript/tests/cases/compiler/spreadTupleAccessedByTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/spreadTypeRemovesReadonly.ts
 PASS TypeScript/tests/cases/compiler/spreadsAndContextualTupleTypes.ts
+PASS TypeScript/tests/cases/compiler/spuriousCircularityOnTypeImport.ts
 PASS TypeScript/tests/cases/compiler/stackDepthLimitCastingType.ts
 PASS TypeScript/tests/cases/compiler/standaloneBreak.ts
 PASS TypeScript/tests/cases/compiler/staticAndMemberFunctions.ts
@@ -6825,8 +6821,12 @@ PASS TypeScript/tests/cases/compiler/styleOptions.ts
 PASS TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
 PASS TypeScript/tests/cases/compiler/subclassUint8Array.ts
 PASS TypeScript/tests/cases/compiler/subclassWithPolymorphicThisIsAssignable.ts
+PASS TypeScript/tests/cases/compiler/substituteReturnTypeSatisfiesConstraint.ts
 PASS TypeScript/tests/cases/compiler/substitutionTypeForIndexedAccessType1.ts
+PASS TypeScript/tests/cases/compiler/substitutionTypeForIndexedAccessType2.ts
 PASS TypeScript/tests/cases/compiler/substitutionTypeForNonGenericIndexedAccessType.ts
+PASS TypeScript/tests/cases/compiler/substitutionTypeNoMergeOfAssignableType.ts
+PASS TypeScript/tests/cases/compiler/substitutionTypePassedToExtends.ts
 PASS TypeScript/tests/cases/compiler/substitutionTypesCompareCorrectlyInRestrictiveInstances.ts
 PASS TypeScript/tests/cases/compiler/substitutionTypesInIndexedAccessTypes.ts
 PASS TypeScript/tests/cases/compiler/subtypeReductionUnionConstraints.ts
@@ -7252,6 +7252,7 @@ PASS TypeScript/tests/cases/compiler/unionOfEnumInference.ts
 PASS TypeScript/tests/cases/compiler/unionOfFunctionAndSignatureIsCallable.ts
 PASS TypeScript/tests/cases/compiler/unionPropertyExistence.ts
 PASS TypeScript/tests/cases/compiler/unionReductionMutualSubtypes.ts
+PASS TypeScript/tests/cases/compiler/unionReductionWithStringMappingAndIdenticalBaseTypeExistsNoCrash.tsx
 PASS TypeScript/tests/cases/compiler/unionRelationshipCheckPasses.ts
 PASS TypeScript/tests/cases/compiler/unionSignaturesWithThisParameter.ts
 PASS TypeScript/tests/cases/compiler/unionTypeErrorMessageTypeRefs01.ts
@@ -8761,8 +8762,7 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern22
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern23.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern24.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern25.ts
-PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern27.ts
-PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern29.ts
+PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern26.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern3.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern30.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/iterableArrayPattern4.ts
@@ -8817,7 +8817,6 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of41.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of42.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of43.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of44.ts
-PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of49.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of5.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of50.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of51.ts
@@ -11603,6 +11602,7 @@ PASS TypeScript/tests/cases/conformance/types/asyncGenerators/types.asyncGenerat
 PASS TypeScript/tests/cases/conformance/types/conditional/conditionalTypesExcessProperties.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts
+PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtendsDependingOnTypeVariables.ts
 PASS TypeScript/tests/cases/conformance/types/conditional/variance.ts
@@ -11685,6 +11685,7 @@ PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes5.ts
+PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRecursiveNoCrash1.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRelationships.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeIndexSignatureModifiers.ts
@@ -11920,6 +11921,7 @@ PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeAndConstraints.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors2.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInAccessors.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInAccessorsNegative.ts
+PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInBasePropertyAndDerivedContainerOfBase01.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctions.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctions2.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctions3.ts
