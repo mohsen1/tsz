@@ -21,5 +21,9 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 smallvec = { workspace = true }
 
+[[test]]
+name = "symbols_tests"
+path = "tests/symbols_tests.rs"
+
 [lints]
 workspace = true
