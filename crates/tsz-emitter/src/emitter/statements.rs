@@ -1222,7 +1222,24 @@ impl<'a> Printer<'a> {
         }
 
         if if_stmt.else_statement.is_some() {
+            // Emit leading comments before the `else` keyword. These are
+            // comments that appear between the then block's `}` and the
+            // `else`, e.g., `} // All non-winged beasts\n else {`.
+            if let Some(else_node) = self.arena.get(if_stmt.else_statement) {
+                let actual_start = self.skip_trivia_forward(else_node.pos, else_node.end);
+                // Emit trailing comments on the then block's closing line first
+                if let Some(then_node) = self.arena.get(if_stmt.then_statement) {
+                    let then_token_end =
+                        self.find_token_end_before_trivia(then_node.pos, actual_start);
+                    self.emit_trailing_comments_before(then_token_end, actual_start);
+                }
+            }
             self.write_line();
+            // Emit any leading block comments before `else` on their own lines
+            if let Some(else_node) = self.arena.get(if_stmt.else_statement) {
+                let actual_start = self.skip_trivia_forward(else_node.pos, else_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
             // Map the `else` keyword to its source position
             if let Some(then_node) = self.arena.get(if_stmt.then_statement)
                 && let Some(else_node) = self.arena.get(if_stmt.else_statement)
