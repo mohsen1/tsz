@@ -1960,6 +1960,43 @@ opt("x", 1);
 }
 
 #[test]
+fn test_generic_function_value_is_assignable_to_non_generic_callback() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+const SK = <A, B>(_: A, b: B): B => b;
+function accept<A, B>(f: (a: A, b: B) => B) {}
+function run<A, B>() {
+    accept<A, B>(SK);
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Unexpected diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
 fn test_overload_call_handles_rest_params() {
     use crate::parser::ParserState;
 

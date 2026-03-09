@@ -499,20 +499,6 @@ impl<'a> CheckerState<'a> {
             callee_type_for_shape,
             args.len(),
         );
-        if let Some(shape) = &callee_shape
-            && let Some(callable) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, callee_type_for_shape)
-            && callable.call_signatures.len() > 1
-        {
-            let mut fmt = tsz_solver::TypeFormatter::new(self.ctx.types);
-            tracing::trace!(
-                arg_count = args.len(),
-                selected_params = shape.params.len(),
-                selected_return = %fmt.format(shape.return_type),
-                callee = %fmt.format(callee_type_for_shape),
-                "generic call selected contextual signature"
-            );
-        }
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -668,6 +654,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
+                let round1_skip_outer_context: Vec<bool> = args
+                    .iter()
+                    .map(|&arg| self.round1_should_skip_outer_contextual_type(arg))
+                    .collect();
                 let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
 
                 if needs_two_pass {
@@ -681,7 +671,11 @@ impl<'a> CheckerState<'a> {
                             // Skip contextually sensitive arguments in Round 1.
                             // Guard against out-of-bounds: large indices are used to probe
                             // for rest parameters (see call_checker.rs spread handling).
-                            if i < sensitive_args.len() && sensitive_args[i] {
+                            let skip_round1_context = (i < sensitive_args.len()
+                                && sensitive_args[i])
+                                || (i < round1_skip_outer_context.len()
+                                    && round1_skip_outer_context[i]);
+                            if skip_round1_context {
                                 None
                             } else {
                                 ctx_helper.get_parameter_type_for_call(i, arg_count)
@@ -709,7 +703,6 @@ impl<'a> CheckerState<'a> {
                             round1_arg_types[i] = partial;
                         }
                     }
-
                     // === Perform Round 1 Inference ===
                     // Pre-evaluate function shape parameter types through the
                     // TypeEnvironment so the solver can constrain against concrete
@@ -776,27 +769,6 @@ impl<'a> CheckerState<'a> {
                         substitution_is_empty = substitution.is_empty(),
                         "Round 1 inference: substitution computed"
                     );
-                    if !substitution.is_empty() {
-                        let mut fmt = tsz_solver::TypeFormatter::new(self.ctx.types);
-                        let rendered: Vec<String> = shape
-                            .type_params
-                            .iter()
-                            .filter_map(|tp| {
-                                substitution.get(tp.name).map(|ty| {
-                                    format!(
-                                        "{}={}",
-                                        self.ctx.types.resolve_atom(tp.name),
-                                        fmt.format(ty)
-                                    )
-                                })
-                            })
-                            .collect();
-                        trace!(
-                            substitutions = rendered.join(", "),
-                            "Round 1 inference: substitution details"
-                        );
-                    }
-
                     let inferred_type_params_by_name: Vec<_> = shape
                         .type_params
                         .iter()

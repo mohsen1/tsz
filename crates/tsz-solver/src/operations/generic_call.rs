@@ -450,6 +450,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 contextual_target_type,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
+
+            // Preserve raw same-base application inference even when the structural
+            // constraint walker evaluates the applications (e.g. Kind<F, ...> into its
+            // conditional/object form). Without this, intermediate higher-order values
+            // only infer through contextual return types and lose generic arguments.
+            if let (
+                Some(TypeData::Application(arg_app_id)),
+                Some(TypeData::Application(target_app_id)),
+            ) = (
+                self.interner.lookup(source_for_inference),
+                self.interner.lookup(contextual_target_type),
+            ) {
+                let arg_app = self.interner.type_application(arg_app_id);
+                let target_app = self.interner.type_application(target_app_id);
+                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
+                    for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
+                    {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *arg_inner,
+                            *target_inner,
+                            crate::types::InferencePriority::NakedTypeVariable,
+                        );
+                    }
+                }
+            }
         }
 
         // Process rest tuple in Round 1 (it's non-contextual).
