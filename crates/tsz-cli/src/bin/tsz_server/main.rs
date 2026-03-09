@@ -323,7 +323,7 @@ enum LegacyRequest {
 }
 
 /// Full compiler options for a check request (expanded for tsc compatibility)
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckOptions {
     #[serde(default)]
@@ -539,6 +539,8 @@ pub(crate) struct Server {
     pub(crate) include_completions_with_class_member_snippets: bool,
     /// Compiler option propagated by `compilerOptionsForInferredProjects`.
     pub(crate) allow_importing_ts_extensions: bool,
+    /// Full inferred compiler options propagated by `compilerOptionsForInferredProjects`.
+    pub(crate) inferred_check_options: CheckOptions,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
     pub(crate) auto_imports_allowed_for_inferred_projects: bool,
     /// Whether inferred projects should be checked as `module:none`.
@@ -610,6 +612,7 @@ impl Server {
             auto_import_specifier_exclude_regexes: Vec::new(),
             include_completions_with_class_member_snippets: true,
             allow_importing_ts_extensions: false,
+            inferred_check_options: CheckOptions::default(),
             auto_imports_allowed_for_inferred_projects: true,
             inferred_module_is_none_for_projects: false,
             _server_mode: server_mode,

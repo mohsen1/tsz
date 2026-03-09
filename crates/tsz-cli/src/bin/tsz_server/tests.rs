@@ -28,12 +28,23 @@ fn make_server() -> Server {
         },
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
+        inferred_check_options: CheckOptions::default(),
         auto_imports_allowed_for_inferred_projects: true,
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
         plugin_configs: FxHashMap::default(),
     }
+}
+
+fn make_server_with_real_libs() -> Server {
+    let mut server = make_server();
+    server.lib_dir = Server::find_lib_dir().expect("lib dir should be discoverable in tests");
+    server.tests_lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../TypeScript/tests/lib")
+        .canonicalize()
+        .expect("TypeScript tests lib dir should exist");
+    server
 }
 
 fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest {
@@ -611,6 +622,215 @@ fn test_semantic_diagnostics_resolve_imports_from_open_dependency_files() {
     assert!(
         !has_cannot_find_module,
         "did not expect unresolved-module diagnostics for open dependency files"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
+    let mut server = make_server_with_real_libs();
+    let resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({ "options": { "module": "commonjs", "lib": ["es6"] } }),
+    ));
+    assert!(resp.success);
+    let resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "fileContent": "export function bar() { return 1; }\n"
+        }),
+    ));
+    assert!(resp.success);
+    let resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "var x1 = import(\"./foo\");\nx1.then(foo => {\n   var s: string = foo.bar();\n})\n"
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert_eq!(diagnostics.len(), 1, "expected one diagnostic before edit");
+
+    let resp = server.handle_tsserver_request(make_request(
+        "change",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 5,
+            "offset": 1,
+            "endLine": 5,
+            "endOffset": 1,
+            "insertString": "  "
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected trailing whitespace edit to preserve the diagnostic count"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_partial_union_alias_insert_keeps_array_is_array_valid() {
+    let mut server = make_server_with_real_libs();
+    let resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({ "options": { "strict": true, "lib": ["esnext"] } }),
+    ));
+    assert!(resp.success);
+    let resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "interface ComponentOptions<Props> {\n  setup?: (props: Props) => void;\n  name?: string;\n}\n\ninterface FunctionalComponent<P> {\n  (props: P): void;\n}\n\ntype ConcreteComponent<Props> =\n  | ComponentOptions<Props>\n  | FunctionalComponent<Props>;\n\ntype Component<Props = {}> = ConcreteComponent<Props>;\n\ntype WithInstallPlugin = { _prefix?: string };\n\n\nexport function withInstall<C extends Component, T extends WithInstallPlugin>(\n  component: C | C[],\n  target?: T,\n): string {\n  const componentWithInstall = (target ?? component) as T;\n  const components = Array.isArray(component) ? component : [component];\n\n  const { name } = components[0];\n  if (name) {\n    return name;\n  }\n\n  return \"\";\n}\n"
+        }),
+    ));
+    assert!(resp.success);
+
+    let resp = server.handle_tsserver_request(make_request(
+        "change",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "insertString": "type C = Component['name']\n"
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.is_empty(),
+        "expected alias insertion content to remain error-free, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_unused_label_content_round_trip_is_stable() {
+    let mut server = make_server_with_real_libs();
+    let resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({ "options": { "allowUnusedLabels": false } }),
+    ));
+    assert!(resp.success);
+    let resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "myLabel: while (true) {\n    if (Math.random() > 0.5) {\n        break myLabel;\n    }\n}\n"
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert_eq!(diagnostics.len(), 0, "expected no diagnostics initially");
+
+    let resp = server.handle_tsserver_request(make_request(
+        "change",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 9,
+            "endLine": 3,
+            "endOffset": 23,
+            "insertString": "break;"
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert_eq!(diagnostics.len(), 1, "expected one diagnostic after edit");
+
+    let resp = server.handle_tsserver_request(make_request(
+        "change",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 9,
+            "endLine": 3,
+            "endOffset": 15,
+            "insertString": "break myLabel;"
+        }),
+    ));
+    assert!(resp.success);
+
+    let req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({ "file": "/index.ts" }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let diagnostics = resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert_eq!(
+        diagnostics.len(),
+        0,
+        "expected restored content to be diagnostic-free"
     );
 }
 

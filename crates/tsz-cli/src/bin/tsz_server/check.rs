@@ -14,10 +14,14 @@ use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
 use tsz::emitter::ScriptTarget;
 use tsz::lib_loader::LibFile;
+use tsz::parallel;
 use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
-use tsz_cli::config::{checker_target_from_emitter, default_lib_name_for_target};
+use tsz_cli::config::{
+    checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
+    resolve_lib_files_from_dir,
+};
 use tsz_solver::QueryCache;
 use tsz_solver::RelationCacheStats;
 use tsz_solver::TypeInterner;
@@ -52,7 +56,7 @@ impl Server {
         content: &str,
         category: DiagnosticCategory,
     ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
-        let mut options = CheckOptions::default();
+        let mut options = self.inferred_check_options.clone();
         if (self.inferred_module_is_none_for_projects
             && !self.auto_imports_allowed_for_inferred_projects)
             || self.fourslash_module_none_directive_blocks_import_syntax(file_path)
@@ -60,9 +64,15 @@ impl Server {
             options.module = Some("none".to_string());
         }
 
-        // Use unified lib loading for proper cross-lib symbol resolution.
-        // The unified binder has declaration_arenas tracking each declaration's source arena.
-        let lib_files = match if options.no_lib {
+        let binding_lib_files = match if options.no_lib {
+            Ok(vec![])
+        } else {
+            self.load_libs_for_binding(&options)
+        } {
+            Ok(libs) => libs,
+            Err(_) => return Vec::new(),
+        };
+        let checker_lib_files = match if options.no_lib {
             Ok(vec![])
         } else {
             self.load_libs_unified(&options)
@@ -71,90 +81,110 @@ impl Server {
             Err(_) => return Vec::new(),
         };
 
-        let checker_options = self.build_checker_options(&options);
-        let type_interner = TypeInterner::new();
-
-        let lib_contexts: Vec<LibContext> = lib_files
+        let mut files: Vec<(String, String)> = self
+            .open_files
             .iter()
-            .map(|lib| LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
+            .map(|(path, raw)| {
+                (
+                    path.clone(),
+                    Self::normalize_fourslash_virtual_content(path, raw),
+                )
             })
             .collect();
+        if let Some((_, existing)) = files.iter_mut().find(|(path, _)| path == file_path) {
+            *existing = content.to_string();
+        } else {
+            files.push((file_path.to_string(), content.to_string()));
+        }
+        files.retain(|(path, _)| Self::is_checkable_file(path));
 
-        let mut parser = ParserState::new(file_path.to_string(), content.to_string());
-        let root = parser.parse_source_file();
-        let parse_diagnostics = parser.get_diagnostics().to_vec();
-        let arena = Arc::new(parser.into_arena());
-        let mut binder = BinderState::new();
-        binder.bind_source_file(&arena, root);
-        let binder = Arc::new(binder);
-
-        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(vec![std::sync::Arc::clone(&arena)]);
-        let all_binders: Arc<Vec<Arc<BinderState>>> =
-            Arc::new(vec![std::sync::Arc::clone(&binder)]);
-        let user_file_contexts: Vec<LibContext> = vec![LibContext {
-            arena: std::sync::Arc::clone(&arena),
-            binder: std::sync::Arc::clone(&binder),
-        }];
-
-        let mut all_contexts = lib_contexts;
-        all_contexts.extend(user_file_contexts);
-
-        let mut file_names: Vec<String> = self
-            .open_files
-            .keys()
-            .filter(|path| Self::is_checkable_file(path))
-            .cloned()
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            files,
+            &binding_lib_files,
+        ));
+        let checker_options = self.build_checker_options(&options);
+        let lib_contexts: Vec<LibContext> = checker_lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
             .collect();
-        if !file_names.iter().any(|path| path == file_path) {
-            file_names.push(file_path.to_string());
-        }
-        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-        let resolved_module_paths = Arc::new(resolved_module_paths);
+        let query_cache = QueryCache::new(&program.type_interner);
 
-        let query_cache = QueryCache::new(&type_interner);
-
-        let mut checker = CheckerState::new(
-            &arena,
-            &binder,
-            &query_cache,
-            file_path.to_string(),
-            checker_options,
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect(),
         );
-
-        if !all_contexts.is_empty() {
-            checker.ctx.set_lib_contexts(all_contexts);
-        }
-        // Set the count of actual lib files (not user files) for has_lib_loaded()
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-        checker.ctx.set_all_arenas(all_arenas);
-        checker.ctx.set_all_binders(all_binders);
-        checker.ctx.set_resolved_module_paths(resolved_module_paths);
-        checker.ctx.set_resolved_modules(resolved_modules);
-        checker.ctx.set_current_file_idx(0);
-        checker.check_source_file(root);
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(parallel::create_binder_from_bound_file(
+                        file, &program, file_idx,
+                    ))
+                })
+                .collect(),
+        );
+        let file_names: Vec<String> = program
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect();
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let resolved_module_paths_arc = Arc::new(resolved_module_paths);
+        let resolved_modules_arc = Arc::new(resolved_modules);
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
-
-        // Add parse diagnostics (only for Errors)
-        if category == DiagnosticCategory::Error {
-            for d in &parse_diagnostics {
-                diagnostics.push(tsz::checker::diagnostics::Diagnostic::error(
-                    file_path.to_string(),
-                    d.start,
-                    d.length,
-                    d.message.clone(),
-                    d.code,
-                ));
+        for (file_idx, file) in program.files.iter().enumerate() {
+            if category == DiagnosticCategory::Error && file.file_name == file_path {
+                diagnostics.extend(file.parse_diagnostics.iter().map(|diag| {
+                    tsz::checker::diagnostics::Diagnostic::error(
+                        file.file_name.clone(),
+                        diag.start,
+                        diag.length,
+                        diag.message.clone(),
+                        diag.code,
+                    )
+                }));
             }
-        }
 
-        // Add checker diagnostics
-        for diag in checker.ctx.diagnostics {
-            if diag.category == category {
-                diagnostics.push(diag);
+            let mut checker = CheckerState::new(
+                &file.arena,
+                &all_binders[file_idx],
+                &query_cache,
+                file.file_name.clone(),
+                checker_options.clone(),
+            );
+
+            if !lib_contexts.is_empty() {
+                checker.ctx.set_lib_contexts(lib_contexts.clone());
+            }
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker
+                .ctx
+                .set_resolved_module_paths(Arc::clone(&resolved_module_paths_arc));
+            checker
+                .ctx
+                .set_resolved_modules((*resolved_modules_arc).clone());
+            checker.ctx.set_current_file_idx(file_idx);
+            checker.check_source_file(file.source_file);
+
+            if file.file_name == file_path {
+                diagnostics.extend(
+                    checker
+                        .ctx
+                        .diagnostics
+                        .into_iter()
+                        .filter(|diag| diag.category == category),
+                );
             }
         }
 
@@ -511,6 +541,39 @@ impl Server {
     /// 3. Returns a single `LibFile` with the merged binder
     ///
     /// This allows proper cross-lib type resolution (e.g., `Array` from es5 visible in dom).
+    pub(crate) fn load_libs_for_binding(
+        &mut self,
+        options: &CheckOptions,
+    ) -> Result<Vec<Arc<LibFile>>> {
+        let lib_paths = if let Some(ref libs) = options.lib {
+            resolve_lib_files_from_dir(libs, &self.lib_dir)
+        } else {
+            resolve_default_lib_files_from_dir(Self::parse_target(&options.target), &self.lib_dir)
+        };
+        let lib_paths = match lib_paths {
+            Ok(paths) => paths,
+            Err(_) => {
+                let lib_names = self.determine_libs(options);
+                if lib_names.is_empty() {
+                    return Ok(vec![]);
+                }
+
+                let mut lib_files = Vec::new();
+                let mut loaded = rustc_hash::FxHashSet::default();
+                for lib_name in &lib_names {
+                    self.load_lib_recursive(lib_name, &mut lib_files, &mut loaded)?;
+                }
+                return Ok(lib_files);
+            }
+        };
+        if lib_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let lib_refs: Vec<&std::path::Path> = lib_paths.iter().map(|path| path.as_path()).collect();
+        parallel::load_lib_files_for_binding_strict(&lib_refs)
+    }
+
     pub(crate) fn load_libs_unified(
         &mut self,
         options: &CheckOptions,

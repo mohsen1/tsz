@@ -2,7 +2,7 @@ use super::{
     LineMap, Server, TsServerRequest, parse_identifier_call_expression, positions_overlap,
 };
 use crate::handlers_code_fixes_utils::reorder_import_candidates_for_package_roots;
-use crate::{LogConfig, LogLevel, ServerMode};
+use crate::{CheckOptions, LogConfig, LogLevel, ServerMode};
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use tsz::lsp::code_actions::ImportCandidate;
@@ -31,6 +31,7 @@ fn make_server() -> Server {
         },
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
+        inferred_check_options: CheckOptions::default(),
         auto_imports_allowed_for_inferred_projects: true,
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),

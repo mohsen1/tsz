@@ -1851,14 +1851,10 @@ fn test_resolution_maps_only_single_file() {
 
     let (paths, modules) = build_module_resolution_maps(&files);
 
-    assert!(
-        paths.is_empty(),
-        "Single file should have no resolution paths"
-    );
-    assert!(
-        modules.is_empty(),
-        "Single file should have no resolved modules"
-    );
+    assert_eq!(paths.get(&(0, "./main".to_string())), Some(&0));
+    assert_eq!(paths.get(&(0, "main".to_string())), Some(&0));
+    assert!(modules.contains("./main"));
+    assert!(modules.contains("main"));
 }
 
 // =============================================================================
