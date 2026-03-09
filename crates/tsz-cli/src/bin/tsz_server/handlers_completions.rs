@@ -258,9 +258,7 @@ impl Server {
             return false;
         };
         let before_brace = prefix[..class_body_start].trim_end();
-        let header_start = before_brace
-            .rfind(|ch| matches!(ch, '{' | '}' | ';'))
-            .map_or(0, |idx| idx + 1);
+        let header_start = before_brace.rfind(['{', '}', ';']).map_or(0, |idx| idx + 1);
         let header = before_brace[header_start..].trim();
         header
             .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
@@ -1627,27 +1625,26 @@ impl Server {
             let has_class_member_snippet = items
                 .iter()
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
-            let is_new_identifier_location =
-                if include_class_member_snippets && has_class_member_snippet {
-                    true
-                } else if Self::is_class_member_declaration_prefix_context(
+            let is_new_identifier_location = if (include_class_member_snippets
+                && has_class_member_snippet)
+                || Self::is_class_member_declaration_prefix_context(
                     &source_text,
                     &line_map,
                     completion_position,
                 ) {
-                    true
-                } else if Self::is_bare_identifier_expression_prefix(
-                    &source_text,
-                    &line_map,
-                    completion_position,
-                ) {
-                    false
-                } else {
-                    completion_result
-                        .as_ref()
-                        .map(|r| r.is_new_identifier_location)
-                        .unwrap_or(false)
-                };
+                true
+            } else if Self::is_bare_identifier_expression_prefix(
+                &source_text,
+                &line_map,
+                completion_position,
+            ) {
+                false
+            } else {
+                completion_result
+                    .as_ref()
+                    .map(|r| r.is_new_identifier_location)
+                    .unwrap_or(false)
+            };
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
 

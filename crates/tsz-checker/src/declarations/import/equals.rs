@@ -636,14 +636,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 (message, code)
             };
-            self.ctx
-                .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    spec_start,
-                    spec_length,
-                    message,
-                    code,
-                ));
+            self.error_at_node(module_specifier_idx, &message, code);
             return;
         }
 

@@ -3,7 +3,6 @@
 use std::rc::Rc;
 
 use crate::FlowAnalyzer;
-use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_binder::SymbolId;
@@ -265,16 +264,11 @@ impl<'a> CheckerState<'a> {
             .get_symbol(sym_id)
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
 
-        // Get the location for error reporting
-        let length = node.end - node.pos;
-
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            pos,
-            length,
-            format!("Variable '{name}' is used before being assigned."),
+        self.error_at_node(
+            idx,
+            &format!("Variable '{name}' is used before being assigned."),
             2454, // TS2454
-        ));
+        );
     }
 
     /// Check if a node is within a parameter's default value initializer.

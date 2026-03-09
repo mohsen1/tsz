@@ -1,6 +1,6 @@
 //! Assignment expression checking (simple, compound, logical, readonly).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -345,17 +345,11 @@ impl<'a> CheckerState<'a> {
         // `undefined` is not a variable — it's a global constant that cannot be assigned to.
         // TypeScript emits TS2539 for `undefined = ...` or `undefined++` etc.
         if name == "undefined" {
-            let message = format_message(
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
+            self.error_at_node_msg(
+                inner,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                node.pos,
-                node.end.saturating_sub(node.pos),
-                message,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
-            ));
             return true;
         }
 
@@ -364,18 +358,11 @@ impl<'a> CheckerState<'a> {
         // `arguments` is an IArguments object (handled by type_computation_complex.rs).
         // Only at module scope would `arguments` resolve to a function-like global.
         if name == "eval" {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+            self.error_at_node_msg(
+                inner,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                node.pos,
-                node.end.saturating_sub(node.pos),
-                message,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
-            ));
             return true;
         }
 
@@ -417,39 +404,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this symbol is a class, enum, function, or namespace (TS2629, TS2628, TS2630, TS2631)
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let (msg_template, code) = if symbol.flags & symbol_flags::MODULE != 0 {
-            (
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
-            )
+        let code = if symbol.flags & symbol_flags::MODULE != 0 {
+            diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE
         } else if symbol.flags & symbol_flags::CLASS != 0 {
-            (
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
-            )
+            diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS
         } else if symbol.flags & symbol_flags::ENUM != 0 {
-            (
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM,
-            )
+            diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM
         } else if symbol.flags & symbol_flags::FUNCTION != 0 {
-            (
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
-            )
+            diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION
         } else {
             return false;
         };
 
-        let message = format_message(msg_template, &[name]);
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            node.pos,
-            node.end.saturating_sub(node.pos),
-            message,
-            code,
-        ));
+        self.error_at_node_msg(inner, code, &[name]);
         true
     }
 
@@ -826,19 +793,21 @@ impl<'a> CheckerState<'a> {
 
         let mut emitted = false;
 
-        if !left_is_valid
-            && !(left_is_nullish)
-            && let Some(loc) = self.get_source_location(left_idx)
-        {
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+        if !left_is_valid && !(left_is_nullish) {
+            self.error_at_node(
+                left_idx,
+                "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+            );
             emitted = true;
         }
 
-        if !right_is_valid
-            && !(right_is_nullish)
-            && let Some(loc) = self.get_source_location(right_idx)
-        {
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+        if !right_is_valid && !(right_is_nullish) {
+            self.error_at_node(
+                right_idx,
+                "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+            );
             emitted = true;
         }
 
@@ -847,12 +816,14 @@ impl<'a> CheckerState<'a> {
 
     /// Emit TS2447 error for boolean bitwise operators (&, |, ^, &=, |=, ^=).
     fn emit_boolean_operator_error(&mut self, node_idx: NodeIndex, op_str: &str, suggestion: &str) {
-        if let Some(loc) = self.get_source_location(node_idx) {
-            let message = format!(
-                "The '{op_str}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD));
-        }
+        let message = format!(
+            "The '{op_str}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
+        );
+        self.error_at_node(
+            node_idx,
+            &message,
+            diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+        );
     }
 
     // =========================================================================
@@ -1001,35 +972,21 @@ impl<'a> CheckerState<'a> {
                 let should_emit_2469 = (left_is_symbol && right_is_string_or_any)
                     || (right_is_symbol && left_is_string_or_any);
                 if should_emit_2469 {
-                    use crate::diagnostics::{
-                        Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    if left_is_symbol && let Some(loc) = self.get_source_location(left_idx) {
-                        let message = format_message(
-                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    use crate::diagnostics::diagnostic_codes;
+                    if left_is_symbol {
+                        self.error_at_node_msg(
+                            left_idx,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
                             &["+="],
                         );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                            self.ctx.file_name.clone(),
-                            loc.start,
-                            loc.length(),
-                            message,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        ));
                         emitted_operator_error = true;
                     }
-                    if right_is_symbol && let Some(loc) = self.get_source_location(right_idx) {
-                        let message = format_message(
-                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    if right_is_symbol {
+                        self.error_at_node_msg(
+                            right_idx,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
                             &["+="],
                         );
-                        self.ctx.diagnostics.push(Diagnostic::error(
-                            self.ctx.file_name.clone(),
-                            loc.start,
-                            loc.length(),
-                            message,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                        ));
                         emitted_operator_error = true;
                     }
                 }
@@ -1072,16 +1029,12 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Operator '+=' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
-                if let Some(loc) = self.get_source_location(expr_idx) {
-                    self.ctx.diagnostics.push(Diagnostic::error(
-                        self.ctx.file_name.clone(),
-                        loc.start,
-                        loc.length(),
-                        message,
-                        diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    ));
-                    emitted_operator_error = true;
-                }
+                self.error_at_node(
+                    expr_idx,
+                    &message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                );
+                emitted_operator_error = true;
             }
         }
 
