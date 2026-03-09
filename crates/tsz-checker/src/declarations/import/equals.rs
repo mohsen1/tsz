@@ -95,6 +95,7 @@ impl<'a> CheckerState<'a> {
     /// - TS1202 when import assignment is used in ES modules
     /// - TS2307 when the module cannot be found
     /// - TS2440 when import conflicts with a local declaration
+    ///
     /// Check if the target of an import-equals alias includes a type meaning.
     ///
     /// For `import string = ns.Foo`, this resolves `ns.Foo` and checks if the
@@ -114,11 +115,11 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        if let Some(sym_id) = target_sym_id {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                // TYPE includes: Interface, TypeLiteral, TypeParameter, TypeAlias, Class, Enum, EnumMember
-                return (symbol.flags & symbol_flags::TYPE) != 0;
-            }
+        if let Some(sym_id) = target_sym_id
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            // TYPE includes: Interface, TypeLiteral, TypeParameter, TypeAlias, Class, Enum, EnumMember
+            return (symbol.flags & symbol_flags::TYPE) != 0;
         }
         false
     }

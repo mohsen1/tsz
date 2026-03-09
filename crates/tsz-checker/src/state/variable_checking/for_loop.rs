@@ -283,7 +283,17 @@ impl<'a> CheckerState<'a> {
 
         // For-in specific LHS checks (TS2491, TS2406, TS2405)
         if !is_for_of && let Some(init_node) = self.ctx.arena.get(initializer) {
-            let init_kind = init_node.kind;
+            // Unwrap parenthesized/satisfies/as wrappers before checking the kind,
+            // so `for ((x satisfies string) in obj)` is treated like `for (x in obj)`.
+            let unwrapped = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(initializer);
+            let init_kind = self
+                .ctx
+                .arena
+                .get(unwrapped)
+                .map_or(init_node.kind, |n| n.kind);
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             use tsz_parser::parser::syntax_kind_ext;
 
@@ -327,13 +337,19 @@ impl<'a> CheckerState<'a> {
         // This applies only to valid LHS forms (identifiers and property/element access).
         // Skip if we already emitted TS2491 (destructuring) or TS2406 (invalid form).
         if !is_for_of
-            && let Some(init_node) = self.ctx.arena.get(initializer)
-            && matches!(
-                init_node.kind,
-                k if k == SyntaxKind::Identifier as u16
-                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            )
+            && let Some(_init_node) = self.ctx.arena.get(initializer)
+            && {
+                let unwrapped = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(initializer);
+                self.ctx.arena.get(unwrapped).is_some_and(|n| {
+                    let k = n.kind;
+                    k == SyntaxKind::Identifier as u16
+                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                })
+            }
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let var_type = self.get_type_of_assignment_target(initializer);

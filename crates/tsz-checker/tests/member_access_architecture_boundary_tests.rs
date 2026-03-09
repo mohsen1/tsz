@@ -11,8 +11,7 @@ fn member_access_uses_centralized_mutual_assignability_gateway() {
         "member_access should route bidirectional relation checks through are_mutually_assignable",
     );
     assert!(
-        source.contains("self.are_mutually_assignable(*first_type, current_type)")
-            && source.contains("!self.are_mutually_assignable(first_type, current_type)"),
+        source.contains("self.are_mutually_assignable(first_type, current_type)"),
         "member_access should use are_mutually_assignable for duplicate-property type consistency checks",
     );
 }

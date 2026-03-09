@@ -675,7 +675,7 @@ impl<'a> CheckerState<'a> {
     /// NOT the global Promise type.
     ///
     /// Used for TS1064: if the return type is `MyPromise<void>` (Application with base class
-    /// "MyPromise"), we know it's not the global Promise and should emit TS1064.
+    /// "`MyPromise`"), we know it's not the global Promise and should emit TS1064.
     ///
     /// Returns false (uncertain) when:
     /// - The type is not an Application
@@ -721,12 +721,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
-                // Only match simple identifier "Promise" — not qualified names
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    return ident.escaped_text.as_str() == "Promise";
-                }
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+        {
+            // Only match simple identifier "Promise" — not qualified names
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                return ident.escaped_text.as_str() == "Promise";
             }
         }
 
