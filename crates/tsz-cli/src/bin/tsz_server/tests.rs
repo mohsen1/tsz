@@ -397,6 +397,53 @@ fn test_semantic_diagnostics_respect_inferred_module_none() {
 }
 
 #[test]
+fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_imports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "module": "none",
+                "target": "es2015"
+            }
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_module_none_diag = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                    as u64,
+            )
+    });
+    assert!(
+        !has_module_none_diag,
+        "did not expect TS1148-style diagnostic when inferred target supports imports"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_respect_fourslash_module_none_directive() {
     let mut server = make_server();
     server.open_files.insert(

@@ -117,6 +117,46 @@ impl Server {
         None
     }
 
+    fn is_class_member_snippet_context(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let end = if let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, offset)
+        {
+            marker_start.saturating_sub(1) as usize
+        } else {
+            offset as usize
+        }
+        .min(source_text.len());
+        let text = &source_text[..end];
+        let Some(class_pos) = text.rfind("class ") else {
+            return false;
+        };
+        let Some(rel_open) = text[class_pos..].find('{') else {
+            return false;
+        };
+        let open = class_pos + rel_open;
+        if open + 1 >= end {
+            return true;
+        }
+        let mut depth = 1i32;
+        for &b in &text.as_bytes()[open + 1..] {
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth <= 0 {
+                return false;
+            }
+        }
+        depth == 1
+    }
+
     fn completion_result_with_probes(
         provider: &Completions<'_>,
         root: tsz::parser::base::NodeIndex,
@@ -128,7 +168,7 @@ impl Server {
         let has_multiple_probes = probe_positions.len() > 1;
         let mut selected_position = position;
         let mut selected_result = None;
-        let mut selected_score = (false, 0usize);
+        let mut selected_score = (false, 0usize, false);
         for probe_position in probe_positions {
             let candidate = provider.get_completion_result(root, probe_position);
             let score = candidate
@@ -137,9 +177,10 @@ impl Server {
                     (
                         result.is_member_completion && !result.entries.is_empty(),
                         result.entries.len(),
+                        result.is_new_identifier_location,
                     )
                 })
-                .unwrap_or((false, 0usize));
+                .unwrap_or((false, 0usize, false));
             if selected_result.is_none() {
                 selected_position = probe_position;
                 selected_result = candidate;
@@ -154,7 +195,10 @@ impl Server {
             } else if candidate_is_member && selected_is_member {
                 score.1 > selected_score.1
             } else if has_multiple_probes && !candidate_is_member && !selected_is_member {
-                score.1 > 0 && (selected_score.1 == 0 || score.1 < selected_score.1)
+                score.1 > 0
+                    && (selected_score.1 == 0
+                        || (selected_score.2 && !score.2)
+                        || (score.2 == selected_score.2 && score.1 < selected_score.1))
             } else {
                 false
             };
@@ -165,6 +209,24 @@ impl Server {
             }
         }
         (selected_position, selected_result)
+    }
+
+    fn is_bare_identifier_expression_prefix(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let prefix = &source_text[..offset as usize];
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = prefix[line_start..].trim();
+        !line.is_empty()
+            && !line.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+            && line
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
@@ -1055,17 +1117,20 @@ impl Server {
         });
 
         let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
-        let allow_insert_text =
-            item.has_action || item.replacement_span.is_some() || !Self::is_identifier(&item.label);
         if include_insert_text
-            && allow_insert_text
             && let Some(insert_text) = item.insert_text.clone().or_else(|| {
                 is_class_member_snippet
                     .then(|| Self::class_member_snippet_insert_text(item))
                     .flatten()
             })
         {
-            entry["insertText"] = serde_json::json!(insert_text);
+            let should_emit_insert_text = item.is_snippet
+                || is_class_member_snippet
+                || !Self::is_identifier(&item.label)
+                || insert_text != item.label;
+            if should_emit_insert_text && !insert_text.is_empty() {
+                entry["insertText"] = serde_json::json!(insert_text);
+            }
         }
         if item.has_action {
             entry["hasAction"] = serde_json::json!(true);
@@ -1390,12 +1455,18 @@ impl Server {
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
+            let allow_class_member_snippets = !is_member_completion
+                && Self::is_class_member_snippet_context(
+                    &source_text,
+                    &line_map,
+                    completion_position,
+                );
             let include_class_member_snippets = Self::bool_pref_or_default(
                 Some(preferences),
                 "includeCompletionsWithClassMemberSnippets",
                 self.include_completions_with_class_member_snippets,
             );
-            let snippet_items = if include_class_member_snippets && !is_member_completion {
+            let snippet_items = if include_class_member_snippets && allow_class_member_snippets {
                 self.class_member_snippet_items(
                     &provider,
                     root,
@@ -1494,12 +1565,19 @@ impl Server {
             let has_class_member_snippet = items
                 .iter()
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
-            let is_new_identifier_location = completion_result
-                .as_ref()
-                .map(|r| r.is_new_identifier_location)
-                .unwrap_or(false)
-                || (include_class_member_snippets
-                    && (!is_member_completion || has_class_member_snippet));
+            let is_new_identifier_location = if Self::is_bare_identifier_expression_prefix(
+                &source_text,
+                &line_map,
+                completion_position,
+            ) {
+                false
+            } else {
+                completion_result
+                    .as_ref()
+                    .map(|r| r.is_new_identifier_location)
+                    .unwrap_or(false)
+                    || (include_class_member_snippets && has_class_member_snippet)
+            };
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
 
@@ -1569,6 +1647,12 @@ impl Server {
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
+            let allow_class_member_snippets = !is_member_completion
+                && Self::is_class_member_snippet_context(
+                    &source_text,
+                    &line_map,
+                    completion_position,
+                );
             let include_class_member_snippets = Self::bool_pref_or_default(
                 Some(preferences),
                 "includeCompletionsWithClassMemberSnippets",
@@ -1581,7 +1665,7 @@ impl Server {
                     .and_then(serde_json::Value::as_str)
                     == Some("ClassMemberSnippet/")
             });
-            if requested_class_member_snippet && project_items.is_empty() {
+            if allow_class_member_snippets && requested_class_member_snippet && project_items.is_empty() {
                 let forced_auto_import_prefs =
                     serde_json::json!({ "includeCompletionsForModuleExports": true });
                 project_items = self.project_completion_items(
@@ -1590,8 +1674,8 @@ impl Server {
                     Some(&forced_auto_import_prefs),
                 );
             }
-            let snippet_items = if requested_class_member_snippet
-                || (include_class_member_snippets && !is_member_completion)
+            let snippet_items = if allow_class_member_snippets
+                && (requested_class_member_snippet || include_class_member_snippets)
             {
                 self.class_member_snippet_items(
                     &provider,

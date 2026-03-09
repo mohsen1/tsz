@@ -581,6 +581,33 @@ impl Server {
         last_import_end
     }
 
+    fn fallback_text_likely_in_class_body(source_text: &str, offset: u32) -> bool {
+        let end = (offset as usize).min(source_text.len());
+        let text = &source_text[..end];
+        let Some(class_pos) = text.rfind("class ") else {
+            return false;
+        };
+        let Some(rel_open) = text[class_pos..].find('{') else {
+            return false;
+        };
+        let open = class_pos + rel_open;
+        if open + 1 >= end {
+            return true;
+        }
+        let mut depth = 1i32;
+        for &b in &text.as_bytes()[open + 1..] {
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth <= 0 {
+                return false;
+            }
+        }
+        depth == 1
+    }
+
     pub(super) fn class_member_snippet_items(
         &self,
         provider: &Completions<'_>,
@@ -860,6 +887,9 @@ impl Server {
         let mut out = Vec::new();
         let mut base_names = Self::enclosing_class_extends_names(&arena, offset);
         if base_names.is_empty() {
+            if !Self::fallback_text_likely_in_class_body(&source_text, offset) {
+                return out;
+            }
             self.collect_fallback_base_members_recursive(
                 "",
                 &scan_paths,
