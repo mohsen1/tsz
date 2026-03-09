@@ -1299,6 +1299,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // the body of a control flow statement (if/while/for) without braces.
         let decl_kind = match node.kind {
             syntax_kind_ext::INTERFACE_DECLARATION => Some("interface"),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some("type"),
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 // Check the VariableDeclarationList for const/let flags
                 if let Some(var_data) = self.ctx.arena.get_variable(node) {

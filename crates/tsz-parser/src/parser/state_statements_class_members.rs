@@ -534,7 +534,7 @@ impl ParserState {
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_error_at_current_token(
-                "Constructor cannot have a return type annotation.",
+                "Type annotation cannot appear on a constructor declaration.",
                 diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
             // Consume the type annotation for recovery

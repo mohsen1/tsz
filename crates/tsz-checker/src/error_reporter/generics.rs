@@ -93,7 +93,11 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.emitted_diagnostics.insert(key);
 
-            let type_str = self.format_type(type_arg);
+            // tsc widens literal types to their base types in TS2344 messages:
+            // e.g., `42` → `number`, `"hello"` → `string`. This matches
+            // tsc's getBaseTypeOfLiteralType applied before typeToString.
+            let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
+            let type_str = self.format_type(widened_arg);
             let constraint_str = self.format_type(constraint);
             let message = format_message(
                 diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,

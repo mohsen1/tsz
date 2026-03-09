@@ -869,7 +869,7 @@ impl<'a> CheckerState<'a> {
                 // Only emit TS7008 when noImplicitAny is enabled
                 if self.ctx.no_implicit_any()
                     && sig.type_annotation.is_none()
-                    && let Some(member_name) = self.get_property_name(sig.name)
+                    && let Some(member_name) = self.get_member_name_display_text(sig.name)
                 {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
