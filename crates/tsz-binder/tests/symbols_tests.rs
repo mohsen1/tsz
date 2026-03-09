@@ -469,8 +469,12 @@ mod symbol_flags_tests {
 
     #[test]
     fn variable_composite_includes_both_scoped_kinds() {
-        assert!(symbol_flags::VARIABLE & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0);
-        assert!(symbol_flags::VARIABLE & symbol_flags::BLOCK_SCOPED_VARIABLE != 0);
+        const {
+            assert!(symbol_flags::VARIABLE & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0);
+        }
+        const {
+            assert!(symbol_flags::VARIABLE & symbol_flags::BLOCK_SCOPED_VARIABLE != 0);
+        }
         assert_eq!(
             symbol_flags::VARIABLE,
             symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE
@@ -479,8 +483,8 @@ mod symbol_flags_tests {
 
     #[test]
     fn enum_composite_includes_regular_and_const() {
-        assert!(symbol_flags::ENUM & symbol_flags::REGULAR_ENUM != 0);
-        assert!(symbol_flags::ENUM & symbol_flags::CONST_ENUM != 0);
+        const { assert!(symbol_flags::ENUM & symbol_flags::REGULAR_ENUM != 0) }
+        const { assert!(symbol_flags::ENUM & symbol_flags::CONST_ENUM != 0) }
         assert_eq!(
             symbol_flags::ENUM,
             symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM
@@ -489,8 +493,8 @@ mod symbol_flags_tests {
 
     #[test]
     fn accessor_composite_includes_get_and_set() {
-        assert!(symbol_flags::ACCESSOR & symbol_flags::GET_ACCESSOR != 0);
-        assert!(symbol_flags::ACCESSOR & symbol_flags::SET_ACCESSOR != 0);
+        const { assert!(symbol_flags::ACCESSOR & symbol_flags::GET_ACCESSOR != 0) }
+        const { assert!(symbol_flags::ACCESSOR & symbol_flags::SET_ACCESSOR != 0) }
         assert_eq!(
             symbol_flags::ACCESSOR,
             symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR
@@ -499,23 +503,23 @@ mod symbol_flags_tests {
 
     #[test]
     fn value_includes_common_value_kinds() {
-        assert!(symbol_flags::VALUE & symbol_flags::VARIABLE != 0);
-        assert!(symbol_flags::VALUE & symbol_flags::FUNCTION != 0);
-        assert!(symbol_flags::VALUE & symbol_flags::CLASS != 0);
-        assert!(symbol_flags::VALUE & symbol_flags::ENUM != 0);
+        const { assert!(symbol_flags::VALUE & symbol_flags::VARIABLE != 0) }
+        const { assert!(symbol_flags::VALUE & symbol_flags::FUNCTION != 0) }
+        const { assert!(symbol_flags::VALUE & symbol_flags::CLASS != 0) }
+        const { assert!(symbol_flags::VALUE & symbol_flags::ENUM != 0) }
     }
 
     #[test]
     fn type_includes_common_type_kinds() {
-        assert!(symbol_flags::TYPE & symbol_flags::CLASS != 0);
-        assert!(symbol_flags::TYPE & symbol_flags::INTERFACE != 0);
-        assert!(symbol_flags::TYPE & symbol_flags::TYPE_ALIAS != 0);
-        assert!(symbol_flags::TYPE & symbol_flags::TYPE_PARAMETER != 0);
+        const { assert!(symbol_flags::TYPE & symbol_flags::CLASS != 0) }
+        const { assert!(symbol_flags::TYPE & symbol_flags::INTERFACE != 0) }
+        const { assert!(symbol_flags::TYPE & symbol_flags::TYPE_ALIAS != 0) }
+        const { assert!(symbol_flags::TYPE & symbol_flags::TYPE_PARAMETER != 0) }
     }
 
     #[test]
     fn namespace_includes_modules() {
-        assert!(symbol_flags::NAMESPACE & symbol_flags::VALUE_MODULE != 0);
-        assert!(symbol_flags::NAMESPACE & symbol_flags::NAMESPACE_MODULE != 0);
+        const { assert!(symbol_flags::NAMESPACE & symbol_flags::VALUE_MODULE != 0) }
+        const { assert!(symbol_flags::NAMESPACE & symbol_flags::NAMESPACE_MODULE != 0) }
     }
 }
