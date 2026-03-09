@@ -1,4 +1,5 @@
 use super::*;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
@@ -68,6 +69,133 @@ fn emit_js_dts_with_usage_analysis(source: &str) -> String {
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     emitter.set_current_arena(current_arena, "test.js".to_string());
     emitter.emit(root)
+}
+
+#[test]
+fn test_same_file_symbol_module_path_is_none() {
+    let source = r#"
+namespace m1 {
+    export class c {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let arena_addr = Arc::as_ptr(&current_arena) as usize;
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(arena_addr, "test.ts".to_string());
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.set_arena_to_path(arena_to_path);
+
+    let sym_id = binder
+        .file_locals
+        .get("m1")
+        .expect("expected same-file namespace symbol");
+
+    assert!(
+        emitter.resolve_symbol_module_path(sym_id).is_none(),
+        "Expected same-file symbol to have no module path"
+    );
+}
+
+#[test]
+fn test_same_file_generic_namespace_type_stays_unqualified() {
+    let source = r#"
+export namespace C {
+    export class A<T> {}
+    export class B {}
+}
+
+export const value = null as any;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let c_sym = binder
+        .file_locals
+        .get("C")
+        .expect("missing namespace symbol");
+    let c_symbol = binder.symbols.get(c_sym).expect("missing namespace data");
+    let exports = c_symbol
+        .exports
+        .as_ref()
+        .expect("expected namespace exports");
+    let a_sym = exports.get("A").expect("missing class A symbol");
+    let b_sym = exports.get("B").expect("missing class B symbol");
+
+    let interner = TypeInterner::new();
+    let a_def = tsz_solver::DefId(9101);
+    let b_def = tsz_solver::DefId(9102);
+    let value_type = interner.application(interner.lazy(a_def), vec![interner.lazy(b_def)]);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(a_def, a_sym);
+    type_cache.def_to_symbol.insert(b_def, b_sym);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let arena_addr = Arc::as_ptr(&current_arena) as usize;
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(arena_addr, "test.ts".to_string());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.set_arena_to_path(arena_to_path);
+    let printed = emitter.print_type_id(value_type);
+
+    assert!(
+        printed == "C.A<C.B>",
+        "Expected same-file generic type to stay local: {printed}"
+    );
+    assert!(
+        !printed.contains("import(\"./test\").C.B"),
+        "Did not expect same-file type references to be import-qualified: {printed}"
+    );
+}
+
+#[test]
+fn test_object_literal_enum_values_preserve_typeof_and_widen_members() {
+    let output = emit_dts_with_binding(
+        r#"
+namespace m1 {
+    export enum e {
+        weekday,
+        weekend,
+        holiday,
+    }
+}
+
+var d = {
+    me: { en: m1.e },
+    mh: m1.e.holiday,
+};
+"#,
+    );
+
+    assert!(
+        output.contains("en: typeof m1.e;"),
+        "Expected enum object value to emit typeof enum: {output}"
+    );
+    assert!(
+        output.contains("mh: m1.e;"),
+        "Expected enum member value to widen to enum type: {output}"
+    );
+    assert!(
+        !output.contains("mh: m1.e.holiday;"),
+        "Did not expect enum member literal to leak into anonymous object type: {output}"
+    );
 }
 
 // =============================================================================
