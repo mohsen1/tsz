@@ -435,6 +435,7 @@ impl<'a> CheckerState<'a> {
         struct AccessorAggregate {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
+            declaration_order: u32,
         }
 
         let mut properties = Vec::new();
@@ -444,12 +445,17 @@ impl<'a> CheckerState<'a> {
         let mut string_index = None;
         let mut number_index = None;
         let mut has_abstract_construct_sig = false;
+        // Global member counter for preserving source declaration order across
+        // both properties and methods. Using properties.len() would give methods
+        // higher declaration_order than all properties since methods are merged
+        // after the loop, breaking tsc's interleaved display order.
+        let mut member_order: u32 = 0;
         // Collect method signatures grouped by name to support overloaded methods.
         // Each entry maps method name -> list of (CallSignature, optional, readonly).
         let mut method_overloads: FxHashMap<Atom, Vec<(CallSignature, bool, bool)>> =
             FxHashMap::default();
-        // Track insertion order for method overloads to preserve declaration_order.
-        let mut method_overload_order: Vec<Atom> = Vec::new();
+        // Track insertion order and declaration_order for method overloads.
+        let mut method_overload_order: Vec<(Atom, u32)> = Vec::new();
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -537,7 +543,8 @@ impl<'a> CheckerState<'a> {
                             let readonly = self.has_readonly_modifier(&sig.modifiers);
                             let entry = method_overloads.entry(name_atom).or_default();
                             if entry.is_empty() {
-                                method_overload_order.push(name_atom);
+                                member_order += 1;
+                                method_overload_order.push((name_atom, member_order));
                             }
                             entry.push((call_sig, optional, readonly));
                         } else {
@@ -546,6 +553,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 TypeId::ANY
                             };
+                            member_order += 1;
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id,
@@ -556,7 +564,7 @@ impl<'a> CheckerState<'a> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: (properties.len() + 1) as u32,
+                                declaration_order: member_order,
                             });
                         }
                     }
@@ -637,9 +645,15 @@ impl<'a> CheckerState<'a> {
                 && let Some(name) = self.get_property_name(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
+                let is_new_accessor = !accessors.contains_key(&name_atom);
+                if is_new_accessor {
+                    member_order += 1;
+                }
+                let current_order = member_order;
                 let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                     getter: None,
                     setter: None,
+                    declaration_order: current_order,
                 });
 
                 if member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR {
@@ -685,13 +699,13 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: (properties.len() + 1) as u32,
+                declaration_order: accessor.declaration_order,
             });
         }
 
         // Merge overloaded method signatures into properties.
         // Single-signature methods become Function types; multi-signature become Callable types.
-        for name_atom in method_overload_order {
+        for (name_atom, decl_order) in method_overload_order {
             if let Some(sigs) = method_overloads.remove(&name_atom) {
                 let optional = sigs.iter().all(|(_, opt, _)| *opt);
                 let readonly = sigs.iter().any(|(_, _, ro)| *ro);
@@ -729,7 +743,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: (properties.len() + 1) as u32,
+                    declaration_order: decl_order,
                 });
             }
         }
