@@ -417,10 +417,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_expando_element_access_read(access.expression, access.name_or_argument) {
+        if !self.ctx.skip_flow_narrowing
+            && self.is_expando_element_access_read(access.expression, access.name_or_argument)
+        {
             return TypeId::ANY;
         }
-
         let union_keys = self.get_literal_key_union_from_type(index_type);
         // Track missing literal keys for TS2339 reporting (instead of TS7053).
         let mut missing_literal_keys: Vec<String> = Vec::new();
@@ -492,7 +493,9 @@ impl<'a> CheckerState<'a> {
                     // In write context, intersect the results from string and number
                     // keys — the assigned value must satisfy all possible key types.
                     result_type = Some(if self.ctx.skip_flow_narrowing {
-                        tsz_solver::utils::intersection_or_single(self.ctx.types, types)
+                        let intersection =
+                            tsz_solver::utils::intersection_or_single(self.ctx.types, types);
+                        self.evaluate_type_with_env(intersection)
                     } else {
                         tsz_solver::utils::union_or_single(self.ctx.types, types)
                     });
