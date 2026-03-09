@@ -724,8 +724,9 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "[{key_name}: string]: {}",
+                "{ro}[{key_name}: string]: {}",
                 self.format(idx.value_type)
             ));
         }
@@ -734,8 +735,9 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "[{key_name}: number]: {}",
+                "{ro}[{key_name}: number]: {}",
                 self.format(idx.value_type)
             ));
         }
@@ -943,8 +945,9 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "[{key_name}: string]: {}",
+                "{ro}[{key_name}: string]: {}",
                 self.format(idx.value_type)
             ));
         }
@@ -953,8 +956,9 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "[{key_name}: number]: {}",
+                "{ro}[{key_name}: number]: {}",
                 self.format(idx.value_type)
             ));
         }
@@ -1679,6 +1683,56 @@ mod tests {
         assert!(
             result.contains("[x: number]: string"),
             "Expected number index signature with default param name 'x', got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_object_with_readonly_number_index_signature() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: None,
+            number_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::STRING,
+                readonly: true,
+                param_name: None,
+            }),
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("readonly [x: number]: string"),
+            "Expected readonly number index signature, got: {result}"
+        );
+    }
+
+    #[test]
+    fn format_object_with_readonly_string_index_signature() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::NUMBER,
+                readonly: true,
+                param_name: None,
+            }),
+            number_index: None,
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("readonly [x: string]: number"),
+            "Expected readonly string index signature, got: {result}"
         );
     }
 
