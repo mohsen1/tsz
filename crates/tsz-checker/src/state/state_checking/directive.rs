@@ -61,6 +61,16 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let unresolved_extensions: Vec<&'static str> =
+            if self.ctx.compiler_options.allow_js || self.ctx.is_js_file() {
+                vec![
+                    ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts",
+                    ".d.mts", ".mjs",
+                ]
+            } else {
+                vec![".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
+            };
+
         for (reference_path, line_num, quote_offset) in references {
             if !has_virtual_reference(&reference_path) {
                 // Calculate byte offset to the start of this line
@@ -78,6 +88,26 @@ impl<'a> CheckerState<'a> {
                 // Span covers just the path value (not the quotes)
                 let length = reference_path.len() as u32;
 
+                use crate::diagnostics::{diagnostic_codes, format_message};
+                let file_name_part = Path::new(&reference_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(reference_path.as_str());
+                if !file_name_part.contains('.') {
+                    let extensions = unresolved_extensions.join("', '");
+                    let message = format_message(
+                        "Could not resolve the path '{0}' with the extensions: '{1}'.",
+                        &[&reference_path, &extensions],
+                    );
+                    self.emit_error_at(
+                        pos,
+                        length,
+                        &message,
+                        diagnostic_codes::COULD_NOT_RESOLVE_THE_PATH_WITH_THE_EXTENSIONS,
+                    );
+                    continue;
+                }
+
                 // Resolve the reference path relative to the source file's directory,
                 // matching tsc behavior which reports absolute/resolved paths.
                 let resolved = source_path
@@ -88,8 +118,6 @@ impl<'a> CheckerState<'a> {
                 // Normalize the path to resolve . and .. components.
                 // tsc reports normalized paths like "/tmp/file.ts" not "/tmp/dir/../file.ts".
                 let display_path = normalize_path(&resolved);
-
-                use crate::diagnostics::{diagnostic_codes, format_message};
                 let message = format_message("File '{0}' not found.", &[&display_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }

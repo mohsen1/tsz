@@ -494,8 +494,25 @@ impl<'a> CheckerState<'a> {
         let callee_type_for_shape = self.resolve_ref_type(callee_type_for_resolution);
 
         // Extract function shape to check if this is a generic call that needs two-pass inference
-        let callee_shape =
-            call_checker::get_contextual_signature(self.ctx.types, callee_type_for_shape);
+        let callee_shape = call_checker::get_contextual_signature_for_arity(
+            self.ctx.types,
+            callee_type_for_shape,
+            args.len(),
+        );
+        if let Some(shape) = &callee_shape
+            && let Some(callable) =
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, callee_type_for_shape)
+            && callable.call_signatures.len() > 1
+        {
+            let mut fmt = tsz_solver::TypeFormatter::new(self.ctx.types);
+            tracing::trace!(
+                arg_count = args.len(),
+                selected_params = shape.params.len(),
+                selected_return = %fmt.format(shape.return_type),
+                callee = %fmt.format(callee_type_for_shape),
+                "generic call selected contextual signature"
+            );
+        }
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -702,11 +719,36 @@ impl<'a> CheckerState<'a> {
                         let new_params: Vec<_> = shape
                             .params
                             .iter()
-                            .map(|p| tsz_solver::ParamInfo {
-                                name: p.name,
-                                type_id: self.evaluate_type_with_env(p.type_id),
-                                optional: p.optional,
-                                rest: p.rest,
+                            .enumerate()
+                            .map(|(i, p)| {
+                                let arg_type = round1_arg_types.get(i).copied();
+                                let preserve_raw_application = arg_type.is_some_and(|arg_type| {
+                                    tsz_solver::type_queries::get_application_info(
+                                        self.ctx.types,
+                                        p.type_id,
+                                    )
+                                    .is_some()
+                                        && tsz_solver::type_queries::get_application_info(
+                                            self.ctx.types,
+                                            arg_type,
+                                        )
+                                        .is_some()
+                                        && tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            p.type_id,
+                                        )
+                                });
+
+                                tsz_solver::ParamInfo {
+                                    name: p.name,
+                                    type_id: if preserve_raw_application {
+                                        p.type_id
+                                    } else {
+                                        self.evaluate_type_with_env(p.type_id)
+                                    },
+                                    optional: p.optional,
+                                    rest: p.rest,
+                                }
                             })
                             .collect();
                         tsz_solver::FunctionShape {
@@ -734,6 +776,26 @@ impl<'a> CheckerState<'a> {
                         substitution_is_empty = substitution.is_empty(),
                         "Round 1 inference: substitution computed"
                     );
+                    if !substitution.is_empty() {
+                        let mut fmt = tsz_solver::TypeFormatter::new(self.ctx.types);
+                        let rendered: Vec<String> = shape
+                            .type_params
+                            .iter()
+                            .filter_map(|tp| {
+                                substitution.get(tp.name).map(|ty| {
+                                    format!(
+                                        "{}={}",
+                                        self.ctx.types.resolve_atom(tp.name),
+                                        fmt.format(ty)
+                                    )
+                                })
+                            })
+                            .collect();
+                        trace!(
+                            substitutions = rendered.join(", "),
+                            "Round 1 inference: substitution details"
+                        );
+                    }
 
                     let inferred_type_params_by_name: Vec<_> = shape
                         .type_params

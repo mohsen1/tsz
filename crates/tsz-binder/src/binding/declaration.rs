@@ -1734,23 +1734,50 @@ impl BinderState {
             None
         }
 
+        fn expando_member_key(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+            let node = arena.get(idx)?;
+            match node.kind {
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let access = arena.get_access_expr(node)?;
+                    let name_node = arena.get(access.name_or_argument)?;
+                    arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                }
+                syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                    let access = arena.get_access_expr(node)?;
+                    let key_node = arena.get(access.name_or_argument)?;
+                    match key_node.kind {
+                        k if k == SyntaxKind::Identifier as u16 => arena
+                            .get_identifier(key_node)
+                            .map(|ident| ident.escaped_text.clone()),
+                        k if k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NumericLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                        {
+                            arena.get_literal(key_node).map(|lit| lit.text.clone())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+
         let Some(lhs_node) = arena.get(lhs) else {
             return;
         };
-        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
             return;
         }
         let Some(access) = arena.get_access_expr(lhs_node) else {
             return;
         };
-        // Get the property name from the name_or_argument (must be an identifier)
-        let Some(name_node) = arena.get(access.name_or_argument) else {
+        let Some(prop_name) = expando_member_key(arena, lhs) else {
             return;
         };
-        let Some(name_ident) = arena.get_identifier(name_node) else {
-            return;
-        };
-        let prop_name = name_ident.escaped_text.clone();
 
         let Some(obj_key) = property_access_chain(arena, access.expression) else {
             return;

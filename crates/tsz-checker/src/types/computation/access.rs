@@ -47,6 +47,74 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 const MAX_AWAIT_DEPTH: u32 = 10;
 
 impl<'a> CheckerState<'a> {
+    fn is_expando_element_access_read(
+        &self,
+        object_expr_idx: NodeIndex,
+        key_expr_idx: NodeIndex,
+    ) -> bool {
+        fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right_node = arena.get(access.name_or_argument)?;
+                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+
+        fn expando_element_key(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+            let node = arena.get(idx)?;
+            match node.kind {
+                k if k == SyntaxKind::Identifier as u16 => {
+                    arena.get_identifier(node).map(|id| id.escaped_text.clone())
+                }
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                {
+                    arena.get_literal(node).map(|lit| lit.text.clone())
+                }
+                _ => None,
+            }
+        }
+
+        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+            return false;
+        };
+        let Some(prop_key) = expando_element_key(self.ctx.arena, key_expr_idx) else {
+            return false;
+        };
+
+        if self
+            .ctx
+            .binder
+            .expando_properties
+            .get(&obj_key)
+            .is_some_and(|props| props.contains(&prop_key))
+        {
+            return true;
+        }
+
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder
+                    .expando_properties
+                    .get(&obj_key)
+                    .is_some_and(|props| props.contains(&prop_key))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
     ///
     /// Handles element access with optional chaining, index signatures,
@@ -347,6 +415,10 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
+        }
+
+        if self.is_expando_element_access_read(access.expression, access.name_or_argument) {
+            return TypeId::ANY;
         }
 
         let union_keys = self.get_literal_key_union_from_type(index_type);

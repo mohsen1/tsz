@@ -2064,3 +2064,15 @@ pub fn get_contextual_signature_with_compat_checker(
 ) -> Option<FunctionShape> {
     CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
 }
+
+pub fn get_contextual_signature_for_arity_with_compat_checker(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    arg_count: usize,
+) -> Option<FunctionShape> {
+    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity(
+        db,
+        type_id,
+        Some(arg_count),
+    )
+}

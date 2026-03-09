@@ -81,8 +81,14 @@ pub struct CheckerOptions {
     /// This corresponds to the --checkJs compiler flag.
     /// With checkJs enabled, noImplicitAny and other type errors apply to .js files.
     pub check_js: bool,
+    /// When true, allow JavaScript files to participate in module/reference resolution.
+    /// This corresponds to the --allowJs compiler flag.
+    pub allow_js: bool,
     /// When true, disable dependency expansion from imports and triple-slash references.
     pub no_resolve: bool,
+    /// When true, declaration emit must be computable per-file without cross-file inference.
+    /// This corresponds to the --isolatedDeclarations compiler flag.
+    pub isolated_declarations: bool,
     /// When true, check side-effect imports for module resolution errors (TS2882).
     pub no_unchecked_side_effect_imports: bool,
     /// When true, require 'override' modifier on members that override base class members (TS4114).
@@ -187,7 +193,9 @@ impl Default for CheckerOptions {
             no_implicit_use_strict: false,
             resolve_json_module: false,
             check_js: false,
+            allow_js: false,
             no_resolve: false,
+            isolated_declarations: false,
             no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),

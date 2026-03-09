@@ -180,6 +180,8 @@ pub struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub isolated_modules: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub isolated_declarations: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub verbatim_module_syntax: Option<bool>,
     /// Custom conditions for package.json exports resolution
     #[serde(default)]
@@ -341,6 +343,7 @@ pub struct ResolvedCompilerOptions {
     pub no_emit_on_error: bool,
     /// Skip module graph expansion from imports/references when checking.
     pub no_resolve: bool,
+    pub isolated_declarations: bool,
     pub import_helpers: bool,
     /// Disable full type checking (only parse and emit errors reported).
     pub no_check: bool,
@@ -888,6 +891,7 @@ pub fn resolve_compiler_options(
 
     if let Some(allow_js) = options.allow_js {
         resolved.allow_js = allow_js;
+        resolved.checker.allow_js = allow_js;
     }
 
     if let Some(check_js) = options.check_js {
@@ -901,6 +905,10 @@ pub fn resolve_compiler_options(
     }
     if let Some(skip_lib_check) = options.skip_lib_check {
         resolved.skip_lib_check = skip_lib_check;
+    }
+    if let Some(isolated_declarations) = options.isolated_declarations {
+        resolved.isolated_declarations = isolated_declarations;
+        resolved.checker.isolated_declarations = isolated_declarations;
     }
     if let Some(strip_internal) = options.strip_internal {
         resolved.strip_internal = strip_internal;
@@ -2288,6 +2296,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_emit,
             no_emit_on_error,
             isolated_modules,
+            isolated_declarations,
             verbatim_module_syntax,
             custom_conditions,
             es_module_interop,

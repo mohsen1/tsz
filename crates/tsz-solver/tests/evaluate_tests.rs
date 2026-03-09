@@ -19520,6 +19520,102 @@ fn test_parameters_optional_and_rest_combination() {
     assert_eq!(result, TypeId::NEVER);
 }
 
+#[test]
+fn test_parameters_generic_function_extracts_parameter_tuple() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("P");
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: infer_p,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source_fn = interner.function(FunctionShape {
+        type_params: vec![
+            TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: u_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("b")),
+                type_id: u_param,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: u_param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: source_fn,
+        extends_type: extends_fn,
+        true_type: infer_p,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    let Some(TypeData::Tuple(tuple_id)) = interner.lookup(result) else {
+        panic!("Expected Parameters<genericFn> to evaluate to a tuple, got {result:?}");
+    };
+    let elements = interner.tuple_list(tuple_id);
+    assert_eq!(elements.len(), 2);
+    assert_eq!(elements[0].type_id, TypeId::UNKNOWN);
+    assert_eq!(elements[1].type_id, TypeId::UNKNOWN);
+}
+
 /// Test `ConstructorParameters`<T> with a class constructor.
 /// `ConstructorParameters` extracts params from a constructor signature.
 #[test]

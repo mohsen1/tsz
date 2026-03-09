@@ -15,6 +15,102 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn function_signature_is_contextually_sensitive(&self, params: &[ParamInfo]) -> bool {
+        params.iter().any(|param| {
+            param.type_id == TypeId::ANY || self.type_uses_inference_placeholders(param.type_id)
+        })
+    }
+
+    fn type_uses_inference_placeholders(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) => {
+                let name = self.interner.resolve_atom(info.name);
+                name.as_str().starts_with("__infer_")
+                    || info
+                        .constraint
+                        .is_some_and(|constraint| self.type_uses_inference_placeholders(constraint))
+            }
+            Some(TypeData::Infer(info)) => info
+                .constraint
+                .is_some_and(|constraint| self.type_uses_inference_placeholders(constraint)),
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.function_signature_is_contextually_sensitive(&shape.params)
+                    || self.type_uses_inference_placeholders(shape.return_type)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| {
+                        self.function_signature_is_contextually_sensitive(&sig.params)
+                            || self.type_uses_inference_placeholders(sig.return_type)
+                    })
+            }
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.type_uses_inference_placeholders(member)),
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => self
+                .interner
+                .object_shape(shape_id)
+                .properties
+                .iter()
+                .any(|prop| self.type_uses_inference_placeholders(prop.type_id)),
+            Some(TypeData::Array(elem))
+            | Some(TypeData::ReadonlyType(elem))
+            | Some(TypeData::NoInfer(elem))
+            | Some(TypeData::KeyOf(elem))
+            | Some(TypeData::Enum(_, elem)) => self.type_uses_inference_placeholders(elem),
+            Some(TypeData::Tuple(elements)) => self
+                .interner
+                .tuple_list(elements)
+                .iter()
+                .any(|elem| self.type_uses_inference_placeholders(elem.type_id)),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.type_uses_inference_placeholders(app.base)
+                    || app
+                        .args
+                        .iter()
+                        .any(|&arg| self.type_uses_inference_placeholders(arg))
+            }
+            Some(TypeData::IndexAccess(obj, key)) => {
+                self.type_uses_inference_placeholders(obj)
+                    || self.type_uses_inference_placeholders(key)
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner.conditional_type(cond_id);
+                self.type_uses_inference_placeholders(cond.check_type)
+                    || self.type_uses_inference_placeholders(cond.extends_type)
+                    || self.type_uses_inference_placeholders(cond.true_type)
+                    || self.type_uses_inference_placeholders(cond.false_type)
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner.mapped_type(mapped_id);
+                self.type_uses_inference_placeholders(mapped.constraint)
+                    || self.type_uses_inference_placeholders(mapped.template)
+            }
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
+                self.type_uses_inference_placeholders(type_arg)
+            }
+            Some(TypeData::TemplateLiteral(spans)) => self
+                .interner
+                .template_list(spans)
+                .iter()
+                .any(|span| match span {
+                    crate::types::TemplateSpan::Text(_) => false,
+                    crate::types::TemplateSpan::Type(inner) => {
+                        self.type_uses_inference_placeholders(*inner)
+                    }
+                }),
+            _ => false,
+        }
+    }
+
     /// Expand a `TypeParameter` to its constraint (if it has one).
     /// This is used when a `TypeParameter` from an outer scope is used as an argument.
     pub(super) fn expand_type_param(&self, ty: TypeId) -> TypeId {
@@ -715,13 +811,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         match key {
-            // Function and callable types are contextually sensitive (lambdas or objects
-            // with call signatures) ONLY if they have parameters. Parameterless functions
-            // do not need contextual typing for arguments and should participate in Round 1
-            // inference (e.g. `foo(() => 'hi')` should infer string immediately).
+            // Function and callable types are contextually sensitive only when one of
+            // their parameter types still needs contextual typing or inference
+            // placeholder resolution. Fully annotated function arguments should
+            // participate in Round 1 generic inference.
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                !shape.params.is_empty()
+                self.function_signature_is_contextually_sensitive(&shape.params)
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
@@ -729,7 +825,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .call_signatures
                     .iter()
                     .chain(shape.construct_signatures.iter())
-                    .any(|sig| !sig.params.is_empty())
+                    .any(|sig| self.function_signature_is_contextually_sensitive(&sig.params))
             }
 
             // Union/Intersection: contextually sensitive if any member is

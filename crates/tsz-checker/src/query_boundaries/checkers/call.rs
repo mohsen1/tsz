@@ -15,6 +15,14 @@ pub(crate) fn get_contextual_signature(
     tsz_solver::get_contextual_signature_with_compat_checker(db, type_id)
 }
 
+pub(crate) fn get_contextual_signature_for_arity(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    arg_count: usize,
+) -> Option<FunctionShape> {
+    tsz_solver::get_contextual_signature_for_arity_with_compat_checker(db, type_id, arg_count)
+}
+
 /// Get the construct signature of a type, preferring a generic one.
 /// Used for two-pass inference in `new` expressions where the construct
 /// signature may have type parameters that need to be inferred.
