@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 REPORT_DIR = ROOT / "artifacts" / "architecture"
 INPUT_JSON = REPORT_DIR / "arch_guard_report.json"
 OUTPUT_MD = REPORT_DIR / "arch_guard_report.md"

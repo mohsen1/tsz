@@ -1,0 +1,9 @@
+[package]
+name = "tsz-website"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "tsz project website — Eleventy static site deployed to tsz.dev"
+
+[lib]
+path = "rust/lib.rs"

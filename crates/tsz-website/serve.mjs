@@ -2,7 +2,7 @@
 
 /**
  * Minimal static file server for local development.
- * Serves website/dist/ on http://localhost:3000
+ * Serves dist/ on http://localhost:3000
  */
 
 import http from "node:http";
@@ -54,5 +54,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Serving website/dist/ at http://localhost:${PORT}`);
+  console.log(`Serving dist/ at http://localhost:${PORT}`);
 });

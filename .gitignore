@@ -126,5 +126,5 @@ npm/
 editors/
 
 # Website build output
-website/dist/
-website/data/
+crates/tsz-website/dist/
+crates/tsz-website/data/

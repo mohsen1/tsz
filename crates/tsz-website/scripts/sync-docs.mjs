@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const WEBSITE = path.resolve(import.meta.dirname, "..");
-const ROOT = path.resolve(WEBSITE, "..");
+const ROOT = path.resolve(WEBSITE, "..", "..");
 const DOCS = path.join(ROOT, "docs");
 const SRC = path.join(WEBSITE, "src");
 const TARGET_DOCS = path.join(SRC, "docs");
