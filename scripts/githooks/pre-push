@@ -20,7 +20,7 @@ if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../" && pwd)"
-CLEAN_SCRIPT="$SCRIPT_DIR/../clean.sh"
+CLEAN_SCRIPT="$SCRIPT_DIR/../setup/clean.sh"
 STAMP_FILE="$ROOT_DIR/.git/pre-commit-passed"
 
 # ─── Test gate: only for pushes to main/master ────────────────────────────────

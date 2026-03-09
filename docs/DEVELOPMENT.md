@@ -25,7 +25,7 @@ Pre-commit hooks are automatically installed on first build. They run:
 
 To manually install hooks:
 ```bash
-./scripts/setup.sh
+./scripts/setup/setup.sh
 ```
 
 To skip hooks for a single commit (not recommended):
@@ -148,13 +148,13 @@ The `target/` directory can grow to multi-GB sizes during builds. Protect your d
 
 ```bash
 # Check disk space and target size
-./scripts/clean.sh --check
+./scripts/setup/clean.sh --check
 
 # Safe cleanup (removes release artifacts, keeps debug for faster iteration)
-./scripts/clean.sh --safe
+./scripts/setup/clean.sh --safe
 
 # Full cleanup (removes all build artifacts)
-./scripts/clean.sh --full
+./scripts/setup/clean.sh --full
 
 # Or use cargo directly
 cargo clean          # Full clean

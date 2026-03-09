@@ -8,17 +8,17 @@
 # and test execution.
 #
 # Usage:
-#   ./scripts/run-fourslash.sh [options]
+#   ./scripts/fourslash/run-fourslash.sh [options]
 #
 # Examples:
-#   ./scripts/run-fourslash.sh                    # Run all fourslash tests
-#   ./scripts/run-fourslash.sh --max=10           # Run first 10 tests
-#   ./scripts/run-fourslash.sh --filter=quickInfo  # Run tests matching pattern
-#   ./scripts/run-fourslash.sh --verbose          # Show each test result
-#   ./scripts/run-fourslash.sh --server-tests     # Run server-specific tests
-#   ./scripts/run-fourslash.sh --skip-build       # Skip build steps
+#   ./scripts/fourslash/run-fourslash.sh                    # Run all fourslash tests
+#   ./scripts/fourslash/run-fourslash.sh --max=10           # Run first 10 tests
+#   ./scripts/fourslash/run-fourslash.sh --filter=quickInfo  # Run tests matching pattern
+#   ./scripts/fourslash/run-fourslash.sh --verbose          # Show each test result
+#   ./scripts/fourslash/run-fourslash.sh --server-tests     # Run server-specific tests
+#   ./scripts/fourslash/run-fourslash.sh --skip-build       # Skip build steps
 #
-# For full help: ./scripts/run-fourslash.sh --help
+# For full help: ./scripts/fourslash/run-fourslash.sh --help
 #
 
 set -euo pipefail
@@ -45,7 +45,7 @@ trap cleanup INT TERM EXIT
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TS_DIR="$ROOT_DIR/TypeScript"
 FOURSLASH_DIR="$ROOT_DIR/scripts/fourslash"
 
@@ -75,7 +75,7 @@ TSZ Fourslash Test Runner
 Runs TypeScript's fourslash language service tests against tsz-server.
 
 USAGE:
-    ./scripts/run-fourslash.sh [options]
+    ./scripts/fourslash/run-fourslash.sh [options]
 
 OPTIONS:
     Test Selection:
@@ -102,19 +102,19 @@ OPTIONS:
 
 EXAMPLES:
     # Run all tests (parallel by default)
-    ./scripts/run-fourslash.sh
+    ./scripts/fourslash/run-fourslash.sh
 
     # Quick smoke test with 10 tests
-    ./scripts/run-fourslash.sh --max=10
+    ./scripts/fourslash/run-fourslash.sh --max=10
 
     # Run with 4 parallel workers
-    ./scripts/run-fourslash.sh --workers=4
+    ./scripts/fourslash/run-fourslash.sh --workers=4
 
     # Run quickInfo-related tests with verbose output
-    ./scripts/run-fourslash.sh --filter=quickInfo --verbose
+    ./scripts/fourslash/run-fourslash.sh --filter=quickInfo --verbose
 
     # Run with existing builds (faster iteration)
-    ./scripts/run-fourslash.sh --skip-build --max=50
+    ./scripts/fourslash/run-fourslash.sh --skip-build --max=50
 
 ARCHITECTURE:
     The runner works by:
@@ -179,7 +179,7 @@ ensure_submodule() {
 build_typescript_harness() {
     log_step "Building TypeScript harness (non-bundled)..."
     cd "$TS_DIR"
-    "$SCRIPT_DIR/ensure-pinned-typescript.sh" "$TS_DIR"
+    "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
 
     # Install dependencies if needed
     if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then

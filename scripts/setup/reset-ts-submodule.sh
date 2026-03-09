@@ -1,7 +1,7 @@
 #!/bin/bash
 # Reset TypeScript submodule to the pinned SHA from typescript-versions.json
 #
-# Usage: ./scripts/reset-ts-submodule.sh
+# Usage: ./scripts/setup/reset-ts-submodule.sh
 #
 # Reads "current" SHA from scripts/conformance/typescript-versions.json and ensures
 # the TypeScript submodule is checked out at that exact commit.
@@ -12,7 +12,7 @@ set -e
 # with submodule operations by overriding gitlink resolution.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 VERSIONS_FILE="$ROOT_DIR/scripts/conformance/typescript-versions.json"
 
 if [ ! -f "$VERSIONS_FILE" ]; then

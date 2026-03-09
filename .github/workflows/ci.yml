@@ -106,7 +106,7 @@ jobs:
       - name: Checker boundary guardrail
         run: |
           mkdir -p target/architecture-reports
-          scripts/check-checker-boundaries.sh
+          scripts/arch/check-checker-boundaries.sh
           cp artifacts/architecture/arch_guard_report.json target/architecture-reports/arch-guard.json
           cp artifacts/architecture/arch_guard_report.md target/architecture-reports/arch-guard.md
 
@@ -837,7 +837,7 @@ jobs:
           CLEANOUT=$(mktemp)
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-          ./scripts/run-fourslash.sh 2>&1 | tee "$TMPOUT" || true
+          ./scripts/fourslash/run-fourslash.sh 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)

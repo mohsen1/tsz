@@ -6,15 +6,15 @@
 # prints "up to date" when nothing changed.
 #
 # Usage:
-#   ./scripts/setup.sh          # full setup
-#   ./scripts/setup.sh --quick  # skip cargo check at the end
-#   ./scripts/setup.sh --force  # redo every step even if already done
+#   ./scripts/setup/setup.sh          # full setup
+#   ./scripts/setup/setup.sh --quick  # skip cargo check at the end
+#   ./scripts/setup/setup.sh --force  # redo every step even if already done
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 
 # ── Colours ──────────────────────────────────────────────────────────────────
@@ -136,9 +136,9 @@ install_npm() {
   fi
 }
 
-install_npm "$SCRIPT_DIR"            "scripts/"
-install_npm "$SCRIPT_DIR/emit"       "scripts/emit/"
-install_npm "$SCRIPT_DIR/fourslash"  "scripts/fourslash/"
+install_npm "$ROOT_DIR/scripts"            "scripts/"
+install_npm "$ROOT_DIR/scripts/emit"       "scripts/emit/"
+install_npm "$ROOT_DIR/scripts/fourslash"  "scripts/fourslash/"
 
 # ── 4. Git hooks ──────────────────────────────────────────────────────────────
 step "Git hooks"

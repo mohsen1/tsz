@@ -5265,7 +5265,7 @@ meaningful contextual typing (e.g., overloaded calls or explicit type arguments)
   ZERO parsed diagnostics for those tests.
 - **Scale**: 5325/5441 failing tests (97.9%) had `@target` directives. 5153 of these showed
   ONLY missing diagnostics (no extras) — the hallmark of silent compilation failure.
-- **Fix**: Running `./scripts/setup.sh` (or `cd scripts && npm install`) installs
+- **Fix**: Running `./scripts/setup/setup.sh` (or `cd scripts && npm install`) installs
   `typescript@6.0.0-dev.20260224` which provides the lib files.
 - **Net effect**: Only +1 conformance test improvement. Many previously-silent-failing tests
   now produce INCORRECT diagnostics (extra errors from lib type definitions exposing
@@ -5276,7 +5276,7 @@ meaningful contextual typing (e.g., overloaded calls or explicit type arguments)
 - 1-mismatch tests: 691
 - Top missing codes (1-mismatch): TS2322 (58), TS2339 (29), TS2345 (26), TS2304 (20)
 - Top extra codes (1-mismatch): TS2322 (16), TS2345 (14), TS2339 (8), TS2454 (8)
-- **Important**: `./scripts/setup.sh` MUST be run for accurate conformance measurement.
+- **Important**: `./scripts/setup/setup.sh` MUST be run for accurate conformance measurement.
 
 ---
 

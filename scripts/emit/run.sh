@@ -375,7 +375,7 @@ main() {
     # Check baselines exist
     local baselines_dir="$ROOT_DIR/TypeScript/tests/baselines/reference"
     if [[ ! -d "$baselines_dir" ]]; then
-        die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
+        die "TypeScript baselines not found. Run: ./scripts/setup/setup-ts-submodule.sh"
     fi
 
     if [[ "$skip_build" -eq 0 ]]; then

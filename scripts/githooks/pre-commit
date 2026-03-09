@@ -43,7 +43,7 @@ echo "Pre-commit checks..."
 
 # ─── 0. Reset TypeScript submodule to pinned SHA ─────────────────────────────
 
-"$ROOT_DIR/scripts/reset-ts-submodule.sh"
+"$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
 
 # ─── 0b. Block TypeScript submodule changes ──────────────────────────────────
 
@@ -325,7 +325,7 @@ fi
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
 echo "3.5/5 Checker boundary guardrail..."
-./scripts/check-checker-boundaries.sh
+./scripts/arch/check-checker-boundaries.sh
 
 # ─── Re-stage files modified by fmt / clippy auto-fix ─────────────────────────
 

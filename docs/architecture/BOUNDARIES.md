@@ -45,7 +45,7 @@ This document defines mandatory ownership boundaries for semantic work.
 
 ## Enforcement
 
-- Run `scripts/check-checker-boundaries.sh`.
+- Run `scripts/arch/check-checker-boundaries.sh`.
 - CI should fail on boundary violations.
 - Architecture report artifact is generated at:
   - `artifacts/architecture/arch_guard_report.json`

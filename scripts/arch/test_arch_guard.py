@@ -5,7 +5,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-ARCH_GUARD_PATH = ROOT / "scripts" / "arch_guard.py"
+ARCH_GUARD_PATH = ROOT / "scripts" / "arch" / "arch_guard.py"
 
 
 def load_arch_guard_module():
