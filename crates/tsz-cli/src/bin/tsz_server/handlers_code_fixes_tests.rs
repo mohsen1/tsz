@@ -272,7 +272,11 @@ fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
         .expect("expected getCodeFixes actions array");
     let descriptions: Vec<_> = actions
         .iter()
-        .filter_map(|action| action.get("description").and_then(serde_json::Value::as_str))
+        .filter_map(|action| {
+            action
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+        })
         .collect();
 
     assert_eq!(
@@ -1052,7 +1056,9 @@ fn handle_get_code_fixes_missing_namespace_type_only_default_import() {
         .expect("expected point actions array");
     let point_import_actions: Vec<&serde_json::Value> = point_actions
         .iter()
-        .filter(|action| action.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .filter(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str) == Some("import")
+        })
         .collect();
     assert_eq!(
         point_import_actions.len(),
@@ -1087,12 +1093,15 @@ fn synthetic_missing_name_skips_qualified_type_names() {
         "export * as default from \"./a\";\n".to_string(),
     );
     let content = "let x: ns.A;\n".to_string();
-    server.open_files.insert("/e.ts".to_string(), content.clone());
+    server
+        .open_files
+        .insert("/e.ts".to_string(), content.clone());
 
     let (_, binder, _, _) = server
         .parse_and_bind_file("/e.ts")
         .expect("expected parse_and_bind_file for /e.ts");
-    let synthetic = server.synthetic_missing_name_expression_diagnostics("/e.ts", &content, &binder);
+    let synthetic =
+        server.synthetic_missing_name_expression_diagnostics("/e.ts", &content, &binder);
 
     assert!(
         synthetic.is_empty(),
