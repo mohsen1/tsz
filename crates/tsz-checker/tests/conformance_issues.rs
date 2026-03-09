@@ -166,6 +166,22 @@ fn compile_and_get_diagnostics_with_lib_and_options(
 }
 
 #[test]
+fn test_lib_global_symbol_call_does_not_emit_ts2454() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        "const value = Symbol();",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2454),
+        "Lib global value reads should not trigger TS2454, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_class_extends_aliased_base_preserves_instance_members() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
