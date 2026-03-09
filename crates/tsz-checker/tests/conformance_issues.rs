@@ -285,6 +285,9 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 
 #[test]
 fn test_intl_number_format_style_alias_resolves_in_lib_context() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 namespace Intl {
@@ -310,6 +313,9 @@ namespace Intl {
 
 #[test]
 fn test_intl_number_format_style_alias_resolves_in_merged_lib_contexts() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         r#"
 namespace Intl {
