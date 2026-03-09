@@ -90,6 +90,7 @@ impl BinderState {
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
         };
@@ -148,6 +149,7 @@ impl BinderState {
         self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
         self.break_targets.clear();
+        self.continue_targets.clear();
         self.return_targets.clear();
     }
 
@@ -275,6 +277,7 @@ impl BinderState {
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
         };
@@ -388,6 +391,7 @@ impl BinderState {
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
         };

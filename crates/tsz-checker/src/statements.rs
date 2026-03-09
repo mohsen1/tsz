@@ -457,9 +457,6 @@ impl StatementChecker {
                         state.check_truthy_or_falsy(condition);
                         condition_is_false = state.is_false_condition(condition);
                     }
-                    if incrementor.is_some() {
-                        state.get_type_of_node(incrementor);
-                    }
 
                     let prev_unreachable = state.is_unreachable();
                     let prev_reported = state.has_reported_unreachable();
@@ -471,6 +468,9 @@ impl StatementChecker {
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
+                    if incrementor.is_some() {
+                        state.get_type_of_node(incrementor);
+                    }
                     state.leave_iteration_statement();
 
                     state.set_unreachable(prev_unreachable);

@@ -449,6 +449,7 @@ impl BinderState {
                     // Create post-loop merge point for break targets
                     let post_loop = self.create_branch_label();
                     self.break_targets.push(post_loop);
+                    self.continue_targets.push(loop_label);
 
                     if node.kind == syntax_kind_ext::DO_STATEMENT {
                         self.bind_node(arena, loop_data.statement);
@@ -493,6 +494,7 @@ impl BinderState {
                     }
 
                     self.break_targets.pop();
+                    self.continue_targets.pop();
                     self.current_flow = post_loop;
                 }
             }
@@ -514,9 +516,19 @@ impl BinderState {
                     // Create post-loop merge point for break targets
                     let post_loop = self.create_branch_label();
                     self.break_targets.push(post_loop);
+                    let continue_target = if loop_data.incrementor.is_some() {
+                        self.create_branch_label()
+                    } else {
+                        loop_label
+                    };
+                    self.continue_targets.push(continue_target);
 
                     if loop_data.condition.is_none() {
                         self.bind_node(arena, loop_data.statement);
+                        self.add_antecedent(continue_target, self.current_flow);
+                        if loop_data.incrementor.is_some() {
+                            self.current_flow = continue_target;
+                        }
                         self.bind_expression(arena, loop_data.incrementor);
                         self.add_antecedent(loop_label, self.current_flow);
                         self.add_antecedent(post_loop, loop_label);
@@ -531,6 +543,10 @@ impl BinderState {
                         );
                         self.current_flow = true_flow;
                         self.bind_node(arena, loop_data.statement);
+                        self.add_antecedent(continue_target, self.current_flow);
+                        if loop_data.incrementor.is_some() {
+                            self.current_flow = continue_target;
+                        }
                         self.bind_expression(arena, loop_data.incrementor);
                         self.add_antecedent(loop_label, self.current_flow);
 
@@ -545,6 +561,7 @@ impl BinderState {
                     }
 
                     self.break_targets.pop();
+                    self.continue_targets.pop();
                     self.current_flow = post_loop;
                     self.exit_scope(arena);
                 }
@@ -567,6 +584,7 @@ impl BinderState {
                     // Create post-loop merge point for break targets
                     let post_loop = self.create_branch_label();
                     self.break_targets.push(post_loop);
+                    self.continue_targets.push(loop_label);
 
                     // Match tsc's bindForInOrForOfStatement: post-loop only gets
                     // the loop label as antecedent (representing "iterator exhausted").
@@ -585,6 +603,7 @@ impl BinderState {
                     self.add_antecedent(loop_label, self.current_flow);
 
                     self.break_targets.pop();
+                    self.continue_targets.pop();
                     self.current_flow = post_loop;
                     self.exit_scope(arena);
                 }
@@ -729,6 +748,14 @@ impl BinderState {
             k if k == syntax_kind_ext::BREAK_STATEMENT => {
                 if let Some(&break_target) = self.break_targets.last() {
                     self.add_antecedent(break_target, self.current_flow);
+                }
+                self.current_flow = self.unreachable_flow;
+            }
+
+            // Continue statement - jump to continue target and mark unreachable
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
+                if let Some(&continue_target) = self.continue_targets.last() {
+                    self.add_antecedent(continue_target, self.current_flow);
                 }
                 self.current_flow = self.unreachable_flow;
             }

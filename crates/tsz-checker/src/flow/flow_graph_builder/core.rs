@@ -567,11 +567,18 @@ impl<'a> FlowGraphBuilder<'a> {
 
         // Create merge label for after the loop
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+        // `continue` in a `for` loop runs the incrementor before re-checking the condition.
+        // Model that with a dedicated continue label when an incrementor exists.
+        let continue_label = if loop_data.incrementor.is_some() {
+            self.graph.nodes.alloc(flow_flags::BRANCH_LABEL)
+        } else {
+            loop_label
+        };
 
         // Push loop context
         self.flow_stack.push(FlowContext {
             break_label: merge_label,
-            continue_label: Some(loop_label),
+            continue_label: Some(continue_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
             label: NodeIndex::NONE,
@@ -598,7 +605,7 @@ impl<'a> FlowGraphBuilder<'a> {
             self.build_statement(loop_data.statement);
 
             // Continue point: after body, before incrementor
-            self.add_antecedent(loop_label, self.current_flow);
+            self.add_antecedent(continue_label, self.current_flow);
 
             // False flow: exit loop
             let false_flow =
@@ -607,11 +614,12 @@ impl<'a> FlowGraphBuilder<'a> {
         } else {
             // No condition: infinite loop
             self.build_statement(loop_data.statement);
-            self.add_antecedent(loop_label, self.current_flow);
+            self.add_antecedent(continue_label, self.current_flow);
         }
 
         // Handle incrementor
         if loop_data.incrementor.is_some() {
+            self.current_flow = continue_label;
             let flow = self.create_flow_node(
                 flow_flags::ASSIGNMENT,
                 self.current_flow,
@@ -619,6 +627,8 @@ impl<'a> FlowGraphBuilder<'a> {
             );
             self.current_flow = flow;
             self.add_antecedent(loop_label, self.current_flow);
+        } else if continue_label != loop_label {
+            self.add_antecedent(loop_label, continue_label);
         }
 
         self.flow_stack.pop();

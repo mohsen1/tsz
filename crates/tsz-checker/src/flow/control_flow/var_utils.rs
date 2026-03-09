@@ -8,7 +8,7 @@
 
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_binder::{FlowNodeId, flow_flags};
+use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -578,6 +578,51 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    /// Check if a symbol is an unannotated mutable local whose reads should be
+    /// typed from control-flow assignments instead of absorbing as explicit `any`.
+    pub(crate) fn is_control_flow_typed_any_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let mut decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_idx = ext.parent;
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.type_annotation.is_some() || self.arena.is_const_variable_declaration(decl_idx) {
+            return false;
+        }
+        if self
+            .arena
+            .get(decl.name)
+            .and_then(|name_node| self.arena.get_identifier(name_node))
+            .is_none()
+        {
+            return false;
+        }
+
+        decl.initializer.is_none() || self.nullish_literal_type(decl.initializer).is_some()
     }
 
     /// Get the declared annotation type for a variable declaration node, if available.
