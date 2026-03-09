@@ -571,19 +571,37 @@ impl<'a> TypeFormatter<'a> {
             );
         }
 
-        // tsc displays optional properties as `name?: T` without `| undefined`,
-        // even though the type system internally may store the type as `T | undefined`.
-        // When the `?` is present, strip `undefined` from the displayed type.
+        // tsc displays optional object properties WITH `| undefined`:
+        // `n?: number | undefined`. If the stored type doesn't already contain
+        // undefined, we append it. For function params, tsc strips `| undefined`
+        // (handled in format_params).
         let type_str: String = if prop.optional {
-            self.format_stripping_undefined(prop.type_id)
+            let formatted = self.format(prop.type_id).into_owned();
+            if !self.type_contains_undefined(prop.type_id) {
+                format!("{formatted} | undefined")
+            } else {
+                formatted
+            }
         } else {
             self.format(prop.type_id).into_owned()
         };
         format!("{readonly}{name}{optional}: {type_str}")
     }
 
+    /// Check if a type already contains `undefined` (as a union member or is undefined itself).
+    fn type_contains_undefined(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::UNDEFINED {
+            return true;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return members.iter().any(|&m| m == TypeId::UNDEFINED);
+        }
+        false
+    }
+
     /// Format a type while stripping `undefined` from it.
-    /// Used for optional properties/parameters where the `?` already implies optionality,
+    /// Used for optional function parameters where the `?` already implies optionality,
     /// so displaying `| undefined` is redundant.
     fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
         if type_id == TypeId::UNDEFINED {
@@ -927,10 +945,25 @@ impl<'a> TypeFormatter<'a> {
             parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        // Sort by declaration_order (same logic as format_object)
         sorted_props.sort_by(|a, b| {
-            self.interner
-                .resolve_atom_ref(a.name)
-                .cmp(&self.interner.resolve_atom_ref(b.name))
+            let ord = a.declaration_order.cmp(&b.declaration_order);
+            if ord != std::cmp::Ordering::Equal
+                && a.declaration_order > 0
+                && b.declaration_order > 0
+            {
+                return ord;
+            }
+            let a_name = self.interner.resolve_atom_ref(a.name);
+            let b_name = self.interner.resolve_atom_ref(b.name);
+            let a_num = a_name.parse::<u64>();
+            let b_num = b_name.parse::<u64>();
+            match (a_num, b_num) {
+                (Ok(an), Ok(bn)) => an.cmp(&bn),
+                (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                (Err(_), Err(_)) => std::cmp::Ordering::Equal,
+            }
         });
         for prop in sorted_props {
             parts.push(self.format_property(prop));
@@ -2789,8 +2822,8 @@ mod tests {
     }
 
     #[test]
-    fn optional_property_no_undefined_suffix() {
-        // tsc: `{ x?: string; }` — NOT `{ x?: string | undefined; }`
+    fn optional_property_shows_undefined() {
+        // tsc: `{ x?: string | undefined; }` — object properties show | undefined
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -2808,14 +2841,14 @@ mod tests {
         }]);
         let result = fmt.format(obj);
         assert_eq!(
-            result, "{ x?: string; }",
-            "Optional property should not show '| undefined'"
+            result, "{ x?: string | undefined; }",
+            "tsc shows '| undefined' for optional object properties"
         );
     }
 
     #[test]
-    fn optional_property_with_union_undefined_strips_it() {
-        // When the type is internally `string | undefined`, display as `x?: string`
+    fn optional_property_with_union_undefined_keeps_it() {
+        // When the type already has `string | undefined`, display as-is (no duplicate)
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -2834,8 +2867,8 @@ mod tests {
         }]);
         let result = fmt.format(obj);
         assert_eq!(
-            result, "{ x?: string; }",
-            "Optional property with string | undefined should strip undefined"
+            result, "{ x?: string | undefined; }",
+            "Optional property with string | undefined should keep it as-is"
         );
     }
 
