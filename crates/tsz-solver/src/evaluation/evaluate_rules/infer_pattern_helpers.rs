@@ -183,6 +183,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if pattern_fn.this_type.is_none() && has_param_infer && !has_return_infer {
+            if pattern_fn.is_constructor {
+                return self.match_infer_constructor_pattern(
+                    source,
+                    &pattern_fn,
+                    bindings,
+                    checker,
+                );
+            }
+
             let has_single_rest_infer = pattern_fn.params.len() == 1
                 && pattern_fn.params[0].rest
                 && self.type_contains_infer(pattern_fn.params[0].type_id);
@@ -311,16 +320,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     _ => false,
                 };
-            }
-
-            // Handle constructor function patterns differently
-            if pattern_fn.is_constructor {
-                return self.match_infer_constructor_pattern(
-                    source,
-                    &pattern_fn,
-                    bindings,
-                    checker,
-                );
             }
 
             // Regular function parameter inference
@@ -623,6 +622,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
+                Some(TypeData::Function(source_fn_id)) => {
+                    let source_fn = self.interner().function_shape(source_fn_id);
+                    if !source_fn.is_constructor {
+                        return false;
+                    }
+                    match_construct_params_tuple(&source_fn.params, bindings)
+                }
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.construct_signatures.is_empty() {
@@ -637,6 +643,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
+                            Some(TypeData::Function(source_fn_id)) => {
+                                let source_fn = self.interner().function_shape(source_fn_id);
+                                if !source_fn.is_constructor
+                                    || !match_construct_params_tuple(
+                                        &source_fn.params,
+                                        &mut member_bindings,
+                                    )
+                                {
+                                    return false;
+                                }
+                            }
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.construct_signatures.is_empty() {
@@ -682,6 +699,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
         match self.interner().lookup(source) {
+            Some(TypeData::Function(source_fn_id)) => {
+                let source_fn = self.interner().function_shape(source_fn_id);
+                if !source_fn.is_constructor {
+                    return false;
+                }
+                match_construct_params(&source_fn.params, bindings)
+            }
             Some(TypeData::Callable(source_shape_id)) => {
                 let source_shape = self.interner().callable_shape(source_shape_id);
                 if source_shape.construct_signatures.is_empty() {
@@ -696,6 +720,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 for &member in members.iter() {
                     let mut member_bindings = FxHashMap::default();
                     match self.interner().lookup(member) {
+                        Some(TypeData::Function(source_fn_id)) => {
+                            let source_fn = self.interner().function_shape(source_fn_id);
+                            if !source_fn.is_constructor
+                                || !match_construct_params(&source_fn.params, &mut member_bindings)
+                            {
+                                return false;
+                            }
+                        }
                         Some(TypeData::Callable(source_shape_id)) => {
                             let source_shape = self.interner().callable_shape(source_shape_id);
                             if source_shape.construct_signatures.is_empty() {

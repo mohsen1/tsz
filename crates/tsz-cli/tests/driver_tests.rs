@@ -6351,8 +6351,7 @@ fn ts2688_resolved_types_no_error() {
         .collect();
     assert!(
         ts2688_diags.is_empty(),
-        "Should NOT emit TS2688 when types package is found, got: {:?}",
-        ts2688_diags
+        "Should NOT emit TS2688 when types package is found, got: {ts2688_diags:?}"
     );
 }
 

@@ -19514,10 +19514,22 @@ fn test_parameters_optional_and_rest_combination() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Parameters extraction for mixed optional/rest params not fully implemented.
-    // Expected: [string, number?, ...boolean[]] tuple
-    // Current: returns never because mixed params don't match rest pattern directly.
-    assert_eq!(result, TypeId::NEVER);
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(elems)) => {
+            let elems = interner.tuple_list(elems);
+            assert_eq!(elems.len(), 3);
+            assert_eq!(elems[0].type_id, TypeId::STRING);
+            assert!(!elems[0].optional);
+            assert!(!elems[0].rest);
+            assert_eq!(elems[1].type_id, TypeId::NUMBER);
+            assert!(elems[1].optional);
+            assert!(!elems[1].rest);
+            assert_eq!(elems[2].type_id, interner.array(TypeId::BOOLEAN));
+            assert!(!elems[2].optional);
+            assert!(elems[2].rest);
+        }
+        _ => panic!("Expected tuple, got {result:?}"),
+    }
 }
 
 #[test]
@@ -19680,10 +19692,15 @@ fn test_constructor_parameters_basic() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: ConstructorParameters extraction not fully implemented.
-    // Expected: [string, number] tuple for constructor params
-    // Current: returns never because constructor param extraction isn't implemented.
-    assert_eq!(result, TypeId::NEVER);
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(elems)) => {
+            let elems = interner.tuple_list(elems);
+            assert_eq!(elems.len(), 2);
+            assert_eq!(elems[0].type_id, TypeId::STRING);
+            assert_eq!(elems[1].type_id, TypeId::NUMBER);
+        }
+        _ => panic!("Expected tuple, got {result:?}"),
+    }
 }
 
 /// Test `ConstructorParameters`<T> with a Callable type having construct signatures.
