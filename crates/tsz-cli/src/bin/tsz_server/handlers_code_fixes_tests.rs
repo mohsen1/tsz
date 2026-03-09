@@ -1050,12 +1050,53 @@ fn handle_get_code_fixes_missing_namespace_type_only_default_import() {
         .as_ref()
         .and_then(serde_json::Value::as_array)
         .expect("expected point actions array");
+    let point_import_actions: Vec<&serde_json::Value> = point_actions
+        .iter()
+        .filter(|action| action.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .collect();
+    assert_eq!(
+        point_import_actions.len(),
+        1,
+        "expected one point-position import fix, got: {point_actions:?}"
+    );
+    let point_import_text = point_import_actions
+        .first()
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|text_changes| text_changes.first())
+        .and_then(|text_change| text_change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("expected point import code fix text change");
     assert!(
-        point_actions.iter().any(|action| action
-            .get("fixName")
-            .and_then(serde_json::Value::as_str)
-            == Some("import")),
-        "expected point-position request to return import fix, got: {point_actions:?}"
+        point_import_text.contains("import type ns from \"./ns\";"),
+        "expected point-position request to return default type-only namespace import, got: {point_actions:?}"
+    );
+}
+
+#[test]
+fn synthetic_missing_name_skips_qualified_type_names() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export class A {}\n".to_string());
+    server.open_files.insert(
+        "/ns.ts".to_string(),
+        "export * as default from \"./a\";\n".to_string(),
+    );
+    let content = "let x: ns.A;\n".to_string();
+    server.open_files.insert("/e.ts".to_string(), content.clone());
+
+    let (_, binder, _, _) = server
+        .parse_and_bind_file("/e.ts")
+        .expect("expected parse_and_bind_file for /e.ts");
+    let synthetic = server.synthetic_missing_name_expression_diagnostics("/e.ts", &content, &binder);
+
+    assert!(
+        synthetic.is_empty(),
+        "expected no synthetic missing-name diagnostics for qualified type names, got {synthetic:?}"
     );
 }
 

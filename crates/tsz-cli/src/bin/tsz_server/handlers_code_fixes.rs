@@ -2583,11 +2583,12 @@ impl Server {
                     .and_then(|idx| fragment.as_bytes().get(idx))
                     .map(|b| *b as char);
                 let next = fragment.as_bytes().get(rel_end).map(|b| *b as char);
+                let is_qualified_name_segment = prev == Some('.') || next == Some('.');
                 let at_word_boundary = prev
                     .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
                     && next
                         .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'));
-                if at_word_boundary {
+                if at_word_boundary && !is_qualified_name_segment {
                     spans.push((ident.clone(), rel_start));
                 }
                 search_start = rel_end;
