@@ -358,11 +358,16 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types.retain(|k, _| cached_before.contains(k));
         *self.ctx.flow_analysis_cache.borrow_mut() = flow_cache_before;
 
-        // Widen inferred return types when there is no contextual return type.
+        // Widen inferred return types when there is no contextual return type,
+        // unless the caller explicitly requested literal preservation
+        // (e.g. computed property name resolution or literal-sensitive inference).
         // `function f() { return "a"; }` → return type `string` (widened).
         // But `const g: () => "a" = () => "a"` → return type `"a"` (preserved
         // by contextual typing).
         if return_context.is_none() {
+            if self.ctx.preserve_literal_types {
+                return result;
+            }
             let widened = self.widen_literal_type(result);
             if !self.ctx.strict_null_checks()
                 && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
