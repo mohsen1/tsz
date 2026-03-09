@@ -1124,11 +1124,9 @@ impl Server {
                     .flatten()
             })
         {
-            let should_emit_insert_text = item.is_snippet
-                || is_class_member_snippet
-                || !Self::is_identifier(&item.label)
-                || insert_text != item.label;
-            if should_emit_insert_text && !insert_text.is_empty() {
+            let should_emit_insert_text =
+                Self::should_emit_tsserver_insert_text(item, &insert_text, is_class_member_snippet);
+            if should_emit_insert_text {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
         }
@@ -1162,6 +1160,32 @@ impl Server {
         }
 
         entry
+    }
+
+    fn should_emit_tsserver_insert_text(
+        item: &CompletionItem,
+        insert_text: &str,
+        is_class_member_snippet: bool,
+    ) -> bool {
+        if insert_text.is_empty() {
+            return false;
+        }
+        if is_class_member_snippet || item.has_action || !Self::is_identifier(&item.label) {
+            return true;
+        }
+        if Self::is_plain_callable_snippet_insert_text(item, insert_text) {
+            return false;
+        }
+        item.is_snippet || insert_text != item.label
+    }
+
+    fn is_plain_callable_snippet_insert_text(item: &CompletionItem, insert_text: &str) -> bool {
+        matches!(
+            item.kind,
+            CompletionItemKind::Function
+                | CompletionItemKind::Method
+                | CompletionItemKind::Constructor
+        ) && insert_text == format!("{}($1)", item.label)
     }
 
     fn last_optional_chain_token_start(source_text: &str, offset: u32) -> Option<u32> {

@@ -2320,3 +2320,77 @@ fn test_completion_info_auto_import_file_exclude_patterns_keeps_button_from_main
         "expected exactly one `Button` completion entry after configure, got entries: {completions_from_configured_entries:?}"
     );
 }
+
+#[test]
+fn test_completion_info_member_method_omits_plain_call_insert_text() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "declare class m3d { foo(): void }\nconst r = new m3d();\nr.".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 3,
+            "preferences": {
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let foo_entry = entries
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))
+        .expect("expected foo completion entry");
+    assert!(
+        foo_entry.get("insertText").is_none(),
+        "plain member method completions should omit insertText"
+    );
+}
+
+#[test]
+fn test_completion_info_global_function_omits_plain_call_insert_text() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "declare function decodeURI(uri: string): string;\ndeco".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 2,
+            "offset": 5,
+            "preferences": {
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let decode_uri_entry = entries
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("decodeURI"))
+        .expect("expected decodeURI completion entry");
+    assert!(
+        decode_uri_entry.get("insertText").is_none(),
+        "plain global function completions should omit insertText"
+    );
+}
