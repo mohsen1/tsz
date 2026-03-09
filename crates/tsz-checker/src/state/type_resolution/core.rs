@@ -1274,19 +1274,9 @@ impl<'a> CheckerState<'a> {
             }
             if flags & symbol_flags::INTERFACE != 0 {
                 if !declarations.is_empty() {
-                    // Return Lazy(DefId) for interface type references
-                    // This preserves interface names in error messages (e.g., "type A" instead of "{ x: number }")
-                    //
-                    // IMPORTANT: We must still compute and cache the structural type first so that:
-                    // 1. resolve_lazy() can return the cached type when needed for type checking
-                    // 2. The DefinitionStore can be populated with the interface shape
-                    //
-                    // The flow is:
-                    // 1. get_type_of_symbol() computes and caches the structural type in symbol_types
-                    // 2. create_lazy_type_ref() returns TypeData::Lazy(DefId) for error formatting
-                    // 3. resolve_lazy() returns the cached structural type for actual type checking
-
-                    // Step 1: Ensure the structural type is computed and cached.
+                    // Return Lazy(DefId) for interface type references to preserve
+                    // interface names in error messages. Compute and cache the structural
+                    // type first so resolve_lazy() can return it for type checking.
                     // For merged interface+namespace symbols, get_type_of_symbol returns the
                     // namespace type (from compute_type_of_symbol's namespace branch). We need
                     // the interface type for type-position usage, so compute it directly from
@@ -1429,19 +1419,8 @@ impl<'a> CheckerState<'a> {
                 }) || value_declaration.is_some()
                     || !declarations.is_empty();
                 if has_type_alias_decl {
-                    // Get the correct arena for the symbol (lib arena or current arena)
-                    // Return structural type directly for type alias type references
-                    //
-                    // NOTE: This was changed from returning Lazy(DefId) to fix a bug where
-                    // conditional types in type aliases weren't fully resolved during assignability checking.
-                    // Trade-off: Error messages will show expanded type instead of alias name,
-                    // but this fixes ~84 false positive TS2322 errors.
-                    //
-                    // Example bug that this fixes:
-                    //   type Test = true extends true ? "y" : "n"
-                    //   let value: Test = "y"  // Was incorrectly rejected
-
-                    // Compute and return the fully-evaluated structural type
+                    // Return structural type directly for type aliases (not Lazy) so
+                    // conditional types are fully resolved during assignability checking.
                     let structural_type = self.get_type_of_symbol(sym_id);
 
                     // Register the body type for the DefId so that the type
