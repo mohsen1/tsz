@@ -962,6 +962,8 @@ impl<'a> HoverProvider<'a> {
                 .filter(|text| !text.is_empty())
                 .collect();
             if !arg_texts.is_empty() {
+                // Strip any definition-level type params the formatter may have added
+                // (e.g., "A<T>") so we can replace with actual source type args ("A<number>").
                 let base_name = init_type_text
                     .split_once('<')
                     .map_or(init_type_text.as_str(), |(base, _)| base)
