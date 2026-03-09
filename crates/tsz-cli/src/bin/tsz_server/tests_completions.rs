@@ -109,7 +109,7 @@ fn test_completion_info_bare_identifier_expression_is_not_new_identifier_locatio
 
 #[test]
 fn test_completion_info_bare_identifier_expression_does_not_replace_auto_import_with_class_member_snippet()
-{
+ {
     let mut server = make_server();
 
     let open_external = make_request(
