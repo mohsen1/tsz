@@ -357,11 +357,11 @@ impl<'a> CheckerState<'a> {
         if let Some(expr_node) = self.ctx.arena.get(computed.expression)
             && expr_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
-                && binary.operator_token == SyntaxKind::EqualsToken as u16
-            {
-                self.error_at_node(name_idx, message, code);
-                return;
-            }
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            self.error_at_node(name_idx, message, code);
+            return;
+        }
 
         // Always evaluate the expression to trigger side-effect diagnostics (e.g., TS2585
         // for `Symbol` at ES5 target). Entity name expressions skip the TS1169/TS1170
