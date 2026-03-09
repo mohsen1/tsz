@@ -339,8 +339,16 @@ function parseSourceTest(content: string): ParsedSourceTest {
       const lowKey = tsDirectiveMatch[1].toLowerCase();
       if (lowKey === 'ts-check') {
         options.checkjs = true;
+        // @ts-check inside a @filename block is real source content (a comment
+        // that tsc preserves in JS output), not a test-runner directive.
+        if (currentFileName) {
+          currentContent.push(line);
+        }
       } else if (lowKey === 'ts-nocheck') {
         options.checkjs = false;
+        if (currentFileName) {
+          currentContent.push(line);
+        }
       } else if (currentFileName) {
         currentContent.push(line);
       }
