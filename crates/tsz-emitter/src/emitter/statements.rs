@@ -397,15 +397,20 @@ impl<'a> Printer<'a> {
                 };
                 if upper_bound > 0 {
                     let token_end = self.find_token_end_before_trivia(stmt_pos, upper_bound);
-                    // For the last statement, cap trailing comment scan at the block's
-                    // closing `}` to avoid stealing comments that belong on the closing
-                    // brace line (same pattern as namespace IIFE emitter).
+                    // Cap trailing comment scan so we don't steal comments that
+                    // belong to the next statement or the block's closing `}`.
+                    // For the last statement, cap at the block's closing brace.
+                    // For non-last statements, cap at the next statement's pos
+                    // to prevent consuming comments past a same-line boundary
+                    // (e.g. `function f() { }; // comment` — the comment belongs
+                    // to the `;` statement, not the function declaration).
                     let is_last = stmt_i + 1 >= stmts.len();
-                    if is_last {
-                        self.emit_trailing_comments_before(token_end, block_close_pos);
+                    let max_pos = if is_last {
+                        block_close_pos
                     } else {
-                        self.emit_trailing_comments(token_end);
-                    }
+                        upper_bound
+                    };
+                    self.emit_trailing_comments_before(token_end, max_pos);
                 }
                 self.write_line();
             } else if !emitted_output {
@@ -1709,11 +1714,19 @@ impl<'a> Printer<'a> {
         self.write(":");
 
         // Emit trailing comments on the same source line as `case X:`
-        // e.g., `case 0: // Zero` should keep the comment on the same line
+        // e.g., `case 0: // Zero` should keep the comment on the same line.
+        // Cap the scan at the first statement's pos to avoid consuming
+        // comments that trail statements in the case body.
         let colon_end = self
             .find_char_after(label_end, node.end, b':')
             .map_or(label_end, |p| p + 1);
-        self.emit_trailing_comments(colon_end);
+        let first_stmt_pos = clause
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.end, |n| n.pos);
+        self.emit_trailing_comments_before(colon_end, first_stmt_pos);
 
         // Use expression end position for same-line detection
         self.emit_case_clause_body(&clause.statements, label_end);
@@ -1727,10 +1740,18 @@ impl<'a> Printer<'a> {
         self.write("default:");
 
         // Emit trailing comments on the same source line as `default:`
+        // Cap the scan at the first statement's pos to avoid consuming
+        // comments that trail statements in the clause body.
         let colon_end = self
             .find_char_after(node.pos, node.end, b':')
             .map_or(node.pos + 8, |p| p + 1);
-        self.emit_trailing_comments(colon_end);
+        let first_stmt_pos = clause
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.end, |n| n.pos);
+        self.emit_trailing_comments_before(colon_end, first_stmt_pos);
 
         // Use node pos + "default" length for same-line detection
         self.emit_case_clause_body(&clause.statements, node.pos + 8);
@@ -1754,7 +1775,8 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        for &stmt in &statements.nodes {
+        let stmts = &statements.nodes;
+        for (stmt_i, &stmt) in stmts.iter().enumerate() {
             // Emit leading comments before this statement.
             // Use skip_trivia_forward to get the actual token start (past comments),
             // so that emit_comments_before_pos can pick up comments in the leading trivia.
@@ -1763,7 +1785,26 @@ impl<'a> Printer<'a> {
                 self.emit_comments_before_pos(actual_start);
             }
             self.emit(stmt);
-            self.write_line();
+            if !self.writer.is_at_line_start() {
+                // Emit trailing same-line comments (e.g., `var x = z[1]; // comment`).
+                let (stmt_pos, upper_bound) = {
+                    let cur = self.arena.get(stmt);
+                    let next_pos = stmts
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map(|n| n.pos);
+                    if let Some(sn) = cur {
+                        (sn.pos, next_pos.unwrap_or(sn.end))
+                    } else {
+                        (0, 0)
+                    }
+                };
+                if upper_bound > 0 {
+                    let token_end = self.find_token_end_before_trivia(stmt_pos, upper_bound);
+                    self.emit_trailing_comments_before(token_end, upper_bound);
+                }
+                self.write_line();
+            }
         }
 
         self.decrease_indent();
