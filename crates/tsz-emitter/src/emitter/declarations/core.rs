@@ -355,7 +355,12 @@ impl<'a> Printer<'a> {
                 if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
                     let var_prefix = format!("var {enum_name};\n");
                     if output.starts_with(&var_prefix) {
-                        output = output[var_prefix.len()..].to_string();
+                        // Strip the var declaration and any leading indentation
+                        // from the remaining IIFE text, since the main writer's
+                        // ensure_indent() will re-add indentation.
+                        output = output[var_prefix.len()..]
+                            .trim_start_matches(' ')
+                            .to_string();
                     }
                 } else if !enum_name.is_empty() && self.should_use_let_for_enum(idx) {
                     // Inside a block scope (namespace IIFE or function body) at ES2015+,
