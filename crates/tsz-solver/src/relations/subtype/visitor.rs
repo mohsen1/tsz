@@ -323,7 +323,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .def_guard
                 .is_visiting_any(|&(s, t)| s == def || t == def)
             {
-                return SubtypeResult::CycleDetected;
+                return self.checker.cycle_result();
             }
 
             // Also check the TypeId-level guard for circular references.
@@ -334,7 +334,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .guard
                 .is_visiting_any(|&(s, t)| s == self.source || t == self.source)
             {
-                return SubtypeResult::CycleDetected;
+                return self.checker.cycle_result();
             }
 
             SubtypeResult::False

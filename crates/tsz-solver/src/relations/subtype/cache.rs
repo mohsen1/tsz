@@ -162,7 +162,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if fuel >= MAX_GLOBAL_SUBTYPE_FUEL {
             leave_global!();
-            return SubtypeResult::DepthExceeded;
+            return self.depth_result();
         }
 
         // =========================================================================
@@ -195,18 +195,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check reversed pair for bivariant cross-recursion detection.
         if self.guard.is_visiting(&(target, source)) {
             leave_global!();
-            return SubtypeResult::CycleDetected;
+            return self.cycle_result();
         }
 
         use crate::recursion::RecursionResult;
         match self.guard.enter(pair) {
             RecursionResult::Cycle => {
                 leave_global!();
-                return SubtypeResult::CycleDetected;
+                return self.cycle_result();
             }
             RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
                 leave_global!();
-                return SubtypeResult::DepthExceeded;
+                return self.depth_result();
             }
             RecursionResult::Entered => {}
         }
@@ -301,7 +301,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }) {
                     self.guard.leave(pair);
                     leave_global!();
-                    return SubtypeResult::CycleDetected;
+                    return self.cycle_result();
                 }
             }
         }
@@ -311,13 +311,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.def_guard.is_visiting(&(t_def, s_def)) {
                 self.guard.leave(pair);
                 leave_global!();
-                return SubtypeResult::CycleDetected;
+                return self.cycle_result();
             }
             match self.def_guard.enter((s_def, t_def)) {
                 RecursionResult::Cycle => {
                     self.guard.leave(pair);
                     leave_global!();
-                    return SubtypeResult::CycleDetected;
+                    return self.cycle_result();
                 }
                 RecursionResult::Entered => Some((s_def, t_def)),
                 _ => None,

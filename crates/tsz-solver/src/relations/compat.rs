@@ -474,6 +474,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    pub fn set_assume_related_on_cycle(&mut self, assume: bool) {
+        if self.subtype.assume_related_on_cycle != assume {
+            self.subtype.assume_related_on_cycle = assume;
+            self.cache.clear();
+        }
+    }
+
     /// Apply compiler options from a bitmask flags value.
     ///
     /// The flags correspond to `RelationCacheKey` bits:

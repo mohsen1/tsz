@@ -40,6 +40,8 @@ pub struct RelationPolicy {
     pub strict_any_propagation: bool,
     /// Controls how `SubtypeChecker` treats `any`.
     pub any_propagation_mode: AnyPropagationMode,
+    /// Whether recursive relation cycles should be treated as assumed-related.
+    pub assume_related_on_cycle: bool,
 }
 
 impl Default for RelationPolicy {
@@ -49,6 +51,7 @@ impl Default for RelationPolicy {
             strict_subtype_checking: false,
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
         }
     }
 }
@@ -66,6 +69,7 @@ impl RelationPolicy {
             } else {
                 AnyPropagationMode::All
             },
+            assume_related_on_cycle: true,
         }
     }
 
@@ -81,6 +85,11 @@ impl RelationPolicy {
 
     pub const fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
         self.any_propagation_mode = mode;
+        self
+    }
+
+    pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
+        self.assume_related_on_cycle = assume;
         self
     }
 }
@@ -251,6 +260,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker.set_inheritance_graph(context.inheritance_graph);
     checker.set_strict_subtype_checking(policy.strict_subtype_checking);
     checker.set_strict_any_propagation(policy.strict_any_propagation);
+    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
@@ -265,7 +275,8 @@ fn configured_subtype_checker<'a, R: TypeResolver>(
 ) -> SubtypeChecker<'a, R> {
     let mut checker = SubtypeChecker::with_resolver(interner, resolver)
         .apply_flags(policy.flags)
-        .with_any_propagation_mode(policy.any_propagation_mode);
+        .with_any_propagation_mode(policy.any_propagation_mode)
+        .with_assume_related_on_cycle(policy.assume_related_on_cycle);
     if let Some(query_db) = context.query_db {
         checker = checker.with_query_db(query_db);
     }

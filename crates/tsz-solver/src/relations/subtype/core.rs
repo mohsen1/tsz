@@ -168,6 +168,9 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
     /// Controls how `any` is treated during subtype checks.
     pub any_propagation: AnyPropagationMode,
+    /// Whether recursive relation cycles and overflow should be treated as
+    /// assumed-related (`true`) or definitive failure (`false`).
+    pub assume_related_on_cycle: bool,
     /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
@@ -205,6 +208,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
@@ -238,6 +242,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
@@ -278,6 +283,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub const fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
         self.strict_null_checks = strict_null_checks;
         self
+    }
+
+    /// Configure whether recursive relation cycles should be assumed related.
+    pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
+        self.assume_related_on_cycle = assume;
+        self
+    }
+
+    pub(crate) const fn cycle_result(&self) -> SubtypeResult {
+        if self.assume_related_on_cycle {
+            SubtypeResult::CycleDetected
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    pub(crate) const fn depth_result(&self) -> SubtypeResult {
+        if self.assume_related_on_cycle {
+            SubtypeResult::DepthExceeded
+        } else {
+            SubtypeResult::False
+        }
     }
 
     /// Reset per-check state so this checker can be reused for another subtype check.
@@ -974,7 +1001,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let sym_pair = (s_sym, t_sym);
                 if !self.sym_visiting.insert(sym_pair) {
                     // Already visiting this symbol pair — coinductive cycle
-                    return SubtypeResult::CycleDetected;
+                    return self.cycle_result();
                 }
                 let result = self.check_object_subtype(&s_shape, Some(s_shape_id), &t_shape);
                 self.sym_visiting.remove(&sym_pair);
@@ -1004,7 +1031,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol) {
                 let sym_pair = (s_sym, t_sym);
                 if !self.sym_visiting.insert(sym_pair) {
-                    return SubtypeResult::CycleDetected;
+                    return self.cycle_result();
                 }
                 let result =
                     self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
