@@ -167,3 +167,38 @@ function e(x: I<"A" | "B">) {
         "Should emit TS2322 when typeof x.p is not narrowed, got: {codes:?}"
     );
 }
+
+/// `typeof c` in a type alias inside a narrowed branch should see the narrowed type.
+#[test]
+fn test_typeof_identifier_narrowed_by_typeof_guard_in_type_alias() {
+    let codes = get_error_codes(
+        r#"
+declare let c: string | number;
+if (typeof c === "string") {
+    type C = typeof c;
+    const bad: C = 1;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "Should emit TS2322 when narrowed typeof c is string inside type alias, got: {codes:?}"
+    );
+}
+
+/// `typeof c` in a variable annotation inside a narrowed branch should also see the narrowed type.
+#[test]
+fn test_typeof_identifier_narrowed_by_typeof_guard_in_variable_annotation() {
+    let codes = get_error_codes(
+        r#"
+declare let c: string | number;
+if (typeof c === "string") {
+    const bad: typeof c = 1;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "Should emit TS2322 when narrowed typeof c is string in variable annotation, got: {codes:?}"
+    );
+}

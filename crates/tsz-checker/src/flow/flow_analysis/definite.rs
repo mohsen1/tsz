@@ -74,9 +74,7 @@ impl<'a> CheckerState<'a> {
             }
             match found {
                 Some(flow) => flow,
-                None => {
-                    return declared_type;
-                }
+                None => return declared_type,
             }
         };
 
