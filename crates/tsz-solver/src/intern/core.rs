@@ -1376,59 +1376,11 @@ impl TypeInterner {
             }
         }
 
-        // Abort reduction if any member is a Lazy type.
-        // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
-        // we must preserve the intersection as-is without attempting to merge or reduce.
-        let has_unresolved = flat
-            .iter()
-            .any(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))));
-        if has_unresolved {
-            // Basic dedup without any simplification
-            flat.sort_by_key(|id| id.0);
-            flat.dedup();
-            let list_id = self.intern_type_list(flat.into_vec());
-            return self.intern(TypeData::Intersection(list_id));
-        }
-
-        // =========================================================
-        // Canonicalization: Handle callable order preservation
-        // =========================================================
-        // In TypeScript, intersections of functions represent overloads, and
-        // order matters. We need to separate callables from non-callables.
-
-        let has_callables = flat
-            .iter()
-            .any(|&id| crate::type_queries::is_callable_type(self, id));
-
-        if !has_callables {
-            // Fast path: No callables, sort everything for canonicalization
-            flat.sort_by_key(|id| id.0);
-            flat.dedup();
-        } else {
-            // Slow path: Separate callables and others to preserve order
-            let mut callables = SmallVec::<[TypeId; 4]>::new();
-
-            // Retain only non-callables in 'flat', move callables to 'callables'
-            // This preserves the order of callables as they are extracted
-            let mut i = 0;
-            while i < flat.len() {
-                if crate::type_queries::is_callable_type(self, flat[i]) {
-                    callables.push(flat.remove(i));
-                } else {
-                    i += 1;
-                }
-            }
-
-            // Sort and dedup non-callables
-            flat.sort_by_key(|id| id.0);
-            flat.dedup();
-
-            // Deduplicate callables (preserving order)
+        // Preserve source/declaration order of intersection members to match tsc.
+        // Only perform order-preserving dedup.
+        {
             let mut seen = FxHashSet::default();
-            callables.retain(|id| seen.insert(*id));
-
-            // Merge: Put non-callables first (canonical), then callables (ordered)
-            flat.extend(callables);
+            flat.retain(|id| seen.insert(*id));
         }
 
         // =========================================================
