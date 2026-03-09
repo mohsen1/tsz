@@ -1,9 +1,7 @@
 //! Name resolution error reporting (TS2304, TS2552, TS2583, TS2584)
 //! and known-global classifiers for "did you mean to install @types/...?" suggestions.
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
@@ -759,30 +757,22 @@ impl<'a> CheckerState<'a> {
         // Check if this is an ES2015+ type that would require a specific lib
         let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
-        if let Some(loc) = self.get_source_location(idx) {
-            let (code, message) = if is_es2015_type {
-                let lib_version = lib_loader::get_suggested_lib_for_type(name);
-                (
-                    lib_loader::MISSING_ES2015_LIB_SUPPORT,
-                    format!(
-                        "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_version}' or later."
-                    ),
-                )
-            } else {
-                (
-                    lib_loader::CANNOT_FIND_GLOBAL_TYPE,
-                    format!("Cannot find global type '{name}'."),
-                )
-            };
+        let (code, message) = if is_es2015_type {
+            let lib_version = lib_loader::get_suggested_lib_for_type(name);
+            (
+                lib_loader::MISSING_ES2015_LIB_SUPPORT,
+                format!(
+                    "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_version}' or later."
+                ),
+            )
+        } else {
+            (
+                lib_loader::CANNOT_FIND_GLOBAL_TYPE,
+                format!("Cannot find global type '{name}'."),
+            )
+        };
 
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                code,
-            ));
-        }
+        self.error_at_node(idx, &message, code);
     }
 
     /// Report TS2583: Cannot find name 'X' - suggest changing target library.
@@ -792,14 +782,12 @@ impl<'a> CheckerState<'a> {
     /// It provides a helpful suggestion to change the lib compiler option.
     pub fn error_cannot_find_name_change_lib(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
-        if let Some(loc) = self.get_source_location(idx) {
-            let lib_version = lib_loader::get_suggested_lib_for_type(name);
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
-                &[name, lib_version],
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB));
-        }
+        let lib_version = lib_loader::get_suggested_lib_for_type(name);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
+            &[name, lib_version],
+        );
     }
 
     /// Report TS2584: Cannot find name 'X' - suggest including 'dom' lib.
@@ -807,50 +795,42 @@ impl<'a> CheckerState<'a> {
     /// This error is emitted when a known DOM/ScriptHost global (console, window,
     /// document, `HTMLElement`, etc.) is used but the 'dom' lib is not included.
     pub fn error_cannot_find_name_change_target_lib(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
-                &[name],
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
+            &[name],
+        );
     }
 
     /// Report TS2591: Cannot find name 'X' - suggest installing @types/node
     /// and adding 'node' to the types field in tsconfig.
     /// tsc 6.0 defaults to TS2591 (with tsconfig suggestion) in nearly all cases.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                &[name],
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+            &[name],
+        );
     }
 
     /// Report TS2593: Cannot find name 'X' - suggest installing test runner types
     /// and adding to the types field in tsconfig.
     pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
-                &[name],
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+            &[name],
+        );
     }
 
     /// Report TS2868: Cannot find name 'Bun' - suggest installing @types/bun
     /// and adding 'bun' to the types field in tsconfig.
     pub fn error_cannot_find_name_install_bun_types(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2,
-                &[name],
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2,
+            &[name],
+        );
     }
 
     /// Report error 2304/2552: Cannot find name 'X' with suggestions.
@@ -895,35 +875,27 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
-            // Format the suggestions list
-            let suggestions_text = if suggestions.len() == 1 {
-                format!("'{}'", suggestions[0])
-            } else {
-                let formatted: Vec<String> = suggestions.iter().map(|s| format!("'{s}")).collect();
-                formatted.join(", ")
-            };
+        // Format the suggestions list
+        let suggestions_text = if suggestions.len() == 1 {
+            format!("'{}'", suggestions[0])
+        } else {
+            let formatted: Vec<String> = suggestions.iter().map(|s| format!("'{s}")).collect();
+            formatted.join(", ")
+        };
 
-            let message = if suggestions.len() == 1 {
-                format!("Cannot find name '{name}'. Did you mean {suggestions_text}?")
-            } else {
-                format!("Cannot find name '{name}'. Did you mean one of: {suggestions_text}?")
-            };
+        let message = if suggestions.len() == 1 {
+            format!("Cannot find name '{name}'. Did you mean {suggestions_text}?")
+        } else {
+            format!("Cannot find name '{name}'. Did you mean one of: {suggestions_text}?")
+        };
 
-            self.ctx.push_diagnostic(Diagnostic {
-                code: if suggestions.len() == 1 {
-                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
-                } else {
-                    diagnostic_codes::CANNOT_FIND_NAME
-                },
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
-        }
+        let code = if suggestions.len() == 1 {
+            diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+        } else {
+            diagnostic_codes::CANNOT_FIND_NAME
+        };
+
+        self.error_at_node(idx, &message, code);
     }
 
     /// Report error 2552: Cannot find name 'X'. Did you mean 'Y'?
@@ -933,16 +905,12 @@ impl<'a> CheckerState<'a> {
         suggestion: &str,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
-            ));
-        }
+        let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
+        );
     }
 
     /// Report error 2662: Cannot find name 'X'. Did you mean the static member 'C.X'?
@@ -952,18 +920,14 @@ impl<'a> CheckerState<'a> {
         class_name: &str,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format!(
-                "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
-            );
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
-            ));
-        }
+        let message = format!(
+            "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
+        );
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
+        );
     }
 
     /// Check whether `idx` is inside a syntactic type node (`TYPE_REFERENCE`,
