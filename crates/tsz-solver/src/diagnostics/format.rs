@@ -279,7 +279,10 @@ impl<'a> TypeFormatter<'a> {
                 // Enum and namespace value types are displayed as `typeof Name` by tsc.
                 // Class instance types and interfaces use just the name.
                 use crate::def::DefKind;
-                if matches!(def.kind, DefKind::Enum | DefKind::Namespace) {
+                if matches!(
+                    def.kind,
+                    DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
+                ) {
                     return format!("typeof {name}").into();
                 }
                 // For generic types, append type parameter names from the definition.
@@ -803,16 +806,12 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_intersection(&mut self, members: &[TypeId]) -> String {
-        // Re-sort members for display to approximate tsc's source-order display.
-        // Intersection members are stored sorted by TypeId for identity/canonicalization,
-        // but tsc preserves declaration order. For Lazy(DefId) types, DefId allocation
-        // follows declaration order, so sorting by DefId approximates source order.
-        let mut display_order: Vec<TypeId> = members.to_vec();
-        display_order.sort_by(|&a, &b| {
-            self.intersection_display_key(a)
-                .cmp(&self.intersection_display_key(b))
-        });
-        let formatted: Vec<String> = display_order
+        // Preserve the member order as stored in the TypeListId.
+        // For intersections containing Lazy types (type parameters, type aliases),
+        // normalize_intersection skips sorting and preserves source/declaration order.
+        // tsc also preserves the original declaration order, so displaying members
+        // in their stored order matches tsc's behavior.
+        let formatted: Vec<String> = members
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
@@ -827,39 +826,6 @@ impl<'a> TypeFormatter<'a> {
             format!("({formatted})")
         } else {
             formatted.into_owned()
-        }
-    }
-
-    /// Compute a display sort key for an intersection member.
-    /// Lazy(DefId) types sort by DefId (approximating declaration order).
-    /// Union types sort by the minimum DefId of their Lazy members.
-    /// Other types sort by TypeId (preserving canonical order).
-    fn intersection_display_key(&self, id: TypeId) -> (u32, u32) {
-        // Use (category, sub_key) tuple:
-        // - Category 0 = non-Lazy types (sort by TypeId)
-        // - Category 1 = Lazy/compound types (sort by DefId)
-        match self.interner.lookup(id) {
-            Some(TypeData::Lazy(def_id)) => (1, def_id.0),
-            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
-                // For union/intersection members, use the minimum DefId of Lazy members
-                // to approximate source order (e.g., `A | B` sorts by min(DefId(A), DefId(B)))
-                let members = self.interner.type_list(list_id);
-                let min_def = members
-                    .iter()
-                    .filter_map(|&m| {
-                        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(m) {
-                            Some(def_id.0)
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
-                match min_def {
-                    Some(def) => (1, def),
-                    None => (0, id.0),
-                }
-            }
-            _ => (0, id.0),
         }
     }
 

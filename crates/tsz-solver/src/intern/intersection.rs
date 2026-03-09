@@ -68,50 +68,7 @@ impl TypeInterner {
     }
 
     pub(super) fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
-        // FIX: Do not blindly sort all members. Callables must preserve order
-        // for correct overload resolution. Non-callables should be sorted for
-        // canonicalization.
-
-        // 1. Check if we have any callables (fast path optimization)
-        let has_callables = flat
-            .iter()
-            .any(|&id| crate::type_queries::is_callable_type(self, id));
-
-        if !has_callables {
-            // Fast path: No callables, sort everything for canonicalization
-            flat.sort_by_key(|id| id.0);
-            flat.dedup();
-        } else {
-            // Slow path: Separate callables and others without heap allocation
-            // Use SmallVec to keep stack allocation benefits
-            let mut callables = SmallVec::<[TypeId; 4]>::new();
-
-            // Retain only non-callables in 'flat', move callables to 'callables'
-            // This preserves the order of callables as they are extracted
-            let mut i = 0;
-            while i < flat.len() {
-                if crate::type_queries::is_callable_type(self, flat[i]) {
-                    callables.push(flat.remove(i));
-                } else {
-                    i += 1;
-                }
-            }
-
-            // 2. Sort non-callables (which are left in 'flat')
-            flat.sort_by_key(|id| id.0);
-            flat.dedup();
-
-            // 3. Deduplicate callables (preserving order)
-            // Using a set for O(1) lookups while maintaining insertion order
-            let mut seen = FxHashSet::default();
-            callables.retain(|id| seen.insert(*id));
-
-            // 4. Merge: Put non-callables first (canonical), then callables (ordered)
-            // This creates a canonical form where structural types appear before signatures
-            flat.extend(callables);
-        }
-
-        // Handle special cases
+        // Handle special cases early (before sorting)
         if flat.contains(&TypeId::ERROR) {
             return TypeId::ERROR;
         }
@@ -149,6 +106,23 @@ impl TypeInterner {
             if has_non_nullish {
                 flat.retain(|id| !self.is_empty_object(*id));
             }
+        }
+
+        // Preserve source/declaration order of intersection members to match tsc.
+        // tsc does not sort intersection members — it preserves the order from the
+        // source declaration. We only perform order-preserving dedup (remove exact
+        // duplicates while keeping the first occurrence).
+        {
+            let mut seen = FxHashSet::default();
+            flat.retain(|id| seen.insert(*id));
+        }
+
+        // Re-check length after dedup
+        if flat.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if flat.len() == 1 {
+            return flat[0];
         }
 
         // Abort reduction if any member is a Lazy type.
@@ -226,23 +200,19 @@ impl TypeInterner {
         let (merged_callable, remaining_after_callables) =
             self.extract_and_merge_callables(&remaining_after_objects);
 
-        // Step 3: Rebuild flat with merged results in canonical form
-        // Canonical form: [non-callables sorted, callables ordered]
+        // Step 3: Rebuild flat with merged results, preserving declaration order.
+        // tsc preserves the original order of intersection members.
         let mut final_flat: TypeListBuffer = SmallVec::new();
 
-        // Add remaining non-object, non-callable members (these are non-callables)
+        // Add remaining non-object, non-callable members
         final_flat.extend(remaining_after_callables.iter().copied());
 
-        // Add merged object if present (objects are non-callables)
+        // Add merged object if present
         if let Some(obj_id) = merged_object {
             final_flat.push(obj_id);
         }
 
-        // Sort all non-callables for canonicalization
-        final_flat.sort_by_key(|id| id.0);
-        final_flat.dedup();
-
-        // Add merged callable if present (callables must come after non-callables)
+        // Add merged callable if present
         if let Some(call_id) = merged_callable {
             final_flat.push(call_id);
         }
