@@ -1753,7 +1753,13 @@ fn collect_accessor_pairs(
                 continue;
             }
 
-            let name = get_identifier_text(arena, accessor_data.name).unwrap_or_default();
+            let name = match get_identifier_text(arena, accessor_data.name) {
+                Some(name) => name,
+                // Non-literal computed property name (e.g., [1 << 6]) — use a unique
+                // key per accessor so they are NOT merged into a single ODP call.
+                // tsc emits separate Object.defineProperty for each.
+                None => format!("__computed_{}", member_idx.0),
+            };
             let entry = accessor_map.entry(name).or_insert((None, None));
 
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {

@@ -127,8 +127,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         continue;
                     }
 
-                    let accessor_name =
-                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
+                    let accessor_name = match get_identifier_text(self.arena, accessor_data.name) {
+                        Some(name) => name,
+                        None => format!("__computed_{}", member_idx.0),
+                    };
 
                     // Skip if already emitted
                     if emitted_accessors.contains(&accessor_name) {
@@ -638,8 +640,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         continue;
                     }
 
-                    let accessor_name =
-                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
+                    let accessor_name = match get_identifier_text(self.arena, accessor_data.name) {
+                        Some(name) => name,
+                        None => format!("__computed_{}", member_idx.0),
+                    };
 
                     // Skip if already emitted
                     if emitted_static_accessors.contains(&accessor_name) {
