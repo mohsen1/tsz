@@ -257,6 +257,29 @@ pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeI
     }
 }
 
+/// Widen only literal types to their base primitive types.
+///
+/// This is more targeted than `get_base_type_for_comparison`:
+/// - String/Number/Boolean/BigInt literals → their primitive types
+/// - Unions → recursively map members
+/// - Everything else (including enums, template literals) → unchanged
+///
+/// Used for binary operator error messages where tsc shows widened types
+/// for literal operands but preserves enum type names.
+pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
+
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members.iter().map(|&m| widen_literal_type(db, m)).collect();
+            db.union(mapped)
+        }
+
+        _ => type_id,
+    }
+}
+
 /// Apply `as const` assertion to a type.
 ///
 /// This function transforms a type to its const-asserted form:

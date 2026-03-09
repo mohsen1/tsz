@@ -1262,14 +1262,12 @@ impl<'a> CheckerState<'a> {
                     if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
                         self.ctx.types,
                         sig.return_type,
-                    ) {
-                        if let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) {
-                            if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                    )
+                        && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+                            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
                             {
                                 return Some(class_idx);
                             }
-                        }
-                    }
                 }
                 None
             })?;

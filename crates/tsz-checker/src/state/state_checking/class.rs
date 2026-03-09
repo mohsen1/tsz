@@ -78,8 +78,10 @@ impl<'a> CheckerState<'a> {
         let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
         let _has_inheritance_cycle = checker.check_class_inheritance_cycle(stmt_idx, class);
 
-        // TS1212: Check class name for strict mode reserved words
-        self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
+        // TS1213: Check class name for strict mode reserved words.
+        // Class definitions are automatically in strict mode, so class names
+        // always get TS1213 (class context), not TS1212.
+        self.check_class_name_strict_mode_reserved(class.name);
 
         // Check for reserved class names (error 2414)
         // TSC forbids using predefined type names as class names.

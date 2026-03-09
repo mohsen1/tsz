@@ -1054,19 +1054,19 @@ impl<'a> CheckerState<'a> {
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
             let result = evaluator.evaluate(eval_left, eval_right, "+");
             if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
-                // For the diagnostic message, tsc preserves literal types (e.g., `2`
-                // stays `2`, not `number`) and bigint literals (`1n` stays `1n`).
-                // Since get_type_of_node widens literals by default, recover the
-                // original literal type from the expression node when available.
-                // Enum member types (E.a) should still widen to the parent enum (E).
-                let left_diag = self
-                    .literal_type_from_initializer(left_idx)
-                    .map(|t| self.widen_enum_member_type(t))
-                    .unwrap_or_else(|| self.widen_enum_member_type(left_type));
-                let right_diag = self
-                    .literal_type_from_initializer(right_idx)
-                    .map(|t| self.widen_enum_member_type(t))
-                    .unwrap_or_else(|| self.widen_enum_member_type(right_type));
+                // For the diagnostic message, tsc uses widened types for most
+                // operands (e.g., `0` → `number`, `true` → `boolean`).
+                // Widen literal types to base types and enum members to
+                // parent enums, matching tsc behavior for messages like
+                // "Operator '+=' cannot be applied to types 'boolean' and 'number'."
+                let left_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                    self.ctx.types,
+                    left_type,
+                ));
+                let right_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                    self.ctx.types,
+                    right_type,
+                ));
                 let left_str = self.format_type(left_diag);
                 let right_str = self.format_type(right_diag);
                 let message = format!(
