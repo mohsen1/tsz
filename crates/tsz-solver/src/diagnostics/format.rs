@@ -794,11 +794,16 @@ impl<'a> TypeFormatter<'a> {
         formatted.join(" | ")
     }
 
-    /// Format a union member, parenthesizing intersection types for clarity.
-    /// TSC writes `(A & B) | (C & D)` even though `&` binds tighter than `|`.
+    /// Format a union member, parenthesizing types that need disambiguation.
+    /// TSC parenthesizes intersection types `(A & B) | (C & D)`, function types
+    /// `(() => string) | (() => number)`, and constructor types in union positions.
     fn format_union_member(&mut self, id: TypeId) -> String {
         let formatted = self.format(id);
-        if matches!(self.interner.lookup(id), Some(TypeData::Intersection(_))) {
+        let needs_parens = matches!(
+            self.interner.lookup(id),
+            Some(TypeData::Intersection(_) | TypeData::Function(_) | TypeData::Callable(_))
+        );
+        if needs_parens {
             format!("({formatted})")
         } else {
             formatted.into_owned()
