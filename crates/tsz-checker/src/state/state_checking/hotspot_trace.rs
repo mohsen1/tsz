@@ -6,6 +6,7 @@ const HOTSPOT_TRACE_STATEMENT_LIMIT: usize = 10;
 const HOTSPOT_TRACE_DECLARATION_LIMIT: usize = 8;
 const HOTSPOT_TRACE_EXPRESSION_DEPTH_LIMIT: usize = 6;
 const HOTSPOT_TRACE_ARRAY_ELEMENT_LIMIT: usize = 8;
+const HOTSPOT_TRACE_OBJECT_PROPERTY_LIMIT: usize = 8;
 const HOTSPOT_TRACE_CALL_ARG_LIMIT: usize = 6;
 #[cfg(test)]
 const HOTSPOT_TRACE_SLOW_PHASE_MS: f64 = 0.0;
@@ -497,6 +498,63 @@ impl<'a> CheckerState<'a> {
                 report(&format!("{prefix}::get_type_of_node:start"));
                 self.get_type_of_node(expr_idx);
             }
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
+                    report(&format!(
+                        "{prefix}::property_count_{}:start",
+                        obj.elements.nodes.len()
+                    ));
+                    for (property_position, property_idx) in obj
+                        .elements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .take(HOTSPOT_TRACE_OBJECT_PROPERTY_LIMIT)
+                        .enumerate()
+                    {
+                        let property_phase = format!("{prefix}::property_{property_position}");
+                        if let Some(property_node) = self.ctx.arena.get(property_idx) {
+                            report(&format!(
+                                "{property_phase}::element_kind_{}:start",
+                                property_node.kind
+                            ));
+                            if let Some(prop) =
+                                self.ctx.arena.get_property_assignment(property_node)
+                            {
+                                self.trace_expression_hotspots_with_progress(
+                                    prop.initializer,
+                                    &format!("{property_phase}::initializer"),
+                                    report,
+                                    depth + 1,
+                                );
+                                continue;
+                            }
+                            if let Some(shorthand) =
+                                self.ctx.arena.get_shorthand_property(property_node)
+                            {
+                                self.trace_expression_hotspots_with_progress(
+                                    shorthand.name,
+                                    &format!("{property_phase}::shorthand"),
+                                    report,
+                                    depth + 1,
+                                );
+                                continue;
+                            }
+                            if let Some(spread) = self.ctx.arena.get_spread(property_node) {
+                                self.trace_expression_hotspots_with_progress(
+                                    spread.expression,
+                                    &format!("{property_phase}::spread"),
+                                    report,
+                                    depth + 1,
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+                report(&format!("{prefix}::get_type_of_node:start"));
+                self.get_type_of_node(expr_idx);
+            }
             syntax_kind_ext::SPREAD_ELEMENT => {
                 if let Some(spread) = self.ctx.arena.get_spread(node) {
                     self.trace_expression_hotspots_with_progress(
@@ -626,6 +684,60 @@ export const box = <T extends string>(value: T): Box<T> => ({ value });
                 .iter()
                 .any(|phase| phase.contains("initializer::expression_body_assignability:slow_ms=")),
             "expected timed expression assignability marker, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn trace_exported_variable_hotspots_with_progress_traces_object_literal_properties() {
+        let source = r#"
+type Box<T> = { raw: T; tokens: T };
+export const box = <T extends string>(value: T): Box<T> => ({ raw: value, tokens: value });
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let mut phases = Vec::new();
+        checker.trace_exported_variable_hotspots_with_progress(root, |phase| {
+            phases.push(phase.to_string());
+        });
+
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains(
+                    "initializer::function_body::expression::expression::property_count_2:start",
+                )
+            }),
+            "expected object literal property count marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains(
+                    "initializer::function_body::expression::expression::property_0::initializer",
+                )
+            }),
+            "expected first object literal property initializer marker, got {phases:?}"
+        );
+        assert!(
+            phases.iter().any(|phase| {
+                phase.contains(
+                    "initializer::function_body::expression::expression::property_1::initializer",
+                )
+            }),
+            "expected second object literal property initializer marker, got {phases:?}"
         );
     }
 }
