@@ -163,13 +163,13 @@ impl<'a> CheckerState<'a> {
 
         // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
         // Keep class type parameters in scope while constructing the instance type.
-        let (_class_type_params, mut class_type_param_updates) =
+        let (class_type_params, mut class_type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
 
         // In JS files, classes don't have syntax-level type parameters.
         // JSDoc `@template T` tags serve the same purpose. If no syntax type params
         // were found, check for JSDoc @template tags on the class declaration.
-        if _class_type_params.is_empty() {
+        if class_type_params.is_empty() {
             let (jsdoc_params, jsdoc_updates) =
                 self.push_jsdoc_class_template_type_params(class_idx);
             if !jsdoc_params.is_empty() {
@@ -1271,6 +1271,12 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(instance_type, def_id);
+            // Register type parameters so the TypeFormatter can display
+            // generic class names (e.g., "B<T>" instead of just "B").
+            if !class_type_params.is_empty() {
+                self.ctx
+                    .insert_def_type_params(def_id, class_type_params);
+            }
         }
 
         self.pop_type_parameters(class_type_param_updates);
