@@ -824,11 +824,8 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            self.error_at_node(
-                idx,
-                diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-                diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-            );
+            // TS1034 is now emitted by the parser at the correct position (the
+            // token after `super`), matching tsc's parseExpectedToken behavior.
             if in_constructor_parameter_context {
                 self.error_at_node(
                     idx,

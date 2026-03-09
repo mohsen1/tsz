@@ -1034,11 +1034,18 @@ impl<'a> CheckerState<'a> {
                     // We need to look at the parent to determine if this is the target of an assignment
                     // For now, we'll check if the property is being read before assignment
                     if tracked.contains(&key) && !assigned.contains(&key) {
-                        // Emit TS2565 error
+                        // Emit TS2565 error at the property name, not the whole expression.
+                        // tsc points at the `.name` or `[arg]` part, not `this.name`.
                         use crate::diagnostics::format_message;
                         let property_name = self.get_property_name_from_key(&key);
+                        let error_node = if let Some(access) = self.ctx.arena.get_access_expr(node)
+                        {
+                            access.name_or_argument
+                        } else {
+                            expr_idx
+                        };
                         self.error_at_node(
-                            expr_idx,
+                            error_node,
                             &format_message(
                                 crate::diagnostics::diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                                 &[&property_name],

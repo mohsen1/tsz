@@ -10,7 +10,7 @@ use crate::diagnostics::{
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue,
     MappedModifier, MappedType, ObjectShape, ParamInfo, PropertyInfo, StringIntrinsicKind,
-    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
+    SymbolRef, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
@@ -357,7 +357,7 @@ impl<'a> TypeFormatter<'a> {
                     // like D<string>. Display as "D<string>" not "typeof D<string>",
                     // since typeof X<T> is not valid TS syntax and this represents
                     // the instantiated class type.
-                    if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                    if let Some(name) = self.resolve_symbol_ref_name(sym) {
                         Cow::Owned(name)
                     } else {
                         Cow::Owned(format!("Ref({})", sym.0))
@@ -393,7 +393,7 @@ impl<'a> TypeFormatter<'a> {
                 self.format_template_literal(spans.as_ref()).into()
             }
             TypeData::TypeQuery(sym) => {
-                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                let name = if let Some(name) = self.resolve_symbol_ref_name(*sym) {
                     name
                 } else {
                     format!("Ref({})", sym.0)
@@ -417,7 +417,7 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Enum(def_id, _member_type) => self.format_def_id(*def_id, "Enum").into(),
             TypeData::ModuleNamespace(sym) => {
-                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                let name = if let Some(name) = self.resolve_symbol_ref_name(*sym) {
                     name
                 } else {
                     format!("module({})", sym.0)
@@ -1003,7 +1003,11 @@ impl<'a> TypeFormatter<'a> {
                     sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
                 let is_enum = sym.has_any_flags(symbol_flags::ENUM);
                 let is_class = sym.has_flags(symbol_flags::CLASS);
-                if (is_namespace || is_enum) && !is_class {
+                let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
+                // When a symbol is both an interface and a namespace (declaration
+                // merging), the type-space name wins — tsc displays `B`, not
+                // `typeof B`.  Similarly, classes take priority over namespaces.
+                if (is_namespace || is_enum) && !is_class && !is_interface {
                     return Some(format!("typeof {name}"));
                 }
             }
@@ -1055,6 +1059,23 @@ impl<'a> TypeFormatter<'a> {
         }
 
         Some(qualified_name)
+    }
+
+    /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
+    /// Tries the symbol arena first, then falls back to the definition store's
+    /// `find_def_by_symbol` lookup.
+    fn resolve_symbol_ref_name(&mut self, sym: SymbolRef) -> Option<String> {
+        if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+            return Some(name);
+        }
+        // Fallback: try the definition store by symbol id
+        if let Some(def_store) = self.def_store
+            && let Some(def_id) = def_store.find_def_by_symbol(sym.0)
+            && let Some(def) = def_store.get(def_id)
+        {
+            return Some(self.format_def_name(&def));
+        }
+        None
     }
 
     fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
