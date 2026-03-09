@@ -27,22 +27,10 @@ pub(crate) struct JsdocCallbackInfo {
 }
 
 impl<'a> CheckerState<'a> {
-    // ============================================================================
-    // Section 57: JSDoc Type Annotation Utilities
-    // ============================================================================
-
     /// Resolve a typeof type reference to its actual type.
     ///
-    /// This function resolves `typeof X` type queries to the type of symbol X.
-    /// It handles both direct typeof queries and typeof queries applied to
-    /// type applications (generics).
-    ///
-    /// ## Parameters:
-    /// - `type_id`: The type to resolve (may be a `TypeQuery` or Application)
-    ///
-    /// ## Returns:
-    /// - The resolved type if `type_id` is a typeof query
-    /// - The original `type_id` if it's not a typeof query
+    /// Resolves `typeof X` type queries to the type of symbol X,
+    /// including typeof queries applied to type applications (generics).
     ///
     /// ## Examples:
     /// ```typescript
@@ -2002,5 +1990,4 @@ impl<'a> CheckerState<'a> {
 
         results
     }
-    // JSDoc param tags, comment finding, text parsing, TS8033 moved to jsdoc_params.rs
 }
