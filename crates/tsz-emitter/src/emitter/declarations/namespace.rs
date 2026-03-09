@@ -236,10 +236,17 @@ impl<'a> Printer<'a> {
                 // Use `take` so outer names don't suppress declarations inside (each
                 // IIFE creates a new function scope), and inner names don't leak out.
                 let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+                let prev_scope_end = self.namespace_scope_end;
                 self.in_namespace_iife = true;
+                // Set the scope end so import alias reference searching is
+                // limited to this namespace body (not sibling namespaces).
+                if let Some(body_node) = self.arena.get(module.body) {
+                    self.namespace_scope_end = body_node.end;
+                }
                 self.current_namespace_name = Some(iife_param.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
+                self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
                 self.declared_namespace_names = prev_declared;
             }
