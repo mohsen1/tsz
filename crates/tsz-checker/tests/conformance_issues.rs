@@ -5865,3 +5865,107 @@ fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
         "Computed keys in destructuring assignment patterns should read exact tuple elements from the fully evaluated RHS.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_loop_assignment_uses_call_return_type_during_fixed_point() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+let cond: boolean;
+
+function len(s: string) {
+    return s.length;
+}
+
+function f() {
+    let x: string | number | boolean;
+    x = "";
+    while (cond) {
+        x = len(x);
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        !ts2345.is_empty(),
+        "Loop fixed-point should synthesize the call return type and report the recursive call-site error.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_loop_assignment_await_uses_awaited_call_return_type_during_fixed_point() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+let cond: boolean;
+
+async function len(s: string) {
+    return s.length;
+}
+
+async function f() {
+    let x: string | number | boolean;
+    x = "";
+    while (cond) {
+        x = await len(x);
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        ts2345.len() == 1,
+        "Awaited loop assignments should report exactly one recursive call-site error.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2345[0].1.contains("string | number") && !ts2345[0].1.contains("boolean"),
+        "Awaited loop assignments should narrow the recursive call-site to string | number, not leak boolean back in.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_relational_operator_diagnostic_widens_literal_operand_types() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    let x: string | number = "";
+    while (x > 1) {
+        x = 1;
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2365: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2365)
+        .collect();
+    assert!(
+        ts2365.len() == 1,
+        "Expected exactly one relational operator diagnostic.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2365[0].1.contains("'string | number' and 'number'")
+            && !ts2365[0].1.contains("'string | number' and '1'"),
+        "Relational operator diagnostics should widen literal operands to their primitive types.\nGot: {diagnostics:?}"
+    );
+}

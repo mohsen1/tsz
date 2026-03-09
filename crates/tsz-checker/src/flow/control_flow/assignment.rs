@@ -5,10 +5,11 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype, are_types_mutually_subtype_with_env,
-    fallback_compound_assignment_result, get_array_element_type, get_lazy_def_id,
-    is_compound_assignment_operator, map_compound_assignment_to_binary, tuple_elements_for_type,
-    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
+    are_types_mutually_subtype, are_types_mutually_subtype_with_env, call_signatures_for_type,
+    fallback_compound_assignment_result, function_return_type, get_application_info,
+    get_array_element_type, get_lazy_def_id, is_compound_assignment_operator, is_promise_like_type,
+    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
+    unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -204,70 +205,64 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return Some(nullish_type);
             }
+            let mut cached_rhs_type = None;
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
                 let rhs_type = self
                     .assigned_type_for_await_rhs(rhs, rhs_type)
                     .unwrap_or(rhs_type);
+                cached_rhs_type = Some(rhs_type);
                 tracing::trace!(
                     "get_assigned_type: node_types HIT for rhs {:?} -> {:?}",
                     rhs,
                     rhs_type
                 );
-                // Only apply assignment-based "killing definition" narrowing when
-                // the write itself is compatible. For invalid assignments, TypeScript
-                // reports the assignment error but keeps subsequent reads at the
-                // variable's declared type.
-                if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                    && let Some(bin) = self.arena.get_binary_expr(node)
-                    && bin.operator_token == SyntaxKind::EqualsToken as u16
-                    && self.is_matching_reference(bin.left, target)
-                {
-                    let declared_target_type = self
-                        .binder
-                        .resolve_identifier(self.arena, bin.left)
-                        .and_then(|sym| self.binder.get_symbol(sym))
-                        .map(|sym| sym.value_declaration)
-                        .filter(|decl| decl.is_some())
-                        .and_then(|decl| {
-                            // Prefer explicit type annotations when available.
-                            // `node_types[decl]` can hold a flow-initialized value type
-                            // (e.g. `undefined`) instead of the declared annotation type,
-                            // which would incorrectly block assignment-based narrowing.
-                            self.annotation_type_from_var_decl_node(decl)
-                                .or_else(|| node_types.get(&decl.0).copied())
-                        })
-                        .or_else(|| node_types.get(&bin.left.0).copied());
-
-                    if let Some(lhs_type) = declared_target_type
-                        && !self.is_assignable_to(rhs_type, lhs_type)
+                if rhs_type == TypeId::ERROR {
+                    // Loop fixed-point often caches an ERROR placeholder for recursive calls
+                    // before the callee has been fully checked. Fall through to the AST-based
+                    // fallback instead of short-circuiting on the placeholder.
+                } else {
+                    // Only apply assignment-based "killing definition" narrowing when
+                    // the write itself is compatible. For invalid assignments, TypeScript
+                    // reports the assignment error but keeps subsequent reads at the
+                    // variable's declared type.
+                    if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(bin) = self.arena.get_binary_expr(node)
+                        && bin.operator_token == SyntaxKind::EqualsToken as u16
+                        && self.is_matching_reference(bin.left, target)
                     {
-                        return None;
+                        let declared_target_type = self
+                            .binder
+                            .resolve_identifier(self.arena, bin.left)
+                            .and_then(|sym| self.binder.get_symbol(sym))
+                            .map(|sym| sym.value_declaration)
+                            .filter(|decl| decl.is_some())
+                            .and_then(|decl| {
+                                // Prefer explicit type annotations when available.
+                                // `node_types[decl]` can hold a flow-initialized value type
+                                // (e.g. `undefined`) instead of the declared annotation type,
+                                // which would incorrectly block assignment-based narrowing.
+                                self.annotation_type_from_var_decl_node(decl)
+                                    .or_else(|| node_types.get(&decl.0).copied())
+                            })
+                            .or_else(|| node_types.get(&bin.left.0).copied());
+
+                        if let Some(lhs_type) = declared_target_type
+                            && !self.is_assignable_to(rhs_type, lhs_type)
+                        {
+                            return None;
+                        }
                     }
+                    return Some(rhs_type);
                 }
+            }
+            let fallback_rhs_type = self.fallback_assigned_type_from_expression(rhs);
+            if let Some(rhs_type) = fallback_rhs_type {
                 return Some(rhs_type);
             }
-            // Fallback for conditional expressions: when node_types doesn't have the
-            // RHS type yet (e.g., during loop fixed-point analysis), try to compute it
-            // from the AST structure. For `cond ? a : b`, the type is union(a, b).
-            // This is critical for loops like `code = code === 1 ? 0 : 1` where the
-            // conditional hasn't been typed yet but both branches are literals.
-            if let Some(rhs_node) = self.arena.get(rhs)
-                && rhs_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                && let Some(cond) = self.arena.get_conditional_expr(rhs_node)
-            {
-                let consequent_type = self.literal_type_from_node(cond.when_true);
-                let alternate_type = self.literal_type_from_node(cond.when_false);
-                match (consequent_type, alternate_type) {
-                    (Some(t), Some(f)) => {
-                        return Some(self.interner.union(vec![t, f]));
-                    }
-                    (Some(t), None) | (None, Some(t)) => {
-                        return Some(t);
-                    }
-                    _ => {}
-                }
+            if let Some(rhs_type) = cached_rhs_type {
+                return Some(rhs_type);
             }
             return None;
         }
@@ -317,8 +312,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // If the await node itself was cached as a promise-like application, unwrap once.
-        if let Some(inner) = unwrap_promise_type_argument(self.interner, rhs_type) {
+        if let Some(inner) = self.awaited_type_from_type(rhs_type) {
             return Some(inner);
+        }
+        if rhs_type != TypeId::ERROR {
+            return Some(rhs_type);
         }
 
         // Fallback: derive from operand type (for cases where await-node cache
@@ -327,10 +325,257 @@ impl<'a> FlowAnalyzer<'a> {
         let operand_type = self
             .node_types
             .and_then(|nt| nt.get(&unary.expression.0).copied())?;
-        if let Some(inner) = unwrap_promise_type_argument(self.interner, operand_type) {
+        if let Some(inner) = self.awaited_type_from_type(operand_type) {
             return Some(inner);
         }
+        (operand_type != TypeId::ERROR).then_some(operand_type)
+    }
+
+    fn fallback_assigned_type_from_expression(&self, rhs: NodeIndex) -> Option<TypeId> {
+        let rhs = self.skip_parens_and_assertions(rhs);
+        let rhs_node = self.arena.get(rhs)?;
+
+        if rhs_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.arena.get_conditional_expr(rhs_node)
+        {
+            let consequent_type = self.literal_type_from_node(cond.when_true);
+            let alternate_type = self.literal_type_from_node(cond.when_false);
+            return match (consequent_type, alternate_type) {
+                (Some(t), Some(f)) => Some(self.interner.union(vec![t, f])),
+                (Some(t), None) | (None, Some(t)) => Some(t),
+                _ => None,
+            };
+        }
+
+        if rhs_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            return self.fallback_call_expression_type(rhs);
+        }
+
+        if rhs_node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+            return self.fallback_await_expression_type(rhs);
+        }
+
         None
+    }
+
+    fn fallback_call_expression_type(&self, call_expr: NodeIndex) -> Option<TypeId> {
+        let call_node = self.arena.get(call_expr)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(call_node)?;
+        let callee = self.skip_parens_and_assertions(call.expression);
+        if let Some(callee_type) = self.fallback_type_for_reference(callee)
+            && let Some(return_type) = self.call_return_type_from_type(callee_type)
+        {
+            return Some(return_type);
+        }
+
+        let sym_id = self.reference_symbol(callee)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        let mut return_types = Vec::new();
+        for &decl in &symbol.declarations {
+            if let Some(return_type) = self.declared_return_type_from_declaration(decl) {
+                return_types.push(return_type);
+                continue;
+            }
+            if let Some(decl_type) = self.fallback_declaration_type(decl) {
+                self.extend_call_return_types(decl_type, &mut return_types);
+            }
+        }
+        self.union_types_if_any(return_types)
+    }
+
+    fn fallback_await_expression_type(&self, await_expr: NodeIndex) -> Option<TypeId> {
+        let await_node = self.arena.get(await_expr)?;
+        if await_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+            return None;
+        }
+
+        let unary = self.arena.get_unary_expr_ex(await_node)?;
+        let operand = self.skip_parens_and_assertions(unary.expression);
+        if let Some(awaited_call_type) = self.fallback_awaited_call_expression_type(operand) {
+            return Some(awaited_call_type);
+        }
+        let operand_type = self
+            .fallback_assigned_type_from_expression(operand)
+            .or_else(|| self.node_types.and_then(|nt| nt.get(&operand.0).copied()))?;
+        self.awaited_type_from_type(operand_type)
+            .or(Some(operand_type))
+    }
+
+    fn fallback_awaited_call_expression_type(&self, operand: NodeIndex) -> Option<TypeId> {
+        let operand = self.skip_parens_and_assertions(operand);
+        let call_node = self.arena.get(operand)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(call_node)?;
+        let callee = self.skip_parens_and_assertions(call.expression);
+        let sym_id = self.reference_symbol(callee)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        if !symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl| self.declaration_likely_returns_awaitable(decl))
+        {
+            return None;
+        }
+
+        let call_type = self
+            .fallback_call_expression_type(operand)
+            .or_else(|| self.node_types.and_then(|nt| nt.get(&operand.0).copied()))?;
+
+        if let Some((_, args)) = get_application_info(self.interner, call_type)
+            && let Some(&first_arg) = args.first()
+        {
+            return Some(first_arg);
+        }
+
+        let members = union_members_for_type(self.interner, call_type)?;
+        let mut awaited_types = Vec::with_capacity(members.len());
+        for member in members {
+            let (.., args) = get_application_info(self.interner, member)?;
+            awaited_types.push(*args.first()?);
+        }
+        self.union_types_if_any(awaited_types)
+    }
+
+    fn awaited_type_from_type(&self, ty: TypeId) -> Option<TypeId> {
+        if let Some(inner) = unwrap_promise_type_argument(self.interner, ty) {
+            return Some(inner);
+        }
+        if let Some((base, args)) = get_application_info(self.interner, ty)
+            && let Some(&first_arg) = args.first()
+        {
+            if base == TypeId::PROMISE_BASE {
+                return Some(first_arg);
+            }
+
+            let resolved_base = self.resolve_lazy_via_env(base);
+            if resolved_base != base && is_promise_like_type(self.interner, resolved_base) {
+                return Some(first_arg);
+            }
+        }
+
+        let members = union_members_for_type(self.interner, ty)?;
+        let mut awaited_members = Vec::with_capacity(members.len());
+        for member in members {
+            awaited_members.push(unwrap_promise_type_argument(self.interner, member)?);
+        }
+
+        match awaited_members.len() {
+            0 => None,
+            1 => awaited_members.first().copied(),
+            _ => Some(self.interner.union(awaited_members)),
+        }
+    }
+
+    fn fallback_type_for_reference(&self, reference: NodeIndex) -> Option<TypeId> {
+        let reference = self.skip_parens_and_assertions(reference);
+        if let Some(ty) = self.node_types.and_then(|nt| nt.get(&reference.0).copied()) {
+            return Some(ty);
+        }
+
+        let sym_id = self.reference_symbol(reference)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied()?
+        };
+        self.fallback_declaration_type(decl)
+    }
+
+    fn fallback_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
+        self.annotation_type_from_var_decl_node(decl)
+            .or_else(|| self.node_types.and_then(|nt| nt.get(&decl.0).copied()))
+    }
+
+    fn declared_return_type_from_declaration(&self, decl: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(decl)?;
+        let func = self.arena.get_function(node)?;
+        if func.type_annotation.is_none() {
+            return None;
+        }
+        self.node_types
+            .and_then(|nt| nt.get(&func.type_annotation.0).copied())
+    }
+
+    fn declaration_likely_returns_awaitable(&self, decl: NodeIndex) -> bool {
+        self.declaration_is_async_function(decl)
+            || self
+                .arena
+                .get(decl)
+                .and_then(|node| self.arena.get_function(node))
+                .is_some_and(|func| {
+                    func.type_annotation.is_some()
+                        && self.type_annotation_looks_like_promise(func.type_annotation)
+                })
+    }
+
+    fn declaration_is_async_function(&self, decl: NodeIndex) -> bool {
+        self.arena
+            .get(decl)
+            .and_then(|node| self.arena.get_function(node))
+            .is_some_and(|func| func.is_async)
+    }
+
+    fn type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(type_annotation) else {
+            return false;
+        };
+
+        let Some(type_ref) = self.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        if let Some(ident) = self.arena.get_identifier(name_node) {
+            return self.is_promise_like_name(ident.escaped_text.as_str());
+        }
+
+        self.arena
+            .get_qualified_name(name_node)
+            .and_then(|qualified| self.arena.get(qualified.right))
+            .and_then(|node| self.arena.get_identifier(node))
+            .is_some_and(|ident| self.is_promise_like_name(ident.escaped_text.as_str()))
+    }
+
+    fn is_promise_like_name(&self, name: &str) -> bool {
+        matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+    }
+
+    fn call_return_type_from_type(&self, ty: TypeId) -> Option<TypeId> {
+        let mut return_types = Vec::new();
+        self.extend_call_return_types(self.resolve_lazy_via_env(ty), &mut return_types);
+        self.union_types_if_any(return_types)
+    }
+
+    fn extend_call_return_types(&self, ty: TypeId, return_types: &mut Vec<TypeId>) {
+        if let Some(signatures) = call_signatures_for_type(self.interner, ty)
+            && !signatures.is_empty()
+        {
+            return_types.extend(signatures.iter().map(|sig| sig.return_type));
+            return;
+        }
+
+        if let Some(return_type) = function_return_type(self.interner, ty) {
+            return_types.push(return_type);
+        }
+    }
+
+    fn union_types_if_any(&self, mut types: Vec<TypeId>) -> Option<TypeId> {
+        match types.len() {
+            0 => None,
+            1 => types.pop(),
+            _ => Some(self.interner.union(types)),
+        }
     }
 
     fn get_destructuring_assigned_type_for_reference(
