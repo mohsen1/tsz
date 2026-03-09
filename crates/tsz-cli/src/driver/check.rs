@@ -1185,7 +1185,7 @@ let __: B = new B();"#
             }
         }
 
-        assert!(binder.wildcard_reexports.get("./c").is_some());
+        assert!(binder.wildcard_reexports.contains_key("./c"));
         let c_wildcards = binder
             .wildcard_reexports
             .get("./c")

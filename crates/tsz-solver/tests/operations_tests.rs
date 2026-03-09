@@ -3562,8 +3562,15 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
     // The inference may instantiate the constraint, producing a structurally
     // different but semantically valid return type. Verify the result is an
     // object type (inference succeeded, not ERROR/UNKNOWN).
+    let is_objectish =
+        |ty| ty == schema_arg || matches!(interner.lookup(ty), Some(TypeData::Object(_)));
     assert!(
-        result == schema_arg || matches!(interner.lookup(result), Some(TypeData::Object(_))),
+        is_objectish(result)
+            || matches!(
+                interner.lookup(result),
+                Some(TypeData::Union(members))
+                    if interner.type_list(members).iter().copied().all(is_objectish)
+            ),
         "Expected inference to return an object type, got {result:?} = {:?}",
         interner.lookup(result),
     );

@@ -942,9 +942,9 @@ pub(super) fn parse_diagnostic_to_checker(
     )
 }
 
-pub(super) fn filtered_parse_diagnostics<'a>(
-    parse_diagnostics: &'a [ParseDiagnostic],
-) -> Vec<&'a ParseDiagnostic> {
+pub(super) fn filtered_parse_diagnostics(
+    parse_diagnostics: &[ParseDiagnostic],
+) -> Vec<&ParseDiagnostic> {
     let has_real_syntax_error = parse_diagnostics
         .iter()
         .any(|diagnostic| is_real_syntax_error(diagnostic.code));
@@ -1404,7 +1404,7 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
 mod tests {
     use super::*;
 
-    /// Parse source text and return the BoundFile from a merged program.
+    /// Parse source text and return the `BoundFile` from a merged program.
     fn bound_file(source: &str) -> BoundFile {
         let bind_result =
             parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());

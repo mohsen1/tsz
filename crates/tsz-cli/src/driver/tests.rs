@@ -77,8 +77,7 @@ fn test_node18_node20_accepted_with_node16_resolution() {
         let diag = check_module_resolution_compatibility(&resolved, None);
         assert!(
             diag.is_none(),
-            "module {:?} should be accepted with Node16 resolution",
-            module
+            "module {module:?} should be accepted with Node16 resolution"
         );
     }
 }
@@ -97,8 +96,7 @@ fn test_node18_node20_accepted_with_nodenext_resolution() {
         let diag = check_module_resolution_compatibility(&resolved, None);
         assert!(
             diag.is_none(),
-            "module {:?} should be accepted with NodeNext resolution",
-            module
+            "module {module:?} should be accepted with NodeNext resolution"
         );
     }
 }
