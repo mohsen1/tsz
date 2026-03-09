@@ -985,8 +985,7 @@ fn test_signature_with_rest_parameter() {
 
 #[test]
 fn test_signature_help_prefers_source_type_alias_and_inferred_return_type() {
-    let source =
-        "type Box = { value: number };\nfunction id(value: Box) { return value; }\nid({ value: 1 });";
+    let source = "type Box = { value: number };\nfunction id(value: Box) { return value; }\nid({ value: 1 });";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
         parser.get_arena(),
