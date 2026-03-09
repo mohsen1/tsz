@@ -525,8 +525,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("declare const _default: ");
 
-        // Get the type of the expression
-        if let Some(type_id) = self.get_node_type(expr_idx) {
+        if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
+            self.write(&type_text);
+        } else if let Some(type_id) = self.get_node_type(expr_idx) {
             self.write(&self.print_type_id(type_id));
         } else {
             self.write("any");

@@ -104,3 +104,69 @@ fn empty_object_type_stays_inline() {
     let result = printer.print_type(obj);
     assert_eq!(result, "{}");
 }
+
+#[test]
+fn local_import_alias_uses_bare_name_when_alias_is_emitted() {
+    let interner = tsz_solver::TypeInterner::new();
+    let mut symbols = SymbolArena::new();
+    let thing = symbols.alloc(symbol_flags::ALIAS, "Thing".to_string());
+    symbols
+        .get_mut(thing)
+        .expect("missing alias symbol")
+        .import_module = Some("pkg".to_string());
+
+    let module_path_resolver = |sym_id| (sym_id == thing).then(|| "pkg".to_string());
+    let alias_name_resolver = |sym_id| sym_id == thing;
+
+    let printer = TypePrinter::new(&interner)
+        .with_symbols(&symbols)
+        .with_module_path_resolver(&module_path_resolver)
+        .with_local_import_alias_name_resolver(&alias_name_resolver);
+
+    assert_eq!(
+        printer.print_named_symbol_reference(thing, false),
+        Some("Thing".to_string())
+    );
+}
+
+#[test]
+fn local_import_alias_falls_back_to_import_qualified_name_when_elided() {
+    let interner = tsz_solver::TypeInterner::new();
+    let mut symbols = SymbolArena::new();
+    let thing = symbols.alloc(symbol_flags::ALIAS, "Thing".to_string());
+    symbols
+        .get_mut(thing)
+        .expect("missing alias symbol")
+        .import_module = Some("inner/other.js".to_string());
+
+    let module_path_resolver = |sym_id| (sym_id == thing).then(|| "inner/other".to_string());
+    let alias_name_resolver = |_sym_id| false;
+
+    let printer = TypePrinter::new(&interner)
+        .with_symbols(&symbols)
+        .with_module_path_resolver(&module_path_resolver)
+        .with_local_import_alias_name_resolver(&alias_name_resolver);
+
+    assert_eq!(
+        printer.print_named_symbol_reference(thing, false),
+        Some("import(\"inner/other\").Thing".to_string())
+    );
+}
+
+#[test]
+fn external_module_symbol_is_not_treated_as_global() {
+    let interner = tsz_solver::TypeInterner::new();
+    let mut symbols = SymbolArena::new();
+    let thing = symbols.alloc(0, "Thing".to_string());
+
+    let module_path_resolver = |sym_id| (sym_id == thing).then(|| "inner/other".to_string());
+
+    let printer = TypePrinter::new(&interner)
+        .with_symbols(&symbols)
+        .with_module_path_resolver(&module_path_resolver);
+
+    assert_eq!(
+        printer.print_named_symbol_reference(thing, false),
+        Some("import(\"inner/other\").Thing".to_string())
+    );
+}

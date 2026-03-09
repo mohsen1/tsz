@@ -48,6 +48,8 @@ pub struct TypePrinter<'a> {
     module_path_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
     /// Optional resolver for reusing in-scope namespace import aliases.
     namespace_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
+    /// Optional resolver for deciding whether a local import alias survives in emitted output.
+    local_import_alias_name_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -63,6 +65,7 @@ impl<'a> TypePrinter<'a> {
             node_arena: None,
             module_path_resolver: None,
             namespace_alias_resolver: None,
+            local_import_alias_name_resolver: None,
         }
     }
 
@@ -121,6 +124,15 @@ impl<'a> TypePrinter<'a> {
         resolver: &'a dyn Fn(SymbolId) -> Option<String>,
     ) -> Self {
         self.namespace_alias_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a resolver for deciding whether local import aliases can be named directly.
+    pub fn with_local_import_alias_name_resolver(
+        mut self,
+        resolver: &'a dyn Fn(SymbolId) -> bool,
+    ) -> Self {
+        self.local_import_alias_name_resolver = Some(resolver);
         self
     }
 
@@ -332,7 +344,9 @@ impl<'a> TypePrinter<'a> {
 
     fn can_reference_symbol_by_name(&self, sym_id: SymbolId) -> bool {
         if self.is_local_import_alias(sym_id) {
-            return true;
+            return self
+                .local_import_alias_name_resolver
+                .is_none_or(|resolver| resolver(sym_id));
         }
 
         if self.resolve_symbol_module_path(sym_id).is_some() {
@@ -353,9 +367,7 @@ impl<'a> TypePrinter<'a> {
             });
         }
 
-        if !self.is_local_import_alias(sym_id)
-            && let Some(name) = self.import_qualified_symbol_name(sym_id)
-        {
+        if let Some(name) = self.import_qualified_symbol_name(sym_id) {
             return Some(if needs_typeof {
                 format!("typeof {name}")
             } else {
@@ -600,6 +612,15 @@ impl<'a> TypePrinter<'a> {
         if let Some(sym_id) = shape.symbol
             && self.can_reference_symbol_by_name(sym_id)
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+        {
+            return name;
+        }
+
+        if let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+            && !symbol.has_any_flags(symbol_flags::MODULE)
+            && let Some(name) = self.print_named_symbol_reference(sym_id, false)
         {
             return name;
         }
@@ -1582,6 +1603,8 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
         !symbol.parent.is_some()
+            && self.resolve_symbol_module_path(sym_id).is_none()
+            && !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some())
     }
 
     fn intersection_member_priority(&self, type_id: TypeId) -> u8 {
@@ -1619,13 +1642,9 @@ impl<'a> TypePrinter<'a> {
         // Try to resolve the enum name via DefId -> SymbolId -> symbol name
         if let Some(cache) = self.type_cache
             && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
-            && let Some(arena) = self.symbol_arena
-            && let Some(symbol) = arena.get(sym_id)
-        {
-            return self
-                .resolve_symbol_qualified_name(sym_id)
-                .unwrap_or_else(|| symbol.escaped_name.clone());
-        }
+            && let Some(name) = self.print_named_symbol_reference(sym_id, false) {
+                return name;
+            }
         // Fallback: print the member type structure
         format!("enum({})", def_id.0)
     }
@@ -1634,7 +1653,7 @@ impl<'a> TypePrinter<'a> {
         let app = self.interner.type_application(app_id);
         let base_text = if let Some(sym_ref) = visitor::type_query_symbol(self.interner, app.base) {
             let sym_id = SymbolId(sym_ref.0);
-            self.resolve_symbol_qualified_name(sym_id)
+            self.print_named_symbol_reference(sym_id, false)
                 .unwrap_or_else(|| self.print_type(app.base))
         } else {
             self.print_type(app.base)

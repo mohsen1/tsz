@@ -3277,6 +3277,15 @@ impl<'a> DeclarationEmitter<'a> {
             sym_id
         };
 
+        self.import_symbol_is_used(binder, used, sym_id)
+    }
+
+    fn import_symbol_is_used(
+        &self,
+        binder: &BinderState,
+        used: &rustc_hash::FxHashMap<SymbolId, super::usage_analyzer::UsageKind>,
+        sym_id: SymbolId,
+    ) -> bool {
         if used.contains_key(&sym_id) {
             return true;
         }
@@ -3311,6 +3320,14 @@ impl<'a> DeclarationEmitter<'a> {
             used_symbol.import_module.as_deref() == Some(import_module)
                 || self.resolve_symbol_module_path(used_sym_id).as_deref() == Some(import_module)
         })
+    }
+
+    pub(crate) fn can_reference_local_import_alias_by_name(&self, sym_id: SymbolId) -> bool {
+        let (Some(binder), Some(used)) = (self.binder, self.used_symbols.as_ref()) else {
+            return true;
+        };
+
+        self.import_symbol_is_used(binder, used, sym_id)
     }
 
     /// Count how many import specifiers in an `ImportClause` should be emitted.
@@ -4120,6 +4137,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.reference_declared_type_annotation_text(expr_idx)
                     .or_else(|| self.undefined_identifier_type_text(expr_idx))
             }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.call_expression_declared_return_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
@@ -4180,6 +4200,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn arena_source_file<'arena>(
+        &self,
+        arena: &'arena tsz_parser::parser::node::NodeArena,
+    ) -> Option<&'arena tsz_parser::parser::node::SourceFileData> {
+        arena
+            .nodes
+            .iter()
+            .rev()
+            .find_map(|node| arena.get_source_file(node))
+    }
+
+    fn source_slice_from_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(node_idx)?;
+        let source_file = self.arena_source_file(arena)?;
+        let text = source_file.text.as_ref();
+        let start = usize::try_from(node.pos).ok()?;
+        let end = usize::try_from(node.end).ok()?;
+        text.get(start..end).map(str::to_string)
+    }
+
     fn undefined_identifier_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
         (self.get_identifier_text(expr_idx).as_deref() == Some("undefined"))
             .then(|| "any".to_string())
@@ -4199,6 +4243,48 @@ impl<'a> DeclarationEmitter<'a> {
                     let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
                     return Some(trimmed.to_string());
                 }
+            }
+        }
+
+        None
+    }
+
+    fn call_expression_declared_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder.symbol_arenas.get(&sym_id)?;
+        let source_file = self.arena_source_file(source_arena.as_ref())?;
+        if !source_file.is_declaration_file {
+            return None;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = source_arena.get_function(decl_node) else {
+                continue;
+            };
+            if func.type_annotation.is_none() {
+                continue;
+            }
+            if let Some(type_text) =
+                self.source_slice_from_arena(source_arena.as_ref(), func.type_annotation)
+            {
+                return Some(
+                    type_text
+                        .trim_end()
+                        .trim_end_matches(';')
+                        .trim_end()
+                        .to_string(),
+                );
             }
         }
 
@@ -5157,11 +5243,14 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(interner) = self.type_interner {
             let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
             let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
+            let local_import_alias_name_resolver =
+                |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
             let mut printer = TypePrinter::new(interner)
                 .with_indent_level(self.indent_level)
                 .with_node_arena(self.arena)
                 .with_module_path_resolver(&module_path_resolver)
-                .with_namespace_alias_resolver(&namespace_alias_resolver);
+                .with_namespace_alias_resolver(&namespace_alias_resolver)
+                .with_local_import_alias_name_resolver(&local_import_alias_name_resolver);
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
@@ -5193,13 +5282,40 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         };
 
-        // 1. Check for ambient modules (declare module "name")
+        if let Some(resolved_sym_id) = binder
+            .resolve_import_symbol(sym_id)
+            .filter(|resolved_sym_id| *resolved_sym_id != sym_id)
+            && let Some(path) =
+                self.resolve_symbol_module_path_from_source(resolved_sym_id, binder, current_path)
+        {
+            return Some(path);
+        }
+
+        if let Some(path) =
+            self.resolve_symbol_module_path_from_source(sym_id, binder, current_path)
+        {
+            return Some(path);
+        }
+
+        // Fall back to the raw import text for imported symbols when we
+        // don't have a source file mapping for the originating declaration.
+        if let Some(module_specifier) = self.import_symbol_map.get(&sym_id) {
+            return Some(module_specifier.clone());
+        }
+
+        binder.symbols.get(sym_id)?.import_module.clone()
+    }
+
+    fn resolve_symbol_module_path_from_source(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+        current_path: &str,
+    ) -> Option<String> {
         if let Some(ambient_path) = self.check_ambient_module(sym_id, binder) {
             return Some(ambient_path);
         }
 
-        // 2. Get the source arena for this symbol when available so imported
-        // node_modules symbols can be canonicalized back through package exports.
         if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
             let arena_addr = Arc::as_ptr(source_arena) as usize;
             if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
@@ -5219,12 +5335,6 @@ impl<'a> DeclarationEmitter<'a> {
                 let rel_path = self.calculate_relative_path(current_path, source_path);
                 return Some(self.strip_ts_extensions(&rel_path));
             }
-        }
-
-        // 3. Fall back to the raw import text for imported symbols when we
-        // don't have a source file mapping for the originating declaration.
-        if let Some(module_specifier) = self.import_symbol_map.get(&sym_id) {
-            return Some(module_specifier.clone());
         }
 
         None
@@ -5802,33 +5912,15 @@ impl<'a> DeclarationEmitter<'a> {
         let widened_enum_type = (has_initializer && keyword != "const")
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
+        let literal_initializer_text =
+            (keyword == "const" && !has_type_annotation && has_initializer)
+                .then(|| self.const_literal_initializer_text(initializer))
+                .flatten();
 
         // Determine if we should emit a literal initializer for const
-        let use_literal_initializer =
-            if keyword == "const" && !has_type_annotation && has_initializer {
-                // Check if initializer is a primitive literal
-                // Note: null is excluded — `const x = null` should emit `: any` in .d.ts
-                if let Some(init_node) = self.arena.get(initializer) {
-                    let k = init_node.kind;
-                    k == SyntaxKind::StringLiteral as u16
-                        || k == SyntaxKind::NumericLiteral as u16
-                        || k == SyntaxKind::BigIntLiteral as u16
-                        || k == SyntaxKind::TrueKeyword as u16
-                        || k == SyntaxKind::FalseKeyword as u16
-                        // Handle negative numeric/bigint literals: PrefixUnaryExpression(-X)
-                        || (k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                            && self.is_negative_literal(init_node))
-                        || self.simple_enum_access_member_text(initializer).is_some()
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-        if use_literal_initializer {
+        if let Some(literal_initializer_text) = literal_initializer_text {
             self.write(if self.source_is_js_file { ": " } else { " = " });
-            self.emit_expression(initializer);
+            self.write(&literal_initializer_text);
         } else {
             let is_unique_symbol =
                 keyword == "const" && has_initializer && self.is_symbol_call(initializer);
@@ -7113,6 +7205,34 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_source_slice(expr_node.pos, expr_node.end)
             }
             _ => None,
+        }
+    }
+
+    fn const_literal_initializer_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => self
+                .arena
+                .get_unary_expr_ex(expr_node)
+                .and_then(|await_expr| self.const_literal_initializer_text(await_expr.expression)),
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(expr_node)
+                .and_then(|paren| self.const_literal_initializer_text(paren.expression)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16 =>
+            {
+                self.js_literal_type_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self.is_negative_literal(expr_node) =>
+            {
+                self.get_source_slice(expr_node.pos, expr_node.end)
+            }
+            _ => self.simple_enum_access_member_text(expr_idx),
         }
     }
 
