@@ -292,6 +292,19 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Computed property name expressions don't participate in TS2454-style
+        // definite-assignment checks. TDZ diagnostics for block-scoped values in
+        // computed names are handled separately by `check_tdz_violation`.
+        if self.find_enclosing_computed_property(idx).is_some() {
+            return false;
+        }
+
+        // Class field initializers execute later (instance construction), so a
+        // variable read there is not a same-point definite-assignment use.
+        if self.is_inside_class_property_initializer(idx) {
+            return false;
+        }
+
         // Skip definite assignment check if this identifier is an assignment target
         // in a destructuring assignment — it's being written to, not read.
         // e.g., `let x: string; [x] = items;` — the `x` is being assigned to.
@@ -321,6 +334,20 @@ impl<'a> CheckerState<'a> {
         // Get the value declaration
         let decl_id = symbol.value_declaration;
         if decl_id.is_none() {
+            return false;
+        }
+
+        // Skip declarations that live in a different arena (for example lib
+        // globals such as `Symbol`). Their flow is not modeled in the current
+        // file, and NodeIndex collisions can otherwise manufacture bogus TS2454s.
+        if let Some(decl_arena) = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_id))
+            .and_then(|arenas| arenas.first())
+            && !std::ptr::eq(decl_arena.as_ref(), self.ctx.arena)
+        {
             return false;
         }
 
@@ -497,6 +524,52 @@ impl<'a> CheckerState<'a> {
 
         // Only check definite assignment when we can anchor to a container scope.
         found_container_scope
+    }
+
+    fn is_inside_class_property_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    return false;
+                }
+                k if k == syntax_kind_ext::ARROW_FUNCTION => {}
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_property_decl(node)
+                        .is_some_and(|prop| prop.initializer.is_some());
+                }
+                k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                    || k == syntax_kind_ext::SOURCE_FILE =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+
+        false
     }
 
     /// Check if an identifier is inside a `typeof` type query (type position).
@@ -779,6 +852,9 @@ impl<'a> CheckerState<'a> {
                     // has an initializer. If it lacks an initializer, the variable is
                     // not definitely assigned — returning true here would incorrectly
                     // suppress TS2454.
+                    if self.find_enclosing_computed_property(idx).is_some() {
+                        return true;
+                    }
                     if let Some(sym_id) = known_sym
                         && !self.declaration_has_initializer(sym_id)
                     {

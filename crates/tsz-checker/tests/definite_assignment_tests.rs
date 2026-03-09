@@ -641,3 +641,85 @@ fn test_ts2454_non_optional_rhs_assignment_definite() {
         "Non-optional RHS assignments should count as definite assignment, got: {diags:?}"
     );
 }
+
+#[test]
+fn test_ts2454_not_emitted_in_class_computed_property_name() {
+    let source = r"
+        var s: string;
+        class C {
+            [s]: number;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Computed property names should not trigger TS2454, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_tdz_in_binding_default_initializer_has_no_ts2454_companion() {
+    let source = r"
+        const {
+            a = f,
+            f = 1,
+        } = {} as any;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION
+        ) >= 1,
+        "Expected TS2448 for binding default TDZ, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Binding default TDZ should not add a TS2454 companion, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_not_emitted_in_class_field_initializer() {
+    let source = r"
+        var n: number;
+        class C {
+            [n] = n;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Class field initializers should not trigger TS2454, got: {diags:?}"
+    );
+}

@@ -81,6 +81,7 @@ impl<'a> CheckerState<'a> {
             if !is_tdz_in_property_initializer
                 && !is_tdz_in_heritage_clause
                 && !self.is_in_static_property_initializer_ast_context(idx)
+                && !self.is_in_binding_element_default_initializer(idx)
                 && self.ctx.strict_null_checks()
                 && (!self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
                     sym.decl_file_idx != u32::MAX
@@ -209,6 +210,35 @@ impl<'a> CheckerState<'a> {
             && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
         {
             return true;
+        }
+
+        false
+    }
+
+    fn is_in_binding_element_default_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding) = self.ctx.arena.get_binding_element(parent_node)
+                && binding.initializer.is_some()
+                && self.is_node_within(idx, binding.initializer)
+            {
+                return true;
+            }
+
+            current = parent;
         }
 
         false
