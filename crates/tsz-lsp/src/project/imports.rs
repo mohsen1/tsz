@@ -954,14 +954,29 @@ impl Project {
     }
 
     fn identifier_at_range(&self, file: &ProjectFile, range: Range) -> Option<String> {
-        let offset = file
+        let start_offset = file
             .line_map()
             .position_to_offset(range.start, file.source_text())?;
-        let node_idx = find_node_at_offset(file.arena(), offset);
-        if node_idx.is_none() {
-            return None;
-        }
+        let end_offset = file
+            .line_map()
+            .position_to_offset(range.end, file.source_text())
+            .unwrap_or(start_offset);
 
+        self.identifier_at_offset(file, start_offset)
+            .or_else(|| {
+                end_offset
+                    .checked_sub(1)
+                    .and_then(|offset| self.identifier_at_offset(file, offset))
+            })
+            .or_else(|| {
+                start_offset
+                    .checked_sub(1)
+                    .and_then(|offset| self.identifier_at_offset(file, offset))
+            })
+    }
+
+    fn identifier_at_offset(&self, file: &ProjectFile, offset: u32) -> Option<String> {
+        let node_idx = find_node_at_offset(file.arena(), offset);
         let node = file.arena().get(node_idx)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;

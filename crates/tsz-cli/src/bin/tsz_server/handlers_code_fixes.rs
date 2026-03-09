@@ -328,6 +328,26 @@ impl Server {
                     json_obj
                 })
                 .collect();
+            let normalize_response_actions = |actions: &mut Vec<serde_json::Value>| {
+                for action in actions.iter_mut() {
+                    let fix_name = action.get("fixName").and_then(serde_json::Value::as_str);
+                    let fix_id = action.get("fixId").and_then(serde_json::Value::as_str);
+                    if fix_name == Some("addMissingAsync") || fix_id == Some("addMissingAsync") {
+                        action["description"] =
+                            serde_json::json!("Add async modifier to containing function");
+                    }
+                }
+                actions.retain(|action| {
+                    let fix_id = action.get("fixId").and_then(serde_json::Value::as_str);
+                    if fix_id != Some("fixAddVoidToPromise") {
+                        return true;
+                    }
+                    action
+                        .get("changes")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|changes| !changes.is_empty())
+                });
+            };
             response_actions.retain(|action| {
                 action.get("fixId").and_then(serde_json::Value::as_str) != Some("addMissingConst")
                     || add_missing_const_preview.is_some()
@@ -867,6 +887,9 @@ impl Server {
                         } else {
                             (description.to_string(), fix_id, fix_all_description)
                         };
+                        if fix_id == "fixAddVoidToPromise" {
+                            continue;
+                        }
 
                         if fix_name == "addMissingMember"
                             && let Some(diag) = diagnostics.iter().find(|d| d.code == *code)
@@ -947,6 +970,9 @@ impl Server {
                         {
                             description = format!("Add missing function declaration '{func_name}'");
                         }
+                        if fix_name == "addMissingAsync" || fix_id == "addMissingAsync" {
+                            description = "Add async modifier to containing function".to_string();
+                        }
 
                         response_actions.push(serde_json::json!({
                             "fixName": fix_name,
@@ -958,6 +984,7 @@ impl Server {
                     }
                 }
             }
+            normalize_response_actions(&mut response_actions);
 
             return TsServerResponse {
                 seq,
@@ -2291,6 +2318,7 @@ impl Server {
             let trimmed = line.trim_start();
             let is_comment_line =
                 trimmed.starts_with("/*") || trimmed.starts_with('*') || trimmed.starts_with("//");
+            let leading_ws = line.len().saturating_sub(trimmed.len());
             let skip_scanning = trimmed.starts_with("import ")
                 || trimmed.starts_with("export ")
                 || trimmed.starts_with("interface ")
@@ -2330,6 +2358,54 @@ impl Server {
 
                 offset += line_with_newline.len();
                 continue;
+            }
+
+            if trimmed.starts_with("type ")
+                && let Some(eq_idx) = trimmed.find('=')
+            {
+                self.push_synthetic_missing_type_identifiers(
+                    &mut diagnostics,
+                    &mut seen_spans,
+                    binder,
+                    file_path,
+                    offset,
+                    &trimmed[eq_idx + 1..],
+                    leading_ws + eq_idx + 1,
+                );
+            }
+
+            if trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("function ")
+                || trimmed.starts_with("export function ")
+                || trimmed.starts_with("async function ")
+                || trimmed.starts_with("export async function ")
+            {
+                let mut search_from = 0usize;
+                while let Some(colon_rel) = trimmed[search_from..].find(':') {
+                    let colon_idx = search_from + colon_rel;
+                    let after_colon = &trimmed[colon_idx + 1..];
+                    let after_colon_trimmed = after_colon.trim_start();
+                    let after_colon_ws =
+                        after_colon.len().saturating_sub(after_colon_trimmed.len());
+                    let fragment_len = after_colon_trimmed
+                        .find([',', ')', ';', '=', '{'])
+                        .unwrap_or(after_colon_trimmed.len());
+                    let fragment = &after_colon_trimmed[..fragment_len];
+                    if !fragment.is_empty() {
+                        self.push_synthetic_missing_type_identifiers(
+                            &mut diagnostics,
+                            &mut seen_spans,
+                            binder,
+                            file_path,
+                            offset,
+                            fragment,
+                            leading_ws + colon_idx + 1 + after_colon_ws,
+                        );
+                    }
+                    search_from = colon_idx + 1;
+                }
             }
 
             if trimmed.starts_with('[') && trimmed.contains('=') {
@@ -2451,6 +2527,64 @@ impl Server {
         }
 
         diagnostics
+    }
+
+    fn push_synthetic_missing_type_identifiers(
+        &self,
+        diagnostics: &mut Vec<tsz::checker::diagnostics::Diagnostic>,
+        seen_spans: &mut std::collections::HashSet<(usize, usize)>,
+        binder: &tsz::binder::BinderState,
+        file_path: &str,
+        line_offset: usize,
+        fragment: &str,
+        fragment_offset_in_line: usize,
+    ) {
+        for (ident, rel_start) in Self::type_identifier_spans(fragment) {
+            if binder.file_locals.get(ident.as_str()).is_some() {
+                continue;
+            }
+            if !self.has_potential_auto_import_symbol(file_path, ident.as_str()) {
+                continue;
+            }
+            let absolute_start = line_offset + fragment_offset_in_line + rel_start;
+            if !seen_spans.insert((absolute_start, ident.len())) {
+                continue;
+            }
+            diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                category: DiagnosticCategory::Error,
+                code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                file: file_path.to_string(),
+                start: absolute_start as u32,
+                length: ident.len() as u32,
+                message_text: format!("Cannot find name '{ident}'."),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    fn type_identifier_spans(fragment: &str) -> Vec<(String, usize)> {
+        let mut spans = Vec::new();
+        for ident in extract_type_identifiers(fragment) {
+            let mut search_start = 0usize;
+            while let Some(found) = fragment[search_start..].find(&ident) {
+                let rel_start = search_start + found;
+                let rel_end = rel_start + ident.len();
+                let prev = rel_start
+                    .checked_sub(1)
+                    .and_then(|idx| fragment.as_bytes().get(idx))
+                    .map(|b| *b as char);
+                let next = fragment.as_bytes().get(rel_end).map(|b| *b as char);
+                let at_word_boundary = prev
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+                    && next
+                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'));
+                if at_word_boundary {
+                    spans.push((ident.clone(), rel_start));
+                }
+                search_start = rel_end;
+            }
+        }
+        spans
     }
 
     fn has_potential_auto_import_symbol(&self, current_file_path: &str, name: &str) -> bool {

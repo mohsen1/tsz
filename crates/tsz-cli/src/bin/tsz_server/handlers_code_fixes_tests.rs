@@ -1334,6 +1334,158 @@ fn get_code_fixes_prefers_merging_type_only_import_into_type_clause() {
 }
 
 #[test]
+fn get_code_fixes_prefers_merging_type_only_import_into_type_clause_at_point() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/react/index.d.ts".to_string(),
+        "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\n".to_string(),
+    );
+    server.open_files.insert(
+        "/main2.ts".to_string(),
+        "import { useState } from \"react\";\nimport type { ComponentType } from \"react\";\n\ntype _ = ComponentProps;\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/main2.ts",
+            "startLine": 4,
+            "startOffset": 24,
+            "endLine": 4,
+            "endOffset": 24,
+            "preferences": {
+                "preferTypeOnlyAutoImports": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let edits = import_fix["changes"][0]["textChanges"]
+        .as_array()
+        .expect("expected text changes");
+
+    let mut updated = server
+        .open_files
+        .get("/main2.ts")
+        .expect("missing main2.ts")
+        .clone();
+    let mut edits = edits.clone();
+    edits.sort_by(|a, b| {
+        let a_line = a["start"]["line"].as_u64().unwrap_or(0);
+        let a_offset = a["start"]["offset"].as_u64().unwrap_or(0);
+        let b_line = b["start"]["line"].as_u64().unwrap_or(0);
+        let b_offset = b["start"]["offset"].as_u64().unwrap_or(0);
+        (b_line, b_offset).cmp(&(a_line, a_offset))
+    });
+    for edit in edits {
+        updated = Server::apply_change(
+            &updated,
+            edit["start"]["line"].as_u64().expect("start line") as u32,
+            edit["start"]["offset"].as_u64().expect("start offset") as u32,
+            edit["end"]["line"].as_u64().expect("end line") as u32,
+            edit["end"]["offset"].as_u64().expect("end offset") as u32,
+            edit["newText"].as_str().expect("new text"),
+        );
+    }
+
+    assert!(
+        updated.contains("import type { ComponentProps, ComponentType } from \"react\";"),
+        "expected merged type-only import for point request, got {updated:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_returns_type_only_import_for_type_annotation_point_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/exports1.ts".to_string(),
+        "export const a = 0;\nexport const A = 1;\nexport type x = 6;\nexport const X = 7;\nexport type y = 8;\nexport const Y = 9;\nexport const Z = 10;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index0.ts".to_string(),
+        "import { type X, type Y, type Z } from \"./exports1\";\nconst foo: x;\nconst bar: y;\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index0.ts",
+            "startLine": 2,
+            "startOffset": 13,
+            "endLine": 2,
+            "endOffset": 13,
+            "preferences": {
+                "organizeImportsTypeOrder": "last"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let new_text = import_fix["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected import text change");
+    assert_eq!(new_text, ", type x");
+}
+
+#[test]
+fn get_code_fixes_returns_type_only_import_for_function_parameter_point_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/exports.ts".to_string(),
+        "class SomeClass {}\nexport type { SomeClass };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "import {} from \"./exports.js\";\nfunction takeSomeClass(c: SomeClass)\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 2,
+            "startOffset": 36,
+            "endLine": 2,
+            "endOffset": 36
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let new_text = import_fix["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected import text change");
+    assert!(new_text.contains("type SomeClass"));
+}
+
+#[test]
 fn handle_get_code_fixes_returns_pnpm_import_fix_for_missing_name() {
     let mut server = make_server();
     server.open_files.insert(
