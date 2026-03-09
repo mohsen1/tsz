@@ -565,6 +565,10 @@ impl<'a> HoverProvider<'a> {
                 .map(Self::normalize_annotation_text);
         }
 
+        if self.function_expression_has_global_function_context(fn_idx) {
+            return Some("any".to_string());
+        }
+
         let mut current_fn_expr = fn_idx;
         while current_fn_expr.is_some() {
             let parent_idx = self.arena.get_extended(current_fn_expr)?.parent;
@@ -583,6 +587,51 @@ impl<'a> HoverProvider<'a> {
         }
 
         self.contextual_parameter_type_from_property_assignment(current_fn_expr, param_index)
+    }
+
+    fn function_expression_has_global_function_context(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_parser::syntax_kind_ext;
+
+        let mut current = expr_idx;
+        while current.is_some() {
+            let ext = match self.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return false;
+            }
+            let Some(parent) = self.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent_idx;
+                continue;
+            }
+
+            let annotation_idx = if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                self.arena
+                    .get_variable_declaration(parent)
+                    .filter(|decl| decl.initializer == current && decl.type_annotation.is_some())
+                    .map(|decl| decl.type_annotation)
+            } else if parent.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                self.arena
+                    .get_property_decl(parent)
+                    .filter(|decl| decl.initializer == current && decl.type_annotation.is_some())
+                    .map(|decl| decl.type_annotation)
+            } else {
+                None
+            };
+
+            return annotation_idx
+                .and_then(|type_idx| self.type_node_text(type_idx))
+                .map(Self::normalize_annotation_text)
+                .is_some_and(|text| text == "Function");
+        }
+
+        false
     }
 
     pub(crate) fn property_declaration_annotation_text(

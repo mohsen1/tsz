@@ -208,6 +208,22 @@ fn test_hover_property_access_member_name_uses_member_type() {
 }
 
 #[test]
+fn test_hover_property_access_member_name_includes_member_jsdoc() {
+    let source = "/** Container docs */\ninterface Obj {\n    /** Member docs */\n    t1: (s: string) => string;\n}\ndeclare const obj: Obj;\nobj.t1;";
+    let info =
+        get_hover_at(source, 6, 4).expect("Should find hover info for property access member");
+    assert_eq!(
+        info.display_string, "(property) Obj.t1: (s: string) => string",
+        "Property-access member hover should still use the member type"
+    );
+    assert!(
+        info.documentation.contains("Member docs"),
+        "Property-access member hover should include member JSDoc, got: '{}'",
+        info.documentation
+    );
+}
+
+#[test]
 fn test_hover_property_assignment_function_parameter_uses_member_signature() {
     let source = "var objc8: { t1: (s: string) => string } = { t1: (s: string) => s };\nobjc8.t1 = (function(s) { return s; });";
     let info = get_hover_at(source, 1, 21)
@@ -215,6 +231,17 @@ fn test_hover_property_assignment_function_parameter_uses_member_signature() {
     assert_eq!(
         info.display_string, "(parameter) s: string",
         "Parameter hover in property-assignment function should use assigned member signature type"
+    );
+}
+
+#[test]
+fn test_hover_contextual_parameter_with_global_function_annotation_is_any() {
+    let source = "const fn: Function = function(value) { return value; };";
+    let info = get_hover_at(source, 0, 30)
+        .expect("Should find hover info for Function-annotated callback parameter");
+    assert_eq!(
+        info.display_string, "(parameter) value: any",
+        "Function-typed callback parameters should surface as any"
     );
 }
 

@@ -665,6 +665,32 @@ impl<'a> CheckerState<'a> {
             return param_type;
         }
 
+        if let Some(sym_id) = self
+            .resolve_value_symbol_for_lowering(type_query.expr_name)
+            .filter(|sym_id| {
+                self.ctx
+                    .symbol_resolution_set
+                    .contains(&tsz_binder::SymbolId(*sym_id))
+            })
+        {
+            // `typeof f` inside `f`'s own signature must stay as a type-query
+            // marker. Expanding the symbol type here re-enters provisional
+            // signature building and can recurse through self-referential
+            // `typeof` annotations until the stack overflows.
+            let base = factory.type_query(SymbolRef(sym_id));
+            if let Some(args) = &type_query.type_arguments
+                && !args.nodes.is_empty()
+            {
+                let type_args = args
+                    .nodes
+                    .iter()
+                    .map(|&idx| self.get_type_from_type_node(idx))
+                    .collect();
+                return factory.application(base, type_args);
+            }
+            return base;
+        }
+
         if !has_type_args && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
             // Handle QualifiedName (e.g. `typeof x.p`) by resolving as value property access.
             // QualifiedName in typeof context means value.property, not namespace.member,

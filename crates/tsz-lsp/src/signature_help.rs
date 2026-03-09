@@ -244,6 +244,9 @@ impl<'a> SignatureHelpProvider<'a> {
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
         }
+        if let Some(symbol_id) = symbol_id {
+            self.apply_source_signature_type_overrides(&mut signatures, symbol_id);
+        }
 
         // Extract and save the updated cache for future queries
         *type_cache = Some(checker.extract_cache());
@@ -861,6 +864,184 @@ impl<'a> SignatureHelpProvider<'a> {
             has_rest,
             param_names,
         }
+    }
+
+    fn apply_source_signature_type_overrides(
+        &self,
+        signatures: &mut [SignatureCandidate],
+        symbol_id: tsz_binder::SymbolId,
+    ) {
+        if signatures.len() != 1 {
+            return;
+        }
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        if symbol.declarations.len() != 1 {
+            return;
+        }
+
+        let Some((param_type_texts, return_type_text)) =
+            self.source_signature_type_texts(symbol.declarations[0])
+        else {
+            return;
+        };
+        let Some(signature) = signatures.first_mut() else {
+            return;
+        };
+        if param_type_texts.len() != signature.info.parameters.len() {
+            return;
+        }
+
+        for (param, type_text) in signature
+            .info
+            .parameters
+            .iter_mut()
+            .zip(param_type_texts.into_iter())
+        {
+            if let Some(type_text) = type_text {
+                let optional = if param.is_optional { "?" } else { "" };
+                let rest = if param.is_rest { "..." } else { "" };
+                param.label = format!("{rest}{}{optional}: {type_text}", param.name);
+            }
+        }
+
+        if let Some(return_type_text) = return_type_text {
+            signature.info.suffix = format!("): {return_type_text}");
+        }
+
+        let param_labels: Vec<String> = signature
+            .info
+            .parameters
+            .iter()
+            .map(|param| param.label.clone())
+            .collect();
+        signature.info.label = format!(
+            "{}{}{}",
+            signature.info.prefix,
+            param_labels.join(", "),
+            signature.info.suffix
+        );
+    }
+
+    fn source_signature_type_texts(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<(Vec<Option<String>>, Option<String>)> {
+        let decl_node = self.arena.get(decl_idx)?;
+
+        if let Some(function) = self.arena.get_function(decl_node) {
+            let param_types = function
+                .parameters
+                .nodes
+                .iter()
+                .map(|&param_idx| {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    self.type_node_text(param.type_annotation)
+                })
+                .collect::<Vec<_>>();
+            let return_type = self.type_node_text(function.type_annotation).or_else(|| {
+                self.inferred_return_type_text_from_body(
+                    function.body,
+                    &function.parameters.nodes,
+                    &param_types,
+                )
+            });
+            return Some((param_types, return_type));
+        }
+
+        if let Some(method) = self.arena.get_method_decl(decl_node) {
+            let param_types = method
+                .parameters
+                .nodes
+                .iter()
+                .map(|&param_idx| {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    self.type_node_text(param.type_annotation)
+                })
+                .collect::<Vec<_>>();
+            let return_type = self.type_node_text(method.type_annotation).or_else(|| {
+                self.inferred_return_type_text_from_body(
+                    method.body,
+                    &method.parameters.nodes,
+                    &param_types,
+                )
+            });
+            return Some((param_types, return_type));
+        }
+
+        None
+    }
+
+    fn inferred_return_type_text_from_body(
+        &self,
+        body_idx: NodeIndex,
+        parameter_nodes: &[NodeIndex],
+        parameter_type_texts: &[Option<String>],
+    ) -> Option<String> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let [statement_idx] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+        let statement_node = self.arena.get(*statement_idx)?;
+        let return_stmt = self.arena.get_return_statement(statement_node)?;
+        let expr_name = self
+            .arena
+            .get_identifier_text(return_stmt.expression)?
+            .trim();
+
+        parameter_nodes
+            .iter()
+            .zip(parameter_type_texts.iter())
+            .find_map(|(&param_idx, type_text)| {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                (self.arena.get_identifier_text(param.name)? == expr_name)
+                    .then(|| type_text.clone())
+                    .flatten()
+            })
+    }
+
+    fn type_node_text(&self, type_idx: NodeIndex) -> Option<String> {
+        if !type_idx.is_some() {
+            return None;
+        }
+        let type_node = self.arena.get(type_idx)?;
+        let start = type_node.pos as usize;
+        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        (start < end).then(|| Self::normalize_source_type_text(self.source_text[start..end].trim()))
+    }
+
+    fn normalize_source_type_text(text: &str) -> String {
+        let mut text = text.trim().to_string();
+        loop {
+            let Some(last) = text.chars().last() else {
+                break;
+            };
+            let should_trim = match last {
+                ',' | ';' | '=' => true,
+                ')' => Self::has_unmatched_trailing_closer(&text, '(', ')'),
+                ']' => Self::has_unmatched_trailing_closer(&text, '[', ']'),
+                '}' => Self::has_unmatched_trailing_closer(&text, '{', '}'),
+                '>' => Self::has_unmatched_trailing_closer(&text, '<', '>'),
+                _ => false,
+            };
+            if !should_trim {
+                break;
+            }
+            text.pop();
+            text = text.trim_end().to_string();
+        }
+        text
+    }
+
+    fn has_unmatched_trailing_closer(text: &str, open: char, close: char) -> bool {
+        text.chars().filter(|&ch| ch == close).count()
+            > text.chars().filter(|&ch| ch == open).count()
     }
 
     fn signature_meta(&self, params: &[tsz_solver::ParamInfo]) -> (usize, usize, bool) {

@@ -1404,6 +1404,10 @@ var v = {
         "Expected negative computed numeric literal to survive in fallback object typing: {output}"
     );
     assert!(
+        !output.contains("\"-1\": {};"),
+        "Did not expect canonical string form to survive once syntax override is applied: {output}"
+    );
+    assert!(
         output.contains("1: {};"),
         "Expected unary-plus computed numeric literal to normalize to a numeric property: {output}"
     );

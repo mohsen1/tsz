@@ -1070,7 +1070,10 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(body["documentation"], serde_json::json!([]));
+    assert_eq!(
+        body["documentation"],
+        serde_json::json!([{"kind": "text", "text": "Doc"}])
+    );
 
     let req_at_member = make_request(
         "quickinfo",
@@ -1085,7 +1088,10 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body_at_member["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(body_at_member["documentation"], serde_json::json!([]));
+    assert_eq!(
+        body_at_member["documentation"],
+        serde_json::json!([{"kind": "text", "text": "Doc"}])
+    );
 }
 
 #[test]

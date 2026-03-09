@@ -5004,7 +5004,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                 only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
-                computed_members.push(member_text);
+                computed_members.push((name_text, member_text));
             } else {
                 overridden_members.push((name_text, member_text));
             }
@@ -5047,14 +5047,52 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let insert_at = lines.len().saturating_sub(1);
-        for (offset, member_text) in computed_members.into_iter().enumerate() {
+        for (offset, (name_text, member_text)) in computed_members.into_iter().enumerate() {
             let line = format!("{indent}{member_text};");
-            if !lines.iter().any(|existing| existing.trim() == line.trim()) {
+            if let Some(existing_idx) = lines.iter().position(|existing| {
+                Self::object_literal_property_line_matches(existing, &name_text, &line)
+            }) {
+                lines[existing_idx] = line;
+            } else if !lines.iter().any(|existing| existing.trim() == line.trim()) {
                 lines.insert(insert_at + offset, line);
             }
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn object_literal_property_line_matches(
+        existing: &str,
+        name_text: &str,
+        replacement: &str,
+    ) -> bool {
+        let trimmed = existing.trim();
+        if trimmed == replacement.trim() {
+            return true;
+        }
+
+        for prefix in Self::object_literal_property_name_prefixes(name_text) {
+            if trimmed.starts_with(&prefix) || trimmed.starts_with(&format!("readonly {prefix}")) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn object_literal_property_name_prefixes(name_text: &str) -> Vec<String> {
+        let mut prefixes = vec![format!("{name_text}:")];
+
+        if let Some(negative_numeric) = name_text
+            .strip_prefix("[-")
+            .and_then(|name| name.strip_suffix(']'))
+        {
+            prefixes.push(format!("\"-{negative_numeric}\":"));
+            prefixes.push(format!("'-{negative_numeric}':"));
+            prefixes.push(format!("-{negative_numeric}:"));
+        }
+
+        prefixes
     }
 
     fn object_literal_member_needs_syntax_override(&self, member_idx: NodeIndex) -> bool {
