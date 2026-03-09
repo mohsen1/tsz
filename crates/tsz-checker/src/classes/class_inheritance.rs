@@ -414,8 +414,18 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         exports.get(&name)
     }
 
-    /// Emit TS2506 for a class symbol, using the class name node as error span when available.
+    /// Emit TS2506/TS2310 for a symbol, using the declaration name as error span when available.
     fn error_circular_class_inheritance_for_symbol(&mut self, sym_id: SymbolId) {
+        self.error_base_cycle_for_symbol(sym_id, true);
+    }
+
+    /// Emit TS2310 when a class or interface recursively appears through an
+    /// instantiated base type rather than a direct extends-graph cycle.
+    pub(crate) fn error_recursive_base_type_for_symbol(&mut self, sym_id: SymbolId) {
+        self.error_base_cycle_for_symbol(sym_id, false);
+    }
+
+    fn error_base_cycle_for_symbol(&mut self, sym_id: SymbolId, direct_class_cycle: bool) {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
@@ -459,7 +469,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             return;
         };
 
-        let (code, message_template) = if is_class {
+        let (code, message_template) = if is_class && direct_class_cycle {
             (
                 diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                 diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
@@ -473,16 +483,22 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
         let mut name = symbol.escaped_name.clone();
 
-        // Append type parameters only for interfaces (TS2310) to match tsc's format:
-        // "Type 'I1<T>' recursively references itself as a base type."
-        // For classes (TS2506), tsc uses just the bare name without type params.
-        if !is_class {
-            let type_parameters = self
-                .ctx
-                .arena
-                .get(decl_idx)
-                .and_then(|node| self.ctx.arena.get_interface(node))
-                .and_then(|iface| iface.type_parameters.clone());
+        // TS2310 includes type parameters in the display name. TS2506 uses the
+        // bare class name even for generic declarations.
+        if code == diagnostic_codes::TYPE_RECURSIVELY_REFERENCES_ITSELF_AS_A_BASE_TYPE {
+            let type_parameters = if is_class {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_class(node))
+                    .and_then(|class| class.type_parameters.clone())
+            } else {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .and_then(|iface| iface.type_parameters.clone())
+            };
             if let Some(list) = &type_parameters {
                 let mut param_names = Vec::new();
                 for &param_idx in &list.nodes {

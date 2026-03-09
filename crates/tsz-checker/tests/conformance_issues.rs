@@ -1140,6 +1140,61 @@ class Base {
 }
 
 #[test]
+fn test_circular_base_type_alias_instantiation_reports_ts2310_and_ts2313() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type M<T> = { value: T };
+interface M2 extends M<M3> {}
+type M3 = M2[keyof M2];
+
+type X<T> = { [K in keyof T]: string } & { b: string };
+interface Y extends X<Y> {
+    a: "";
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2310),
+        "Expected TS2310 for recursive base type instantiation. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2313),
+        "Expected TS2313 for mapped type constraint cycle through instantiated base alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_class_base_default_type_arg_cycle_reports_ts2310_without_ts2506() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class BaseType<T> {
+    bar: T
+}
+
+class NextType<C extends { someProp: any }, T = C['someProp']> extends BaseType<T> {
+    baz: string;
+}
+
+class Foo extends NextType<Foo> {
+    someProp: {
+        test: true
+    }
+}
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2310),
+        "Expected TS2310 for recursive instantiated class base type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 for instantiated-base recursion. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
         r"

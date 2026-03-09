@@ -1009,6 +1009,7 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
+                let mut base_type_params = Vec::new();
                 let base_instance_type = if can_skip_base_instantiation(
                     base_class
                         .type_parameters
@@ -1018,16 +1019,28 @@ impl<'a> CheckerState<'a> {
                 ) {
                     base_instance_type
                 } else {
-                    let (base_type_params, base_type_param_updates) =
+                    let (resolved_base_type_params, base_type_param_updates) =
                         self.push_type_parameters(&base_class.type_parameters);
+                    base_type_params = resolved_base_type_params;
 
                     if type_args.len() < base_type_params.len() {
-                        for param in base_type_params.iter().skip(type_args.len()) {
+                        for (param_index, param) in
+                            base_type_params.iter().enumerate().skip(type_args.len())
+                        {
                             let fallback = param
                                 .default
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            type_args.push(fallback);
+                            let substitution = TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_type_params[..param_index],
+                                &type_args,
+                            );
+                            type_args.push(tsz_solver::instantiate_type_preserving_meta(
+                                self.ctx.types,
+                                fallback,
+                                &substitution,
+                            ));
                         }
                     }
                     if type_args.len() > base_type_params.len() {
@@ -1041,6 +1054,42 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(base_type_param_updates);
                     instantiated
                 };
+
+                let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
+                    type_args
+                        .iter()
+                        .copied()
+                        .any(|arg| self.type_requires_structure_of_symbol(arg, current_sym))
+                });
+
+                if let Some(current_sym) = current_sym
+                    && (has_structural_self_arg
+                        || self.type_requires_structure_of_symbol(base_instance_type, current_sym))
+                {
+                    self.report_recursive_base_type_for_symbol(current_sym);
+                    self.report_instantiated_type_alias_mapped_constraint_cycles(
+                        base_sym_id,
+                        &base_type_params,
+                        &type_args,
+                        current_sym,
+                    );
+                    if let Some(base_shape) =
+                        object_shape_for_type(self.ctx.types, base_instance_type)
+                    {
+                        for base_prop in &base_shape.properties {
+                            properties
+                                .entry(base_prop.name)
+                                .or_insert_with(|| base_prop.clone());
+                        }
+                        if let Some(ref idx) = base_shape.string_index {
+                            Self::merge_index_signature(&mut string_index, idx.clone());
+                        }
+                        if let Some(ref idx) = base_shape.number_index {
+                            Self::merge_index_signature(&mut number_index, idx.clone());
+                        }
+                    }
+                    break;
+                }
 
                 if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {

@@ -936,8 +936,20 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
                     );
-                    // Return ERROR to prevent downstream issues
-                    return (TypeId::ERROR, params);
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    if !params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(alias_type, def_id);
+                    self.ctx.definition_store.set_body(def_id, alias_type);
+                    // Preserve the raw alias body so downstream consumers can
+                    // continue to reason about the surrounding type graph (for
+                    // example, recursive base-type diagnostics) without
+                    // collapsing the branch to ERROR or hiding the original
+                    // meta-type structure behind a self-lazy placeholder.
+                    return (alias_type, params);
                 }
 
                 // CRITICAL FIX: Always create DefId for type aliases, not just when they have type parameters
