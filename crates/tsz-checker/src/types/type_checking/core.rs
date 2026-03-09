@@ -1470,6 +1470,10 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 self.check_indexed_access_type(node_idx);
+                if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
+                    self.check_type_node(indexed.object_type);
+                    self.check_type_node(indexed.index_type);
+                }
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {

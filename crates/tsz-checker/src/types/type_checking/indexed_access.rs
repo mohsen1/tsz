@@ -8,7 +8,42 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
+        return true;
+    }
+
+    tsz_solver::type_queries::get_union_members(db, ty).is_some_and(|members| {
+        !members.is_empty() && members.iter().all(|&member| is_broad_index_type(db, member))
+    })
+}
+
+fn same_type_param_name(db: &dyn tsz_solver::TypeDatabase, left: TypeId, right: TypeId) -> bool {
+    tsz_solver::type_queries::get_type_parameter_info(db, left)
+        .zip(tsz_solver::type_queries::get_type_parameter_info(db, right))
+        .is_some_and(|(l, r)| l.name == r.name)
+}
+
+fn same_object_key_space(db: &dyn tsz_solver::TypeDatabase, left: TypeId, right: TypeId) -> bool {
+    left == right || same_type_param_name(db, left, right)
+}
+
 impl<'a> CheckerState<'a> {
+    fn is_keyof_for_current_object(
+        &mut self,
+        ty: TypeId,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        tsz_solver::type_queries::get_keyof_type(self.ctx.types, ty).is_some_and(|operand| {
+            let evaluated_operand = self.evaluate_type_with_env(operand);
+            same_object_key_space(self.ctx.types, operand, object_type)
+                || same_object_key_space(self.ctx.types, operand, object_type_for_check)
+                || same_object_key_space(self.ctx.types, evaluated_operand, object_type)
+                || same_object_key_space(self.ctx.types, evaluated_operand, object_type_for_check)
+        })
+    }
+
     /// Check an indexed access type (T[K]).
     pub(crate) fn check_indexed_access_type(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -32,17 +67,16 @@ impl<'a> CheckerState<'a> {
 
         let index_constraint =
             tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type);
-        let same_type_param_name = |left: TypeId, right: TypeId| {
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, left)
-                .zip(tsz_solver::type_queries::get_type_parameter_info(
-                    self.ctx.types,
-                    right,
-                ))
-                .is_some_and(|(l, r)| l.name == r.name)
-        };
+        let error_anchor =
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type) {
+                node_idx
+            } else {
+                data.index_type
+            };
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
             && index_constraint.is_some_and(|constraint| {
-                constraint == object_type || same_type_param_name(constraint, object_type)
+                constraint == object_type
+                    || same_type_param_name(self.ctx.types, constraint, object_type)
             })
         {
             let obj_type_str = self.format_type(object_type);
@@ -52,7 +86,7 @@ impl<'a> CheckerState<'a> {
                 &[&index_type_str, &obj_type_str],
             );
             self.error_at_node(
-                data.index_type,
+                error_anchor,
                 &message_2536,
                 diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
             );
@@ -141,7 +175,7 @@ impl<'a> CheckerState<'a> {
                             derived_object,
                         )
                         && (derived_index == index_type
-                            || same_type_param_name(derived_index, index_type))
+                            || same_type_param_name(self.ctx.types, derived_index, index_type))
                 },
             )
         };
@@ -155,7 +189,7 @@ impl<'a> CheckerState<'a> {
                 &[&index_type_str, &obj_type_str],
             );
             self.error_at_node(
-                data.index_type,
+                error_anchor,
                 &message_2536,
                 diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
             );
@@ -183,9 +217,15 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(next_evaluated, keyof_object) {
                 return;
             }
-            // If the constraint resolved to a deferred type, suppress TS2536.
-            if tsz_solver::type_queries::is_keyof_type(self.ctx.types, next_evaluated)
-                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, next_constraint)
+            // If the constraint resolved to a deferred key space for THIS object,
+            // suppress TS2536. For unrelated key spaces (e.g. `F extends keyof D[T]`
+            // used as `D[F]`), we must keep checking and report TS2536.
+            if self.is_keyof_for_current_object(next_evaluated, object_type, object_type_for_check)
+                || self.is_keyof_for_current_object(
+                    next_constraint,
+                    object_type,
+                    object_type_for_check,
+                )
                 || tsz_solver::is_conditional_type(self.ctx.types, next_evaluated)
                 || tsz_solver::is_generic_application(self.ctx.types, next_evaluated)
                 || tsz_solver::is_generic_application(self.ctx.types, next_constraint)
@@ -258,6 +298,7 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 if constrained_object_type != TypeId::ERROR
+                    && is_broad_index_type(self.ctx.types, index_type_for_check)
                     && let Some((wants_string, wants_number)) =
                         self.get_index_key_kind(index_type_for_check)
                     && self.is_element_indexable(
@@ -280,19 +321,26 @@ impl<'a> CheckerState<'a> {
             // Check BOTH the evaluated type AND the original (pre-evaluation) type,
             // because evaluation may partially resolve an Application into a
             // Conditional, or may produce ERROR.
-            let is_deferred_type = |ty: TypeId| -> bool {
+            let is_deferred_object_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
                     || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
+            let mut is_deferred_index_type = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || tsz_solver::is_conditional_type(self.ctx.types, ty)
+                    || tsz_solver::is_generic_application(self.ctx.types, ty)
+                    || self.is_keyof_for_current_object(ty, object_type, object_type_for_check)
+            };
             // Suppress TS2536 for deferred types (conditional, application, keyof,
             // error, index-access). tsc defers these checks to instantiation time.
-            if is_deferred_type(index_type_for_check)
-                || is_deferred_type(index_type)
-                || is_deferred_type(object_type_for_check)
-                || is_deferred_type(object_type)
-                || tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
+            if is_deferred_index_type(index_type_for_check)
+                || is_deferred_index_type(index_type)
+                || is_deferred_object_type(object_type_for_check)
+                || is_deferred_object_type(object_type)
+                || (tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
+                    && is_broad_index_type(self.ctx.types, index_type_for_check))
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
             {
                 return;
@@ -306,7 +354,7 @@ impl<'a> CheckerState<'a> {
                 &[&index_type_str, &obj_type_str],
             );
             self.error_at_node(
-                data.index_type,
+                error_anchor,
                 &message_2536,
                 diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
             );
