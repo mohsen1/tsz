@@ -338,6 +338,16 @@ impl<'a> CheckerState<'a> {
             if let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
             {
+                // Mark constraint-derived when the resolved type was a type parameter
+                // (get_array_applicable_type handles TypeParameter internally)
+                if tsz_solver::type_queries::get_type_parameter_constraint(
+                    self.ctx.types,
+                    evaluated,
+                )
+                .is_some()
+                {
+                    tuple_context_from_constraint = true;
+                }
                 return Some(applicable);
             }
             // When the contextual type is a type parameter (e.g., `T extends [string, number]`),
@@ -376,6 +386,19 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     resolved,
                 )
+            });
+
+        // When a type parameter constraint is a union containing a tuple member
+        // (the `T extends readonly unknown[] | []` pattern), force tuple inference.
+        // The `| []` is a deliberate hint in TypeScript to infer tuple types from
+        // array literals. This pattern is used by Promise.all, Promise.allSettled,
+        // and many other APIs. Without this, array literals are typed as arrays
+        // instead of tuples, causing incorrect generic inference.
+        let force_tuple_for_constraint_hint = tuple_context.is_none()
+            && !force_tuple_for_mapped
+            && tuple_context_from_constraint
+            && applicable_contextual_type.is_some_and(|applicable| {
+                tsz_solver::type_queries::union_contains_tuple(self.ctx.types, applicable)
             });
 
         // Use the applicable (narrowed) type for contextual typing when available,
@@ -575,7 +598,7 @@ impl<'a> CheckerState<'a> {
 
         // When contextual type is a homomorphic mapped type, force tuple typing.
         // This preserves per-element types for reverse mapped type inference.
-        if force_tuple_for_mapped {
+        if force_tuple_for_mapped || force_tuple_for_constraint_hint {
             let mapped_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
                 .iter()
                 .map(|&type_id| tsz_solver::TupleElement {

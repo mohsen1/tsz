@@ -223,6 +223,21 @@ pub fn get_tuple_elements(
     }
 }
 
+/// Check if a type is a union containing at least one tuple member.
+///
+/// This detects the `T extends readonly unknown[] | []` pattern where `| []`
+/// is a deliberate hint in TypeScript to infer tuple types from array literals.
+/// Used by `Promise.all`, `Promise.allSettled`, and similar APIs.
+pub fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| get_tuple_elements(db, m).is_some())
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,

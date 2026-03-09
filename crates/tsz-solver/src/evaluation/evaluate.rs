@@ -628,7 +628,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Expand type arguments by evaluating any that are `TypeQuery` or Application.
     /// Uses a loop instead of closure to allow mutable self access.
-    fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+    pub(crate) fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
         let mut expanded = Vec::with_capacity(args.len());
         for &arg in args {
             expanded.push(self.try_expand_type_arg(arg));
