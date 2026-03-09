@@ -262,6 +262,22 @@ impl<'a> TypeFormatter<'a> {
                 if matches!(def.kind, DefKind::Enum | DefKind::Namespace) {
                     return format!("typeof {name}").into();
                 }
+                // For generic types, append type arguments or type parameter names.
+                // First check for registered display args (actual instantiation args),
+                // then fall back to type parameter names from the definition.
+                if let Some(display_args) = def_store.get_type_display_args(type_id) {
+                    let args: Vec<Cow<'static, str>> =
+                        display_args.iter().map(|&arg| self.format(arg)).collect();
+                    return format!("{}<{}>", name, args.join(", ")).into();
+                }
+                if !def.type_params.is_empty() {
+                    let params: Vec<String> = def
+                        .type_params
+                        .iter()
+                        .map(|tp| self.atom(tp.name).to_string())
+                        .collect();
+                    return format!("{}<{}>", name, params.join(", ")).into();
+                }
                 return name.into();
             }
         }
@@ -2551,6 +2567,172 @@ mod tests {
         assert!(
             result.contains("const T"),
             "Expected 'const T' in type params, got: {result}"
+        );
+    }
+
+    #[test]
+    fn generic_class_type_shows_type_params() {
+        // When a generic class (e.g., `class B<T>`) has its instance type formatted,
+        // the formatter should show `B<T>` not just `B`.
+        let db = TypeInterner::new();
+        let def_store = crate::def::DefinitionStore::new();
+
+        // Create an empty object type as the class instance body
+        let instance_type = db.object(vec![]);
+
+        // Register a class definition with one type parameter T
+        let name = db.intern_string("B");
+        let t_name = db.intern_string("T");
+        let info = crate::def::DefinitionInfo {
+            kind: crate::def::DefKind::Class,
+            name,
+            type_params: vec![TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+            body: Some(instance_type),
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+        };
+        let def_id = def_store.register(info);
+
+        // Register the instance type -> def mapping
+        def_store.register_type_to_def(instance_type, def_id);
+
+        // Without def_store: should show structural form
+        let mut fmt = TypeFormatter::new(&db);
+        let without = fmt.format(instance_type);
+        assert_eq!(without, "{}");
+
+        // With def_store: should show `B<T>` with type parameter name
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        let with = fmt.format(instance_type);
+        assert_eq!(with, "B<T>", "Generic class should show type params");
+    }
+
+    #[test]
+    fn generic_class_with_display_args() {
+        // When a generic class is instantiated (e.g., `S18<unknown, unknown, unknown>`),
+        // the formatter should show the actual type arguments.
+        let db = TypeInterner::new();
+        let def_store = crate::def::DefinitionStore::new();
+
+        // Create an empty object type as the class instance body
+        let instance_type = db.object(vec![]);
+
+        // Register a class definition with three type parameters
+        let name = db.intern_string("S18");
+        let info = crate::def::DefinitionInfo {
+            kind: crate::def::DefKind::Class,
+            name,
+            type_params: vec![
+                TypeParamInfo {
+                    name: db.intern_string("B"),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                },
+                TypeParamInfo {
+                    name: db.intern_string("A"),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                },
+                TypeParamInfo {
+                    name: db.intern_string("C"),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                },
+            ],
+            body: Some(instance_type),
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+        };
+        let def_id = def_store.register(info);
+
+        // Register type -> def mapping and display args
+        def_store.register_type_to_def(instance_type, def_id);
+        def_store.register_type_display_args(
+            instance_type,
+            vec![TypeId::UNKNOWN, TypeId::UNKNOWN, TypeId::UNKNOWN],
+        );
+
+        // With display args: should show `S18<unknown, unknown, unknown>`
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        let result = fmt.format(instance_type);
+        assert_eq!(
+            result, "S18<unknown, unknown, unknown>",
+            "Should show display args, not param names"
+        );
+    }
+
+    #[test]
+    fn application_lazy_shows_type_args() {
+        // Application(Lazy(def_id), [string, number]) should format as `Name<string, number>`
+        use crate::caches::db::QueryDatabase;
+        let db = TypeInterner::new();
+        let def_store = crate::def::DefinitionStore::new();
+
+        // Register a definition
+        let name = db.intern_string("MyClass");
+        let info = crate::def::DefinitionInfo {
+            kind: crate::def::DefKind::Class,
+            name,
+            type_params: vec![
+                TypeParamInfo {
+                    name: db.intern_string("T"),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                },
+                TypeParamInfo {
+                    name: db.intern_string("U"),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                },
+            ],
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+        };
+        let def_id = def_store.register(info);
+
+        // Create Application(Lazy(def_id), [string, number])
+        let factory = db.factory();
+        let lazy = factory.lazy(def_id);
+        let app = factory.application(lazy, vec![TypeId::STRING, TypeId::NUMBER]);
+
+        // With def_store: should show `MyClass<string, number>`
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        let result = fmt.format(app);
+        assert_eq!(
+            result, "MyClass<string, number>",
+            "Application should show formatted type args"
         );
     }
 }
