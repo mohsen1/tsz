@@ -14,7 +14,7 @@ set -euo pipefail
 #   (builds wasm package for playground if missing)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WEBSITE_DIR="$ROOT/website"
+WEBSITE_DIR="$ROOT/crates/tsz-website"
 BENCH_JSON="$WEBSITE_DIR/data/benchmarks.json"
 
 if ! command -v cp >/dev/null 2>&1; then
@@ -46,7 +46,7 @@ prepare_benchmarks() {
   mkdir -p "$WEBSITE_DIR/data"
 
   if [ -f "$BENCH_JSON" ]; then
-    echo "Benchmarks: using existing website/data/benchmarks.json"
+    echo "Benchmarks: using existing data/benchmarks.json"
     return
   fi
 

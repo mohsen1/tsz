@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'website/**'
+      - 'crates/tsz-website/**'
       - 'docs/**/*.md'
       - 'docs/architecture.html'
       - 'AGENTS.md'
@@ -145,7 +145,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: benchmark-data
-          path: website/data
+          path: crates/tsz-website/data
         continue-on-error: true
 
       - name: Download WASM
@@ -158,23 +158,23 @@ jobs:
       # Rename to expected filename
       - name: Prepare benchmark data
         run: |
-          if ls website/data/bench-vs-tsgo-*.json 1>/dev/null 2>&1; then
-            mv website/data/bench-vs-tsgo-*.json website/data/benchmarks.json
+          if ls crates/tsz-website/data/bench-vs-tsgo-*.json 1>/dev/null 2>&1; then
+            mv crates/tsz-website/data/bench-vs-tsgo-*.json crates/tsz-website/data/benchmarks.json
             echo "Benchmark data ready"
           else
             echo "No benchmark data available, will use sample data"
           fi
 
       - name: Install dependencies
-        run: cd website && npm install
+        run: cd crates/tsz-website && npm install
 
       - name: Build website
-        run: cd website && npm run build
+        run: cd crates/tsz-website && npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: website/dist
+          path: crates/tsz-website/dist
 
   deploy:
     needs: build

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
 function readIfExists(p) {
   try {

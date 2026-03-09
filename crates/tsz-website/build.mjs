@@ -14,7 +14,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { marked } from "marked";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const WEBSITE = import.meta.dirname;
 const DIST = path.join(WEBSITE, "dist");
 
@@ -221,7 +221,7 @@ function generateBenchmarkCharts(data) {
     return `<div class="bench-placeholder">
       <p>No benchmark data available.</p>
       <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks,<br>
-      then copy the output to <code>website/data/benchmarks.json</code>.</p>
+      then copy the output to <code>crates/tsz-website/data/benchmarks.json</code>.</p>
     </div>`;
   }
 

@@ -4,8 +4,8 @@ export default function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ static: "." });
   eleventyConfig.addPassthroughCopy({ "src/lib": "lib" });
 
-  if (fs.existsSync("../pkg/web")) {
-    eleventyConfig.addPassthroughCopy({ "../pkg/web": "wasm" });
+  if (fs.existsSync("../../pkg/web")) {
+    eleventyConfig.addPassthroughCopy({ "../../pkg/web": "wasm" });
   }
 
   return {
