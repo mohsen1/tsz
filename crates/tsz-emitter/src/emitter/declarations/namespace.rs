@@ -1054,6 +1054,47 @@ impl<'a> Printer<'a> {
                 }
                 Some((false, None))
             }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                // `var X`, `let X`, `export var X`, etc.
+                // Structure: VariableStatement → declarations: [VariableDeclarationList]
+                //            VariableDeclarationList → declarations: [VariableDeclaration, ...]
+                let var_stmt = self.arena.get_variable(stmt_node)?;
+                let is_declare = self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword);
+                for &list_or_decl_idx in &var_stmt.declarations.nodes {
+                    let Some(list_or_decl_node) = self.arena.get(list_or_decl_idx) else {
+                        continue;
+                    };
+                    // May be a VariableDeclarationList wrapping individual declarations
+                    if list_or_decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        let Some(decl_list) = self.arena.get_variable(list_or_decl_node) else {
+                            continue;
+                        };
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            let Some(decl_node) = self.arena.get(decl_idx) else {
+                                continue;
+                            };
+                            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                                continue;
+                            };
+                            if self.get_identifier_text_idx(decl.name) == name {
+                                return Some((!is_declare, None));
+                            }
+                        }
+                    } else {
+                        // Direct VariableDeclaration
+                        let Some(decl) = self.arena.get_variable_declaration(list_or_decl_node)
+                        else {
+                            continue;
+                        };
+                        if self.get_identifier_text_idx(decl.name) == name {
+                            return Some((!is_declare, None));
+                        }
+                    }
+                }
+                None
+            }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 let import = self.arena.get_import_decl(stmt_node)?;
                 if self.get_identifier_text_idx(import.import_clause) != name {
