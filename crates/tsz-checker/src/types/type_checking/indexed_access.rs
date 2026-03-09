@@ -15,7 +15,10 @@ fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
     }
 
     tsz_solver::type_queries::get_union_members(db, ty).is_some_and(|members| {
-        !members.is_empty() && members.iter().all(|&member| is_broad_index_type(db, member))
+        !members.is_empty()
+            && members
+                .iter()
+                .all(|&member| is_broad_index_type(db, member))
     })
 }
 
@@ -92,11 +95,16 @@ impl<'a> CheckerState<'a> {
                 if type_operator.operator != SyntaxKind::KeyOfKeyword as u16 {
                     return false;
                 }
-                return self.simple_type_reference_name(type_operator.type_node)
+                return self
+                    .simple_type_reference_name(type_operator.type_node)
                     .as_deref()
                     .is_some_and(|name| name == object_name);
             }
-            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
         }
 
         false

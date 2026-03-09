@@ -390,9 +390,7 @@ impl<'a> CheckerState<'a> {
                     let db = self.ctx.types.as_type_database();
                     let is_bare_type_param =
                         matches!(db.lookup(type_arg), Some(TypeData::TypeParameter(_)));
-                    if is_bare_type_param
-                        && let Some(base) = base_constraint_type
-                    {
+                    if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
                         // Composite generic arguments like `T[K]` or `GetProps<C>`
@@ -545,8 +543,10 @@ impl<'a> CheckerState<'a> {
                 {
                     type_id
                 } else {
-                    let constrained_access =
-                        self.ctx.types.index_access(object_type, constrained_index_type);
+                    let constrained_access = self
+                        .ctx
+                        .types
+                        .index_access(object_type, constrained_index_type);
                     self.evaluate_type_for_assignability(constrained_access)
                 }
             }
