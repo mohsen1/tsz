@@ -1408,10 +1408,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     }
 
                                     if !have_overlap {
+                                        // tsc anchors TS2352 at the expression being
+                                        // asserted, not at the `<T>` / `as T` node.
                                         self.checker.error_type_assertion_no_overlap(
                                             expr_type,
                                             asserted_type,
-                                            idx,
+                                            assertion.expression,
                                         );
                                     }
                                 }

@@ -1240,8 +1240,14 @@ impl<'a> CheckerState<'a> {
         // If the typedef's base type couldn't be resolved, return `any` as fallback.
         // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
         // post-checking phase, so we don't emit it here to avoid duplicates.
-        self.type_from_jsdoc_typedef(typedef_info)
-            .or(Some(TypeId::ANY))
+        let result = self
+            .type_from_jsdoc_typedef(typedef_info)
+            .or(Some(TypeId::ANY));
+
+        if let Some(ty) = result {
+            self.register_jsdoc_typedef_def(type_expr, ty);
+        }
+        result
     }
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {

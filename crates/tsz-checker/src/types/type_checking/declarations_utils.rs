@@ -180,7 +180,14 @@ impl<'a> CheckerState<'a> {
             PropertyKey::Computed(ComputedKey::Number(n)) => {
                 format!("[{n}]")
             }
-            PropertyKey::Private(s) => format!("#{s}"),
+            PropertyKey::Private(s) => {
+                // The scanner stores private identifiers with the `#` prefix already
+                if s.starts_with('#') {
+                    s.clone()
+                } else {
+                    format!("#{s}")
+                }
+            }
         }
     }
 

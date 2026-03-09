@@ -584,11 +584,30 @@ impl ParserState {
     }
 
     /// Parse super expression
+    ///
+    /// Matches tsc's `parseSuperExpression`: if `super` is not followed by `(`, `.`,
+    /// `[`, or `<`, emit TS1034 at the current token position (matching tsc's
+    /// parseExpectedToken behavior where the error is at the token after `super`).
     pub(crate) fn parse_super_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         self.next_token();
+
+        // If super is followed by (, ., [, or <, return just the super keyword.
+        // The caller (parse_member_expression_rest) will handle the access chain.
+        if !self.is_token(SyntaxKind::OpenParenToken)
+            && !self.is_token(SyntaxKind::DotToken)
+            && !self.is_token(SyntaxKind::OpenBracketToken)
+            && !self.is_token(SyntaxKind::LessThanToken)
+        {
+            // super must be followed by an argument list or member access.
+            // Emit TS1034 at the current token position (matching tsc's parseExpectedToken).
+            self.parse_error_at_current_token(
+                diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+            );
+        }
 
         self.arena
             .add_token(SyntaxKind::SuperKeyword as u16, start_pos, end_pos)

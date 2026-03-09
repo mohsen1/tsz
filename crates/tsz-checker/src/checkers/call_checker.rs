@@ -682,6 +682,11 @@ impl<'a> CheckerState<'a> {
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
 
+        // Save TS2454 dedup state before speculative overload argument collection.
+        // If overload resolution fails and diagnostics are truncated, we must also
+        // restore this set so TS2454 errors can be re-emitted in the fallback path.
+        let saved_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
+
         // Collect argument types ONCE with union contextual type.
         // Diagnostics produced during this pass are speculative: if no overload
         // matches, TypeScript reports the overload failure and suppresses these
@@ -831,6 +836,11 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .truncate(first_pass_diagnostics_checkpoint);
+
+        // Restore TS2454 dedup state so definite-assignment errors can be
+        // re-emitted when the fallback (non-overloaded) call resolution path
+        // re-evaluates the same argument identifiers.
+        self.ctx.emitted_ts2454_errors = saved_ts2454_errors;
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;

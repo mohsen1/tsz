@@ -705,7 +705,14 @@ impl<'a> CheckerState<'a> {
                     PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{s}]"),
                     PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{s}\"]"),
                     PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{n}]"),
-                    PropertyKey::Private(s) => format!("#{s}"),
+                    PropertyKey::Private(s) => {
+                        // The scanner stores private identifiers with the `#` prefix
+                        if s.starts_with('#') {
+                            s.clone()
+                        } else {
+                            format!("#{s}")
+                        }
+                    }
                     PropertyKey::Ident(s) => s.clone(),
                 }
             };
@@ -1001,16 +1008,25 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
-                    for &decl_idx in &var_stmt.declarations.nodes {
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                            && decl.initializer.is_some()
+                    // var_stmt.declarations contains VariableDeclarationList nodes,
+                    // each of which in turn contains the actual VariableDeclaration nodes.
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
+                            && let Some(decl_list) = self.ctx.arena.get_variable(decl_list_node)
                         {
-                            self.check_expression_for_early_property_access(
-                                decl.initializer,
-                                assigned,
-                                tracked,
-                            );
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    && decl.initializer.is_some()
+                                {
+                                    self.check_expression_for_early_property_access(
+                                        decl.initializer,
+                                        assigned,
+                                        tracked,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
