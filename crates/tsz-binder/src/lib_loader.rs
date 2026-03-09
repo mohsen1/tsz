@@ -304,6 +304,35 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
     ES2015_PLUS_TYPES.contains(&name)
 }
 
+/// Get the minimum lib version required for an ES2015+ type name.
+///
+/// Returns the lib version string (e.g., "es2015", "es2017") that first defines
+/// the given type. Returns "es2015" as default for most types.
+#[must_use]
+pub fn get_suggested_lib_for_type(name: &str) -> &'static str {
+    match name {
+        "SharedArrayBuffer" | "SharedArrayBufferConstructor" | "Atomics" => "es2017",
+        "AsyncGenerator" | "AsyncGeneratorFunction" | "AsyncGeneratorFunctionConstructor" => {
+            "es2018"
+        }
+        "BigInt"
+        | "BigIntConstructor"
+        | "BigInt64Array"
+        | "BigInt64ArrayConstructor"
+        | "BigUint64Array"
+        | "BigUint64ArrayConstructor" => "es2020",
+        "FinalizationRegistry"
+        | "FinalizationRegistryConstructor"
+        | "WeakRef"
+        | "WeakRefConstructor"
+        | "AggregateError"
+        | "AggregateErrorConstructor"
+        | "ErrorOptions" => "es2021",
+        "Disposable" | "AsyncDisposable" => "esnext",
+        _ => "es2015",
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/lib_loader.rs"]
 mod tests;

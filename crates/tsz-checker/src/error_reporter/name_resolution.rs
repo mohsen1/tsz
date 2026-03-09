@@ -761,10 +761,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(loc) = self.get_source_location(idx) {
             let (code, message) = if is_es2015_type {
+                let lib_version = lib_loader::get_suggested_lib_for_type(name);
                 (
                     lib_loader::MISSING_ES2015_LIB_SUPPORT,
                     format!(
-                        "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."
+                        "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_version}' or later."
                     ),
                 )
             } else {
@@ -790,10 +791,12 @@ impl<'a> CheckerState<'a> {
     /// is used as a value but is not available in the current lib configuration.
     /// It provides a helpful suggestion to change the lib compiler option.
     pub fn error_cannot_find_name_change_lib(&mut self, name: &str, idx: NodeIndex) {
+        use tsz_binder::lib_loader;
         if let Some(loc) = self.get_source_location(idx) {
+            let lib_version = lib_loader::get_suggested_lib_for_type(name);
             let message = format_message(
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
-                &[name],
+                &[name, lib_version],
             );
             self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB));
         }
