@@ -375,51 +375,38 @@ impl<'a> CheckerState<'a> {
             // fall through to TS2362/TS2363 below.
         }
 
-        // For the `+` operator diagnostic, tsc preserves literal types when both
-        // operands are literals (e.g., `1 + 2n` shows `'1' and '2n'`). When one
-        // operand is not a literal (e.g., `0 + key`), tsc uses widened base types.
-        // For other operators (-, *, /, etc.), tsc always uses widened base types
-        // (number literal → number, string literal → string, etc.).
-        // Since get_type_of_node widens literals by default, recover the
-        // original literal type from the expression node when both are literals.
-        // Enum member types (E.a) should still widen to the parent enum (E).
-        let (left_diag, right_diag) = if op == "+" {
-            let left_lit = self.literal_type_from_initializer(left_idx);
-            let right_lit = self.literal_type_from_initializer(right_idx);
-            if let (Some(l), Some(r)) = (left_lit, right_lit) {
-                (
-                    self.widen_enum_member_type(l),
-                    self.widen_enum_member_type(r),
-                )
-            } else {
-                // When not both literals, widen literal types to base types
-                // but preserve enum type names (tsc shows 'E' not 'number'
-                // for enum types in `+` error messages).
-                (
-                    self.widen_enum_member_type(tsz_solver::widen_literal_type(
-                        self.ctx.types,
-                        left_type,
-                    )),
-                    self.widen_enum_member_type(tsz_solver::widen_literal_type(
-                        self.ctx.types,
-                        right_type,
-                    )),
-                )
-            }
-        } else if matches!(op, "<" | ">" | "<=" | ">=") {
-            // For relational operators, use the widened operand types that the
-            // checker computed for the comparison itself. This keeps diagnostics
-            // aligned with tsc for cases like `x > 1`, which reports `number`
-            // rather than the literal `1`.
+        // tsc uses getTypeOfNode (which widens literals) for TS2365 messages,
+        // so literal types are widened to base types (e.g., `1` → `number`).
+        // Exception: for `+` operator with number↔bigint mismatch, tsc preserves
+        // the literal types (e.g., `1 + 2n` shows `'1' and '2n'`).
+        // Enum member types (E.a) should widen to the parent enum (E).
+        let is_number_bigint_mix = op == "+"
+            && self.literal_type_from_initializer(left_idx).is_some()
+            && self.literal_type_from_initializer(right_idx).is_some()
+            && {
+                let l = self.literal_type_from_initializer(left_idx).unwrap();
+                let r = self.literal_type_from_initializer(right_idx).unwrap();
+                let l_num = tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::NUMBER
+                    || tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
+                let r_num = tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::NUMBER
+                    || tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                let l_is_bigint =
+                    tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
+                let r_is_bigint =
+                    tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::BIGINT;
+                l_num && r_num && (l_is_bigint != r_is_bigint)
+            };
+
+        let (left_diag, right_diag) = if is_number_bigint_mix {
+            // Preserve literal types for number+bigint mix (e.g., '1' and '2n')
+            let l = self.literal_type_from_initializer(left_idx).unwrap();
+            let r = self.literal_type_from_initializer(right_idx).unwrap();
             (
-                self.widen_enum_member_type(left_type),
-                self.widen_enum_member_type(right_type),
+                self.widen_enum_member_type(l),
+                self.widen_enum_member_type(r),
             )
         } else {
-            // For non-`+` operators, widen literal types to their base types
-            // (e.g., literal `14` → `number`, `"hello"` → `string`) and also
-            // widen enum member types. This matches tsc which uses getTypeOfNode
-            // (which widens literals) for these operator error messages.
+            // Widen literal types to base types for all other operator errors
             (
                 self.widen_enum_member_type(tsz_solver::get_base_type_for_comparison(
                     self.ctx.types,

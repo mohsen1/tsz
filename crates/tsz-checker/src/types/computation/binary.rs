@@ -178,7 +178,7 @@ impl<'a> CheckerState<'a> {
                                     Diagnostic, diagnostic_codes, diagnostic_messages,
                                     format_message,
                                 };
-                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[inner_op_str, outer_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
+                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[outer_op_str, inner_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
                             }
                         }
                     }
@@ -686,11 +686,15 @@ impl<'a> CheckerState<'a> {
                 && !self.declared_type_has_overlap(right_idx, right_narrow, left_narrow)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // TSC uses the narrow/literal types for the TS2367 message text,
-                // e.g., `"foo"` and `"bar"` rather than widened `string` and `string`.
+                // tsc preserves string/bigint literal types in TS2367 messages
+                // (e.g., `"foo"` stays `"foo"`) but widens number/boolean literals
+                // (e.g., `true` → `boolean`, `0` → `number`). For non-literal
+                // operands, the widened type from get_type_of_node is used.
                 // Use format_type_pair for import-qualification when the same name
                 // appears in two different modules (e.g., import("a").F vs import("b").F).
-                let (left_str, right_str) = self.format_type_pair(left_narrow, right_narrow);
+                let left_display = self.widen_non_string_literal_for_display(left_narrow);
+                let right_display = self.widen_non_string_literal_for_display(right_narrow);
+                let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                     &[&left_str, &right_str],

@@ -280,6 +280,22 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
     }
 }
 
+/// Widen number and boolean literal types but preserve string and bigint literals.
+///
+/// tsc's TS2367 diagnostic uses widened types for number/boolean operands
+/// (e.g., `true` → `boolean`, `0` → `number`) but preserves string/bigint
+/// literal types in the message text.
+pub fn widen_non_string_bigint_literal(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(ref value)) => match value {
+            crate::LiteralValue::Number(_) => TypeId::NUMBER,
+            crate::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+            crate::LiteralValue::String(_) | crate::LiteralValue::BigInt(_) => type_id,
+        },
+        _ => type_id,
+    }
+}
+
 /// Apply `as const` assertion to a type.
 ///
 /// This function transforms a type to its const-asserted form:

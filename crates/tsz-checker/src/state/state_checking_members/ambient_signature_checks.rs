@@ -332,7 +332,7 @@ impl<'a> CheckerState<'a> {
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static
                 && self.property_assigned_in_enclosing_class_static_block(prop.name))
-            && let Some(member_name) = self.get_property_name(prop.name)
+            && let Some(member_name) = self.get_member_name_display_text(prop.name)
         {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(

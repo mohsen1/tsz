@@ -407,13 +407,15 @@ impl<'a> CheckerState<'a> {
                                         })
                                 {
                                     // For classes extending non-interfaces: emit TS2507 if not a constructor type
-                                    if let Some(name) = self.heritage_name_text(expr_idx) {
+                                    // Use the resolved value type (not the variable name) to match tsc behavior.
+                                    {
                                         use crate::diagnostics::{
                                             diagnostic_codes, diagnostic_messages, format_message,
                                         };
+                                        let type_name = self.format_type(symbol_type);
                                         let message = format_message(
                                             diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                            &[&name],
+                                            &[&type_name],
                                         );
                                         self.error_at_node(
                                             expr_idx,
@@ -635,24 +637,48 @@ impl<'a> CheckerState<'a> {
 
                             // Check for literals - emit TS2507 for extends clauses
                             // NOTE: TypeScript allows `extends null` as a special case,
-                            // so we don't emit TS2507 for null in extends clauses
-                            let literal_type_name: Option<&str> = match expr_node.kind {
+                            // so we don't emit TS2507 for null in extends clauses.
+                            // For literal values, tsc preserves the literal type (e.g., 42, "hello")
+                            // rather than the widened type (number, string).
+                            let literal_type_name: Option<String> = match expr_node.kind {
                                 k if k == SyntaxKind::NullKeyword as u16 => {
                                     // Don't error on null - TypeScript allows `extends null`
                                     None
                                 }
-                                k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
-                                k if k == SyntaxKind::TrueKeyword as u16 => Some("true"),
-                                k if k == SyntaxKind::FalseKeyword as u16 => Some("false"),
-                                k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
-                                k if k == SyntaxKind::NumericLiteral as u16 => Some("number"),
-                                k if k == SyntaxKind::StringLiteral as u16 => Some("string"),
+                                k if k == SyntaxKind::UndefinedKeyword as u16 => {
+                                    Some("undefined".to_string())
+                                }
+                                k if k == SyntaxKind::TrueKeyword as u16 => {
+                                    Some("true".to_string())
+                                }
+                                k if k == SyntaxKind::FalseKeyword as u16 => {
+                                    Some("false".to_string())
+                                }
+                                k if k == SyntaxKind::VoidKeyword as u16 => {
+                                    Some("void".to_string())
+                                }
+                                k if k == SyntaxKind::NumericLiteral as u16 => {
+                                    // Use the actual literal text (e.g., "42") not "number"
+                                    self.ctx
+                                        .arena
+                                        .get_literal_text(expr_idx)
+                                        .map(|t| t.to_string())
+                                        .or_else(|| Some("number".to_string()))
+                                }
+                                k if k == SyntaxKind::StringLiteral as u16 => {
+                                    // Use the actual literal text with quotes (e.g., "\"hello\"")
+                                    self.ctx
+                                        .arena
+                                        .get_literal_text(expr_idx)
+                                        .map(|t| format!("\"{t}\""))
+                                        .or_else(|| Some("string".to_string()))
+                                }
                                 // Also check for identifiers with reserved names (parsed as identifier)
                                 k if k == SyntaxKind::Identifier as u16 => {
                                     if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
                                         match ident.escaped_text.as_str() {
-                                            "undefined" => Some("undefined"),
-                                            "void" => Some("void"),
+                                            "undefined" => Some("undefined".to_string()),
+                                            "void" => Some("void".to_string()),
                                             _ => None,
                                         }
                                     } else {
@@ -668,9 +694,9 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_codes, diagnostic_messages, format_message,
                                     };
                                     let message = format_message(
-                                    diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                    &[type_name],
-                                );
+                                        diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        &[&type_name],
+                                    );
                                     self.error_at_node(
                                         expr_idx,
                                         &message,
