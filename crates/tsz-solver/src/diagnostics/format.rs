@@ -571,29 +571,43 @@ impl<'a> TypeFormatter<'a> {
             );
         }
 
-        let type_str = self.format(prop.type_id);
-        // tsc displays optional properties with `| undefined` appended to the type
-        // (when exactOptionalPropertyTypes is not enabled, which is the default).
-        // Our type system stores the raw type without undefined for optional properties,
-        // so we add it at display time to match tsc's output.
-        if prop.optional && !self.type_contains_undefined(prop.type_id) {
-            format!("{readonly}{name}{optional}: {type_str} | undefined")
+        // tsc displays optional properties as `name?: T` without `| undefined`,
+        // even though the type system internally may store the type as `T | undefined`.
+        // When the `?` is present, strip `undefined` from the displayed type.
+        let type_str: String = if prop.optional {
+            self.format_stripping_undefined(prop.type_id)
         } else {
-            format!("{readonly}{name}{optional}: {type_str}")
-        }
+            self.format(prop.type_id).into_owned()
+        };
+        format!("{readonly}{name}{optional}: {type_str}")
     }
 
-    /// Check if a type already contains `undefined` (either is `undefined` itself
-    /// or is a union that includes `undefined` as a member).
-    fn type_contains_undefined(&self, type_id: TypeId) -> bool {
+    /// Format a type while stripping `undefined` from it.
+    /// Used for optional properties/parameters where the `?` already implies optionality,
+    /// so displaying `| undefined` is redundant.
+    fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
         if type_id == TypeId::UNDEFINED {
-            return true;
+            // Edge case: type is just `undefined` — display it as-is since
+            // there's nothing else to show.
+            return self.format(type_id).into_owned();
         }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
-            return members.contains(&TypeId::UNDEFINED);
+            let filtered: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&m| m != TypeId::UNDEFINED)
+                .collect();
+            if filtered.len() < members.len() {
+                // We stripped some undefined members
+                return match filtered.len() {
+                    0 => self.format(TypeId::NEVER).into_owned(),
+                    1 => self.format(filtered[0]).into_owned(),
+                    _ => self.format_union(&filtered),
+                };
+            }
         }
-        false
+        self.format(type_id).into_owned()
     }
 
     fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
@@ -635,14 +649,15 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            let type_str = self.format(p.type_id);
-            // tsc displays optional params with `| undefined` appended when the stored type
-            // doesn't already include undefined (e.g., interface member function types).
-            if p.optional && !self.type_contains_undefined(p.type_id) {
-                rendered.push(format!("{rest}{name}{optional}: {type_str} | undefined"));
+            // tsc displays optional params as `name?: T` without `| undefined`,
+            // even though the type system internally may store the type as `T | undefined`.
+            // When the `?` is present, strip `undefined` from the displayed type.
+            let type_str: String = if p.optional {
+                self.format_stripping_undefined(p.type_id)
             } else {
-                rendered.push(format!("{rest}{name}{optional}: {type_str}"));
-            }
+                self.format(p.type_id).into_owned()
+            };
+            rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 
         rendered
@@ -834,7 +849,11 @@ impl<'a> TypeFormatter<'a> {
             .map(|e| {
                 let rest = if e.rest { "..." } else { "" };
                 let optional = if e.optional { "?" } else { "" };
-                let type_str = self.format(e.type_id);
+                let type_str: String = if e.optional {
+                    self.format_stripping_undefined(e.type_id)
+                } else {
+                    self.format(e.type_id).into_owned()
+                };
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
                     format!("{name}{optional}: {rest}{type_str}")
@@ -2707,6 +2726,144 @@ mod tests {
         assert_eq!(
             result, "MyClass<string, number>",
             "Application should show formatted type args"
+        );
+    }
+
+    // =================================================================
+    // Optional parameter/property display (no redundant `| undefined`)
+    // =================================================================
+
+    #[test]
+    fn optional_param_no_undefined_suffix() {
+        // tsc: `(a?: string) => any` — NOT `(a?: string | undefined) => any`
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("a")),
+                type_id: TypeId::STRING,
+                optional: true,
+                rest: false,
+            }],
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert_eq!(
+            result, "(a?: string) => any",
+            "Optional param should not show '| undefined'"
+        );
+    }
+
+    #[test]
+    fn optional_param_with_union_undefined_strips_it() {
+        // When the type is internally `string | undefined`, display as `(a?: string)`
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let str_or_undef = db.union_preserve_members(vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("a")),
+                type_id: str_or_undef,
+                optional: true,
+                rest: false,
+            }],
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert_eq!(
+            result, "(a?: string) => any",
+            "Optional param with string | undefined should strip undefined"
+        );
+    }
+
+    #[test]
+    fn optional_property_no_undefined_suffix() {
+        // tsc: `{ x?: string; }` — NOT `{ x?: string | undefined; }`
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let obj = db.object(vec![PropertyInfo {
+            name: db.intern_string("x"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: crate::types::Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }]);
+        let result = fmt.format(obj);
+        assert_eq!(
+            result, "{ x?: string; }",
+            "Optional property should not show '| undefined'"
+        );
+    }
+
+    #[test]
+    fn optional_property_with_union_undefined_strips_it() {
+        // When the type is internally `string | undefined`, display as `x?: string`
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let str_or_undef = db.union_preserve_members(vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let obj = db.object(vec![PropertyInfo {
+            name: db.intern_string("x"),
+            type_id: str_or_undef,
+            write_type: str_or_undef,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: crate::types::Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }]);
+        let result = fmt.format(obj);
+        assert_eq!(
+            result, "{ x?: string; }",
+            "Optional property with string | undefined should strip undefined"
+        );
+    }
+
+    #[test]
+    fn non_optional_param_keeps_undefined_in_union() {
+        // Non-optional params should still show `| undefined` if it's in the type
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let str_or_undef = db.union_preserve_members(vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let func = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(db.intern_string("a")),
+                type_id: str_or_undef,
+                optional: false,
+                rest: false,
+            }],
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = fmt.format(func);
+        assert_eq!(
+            result, "(a: string | undefined) => any",
+            "Non-optional param should keep '| undefined' in union"
         );
     }
 }
