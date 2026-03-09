@@ -5680,3 +5680,48 @@ fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignmen
         "Bare identifier computed keys should keep the old-or-assigned key union from enclosing binding defaults, without widening to unrelated tuple elements.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+{
+    let a: 0 | 1 = 0;
+    let b: 0 | 1 | 9;
+    [{ [(a = 1)]: b } = [9, a] as const] = [];
+    const bb: 0 = b;
+}
+{
+    let a: 0 | 1 = 1;
+    let b: 0 | 1 | 9;
+    [{ [a]: b } = [9, a = 0] as const] = [];
+    const bb: 9 = b;
+}
+{
+    let a: 0 | 1 = 0;
+    let b: 0 | 1 | 8 | 9;
+    [{ [(a = 1)]: b } = [9, a] as const] = [[9, 8] as const];
+    const bb: 0 | 8 = b;
+}
+{
+    let a: 0 | 1 = 1;
+    let b: 0 | 1 | 8 | 9;
+    [{ [a]: b } = [a = 0, 9] as const] = [[8, 9] as const];
+    const bb: 0 | 8 = b;
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Computed keys in destructuring assignment patterns should read exact tuple elements from the fully evaluated RHS.\nGot: {diagnostics:?}"
+    );
+}
