@@ -1,6 +1,6 @@
 //! Custom help renderer matching tsc v6 output exactly.
 
-/// The version string embedded at build time from `scripts/typescript-versions.json`.
+/// The version string embedded at build time from `scripts/conformance/typescript-versions.json`.
 pub const TSC_VERSION: &str = env!("TSZ_TSC_VERSION");
 
 /// Render the standard `--help` output, matching `tsc --help` exactly.

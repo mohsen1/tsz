@@ -2,7 +2,7 @@
 """Parse conformance runner output into a structured per-test detail JSON file.
 
 This runs as part of `conformance.sh snapshot` and produces
-`scripts/conformance-detail.json` — a compact file that enables all offline
+`scripts/conformance/conformance-detail.json` — a compact file that enables all offline
 analysis (1-missing tests, false positives, code co-occurrence, etc.) without
 re-running the full conformance suite.
 

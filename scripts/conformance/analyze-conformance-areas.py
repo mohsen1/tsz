@@ -252,7 +252,7 @@ def main():
         if large_areas:
             print(f"{DIM}Tip: Drill into large areas for more detail:{NC}")
             for s in large_areas[:5]:
-                print(f"  {DIM}./scripts/conformance.sh areas --drilldown {s['area']}{NC}")
+                print(f"  {DIM}./scripts/conformance/conformance.sh areas --drilldown {s['area']}{NC}")
             print()
 
 

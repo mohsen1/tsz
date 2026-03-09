@@ -3,7 +3,7 @@
 #
 # Usage: ./scripts/reset-ts-submodule.sh
 #
-# Reads "current" SHA from scripts/typescript-versions.json and ensures
+# Reads "current" SHA from scripts/conformance/typescript-versions.json and ensures
 # the TypeScript submodule is checked out at that exact commit.
 
 set -e
@@ -13,7 +13,7 @@ set -e
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSIONS_FILE="$ROOT_DIR/scripts/typescript-versions.json"
+VERSIONS_FILE="$ROOT_DIR/scripts/conformance/typescript-versions.json"
 
 if [ ! -f "$VERSIONS_FILE" ]; then
     echo "ERROR: $VERSIONS_FILE not found"

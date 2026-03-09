@@ -195,7 +195,7 @@ rm -rf "$REPO_ROOT/scripts/conformance/.tsc-cache" 2>/dev/null || true
 rm -rf "$REPO_ROOT/scripts/conformance/dist" 2>/dev/null || true
 rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 # Keep the committed tsc-cache-full.json
-git -C "$REPO_ROOT" checkout -- scripts/tsc-cache-full.json 2>/dev/null || true
+git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
 # Phase 11: Reset TypeScript submodule to clean state
 git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true

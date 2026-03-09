@@ -516,7 +516,7 @@ jobs:
           # explicit timeout/workers config to avoid timeout-induced flake.
           # ubuntu-latest has 4 cores; 4 workers avoids oversubscription,
           # and 20s timeout matches local defaults to prevent false timeouts.
-          ./scripts/conformance.sh run --timeout 20 --workers 4 2>&1 | tee "$TMPOUT" || true
+          ./scripts/conformance/conformance.sh run --timeout 20 --workers 4 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           # Extract pass counters and percentage from final result line:

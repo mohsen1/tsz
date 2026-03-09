@@ -168,27 +168,27 @@ Skill usage rules:
 ### CRITICAL: Avoid re-running the full conformance suite
 - The full conformance suite takes **minutes** to run. Do NOT run it for research, planning, or analysis.
 - **All analysis can be done offline** from pre-computed snapshot files. Use the query tools below.
-- Only run the full suite (`./scripts/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
+- Only run the full suite (`./scripts/conformance/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
 
 ### Offline analysis (preferred — zero cost, instant)
 Two snapshot files contain everything needed for analysis:
-- **`scripts/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
-- **`scripts/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
+- **`scripts/conformance/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
+- **`scripts/conformance/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
 
 ### Preferred strategy: campaign-first, not whack-a-mole
 - Default to **root-cause campaigns**, not individual test chasing.
 - Start conformance work with:
   ```bash
-  ./scripts/conformance.sh analyze --campaigns
+  ./scripts/conformance/conformance.sh analyze --campaigns
   ```
 - Deep-dive one campaign before choosing code changes:
   ```bash
-  ./scripts/conformance.sh analyze --campaign big3
-  ./scripts/conformance.sh analyze --campaign contextual-typing
-  ./scripts/conformance.sh analyze --campaign property-resolution
-  ./scripts/conformance.sh analyze --campaign narrowing-flow
-  ./scripts/conformance.sh analyze --campaign parser-recovery
-  ./scripts/conformance.sh analyze --campaign jsdoc-jsx-salsa
+  ./scripts/conformance/conformance.sh analyze --campaign big3
+  ./scripts/conformance/conformance.sh analyze --campaign contextual-typing
+  ./scripts/conformance/conformance.sh analyze --campaign property-resolution
+  ./scripts/conformance/conformance.sh analyze --campaign narrowing-flow
+  ./scripts/conformance/conformance.sh analyze --campaign parser-recovery
+  ./scripts/conformance/conformance.sh analyze --campaign jsdoc-jsx-salsa
   ```
 - Treat **`TS2322` / `TS2339` / `TS2345` / `TS7006` / `TS2769`** as symptom families, not isolated bug buckets.
 - Do **not** pick work solely from:
@@ -198,11 +198,11 @@ Two snapshot files contain everything needed for analysis:
   - single diagnostic codes.
 - Use quick-win views only after selecting a campaign, to build a representative basket:
   ```bash
-  ./scripts/conformance.sh analyze --one-missing
-  ./scripts/conformance.sh analyze --one-extra
-  ./scripts/conformance.sh analyze --code TS2322
-  ./scripts/conformance.sh analyze --extra-code TS2339
-  ./scripts/conformance.sh analyze --close 2
+  ./scripts/conformance/conformance.sh analyze --one-missing
+  ./scripts/conformance/conformance.sh analyze --one-extra
+  ./scripts/conformance/conformance.sh analyze --code TS2322
+  ./scripts/conformance/conformance.sh analyze --extra-code TS2339
+  ./scripts/conformance/conformance.sh analyze --close 2
   ```
 - For each campaign:
   1. Pick 8-15 representative failures spanning both missing and extra diagnostics.
@@ -211,43 +211,43 @@ Two snapshot files contain everything needed for analysis:
   4. Use targeted filtered runs only after code changes.
 - `JSDoc`, `JSX`, and `Salsa` are usually **regression baskets**, not first-choice root causes.
 
-**Query tool** (`python3 scripts/query-conformance.py`):
+**Query tool** (`python3 scripts/conformance/query-conformance.py`):
 ```bash
 # Overview: what to work on next
-python3 scripts/query-conformance.py
+python3 scripts/conformance/query-conformance.py
 
 # Recommended root-cause campaigns
-python3 scripts/query-conformance.py --campaigns
+python3 scripts/conformance/query-conformance.py --campaigns
 
 # Deep-dive one campaign
-python3 scripts/query-conformance.py --campaign big3
+python3 scripts/conformance/query-conformance.py --campaign big3
 
 # Tests fixable by adding 1 missing code (highest impact)
-python3 scripts/query-conformance.py --one-missing
+python3 scripts/conformance/query-conformance.py --one-missing
 
 # Tests fixable by removing 1 extra code
-python3 scripts/query-conformance.py --one-extra
+python3 scripts/conformance/query-conformance.py --one-extra
 
 # False positive breakdown (expected 0, we emit errors)
-python3 scripts/query-conformance.py --false-positives
+python3 scripts/conformance/query-conformance.py --false-positives
 
 # Deep-dive a specific error code (shows would-pass, also-needs, extras)
-python3 scripts/query-conformance.py --code TS2454
+python3 scripts/conformance/query-conformance.py --code TS2454
 
 # List tests where a code is falsely emitted
-python3 scripts/query-conformance.py --extra-code TS7053
+python3 scripts/conformance/query-conformance.py --extra-code TS7053
 
 # Tests closest to passing (diff <= N)
-python3 scripts/query-conformance.py --close 2
+python3 scripts/conformance/query-conformance.py --close 2
 
 # Export paths for piping into conformance runner
-python3 scripts/query-conformance.py --code TS2454 --paths-only
+python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 ```
 
 **Reading snapshot JSON directly** (for custom queries):
 ```python
 import json
-with open('scripts/conformance-snapshot.json') as f:
+with open('scripts/conformance/conformance-snapshot.json') as f:
     snap = json.load(f)
 # Keys: summary, areas_by_pass_rate, top_failures, not_implemented_codes,
 #        partial_codes, one_missing_zero_extra, one_extra_zero_missing,
@@ -257,7 +257,7 @@ with open('scripts/conformance-snapshot.json') as f:
 **Reading detail JSON directly** (for per-test queries):
 ```python
 import json
-with open('scripts/conformance-detail.json') as f:
+with open('scripts/conformance/conformance-detail.json') as f:
     detail = json.load(f)
 # detail["failures"][test_path] = {"e": [...], "a": [...], "m": [...], "x": [...]}
 # e=expected, a=actual, m=missing, x=extra
@@ -265,13 +265,13 @@ with open('scripts/conformance-detail.json') as f:
 ```
 
 ### TSC cache for research (what does tsc expect?)
-- `scripts/tsc-cache-full.json` contains tsc's expected diagnostics for every test.
+- `scripts/conformance/tsc-cache-full.json` contains tsc's expected diagnostics for every test.
 - Each entry has `error_codes`, `diagnostic_fingerprints` (code, file, line, column, message_key).
 - Use Python/jq to query the cache for tests expecting a specific error code without running anything:
   ```python
   python3 -c "
   import json
-  with open('scripts/tsc-cache-full.json') as f:
+  with open('scripts/conformance/tsc-cache-full.json') as f:
       cache = json.load(f)
   for key, val in sorted(cache.items()):
       if CODE in val.get('error_codes', []):
@@ -280,13 +280,13 @@ with open('scripts/conformance-detail.json') as f:
   ```
 
 ### Targeted testing (after code changes)
-- `./scripts/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
-- `./scripts/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
+- `./scripts/conformance/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
+- `./scripts/conformance/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
 - Use `--max N` to limit test count for quick smoke tests.
 
 ### Full suite (use sparingly — only to verify changes)
-- `./scripts/conformance.sh run` — run all conformance tests (error-code level).
-- `./scripts/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
+- `./scripts/conformance/conformance.sh run` — run all conformance tests (error-code level).
+- `./scripts/conformance/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.

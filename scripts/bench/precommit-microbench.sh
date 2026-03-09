@@ -24,7 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 
 [[ "${TSZ_SKIP_BENCH:-}" == "1" ]] && exit 0
@@ -34,7 +34,7 @@ NO_BUILD=false
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/precommit-microbench.sh [OPTIONS]
+Usage: ./scripts/bench/precommit-microbench.sh [OPTIONS]
 
 Options:
   --update-baseline   Replace baseline with current measurements

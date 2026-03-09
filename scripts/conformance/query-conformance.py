@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """Query conformance snapshot data without re-running tests.
 
-Reads from scripts/conformance-detail.json (produced by `conformance.sh snapshot`).
+Reads from scripts/conformance/conformance-detail.json (produced by `conformance.sh snapshot`).
 
 Usage:
   # Show overview of what to work on next
-  python3 scripts/query-conformance.py
+  python3 scripts/conformance/query-conformance.py
 
   # Show root-cause campaigns instead of one-off quick wins
-  python3 scripts/query-conformance.py --campaigns
-  python3 scripts/query-conformance.py --campaign contextual-typing
+  python3 scripts/conformance/query-conformance.py --campaigns
+  python3 scripts/conformance/query-conformance.py --campaign contextual-typing
 
   # Show tests fixable by adding a single missing code (highest impact)
-  python3 scripts/query-conformance.py --one-missing
+  python3 scripts/conformance/query-conformance.py --one-missing
 
   # Show false positive breakdown
-  python3 scripts/query-conformance.py --false-positives
+  python3 scripts/conformance/query-conformance.py --false-positives
 
   # Show tests that need a specific code
-  python3 scripts/query-conformance.py --code TS2454
+  python3 scripts/conformance/query-conformance.py --code TS2454
 
   # Show tests fixable by removing a single extra code
-  python3 scripts/query-conformance.py --one-extra
+  python3 scripts/conformance/query-conformance.py --one-extra
 
   # List all tests failing with a specific extra code (false emissions)
-  python3 scripts/query-conformance.py --extra-code TS7053
+  python3 scripts/conformance/query-conformance.py --extra-code TS7053
 
   # Show tests closest to passing (diff <= N)
-  python3 scripts/query-conformance.py --close 2
+  python3 scripts/conformance/query-conformance.py --close 2
 
   # Export test paths for a code to feed into conformance runner
-  python3 scripts/query-conformance.py --code TS2454 --paths-only
+  python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 """
 
 import sys
@@ -166,7 +166,7 @@ CAMPAIGNS = {
 def load_detail():
     if not DETAIL_FILE.exists():
         print(f"Error: {DETAIL_FILE} not found.")
-        print("Run: ./scripts/conformance.sh snapshot")
+        print("Run: ./scripts/conformance/conformance.sh snapshot")
         sys.exit(1)
     with open(DETAIL_FILE) as f:
         return json.load(f)

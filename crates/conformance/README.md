@@ -22,16 +22,16 @@ From the repository root:
 
 ```bash
 # Generate TSC cache (required first time)
-./scripts/conformance.sh generate
+./scripts/conformance/conformance.sh generate
 
 # Run full conformance test suite
-./scripts/conformance.sh run
+./scripts/conformance/conformance.sh run
 
 # Run with options
-./scripts/conformance.sh run --verbose              # Show per-test results
-./scripts/conformance.sh run --max 1000            # Test first 1000 files
-./scripts/conformance.sh run --filter "strict"      # Filter by pattern
-./scripts/conformance.sh run --workers 32          # Use 32 workers
+./scripts/conformance/conformance.sh run --verbose              # Show per-test results
+./scripts/conformance/conformance.sh run --max 1000            # Test first 1000 files
+./scripts/conformance/conformance.sh run --filter "strict"      # Filter by pattern
+./scripts/conformance/conformance.sh run --workers 32          # Use 32 workers
 ```
 
 ## Architecture

@@ -8,7 +8,7 @@ fn main() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("scripts/typescript-versions.json");
+        .join("scripts/conformance/typescript-versions.json");
 
     let version = if versions_path.exists() {
         let content = std::fs::read_to_string(&versions_path).unwrap();

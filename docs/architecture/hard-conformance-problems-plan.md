@@ -206,9 +206,9 @@ guaranteed test gains.
    assignability for a pattern class affects dozens of tests simultaneously
 2. **Avoid ad-hoc suppressions** — each false positive should be traced to the root solver/binder
    cause rather than adding checker-level exception paths
-3. **Measure before and after** — always run `./scripts/conformance.sh run --filter "pattern"` to
+3. **Measure before and after** — always run `./scripts/conformance/conformance.sh run --filter "pattern"` to
    verify fixes don't introduce regressions before running the full suite
-4. **Use offline analysis first** — `python3 scripts/query-conformance.py` provides instant analysis
+4. **Use offline analysis first** — `python3 scripts/conformance/query-conformance.py` provides instant analysis
    without running the suite; reserve full runs for verification only
 5. **Batch related fixes** — group fixes by root cause (e.g., "narrowing through optional chains"
    affects multiple error codes) rather than by individual error code

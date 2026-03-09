@@ -165,22 +165,22 @@ Skill usage rules:
 - **All analysis can be done offline** from snapshot files. Only run the full suite to **verify code changes**.
 
 ### Offline analysis (preferred — instant, zero cost)
-- `python3 scripts/query-conformance.py` — overview of what to work on next.
-- `python3 scripts/query-conformance.py --one-missing` — tests fixable by adding 1 code.
-- `python3 scripts/query-conformance.py --one-extra` — tests fixable by removing 1 extra code.
-- `python3 scripts/query-conformance.py --false-positives` — false positive breakdown.
-- `python3 scripts/query-conformance.py --code TS2454` — deep-dive a specific error code.
-- `python3 scripts/query-conformance.py --extra-code TS7053` — tests where a code is falsely emitted.
-- `python3 scripts/query-conformance.py --close 2` — tests within diff <= 2 of passing.
-- Snapshot data: `scripts/conformance-snapshot.json` (aggregates), `scripts/conformance-detail.json` (per-test).
+- `python3 scripts/conformance/query-conformance.py` — overview of what to work on next.
+- `python3 scripts/conformance/query-conformance.py --one-missing` — tests fixable by adding 1 code.
+- `python3 scripts/conformance/query-conformance.py --one-extra` — tests fixable by removing 1 extra code.
+- `python3 scripts/conformance/query-conformance.py --false-positives` — false positive breakdown.
+- `python3 scripts/conformance/query-conformance.py --code TS2454` — deep-dive a specific error code.
+- `python3 scripts/conformance/query-conformance.py --extra-code TS7053` — tests where a code is falsely emitted.
+- `python3 scripts/conformance/query-conformance.py --close 2` — tests within diff <= 2 of passing.
+- Snapshot data: `scripts/conformance/conformance-snapshot.json` (aggregates), `scripts/conformance/conformance-detail.json` (per-test).
 
 ### Targeted testing (after code changes)
-- `./scripts/conformance.sh run --filter "pattern"` — run only matching tests (seconds).
-- `./scripts/conformance.sh run --filter "pattern" --verbose` — with expected vs actual.
+- `./scripts/conformance/conformance.sh run --filter "pattern"` — run only matching tests (seconds).
+- `./scripts/conformance/conformance.sh run --filter "pattern" --verbose` — with expected vs actual.
 
 ### Full suite (use sparingly — only to verify changes)
-- `./scripts/conformance.sh run` — run all tests.
-- `./scripts/conformance.sh snapshot` — run + save updated snapshot files.
+- `./scripts/conformance/conformance.sh run` — run all tests.
+- `./scripts/conformance/conformance.sh snapshot` — run + save updated snapshot files.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
