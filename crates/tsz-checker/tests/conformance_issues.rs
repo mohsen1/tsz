@@ -5509,3 +5509,87 @@ function ff({ a, b }: { a: string | undefined, b: () => void }) {
         ts2322.len()
     );
 }
+
+#[test]
+fn test_type_query_in_type_literal_signature_parameter_uses_declared_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(a: number | string) {
+  if (typeof a === "number") {
+    const fn: { (arg: typeof a): boolean; } = () => true;
+    fn("");
+  }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        ts2345.is_empty(),
+        "Type-literal call signature parameters should resolve `typeof` from the declared type, not the narrowed branch type.\nGot: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_type_query_in_type_alias_index_signature_stays_flow_sensitive() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(a: number | string) {
+  if (typeof a === "number") {
+    type I = { [key: string]: typeof a };
+    const i: I = { x: "" };
+  }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Index-signature value types should still see flow-sensitive `typeof` inside narrowed branches.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_returned_arrow_type_query_preserves_branch_narrowing() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(a: number | string) {
+  if (typeof a === "number") {
+    return (arg: typeof a) => {};
+  }
+  throw 0;
+}
+
+f(1)("");
+"#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        !ts2345.is_empty(),
+        "Returned arrow parameter `typeof` queries should inherit the narrowed return-site flow.\nGot: {diagnostics:?}"
+    );
+}

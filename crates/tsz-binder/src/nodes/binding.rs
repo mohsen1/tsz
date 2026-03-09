@@ -703,6 +703,7 @@ impl BinderState {
             k if k == syntax_kind_ext::RETURN_STATEMENT
                 || k == syntax_kind_ext::THROW_STATEMENT =>
             {
+                self.record_flow(idx);
                 if let Some(ret) = arena.get_return_statement(node)
                     && ret.expression.is_some()
                 {
