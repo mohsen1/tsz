@@ -2731,3 +2731,329 @@ interface Foo {
         _ => panic!("Expected Object or Callable type, got {type_data:?}"),
     }
 }
+
+// =============================================================================
+// Advanced Type Lowering Tests
+// =============================================================================
+
+#[test]
+fn test_lower_nested_generics() {
+    // Map<string, Map<number, boolean>> - nested generic type application
+    let (arena, type_idx) =
+        parse_type_alias_type_node("type T = Map<string, Map<number, boolean>>;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    // Should be an Application type with nested Application as an argument
+    match key {
+        TypeData::Application(app_id) => {
+            let app = interner.type_application(app_id);
+            assert_eq!(app.args.len(), 2);
+            // First arg should be STRING
+            assert_eq!(app.args[0], TypeId::STRING);
+            // Second arg should be another Application (Map<number, boolean>)
+            match interner.lookup(app.args[1]) {
+                Some(TypeData::Application(_)) => {} // Expected nested Application
+                other => panic!("Expected nested Application type, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected Application type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_type_with_multiple_type_params() {
+    // T<T1, T2, T3> - generic type with 3 type arguments
+    let (arena, type_idx) = parse_type_alias_type_node("type X = Record<string, number, boolean>;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Application(app_id) => {
+            let app = interner.type_application(app_id);
+            assert_eq!(app.args.len(), 3);
+            assert_eq!(app.args[0], TypeId::STRING);
+            assert_eq!(app.args[1], TypeId::NUMBER);
+            assert_eq!(app.args[2], TypeId::BOOLEAN);
+        }
+        _ => panic!("Expected Application type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_mapped_type_keyof() {
+    // { [K in keyof T]: T[K] } - mapped type with keyof and indexed access
+    let (arena, mapped_idx) = parse_mapped_type("type T<U> = { [K in keyof U]: U[K] };");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(mapped_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Mapped(mapped_id) => {
+            let mapped = interner.mapped_type(mapped_id);
+            assert_eq!(interner.resolve_atom(mapped.type_param.name), "K");
+            // constraint should be KeyOf type
+            match interner.lookup(mapped.constraint) {
+                Some(TypeData::KeyOf(_)) => {} // Expected
+                other => panic!("Expected KeyOf constraint, got {other:?}"),
+            }
+            // template should be IndexAccess type
+            match interner.lookup(mapped.template) {
+                Some(TypeData::IndexAccess(_, _)) => {} // Expected
+                other => panic!("Expected IndexAccess template, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected Mapped type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_conditional_type_infer() {
+    // T extends Array<infer U> ? U : T - conditional with infer in array
+    let (arena, type_idx) =
+        parse_type_alias_type_node("type Unwrap<T> = T extends Array<infer U> ? U : T;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Conditional(cond_id) => {
+            let cond = interner.conditional_type(cond_id);
+            // extends_type should be an Array with infer U as element
+            match interner.lookup(cond.extends_type) {
+                Some(TypeData::Array(elem)) => match interner.lookup(elem) {
+                    Some(TypeData::Infer(info)) => {
+                        assert_eq!(interner.resolve_atom(info.name), "U");
+                    }
+                    other => panic!("Expected Infer type in array element, got {other:?}"),
+                },
+                other => panic!("Expected Array type in extends, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected Conditional type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_template_literal_type() {
+    // `on${string}` - template literal with interpolation
+    let (arena, template_idx) = parse_template_literal_type("type T = `on${string}`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 2);
+            // First span: "on"
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                assert_eq!(interner.resolve_atom(*atom), "on");
+            } else {
+                panic!("Expected text span");
+            }
+            // Second span: string type
+            assert!(matches!(spans[1], TemplateSpan::Type(TypeId::STRING)));
+        }
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_index_access_type() {
+    // T['key'] - indexed access type
+    let (arena, type_idx) = parse_type_alias_type_node("type V<T> = T['key'];");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::IndexAccess(_obj_type, index_type) => {
+            // Index should be a string literal "key"
+            match interner.lookup(index_type) {
+                Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                    assert_eq!(interner.resolve_atom(atom), "key");
+                }
+                other => panic!("Expected string literal index, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected IndexAccess type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_keyof_type() {
+    // keyof { a: string; b: number } - keyof type operator on concrete type
+    // Note: The lowering produces a KeyOf type; evaluation to union happens in solver
+    let (arena, type_idx) = parse_type_alias_type_node("type K = keyof { a: string; b: number };");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    // Lowering produces a KeyOf type; the solver evaluates it to union of literals
+    match key {
+        TypeData::KeyOf(inner) => {
+            // Inner should be an Object type with properties a and b
+            match interner.lookup(inner) {
+                Some(TypeData::Object(_)) => {} // Expected
+                other => panic!("Expected Object type for inner, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected KeyOf type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_tuple_type() {
+    // [string, number, boolean] - tuple with 3 elements
+    let (arena, tuple_idx) = parse_tuple_type("type T = [string, number, boolean];");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(tuple_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Tuple(elements) => {
+            let elements = interner.tuple_list(elements);
+            assert_eq!(elements.len(), 3);
+            assert_eq!(elements[0].type_id, TypeId::STRING);
+            assert_eq!(elements[1].type_id, TypeId::NUMBER);
+            assert_eq!(elements[2].type_id, TypeId::BOOLEAN);
+        }
+        _ => panic!("Expected Tuple type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_tuple_with_rest() {
+    // [string, ...number[]] - tuple with rest element
+    let (arena, tuple_idx) = parse_tuple_type("type T = [string, ...number[]];");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(tuple_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Tuple(elements) => {
+            let elements = interner.tuple_list(elements);
+            assert_eq!(elements.len(), 2);
+
+            // First element: string
+            assert_eq!(elements[0].type_id, TypeId::STRING);
+            assert!(!elements[0].rest);
+
+            // Second element: rest number[]
+            assert!(elements[1].rest);
+            match interner.lookup(elements[1].type_id) {
+                Some(TypeData::Array(elem)) => assert_eq!(elem, TypeId::NUMBER),
+                other => panic!("Expected Array type for rest element, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected Tuple type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_optional_property() {
+    // { name?: string } - object with optional property
+    let (arena, literal_idx) = parse_type_literal("type T = { name?: string };");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(literal_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Object(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            let prop = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "name")
+                .expect("Expected name property");
+            assert_eq!(prop.type_id, TypeId::STRING);
+            assert!(prop.optional);
+        }
+        _ => panic!("Expected Object type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_readonly_property() {
+    // { readonly id: number } - object with readonly property
+    let (arena, literal_idx) = parse_type_literal("type T = { readonly id: number };");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(literal_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Object(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            let prop = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "id")
+                .expect("Expected id property");
+            assert_eq!(prop.type_id, TypeId::NUMBER);
+            assert!(prop.readonly);
+        }
+        _ => panic!("Expected Object type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_intersection_type() {
+    // { a: string } & { b: number } - intersection of two object types
+    // Note: The lowering normalizes object intersections into a merged Object type
+    let (arena, type_idx) = parse_type_alias_type_node("type T = { a: string } & { b: number };");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeData::Object(shape_id) => {
+            // The two objects should be merged into one with both properties
+            let shape = interner.object_shape(shape_id);
+            let prop_a = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "a");
+            let prop_b = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "b");
+            assert!(prop_a.is_some(), "Should have property 'a'");
+            assert!(prop_b.is_some(), "Should have property 'b'");
+        }
+        _ => panic!("Expected merged Object type, got {key:?}"),
+    }
+}
+
+#[test]
+fn test_lower_parenthesized_type() {
+    // (string | number) - parenthesized union type
+    let (arena, type_idx) = parse_type_alias_type_node("type T = (string | number);");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    // Parentheses are typically transparent - should get the inner type (union)
+    match key {
+        TypeData::Union(members) => {
+            let members = interner.type_list(members);
+            assert_eq!(members.as_ref(), [TypeId::STRING, TypeId::NUMBER]);
+        }
+        _ => panic!("Expected Union type, got {key:?}"),
+    }
+}

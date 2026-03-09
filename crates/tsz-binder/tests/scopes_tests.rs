@@ -303,8 +303,10 @@ fn scope_context_hoisted_vars_can_be_added() {
 fn scope_context_hoisted_functions_can_be_added() {
     let mut ctx = ScopeContext::new(ContainerKind::Function, NodeIndex::NONE, None);
 
-    ctx.hoisted_functions.push(("fn1".to_string(), NodeIndex(10)));
-    ctx.hoisted_functions.push(("fn2".to_string(), NodeIndex(20)));
+    ctx.hoisted_functions
+        .push(("fn1".to_string(), NodeIndex(10)));
+    ctx.hoisted_functions
+        .push(("fn2".to_string(), NodeIndex(20)));
 
     assert_eq!(ctx.hoisted_functions.len(), 2);
     assert_eq!(ctx.hoisted_functions[0].0, "fn1");
