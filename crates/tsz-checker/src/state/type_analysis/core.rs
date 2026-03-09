@@ -531,6 +531,49 @@ impl<'a> CheckerState<'a> {
     /// type Nested = (string | number) | boolean;
     /// // Normalized to Union(STRING, NUMBER, BOOLEAN)
     /// ```
+    fn is_type_query_in_non_flow_sensitive_signature_parameter(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut saw_parameter = false;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+
+            match parent_node.kind {
+                syntax_kind_ext::PARAMETER => saw_parameter = true,
+                k if k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+                    || k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                {
+                    return saw_parameter;
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+
+            current = parent;
+        }
+
+        false
+    }
+
     /// Get type from a type query node (typeof X).
     ///
     /// Creates a `TypeQuery` type that captures the type of a value, enabling type-level
@@ -603,9 +646,11 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|args| !args.nodes.is_empty());
         let factory = self.ctx.types.factory();
-        let flow_type_for_query_expr = |state: &mut Self| {
+        let use_flow_sensitive_query =
+            !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
+        let query_expr_type = |state: &mut Self, use_flow: bool| {
             let prev_skip = state.ctx.skip_flow_narrowing;
-            state.ctx.skip_flow_narrowing = false;
+            state.ctx.skip_flow_narrowing = !use_flow;
             let ty = state.get_type_of_node(type_query.expr_name);
             state.ctx.skip_flow_narrowing = prev_skip;
             ty
@@ -628,9 +673,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
                     let left_idx = qn.left;
                     let right_idx = qn.right;
-                    // Resolve the left side as a value expression (with flow narrowing)
+                    // Resolve the left side as a value expression at the query site.
                     let prev_skip = self.ctx.skip_flow_narrowing;
-                    self.ctx.skip_flow_narrowing = false;
+                    self.ctx.skip_flow_narrowing = !use_flow_sensitive_query;
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.skip_flow_narrowing = prev_skip;
                     trace!(left_type = ?left_type, "type_query qualified: left_type");
@@ -661,9 +706,11 @@ impl<'a> CheckerState<'a> {
                                     // property result so that `typeof k.foo` where
                                     // `foo: typeof I` yields the resolved value type.
                                     let resolved = self.resolve_type_query_type(type_id);
-                                    let narrowed =
-                                        self.apply_flow_narrowing(type_query.expr_name, resolved);
-                                    return narrowed;
+                                    return if use_flow_sensitive_query {
+                                        self.apply_flow_narrowing(type_query.expr_name, resolved)
+                                    } else {
+                                        resolved
+                                    };
                                 }
                                 _ => {
                                     // Property access returned any/error or failed entirely.
@@ -697,13 +744,14 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
 
                 if !is_type_only_import {
-                    // Prefer flow-aware value-space type at the query site.
-                    // This keeps `typeof expr` aligned with control-flow narrowing.
+                    // Prefer the value-space type at the query site. Most `typeof`
+                    // queries are flow-sensitive, but type-only function-like
+                    // parameter positions use the declared type instead.
                     // BUT skip Lazy types - those indicate circular reference (e.g., `typeof A`
                     // inside class A's body). Lazy types resolve to the instance type via
                     // resolve_lazy, but typeof needs the constructor type. Fall through to
                     // create a TypeQuery(SymbolRef) which resolves correctly.
-                    let expr_type = flow_type_for_query_expr(self);
+                    let expr_type = query_expr_type(self, use_flow_sensitive_query);
                     let is_lazy =
                         tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
                             .is_some();
@@ -726,11 +774,12 @@ impl<'a> CheckerState<'a> {
             trace!(resolved = ?resolved, "resolved type");
 
             if !has_type_args {
-                // Prefer flow-aware type at the query site for `typeof expr` in narrowed scopes
-                // (e.g. inside `if (x.p === "A")`, `typeof x.p` should be `"A"`).
+                // Prefer the type at the query site for `typeof expr`. Most queries
+                // preserve control-flow narrowing, but type-only function-like
+                // parameter positions resolve from the declared type.
                 // Skip Lazy types - they indicate circular reference and would resolve to
                 // the instance type instead of the constructor type needed for typeof.
-                let flow_resolved = flow_type_for_query_expr(self);
+                let flow_resolved = query_expr_type(self, use_flow_sensitive_query);
                 let flow_is_lazy =
                     tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, flow_resolved)
                         .is_some();
