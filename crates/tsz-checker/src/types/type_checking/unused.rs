@@ -551,20 +551,12 @@ impl<'a> CheckerState<'a> {
         if check_locals {
             for (import_decl_idx, (total_count, unused_count)) in import_declarations {
                 // Only emit if there are multiple imports and ALL are unused
-                if total_count > 1
-                    && unused_count == total_count
-                    && let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx)
-                {
-                    let msg = "All imports in import declaration are unused.".to_string();
-                    let start = import_decl_node.pos;
-                    let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        msg,
+                if total_count > 1 && unused_count == total_count {
+                    self.error_at_node(
+                        import_decl_idx,
+                        "All imports in import declaration are unused.",
                         6192,
-                    ));
+                    );
                 }
             }
 
@@ -573,20 +565,8 @@ impl<'a> CheckerState<'a> {
             // For single unused variables, TS6133 is emitted above.
             for (var_decl_idx, (total_count, unused_count)) in variable_declarations {
                 // Only emit if there are multiple variables and ALL are unused
-                if total_count > 1
-                    && unused_count == total_count
-                    && let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx)
-                {
-                    let msg = "All variables are unused.".to_string();
-                    let start = var_decl_node.pos;
-                    let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        msg,
-                        6199,
-                    ));
+                if total_count > 1 && unused_count == total_count {
+                    self.error_at_node(var_decl_idx, "All variables are unused.", 6199);
                 }
             }
 
@@ -595,20 +575,8 @@ impl<'a> CheckerState<'a> {
             // For single unused elements, TS6133 is emitted above.
             for (pattern_idx, (total_count, unused_count)) in destructuring_patterns {
                 // Only emit if there are multiple elements and ALL are unused
-                if total_count > 1
-                    && unused_count == total_count
-                    && let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
-                {
-                    let msg = "All destructured elements are unused.".to_string();
-                    let start = pattern_node.pos;
-                    let length = pattern_node.end.saturating_sub(pattern_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        msg,
-                        6198,
-                    ));
+                if total_count > 1 && unused_count == total_count {
+                    self.error_at_node(pattern_idx, "All destructured elements are unused.", 6198);
                 }
             }
         }
