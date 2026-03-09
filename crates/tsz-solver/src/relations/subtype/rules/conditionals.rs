@@ -6,7 +6,7 @@
 //! - Branch compatibility checking
 
 use crate::types::{ConditionalType, TypeData, TypeId};
-use crate::visitor::type_param_info;
+use crate::visitor::{contains_type_parameter_named, type_param_info};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -122,6 +122,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if cond.is_distributive
             && let Some(param_info) = type_param_info(self.interner, cond.check_type)
             && let Some(constraint) = param_info.constraint
+            && !contains_type_parameter_named(self.interner, constraint, param_info.name)
         {
             use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
             let mut sub = TypeSubstitution::new();

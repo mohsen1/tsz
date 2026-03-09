@@ -319,12 +319,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::Entered => {}
             RecursionResult::Cycle => {
                 // Recursion guard for self-referential mapped/application types.
-                // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
+                // Recursive mapped types must stay deferred here. Collapsing them to
+                // `{}` loses the constraint structure and can incorrectly make
+                // self-referential generic constraints look satisfied.
                 let key = self.interner.lookup(type_id);
                 if matches!(key, Some(TypeData::Mapped(_))) {
-                    let empty = self.interner.object(vec![]);
-                    self.cache.insert(type_id, empty);
-                    return empty;
+                    self.cache.insert(type_id, type_id);
+                    return type_id;
                 }
                 return type_id;
             }

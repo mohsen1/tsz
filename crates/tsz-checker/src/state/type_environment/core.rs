@@ -400,16 +400,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve type arguments so distributive conditionals can see unions.
-        // For conditional type bodies with Application extends containing infer
-        // (e.g., `T extends Promise<infer U> ? U : T`), preserve Application args
-        // so the conditional evaluator can match at the Application level.
-        let body_has_conditional_app_infer =
-            self.body_is_conditional_with_application_infer(body_type);
+        // For conditional type bodies whose extends side contains infer patterns,
+        // preserve generic/type-parameter arguments so the conditional evaluator
+        // can still use their original constraints during infer matching.
+        let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_app_infer && query::is_generic_type(self.ctx.types, arg) {
-                    arg // Preserve Application form
+                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                    arg
                 } else {
                     self.evaluate_type_with_env(arg)
                 }
@@ -430,13 +429,12 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(result)
     }
 
-    /// Check if a type body is a Conditional type whose `extends_type` is an Application.
-    /// This detects patterns like `T extends Promise<infer U> ? U : T`.
-    fn body_is_conditional_with_application_infer(&self, body_type: TypeId) -> bool {
+    /// Check if a type body is a Conditional type whose `extends_type` contains infer patterns.
+    fn body_is_conditional_with_infer(&self, body_type: TypeId) -> bool {
         let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
             return false;
         };
-        query::is_generic_type(self.ctx.types, cond.extends_type)
+        tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.

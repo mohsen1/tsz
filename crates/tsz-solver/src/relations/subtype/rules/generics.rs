@@ -12,9 +12,9 @@ use crate::def::DefId;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, index_access_parts, is_empty_object_type, keyof_inner_type, lazy_def_id,
-    literal_value, mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info,
-    union_list_id,
+    application_id, contains_type_parameter_named, index_access_parts, is_empty_object_type,
+    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    object_with_index_shape_id, type_param_info, union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
@@ -78,14 +78,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check reversed pair for bivariant cross-recursion
         if self.def_guard.is_visiting(&(t_def, s_def)) {
-            return SubtypeResult::CycleDetected;
+            return self.cycle_result();
         }
 
         use crate::recursion::RecursionResult;
         match self.def_guard.enter(def_pair) {
-            RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+            RecursionResult::Cycle => return self.cycle_result(),
             RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
-                return SubtypeResult::DepthExceeded;
+                return self.depth_result();
             }
             RecursionResult::Entered => {}
         }
@@ -321,13 +321,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.def_guard.is_visiting(&def_pair)
                 || self.def_guard.is_visiting(&(def_pair.1, def_pair.0))
             {
-                return SubtypeResult::CycleDetected;
+                return self.cycle_result();
             }
             use crate::recursion::RecursionResult;
             match self.def_guard.enter(def_pair) {
-                RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+                RecursionResult::Cycle => return self.cycle_result(),
                 RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
-                    return SubtypeResult::DepthExceeded;
+                    return self.depth_result();
                 }
                 RecursionResult::Entered => {}
             }
@@ -885,6 +885,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
             && let Some(constraint) = param.constraint
         {
+            // A self-referential bound like `T extends Box<T>` is not a concrete
+            // structural expansion source. Substituting it back into a mapped type
+            // can make recursive constraints look satisfiable simply because the
+            // relation checker re-enters the same bound coinductively.
+            if contains_type_parameter_named(self.interner, constraint, param.name) {
+                return None;
+            }
+
             let mut subst = TypeSubstitution::new();
             subst.insert(param.name, constraint);
             // Use keyof(constraint) directly to prevent eager evaluation
