@@ -606,6 +606,13 @@ impl<'a> FlowAnalyzer<'a> {
         if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return false;
         }
+        if let Some(ext) = self.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::CATCH_CLAUSE
+        {
+            return false;
+        }
 
         let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
             return false;
@@ -623,6 +630,49 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         decl.initializer.is_none() || self.nullish_literal_type(decl.initializer).is_some()
+    }
+
+    pub(crate) fn is_unknown_catch_variable_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let mut decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_idx = ext.parent;
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        let Some(ext) = self.arena.get_extended(decl_idx) else {
+            return false;
+        };
+        if ext.parent.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
+            return false;
+        }
+        let Some(catch_clause) = self.arena.get_catch_clause(parent_node) else {
+            return false;
+        };
+        catch_clause.variable_declaration == decl_idx
     }
 
     /// Get the declared annotation type for a variable declaration node, if available.

@@ -906,16 +906,24 @@ impl<'a> FlowAnalyzer<'a> {
 
                 if targets_reference {
                     let is_control_flow_typed_any = control_flow_typed_any_symbol;
+                    let preserve_unknown_catch_type = initial_type == TypeId::UNKNOWN
+                        && symbol_id
+                            .or_else(|| self.reference_symbol(reference))
+                            .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
                     // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
                     // These types should preserve their identity across assignments to match tsc behavior
                     //
                     // IMPORTANT: unknown is NOT included here because it SHOULD be narrowed by assignments
                     // Example: let x: unknown; x = 123; should narrow x to number
                     //
+                    // Catch variables with declared/implicit unknown are special:
+                    // plain assignments do not change their flow type.
+                    //
                     // any absorbs assignments (stays any)
                     // error persists to prevent cascading errors
                     if (initial_type != TypeId::ANY || is_control_flow_typed_any)
                         && initial_type != TypeId::ERROR
+                        && !preserve_unknown_catch_type
                     {
                         // Check if this is a destructuring assignment (widens literals to primitives)
                         let is_destructuring = self.is_destructuring_assignment(flow.node);
@@ -998,7 +1006,7 @@ impl<'a> FlowAnalyzer<'a> {
                             }
                         }
                     } else {
-                        // For any/error types: Don't apply narrowing - continue to antecedent
+                        // For any/error/unknown-catch types: Don't apply narrowing - continue to antecedent
                         // This allows condition narrowing (typeof guards) to still work
                         if let Some(&ant) = flow.antecedent.first() {
                             if !in_worklist.contains(&ant) && !visited.contains(&ant) {

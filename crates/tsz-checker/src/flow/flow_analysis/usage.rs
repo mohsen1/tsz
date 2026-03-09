@@ -196,6 +196,13 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        if let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::CATCH_CLAUSE
+        {
+            return false;
+        }
 
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return false;
