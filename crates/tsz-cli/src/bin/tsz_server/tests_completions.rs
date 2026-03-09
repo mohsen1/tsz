@@ -2394,3 +2394,48 @@ fn test_completion_info_global_function_omits_plain_call_insert_text() {
         "plain global function completions should omit insertText"
     );
 }
+
+#[test]
+fn test_completion_info_class_member_snippet_sets_new_identifier_location() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node.ts".to_string(),
+        "import Container from \"./container.js\";\nimport Document from \"./document.js\";\n\ndeclare namespace Node {\n  class Node extends Node_ {}\n\n  export { Node as default };\n}\n\ndeclare abstract class Node_ {\n  parent: Container | Document | undefined;\n}\n\ndeclare class Node extends Node_ {}\n\nexport = Node;".to_string(),
+    );
+    server.open_files.insert(
+        "/document.ts".to_string(),
+        "import Container from \"./container.js\";\n\ndeclare namespace Document {\n  export { Document_ as default };\n}\n\ndeclare class Document_ extends Container {}\n\ndeclare class Document extends Document_ {}\n\nexport = Document;".to_string(),
+    );
+    server.open_files.insert(
+        "/container.ts".to_string(),
+        "import Node from \"./node.js\";\n\ndeclare namespace Container {\n  export { Container_ as default };\n}\n\ndeclare abstract class Container_ extends Node {\n  p\n}\n\ndeclare class Container extends Container_ {}\n\nexport = Container;".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/container.ts",
+            "line": 8,
+            "offset": 4,
+            "preferences": {
+                "includeCompletionsWithInsertText": true,
+                "includeCompletionsWithClassMemberSnippets": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    assert_eq!(
+        completion_body["isNewIdentifierLocation"],
+        serde_json::json!(true)
+    );
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(entries.iter().any(|entry| {
+        entry.get("source").and_then(serde_json::Value::as_str) == Some("ClassMemberSnippet/")
+    }));
+}

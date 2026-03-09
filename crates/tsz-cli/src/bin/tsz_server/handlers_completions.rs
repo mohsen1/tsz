@@ -1589,19 +1589,21 @@ impl Server {
             let has_class_member_snippet = items
                 .iter()
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
-            let is_new_identifier_location = if Self::is_bare_identifier_expression_prefix(
-                &source_text,
-                &line_map,
-                completion_position,
-            ) {
-                false
-            } else {
-                completion_result
-                    .as_ref()
-                    .map(|r| r.is_new_identifier_location)
-                    .unwrap_or(false)
-                    || (include_class_member_snippets && has_class_member_snippet)
-            };
+            let is_new_identifier_location =
+                if include_class_member_snippets && has_class_member_snippet {
+                    true
+                } else if Self::is_bare_identifier_expression_prefix(
+                    &source_text,
+                    &line_map,
+                    completion_position,
+                ) {
+                    false
+                } else {
+                    completion_result
+                        .as_ref()
+                        .map(|r| r.is_new_identifier_location)
+                        .unwrap_or(false)
+                };
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
 
