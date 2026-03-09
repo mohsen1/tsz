@@ -438,6 +438,7 @@ impl<'a> CheckerState<'a> {
         // Check if this is an arithmetic or bitwise operator
         // These operators require integer operands and emit TS2362/TS2363
         // Note: + is handled separately - it can be string concatenation or arithmetic
+        let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
         let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
         let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
         let requires_numeric_operands = is_arithmetic || is_bitwise;
