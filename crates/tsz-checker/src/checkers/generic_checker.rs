@@ -4,7 +4,7 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_solver::{TypeData, TypeId};
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Generic Type Argument Checking Methods
@@ -375,6 +375,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip constraint checking for `infer` type arguments in conditional
+                // types (e.g., `R extends Reducer<any, infer A>`). TSC does not emit
+                // TS2344 for infer positions — constraints on inferred type params
+                // are checked during conditional type evaluation, not here.
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                    && arg_node.kind == tsz_parser::parser::syntax_kind_ext::INFER_TYPE
+                {
+                    continue;
+                }
+
                 // When the type argument contains type parameters, we generally skip
                 // constraint checking (deferred to instantiation time). However, when
                 // the type arg IS a bare type parameter, check its base constraint
@@ -387,9 +398,8 @@ impl<'a> CheckerState<'a> {
                     .then(|| self.constraint_check_base_type(type_arg))
                     .filter(|&base| base != type_arg);
                 if type_arg_contains_type_parameters {
-                    let db = self.ctx.types.as_type_database();
                     let is_bare_type_param =
-                        matches!(db.lookup(type_arg), Some(TypeData::TypeParameter(_)));
+                        query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
                     if !is_bare_type_param {
                         // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
                         // `Parameters<Target[K]>`). Defer constraint checking to
@@ -412,7 +422,12 @@ impl<'a> CheckerState<'a> {
                         // params often appear in conditional types where the true branch
                         // narrows to a specific union member. Checking the full union
                         // against the narrowed constraint would produce false positives.
-                        if tsz_solver::type_queries::get_union_members(db, base).is_some() {
+                        if tsz_solver::type_queries::get_union_members(
+                            self.ctx.types.as_type_database(),
+                            base,
+                        )
+                        .is_some()
+                        {
                             continue;
                         }
                         if query::contains_type_parameters(self.ctx.types, base) {
@@ -545,25 +560,25 @@ impl<'a> CheckerState<'a> {
             return self.constraint_check_base_type(evaluated);
         }
 
-        match self.ctx.types.as_type_database().lookup(type_id) {
-            Some(TypeData::TypeParameter(info)) => info
-                .constraint
-                .map(|constraint| self.evaluate_type_for_assignability(constraint))
-                .unwrap_or(TypeId::UNKNOWN),
-            Some(TypeData::IndexAccess(object_type, index_type)) => {
-                let constrained_index_type = self.constraint_check_base_type(index_type);
-                if constrained_index_type == TypeId::UNKNOWN || constrained_index_type == index_type
-                {
-                    type_id
-                } else {
-                    let constrained_access = self
-                        .ctx
-                        .types
-                        .index_access(object_type, constrained_index_type);
-                    self.evaluate_type_for_assignability(constrained_access)
-                }
+        let db = self.ctx.types.as_type_database();
+        // For TypeParameter: returns constraint or UNKNOWN; for non-TypeParameter: returns type_id
+        let base = query::base_constraint_of_type(db, type_id);
+        if base != type_id {
+            return self.evaluate_type_for_assignability(base);
+        }
+        if let Some((object_type, index_type)) = query::index_access_components(db, type_id) {
+            let constrained_index_type = self.constraint_check_base_type(index_type);
+            if constrained_index_type == TypeId::UNKNOWN || constrained_index_type == index_type {
+                type_id
+            } else {
+                let constrained_access = self
+                    .ctx
+                    .types
+                    .index_access(object_type, constrained_index_type);
+                self.evaluate_type_for_assignability(constrained_access)
             }
-            _ => type_id,
+        } else {
+            type_id
         }
     }
 
