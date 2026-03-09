@@ -178,7 +178,8 @@ impl<'a> CheckerState<'a> {
         // Strip `undefined` from the initial type for parameters with default values.
         // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`
         // starts as `string` (not `string | undefined`) because the default guarantees it.
-        let initial_type = if let Some(sym_id) = self.get_symbol_for_identifier(idx)
+        let initial_type = if !self.is_in_default_parameter(idx)
+            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             && sym.value_declaration.is_some()
             && let Some(decl_node) = self.ctx.arena.get(sym.value_declaration)

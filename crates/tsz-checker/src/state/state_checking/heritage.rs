@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
                             self.validate_type_reference_type_arguments(
                                 heritage_sym,
                                 type_args,
-                                expr_idx,
+                                type_idx,
                             );
                         }
                     } else if required_count > 0

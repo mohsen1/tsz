@@ -650,6 +650,7 @@ impl<'a> CheckerState<'a> {
         let saved_uses_arguments = self.ctx.js_body_uses_arguments;
         self.ctx.js_body_uses_arguments = false;
         let mut has_contextual_return = false;
+        let mut return_context_for_circularity = None;
         let mut early_yield_type: Option<TypeId> = None;
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
@@ -780,6 +781,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     return_context
                 };
+                return_context_for_circularity = return_context;
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
@@ -807,6 +809,14 @@ impl<'a> CheckerState<'a> {
             let is_promise_executor = self.is_promise_executor_function(idx);
             let is_accessor_node = node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR;
+            if is_closure
+                && !has_type_annotation
+                && !has_jsdoc_return
+                && self.ctx.is_checking_statements
+                && !self.contextual_return_suppresses_circularity(return_context_for_circularity)
+            {
+                self.record_pending_circular_return_sites(idx, body);
+            }
             // For closures (function expressions / arrow functions), defer TS7010/TS7011
             // during the build_type_environment phase.  During that phase, contextual
             // types are not yet available (they're set during check_variable_declaration).

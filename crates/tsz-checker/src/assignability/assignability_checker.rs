@@ -453,6 +453,9 @@ impl<'a> CheckerState<'a> {
     /// the type system to validate assignments, function calls, returns, etc.
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
 
@@ -498,6 +501,9 @@ impl<'a> CheckerState<'a> {
 
     /// Like `is_assignable_to`, but forces the strict-function-types relation flag.
     pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
         self.check_assignability_cached(
             source,
@@ -513,6 +519,9 @@ impl<'a> CheckerState<'a> {
     /// overrides, caching, and precondition setup) while pinning nullability
     /// semantics to strict mode for localized checks.
     pub fn is_assignable_to_strict_null(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
         self.check_assignability_cached(
             source,
@@ -555,6 +564,9 @@ impl<'a> CheckerState<'a> {
     /// Follows the same pattern as `is_assignable_to` but calls `is_assignable_to_bivariant_callback`
     /// which disables `strict_function_types` for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.

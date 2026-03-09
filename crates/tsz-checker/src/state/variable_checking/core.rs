@@ -599,6 +599,7 @@ impl<'a> CheckerState<'a> {
                         checker.clear_type_cache_recursive(var_decl.initializer);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
+                    let init_type_for_relation = checker.resolve_lazy_type(init_type);
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any,
@@ -609,11 +610,12 @@ impl<'a> CheckerState<'a> {
                     // causing type_contains_error to return true even though the declared type
                     // itself (String interface) is perfectly valid for assignability checking.
                     if declared_type != TypeId::ANY && declared_type != TypeId::ERROR {
+                        let checked_init_type = init_type_for_relation;
                         if let Some((source_level, target_level)) =
                             checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
                         {
                             checker.error_constructor_accessibility_not_assignable(
-                                init_type,
+                                checked_init_type,
                                 declared_type,
                                 source_level,
                                 target_level,
@@ -624,51 +626,66 @@ impl<'a> CheckerState<'a> {
                             // (tsc reports TS2322 on each mismatching element), then fall back
                             // to a generic TS2322 error.
                             if !checker.try_elaborate_initializer_elements(
-                                init_type,
+                                checked_init_type,
                                 declared_type,
                                 var_decl.initializer,
                             ) {
                                 let _ = checker.check_assignable_or_report_generic_at(
-                                    init_type,
+                                    checked_init_type,
                                     declared_type,
                                     var_decl.initializer,
                                     decl_idx,
                                 );
                             }
-                        } else if checker.try_discriminated_union_excess_check(
-                            init_type,
-                            declared_type,
-                            var_decl.initializer,
-                        ) {
-                            // Discriminated union excess property check handled the error.
-                            // tsc reports TS2353 against the narrowed member instead of
-                            // a generic TS2322 for these cases.
-                        } else if checker.try_elaborate_initializer_elements(
-                            init_type,
-                            declared_type,
-                            var_decl.initializer,
-                        ) {
-                            // Elaboration emitted per-element TS2322 errors on the specific
-                            // mismatching array/tuple elements. Skip the generic TS2322.
                         } else {
-                            // Run excess property check first for object literal
-                            // initializers. In tsc, TS2353 (excess property) takes
-                            // priority over TS2741/TS2322 (missing property).
-                            let diags_before = checker.ctx.diagnostics.len();
-                            checker.check_object_literal_excess_properties(
-                                init_type,
-                                declared_type,
-                                var_decl.initializer,
-                            );
-                            if checker.ctx.diagnostics.len() == diags_before {
-                                // Try per-property elaboration for object literals before
-                                // the generic TS2322. tsc reports TS2322 on the specific
-                                // mismatching property (e.g. inside an object literal assigned
-                                // to an index-signature type) instead of on the outer assignment.
-                                // Only attempt elaboration when overall assignment fails and
-                                // the initializer is an object literal (arrays/tuples are
-                                // handled earlier by try_elaborate_initializer_elements).
-                                if !checker.is_assignable_to(init_type, declared_type)
+                            let handled_discriminated = checker
+                                .try_discriminated_union_excess_check(
+                                    checked_init_type,
+                                    declared_type,
+                                    var_decl.initializer,
+                                );
+                            if handled_discriminated {
+                                // Discriminated union excess property check handled the error.
+                                // tsc reports TS2353 against the narrowed member instead of
+                                // a generic TS2322 for these cases.
+                            } else {
+                                let elaborated_elements = checker
+                                    .try_elaborate_initializer_elements(
+                                        checked_init_type,
+                                        declared_type,
+                                        var_decl.initializer,
+                                    );
+                                if elaborated_elements {
+                                    // Elaboration emitted per-element TS2322 errors on the specific
+                                    // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else {
+                                    // Run excess property check first for object literal
+                                    // initializers. In tsc, TS2353 (excess property) takes
+                                    // priority over TS2741/TS2322 (missing property).
+                                    let diags_before = checker.ctx.diagnostics.len();
+                                    checker.check_object_literal_excess_properties(
+                                        checked_init_type,
+                                        declared_type,
+                                        var_decl.initializer,
+                                    );
+                                    if checker.ctx.diagnostics.len() == diags_before {
+                                        // Try per-property elaboration for object literals before
+                                        // the generic TS2322. tsc reports TS2322 on the specific
+                                        // mismatching property (e.g. inside an object literal assigned
+                                        // to an index-signature type) instead of on the outer assignment.
+                                        // Only attempt elaboration when overall assignment fails and
+                                        // the initializer is an object literal (arrays/tuples are
+                                        // handled earlier by try_elaborate_initializer_elements).
+                                        let is_object_literal_initializer = checker
+                                            .ctx
+                                            .arena
+                                            .get(var_decl.initializer)
+                                            .is_some_and(|init_node| {
+                                                init_node.kind
+                                                    == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                            });
+                                        if is_object_literal_initializer
+                                    && !checker.is_assignable_to(checked_init_type, declared_type)
                                     && checker.try_elaborate_object_literal_properties_for_var_init(
                                         var_decl.initializer,
                                         declared_type,
@@ -679,11 +696,13 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     // No elaboration possible — fall back to generic TS2322
                                     let _ = checker.check_assignable_or_report_at(
-                                        init_type,
+                                        checked_init_type,
                                         declared_type,
                                         var_decl.initializer,
                                         decl_idx,
                                     );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -877,12 +896,23 @@ impl<'a> CheckerState<'a> {
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
             let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
+            let diag_count_before = self.ctx.diagnostics.len();
+            let emitted_before = self.ctx.emitted_diagnostics.clone();
             let mut final_type = compute_final_type(self);
             // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
             // This happens when the initializer (directly or indirectly) references the variable,
             // causing the node-level cycle detection to return ERROR.
             let sym_cached_as_error =
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
+            let circular_return_sites = if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+            {
+                self.consume_circular_return_sites_for_initializer(sym_id, var_decl.initializer)
+            } else {
+                Vec::new()
+            };
+            let has_recorded_circular_return = !circular_return_sites.is_empty();
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
             // Skip this check when the variable already had a type from a prior declaration
@@ -1075,7 +1105,44 @@ impl<'a> CheckerState<'a> {
             // TS7022: Structural circularity — `var a = { f: a }`.
             // TS7023: Return-type circularity — `var f = () => f()` or
             //         `var f = function() { return f(); }`.
+            let init_kind = self.ctx.arena.get(var_decl.initializer).map(|n| n.kind);
+            let is_direct_deferred_initializer = init_kind.is_some_and(|kind| {
+                matches!(
+                    kind,
+                    syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::CLASS_EXPRESSION
+                )
+            });
             if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && has_recorded_circular_return
+                && !is_direct_deferred_initializer
+            {
+                self.suppress_circular_initializer_relation_diagnostics(
+                    diag_count_before,
+                    &emitted_before,
+                    var_decl.initializer,
+                );
+                final_type = TypeId::ANY;
+                if let Some(ref name) = var_name {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                        &[name],
+                    );
+                    for &site_idx in &circular_return_sites {
+                        self.emit_circular_return_site_diagnostic(
+                            site_idx,
+                            Some(name.as_str()),
+                            var_decl.name,
+                            var_decl.initializer,
+                        );
+                    }
+                }
+            } else if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
                 && sym_cached_as_error
@@ -1090,7 +1157,6 @@ impl<'a> CheckerState<'a> {
                 //   `const a = { get self() { return a; } } satisfies T`
                 // are valid and should NOT get TS7022.  Bare object literals
                 // like `var a = { f: a }` SHOULD still get TS7022.
-                let init_kind = self.ctx.arena.get(var_decl.initializer).map(|n| n.kind);
                 let has_type_wrapper = init_kind.is_some_and(|k| {
                     matches!(
                         k,

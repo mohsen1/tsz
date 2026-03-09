@@ -393,7 +393,14 @@ impl ParserState {
             // This applies to all parameter contexts, including arrow functions.
             if question_token {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
+                let (error_start, error_len) = self
+                    .arena
+                    .get(name)
+                    .map(|node| (node.pos, node.end - node.pos))
+                    .unwrap_or((start_pos, 0));
+                self.parse_error_at(
+                    error_start,
+                    error_len,
                     "Parameter cannot have question mark and initializer.",
                     diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
                 );

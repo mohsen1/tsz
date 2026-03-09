@@ -1266,6 +1266,19 @@ impl<'a> CheckerState<'a> {
 
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
+            if cached == TypeId::ERROR
+                && self.ctx.symbol_resolution_set.contains(&sym_id)
+                && let Some(provisional) = self.provisional_circular_function_symbol_type(sym_id)
+            {
+                self.ctx.symbol_types.insert(sym_id, provisional);
+                trace!(
+                    sym_id = sym_id.0,
+                    type_id = provisional.0,
+                    file = self.ctx.file_name.as_str(),
+                    "(cached provisional) get_type_of_symbol"
+                );
+                return provisional;
+            }
             trace!(
                 sym_id = sym_id.0,
                 type_id = cached.0,
@@ -1308,6 +1321,15 @@ impl<'a> CheckerState<'a> {
                     let lazy_type = factory.lazy(def_id);
                     // Don't cache the Lazy type - we want to retry when the circular reference is broken
                     return lazy_type;
+                }
+
+                if flags & symbol_flags::FUNCTION != 0
+                    && flags & symbol_flags::INTERFACE == 0
+                    && let Some(provisional) =
+                        self.provisional_circular_function_symbol_type(sym_id)
+                {
+                    self.ctx.symbol_types.insert(sym_id, provisional);
+                    return provisional;
                 }
             }
 
@@ -1354,6 +1376,9 @@ impl<'a> CheckerState<'a> {
             {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
                 factory.lazy(def_id)
+            } else if flags & symbol_flags::FUNCTION != 0 && flags & symbol_flags::INTERFACE == 0 {
+                self.provisional_circular_function_symbol_type(sym_id)
+                    .unwrap_or(TypeId::ERROR)
             } else {
                 TypeId::ERROR
             }
@@ -1396,7 +1421,7 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol
         // because those are the same TypeIds used when lowering the type body.
         // Calling get_type_params_for_symbol would create fresh TypeIds that don't match.
-        if result != TypeId::ANY && result != TypeId::ERROR && result != TypeId::UNKNOWN {
+        if result != TypeId::ANY && result != TypeId::ERROR {
             // For class symbols, we need to cache BOTH the constructor type (for value position)
             // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
@@ -1558,6 +1583,60 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn provisional_circular_function_symbol_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        use tsz_solver::{CallableShape, FunctionShape};
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::FUNCTION == 0 || symbol.flags & symbol_flags::INTERFACE != 0
+        {
+            return None;
+        }
+
+        let declarations = symbol.declarations.clone();
+        let factory = self.ctx.types.factory();
+        let mut overloads = Vec::new();
+        let mut implementation_sig = None;
+
+        for decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.ctx.arena.get_function(node) else {
+                continue;
+            };
+
+            let sig = self.call_signature_from_function(func, decl_idx);
+            if func.body.is_none() {
+                overloads.push(sig);
+            } else if implementation_sig.is_none() {
+                implementation_sig = Some(sig);
+            }
+        }
+
+        if !overloads.is_empty() {
+            return Some(factory.callable(CallableShape {
+                call_signatures: overloads,
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            }));
+        }
+
+        let sig = implementation_sig?;
+        Some(factory.function(FunctionShape {
+            type_params: sig.type_params,
+            params: sig.params,
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor: false,
+            is_method: false,
+        }))
     }
 
     /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.

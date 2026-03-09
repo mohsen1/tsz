@@ -88,17 +88,11 @@ impl<'a> CheckerState<'a> {
                                 {
                                     if !self.is_unresolved_import_symbol(qn.left) {
                                         self.validate_type_reference_type_arguments(
-                                            sym_id,
-                                            args,
-                                            type_name_idx,
+                                            sym_id, args, idx,
                                         );
                                     }
                                 } else {
-                                    self.validate_type_reference_type_arguments(
-                                        sym_id,
-                                        args,
-                                        type_name_idx,
-                                    );
+                                    self.validate_type_reference_type_arguments(sym_id, args, idx);
                                 }
                             }
                             return self.type_reference_symbol_type(sym_id);
@@ -119,7 +113,7 @@ impl<'a> CheckerState<'a> {
                     // Validate type arguments against constraints (TS2344)
                     // Skip validation inside type parameter declarations (constraints/defaults)
                     if !self.is_inside_type_parameter_declaration(idx) {
-                        self.validate_type_reference_type_arguments(sym_id, args, type_name_idx);
+                        self.validate_type_reference_type_arguments(sym_id, args, idx);
                     }
                 }
                 let type_param_bindings = self.get_type_param_bindings();
@@ -435,7 +429,7 @@ impl<'a> CheckerState<'a> {
                         && !self.is_inside_type_parameter_declaration(idx)
                         && let Some(sym_id) = sym_id
                     {
-                        self.validate_type_reference_type_arguments(sym_id, args, type_name_idx);
+                        self.validate_type_reference_type_arguments(sym_id, args, idx);
                     }
                 }
                 // Cache type parameters for the symbol's DefId before lowering.
