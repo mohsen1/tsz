@@ -1187,29 +1187,38 @@ impl<'a> CheckerState<'a> {
         // Check if this method/accessor has an explicit `this` parameter.
         // If so, extract and return its type instead of the default class type.
         if let Some(node) = self.ctx.arena.get(member_idx) {
-            let explicit_this_type_annotation = match node.kind {
+            let (explicit_this_type_annotation, member_type_params) = match node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                        self.get_explicit_this_type_annotation(&method.parameters.nodes)
+                        (
+                            self.get_explicit_this_type_annotation(&method.parameters.nodes),
+                            method.type_parameters.clone(),
+                        )
                     } else {
-                        None
+                        (None, None)
                     }
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                        self.get_explicit_this_type_annotation(&accessor.parameters.nodes)
+                        (
+                            self.get_explicit_this_type_annotation(&accessor.parameters.nodes),
+                            accessor.type_parameters.clone(),
+                        )
                     } else {
-                        None
+                        (None, None)
                     }
                 }
                 k if k == syntax_kind_ext::SET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                        self.get_explicit_this_type_annotation(&accessor.parameters.nodes)
+                        (
+                            self.get_explicit_this_type_annotation(&accessor.parameters.nodes),
+                            accessor.type_parameters.clone(),
+                        )
                     } else {
-                        None
+                        (None, None)
                     }
                 }
-                _ => None,
+                _ => (None, None),
             };
 
             if let Some(type_annotation_idx) = explicit_this_type_annotation {
@@ -1231,8 +1240,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Otherwise, resolve the explicit type normally
+                // Push method's own type parameters into scope before resolving
+                // the `this` type annotation. Without this, `this: T` where `T` is
+                // the method's type parameter would fail with TS2304.
+                let (_tp, tp_updates) = self.push_type_parameters(&member_type_params);
                 let explicit_this_type = self.get_type_from_type_node(type_annotation_idx);
+                self.pop_type_parameters(tp_updates);
                 return Some(explicit_this_type);
             }
         }
