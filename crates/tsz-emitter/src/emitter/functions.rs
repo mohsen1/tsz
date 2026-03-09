@@ -108,25 +108,26 @@ impl<'a> Printer<'a> {
             // e.g., `f: /**own f*/ (a) => 0` → comment should be before `(`.
             if let Some(&first_param_idx) = func.parameters.nodes.first()
                 && let Some(first_param) = self.arena.get(first_param_idx)
-                    && let Some(source) = self.source_text {
-                        let bytes = source.as_bytes();
-                        let mut pos = first_param.pos as usize;
-                        // Scan backward from first parameter to find `(`
-                        while pos > 0 {
-                            pos -= 1;
-                            if bytes[pos] == b'(' {
-                                break;
-                            }
-                        }
-                        if bytes.get(pos) == Some(&b'(') {
-                            // Emit comments that are before the `(` position
-                            if self.has_pending_comment_before(pos as u32) {
-                                self.emit_comments_before_pos(pos as u32);
-                                self.pending_block_comment_space = false;
-                                self.write(" ");
-                            }
-                        }
+                && let Some(source) = self.source_text
+            {
+                let bytes = source.as_bytes();
+                let mut pos = first_param.pos as usize;
+                // Scan backward from first parameter to find `(`
+                while pos > 0 {
+                    pos -= 1;
+                    if bytes[pos] == b'(' {
+                        break;
                     }
+                }
+                if bytes.get(pos) == Some(&b'(') {
+                    // Emit comments that are before the `(` position
+                    if self.has_pending_comment_before(pos as u32) {
+                        self.emit_comments_before_pos(pos as u32);
+                        self.pending_block_comment_space = false;
+                        self.write(" ");
+                    }
+                }
+            }
             self.write("(");
         }
         self.emit_function_parameters_js(&func.parameters.nodes);
