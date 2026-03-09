@@ -842,23 +842,40 @@ impl<'a> Printer<'a> {
                 self.emit_inline_object_props(props);
             }
             Some(Seg::Spread(spread_idx)) => {
-                // When the spread expression is an object literal, tsc optimizes
-                // away the empty `{}` seed: `{ ...{x: 0} }` → `Object.assign({x: 0})`
-                // instead of `Object.assign({}, {x: 0})`.
-                let spread_is_literal = self.arena.get(*spread_idx).is_some_and(|n| {
+                // When the spread expression is a *simple* object literal (no nested
+                // spreads), tsc optimizes away the empty `{}` seed:
+                //   `{ ...{x: 0} }` → `Object.assign({x: 0})`
+                // But if the literal itself contains spreads, it will be lowered to
+                // an Object.assign() chain, and using that as the seed would mutate
+                // the intermediate result. In that case, wrap with `{}`:
+                //   `{ ...{a: 3, ...b}, c: 1 }` → `Object.assign(Object.assign({}, Object.assign({a: 3}, b)), {c: 1})`
+                let spread_is_simple_literal = self.arena.get(*spread_idx).is_some_and(|n| {
                     self.arena
                         .get_spread(n)
                         .and_then(|s| self.arena.get(s.expression))
-                        .is_some_and(|e| e.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                        .is_some_and(|e| {
+                            if e.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                                return false;
+                            }
+                            // Check that the inner literal has no nested spreads
+                            let Some(inner_obj) = self.arena.get_literal_expr(e) else {
+                                return false;
+                            };
+                            !inner_obj.elements.nodes.iter().any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+                            })
+                        })
                 });
-                if spread_is_literal {
+                if spread_is_simple_literal {
                     if segs.len() == 1 {
-                        // Single spread of literal: Object.assign(expr)
+                        // Single spread of simple literal: Object.assign(expr)
                         self.write("Object.assign(");
                         self.emit_spread_expression_node(*spread_idx);
                         self.write(")");
                     } else {
-                        // Multiple segments, literal first: use expr as seed
+                        // Multiple segments, simple literal first: use expr as seed
                         self.emit_spread_expression_node(*spread_idx);
                     }
                 } else {
