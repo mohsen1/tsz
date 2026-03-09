@@ -231,12 +231,17 @@ impl<'a> CheckerState<'a> {
             self.check_await_expression(prop.initializer);
         }
 
-        // If property has type annotation and initializer, check type compatibility
-        if prop.type_annotation.is_some() && prop.initializer.is_some() {
+        let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
+
+        // If property has a semantic declared type and initializer, check type compatibility.
+        if prop.initializer.is_some()
+            && let Some(declared_type) = effective_declared_type
+        {
             // Check for undefined type names in nested types (e.g., function type parameters).
             // This matches the variable declaration path in check_variable_declaration.
-            self.check_type_for_missing_names_skip_top_level_ref(prop.type_annotation);
-            let declared_type = self.get_type_from_type_node(prop.type_annotation);
+            if !self.is_js_file() && prop.type_annotation.is_some() {
+                self.check_type_for_missing_names_skip_top_level_ref(prop.type_annotation);
+            }
             let prev_context = self.ctx.contextual_type;
             if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
                 self.ctx.contextual_type = Some(declared_type);
@@ -266,27 +271,8 @@ impl<'a> CheckerState<'a> {
                     prop.initializer,
                 );
             }
-        } else if prop.initializer.is_some()
-            && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(member_idx)
-        {
-            // JSDoc @type annotation on a class property in a JS file:
-            // check initializer assignability against the JSDoc-declared type.
-            let prev_context = self.ctx.contextual_type;
-            if jsdoc_type != TypeId::ANY && !self.type_contains_error(jsdoc_type) {
-                self.ctx.contextual_type = Some(jsdoc_type);
-                self.clear_type_cache_recursive(prop.initializer);
-            }
-            let init_type = self.get_type_of_node(prop.initializer);
-            self.ctx.contextual_type = prev_context;
-
-            if jsdoc_type != TypeId::ANY
-                && !self.type_contains_error(jsdoc_type)
-                && self.check_assignable_or_report(init_type, jsdoc_type, prop.name)
-            {
-                self.check_object_literal_excess_properties(init_type, jsdoc_type, prop.name);
-            }
         } else if prop.initializer.is_some() {
-            // When a class property has an initializer but no type annotation,
+            // When a class property has an initializer but no semantic declared type,
             // and the class has a contextual type (e.g., from a function return type),
             // look up the property's expected type from the contextual type and use it
             // as contextual type for the initializer. This enables arrow/function
@@ -338,7 +324,7 @@ impl<'a> CheckerState<'a> {
             && self.has_private_modifier(&prop.modifiers);
         let is_static = self.has_static_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
-            && prop.type_annotation.is_none()
+            && effective_declared_type.is_none()
             && prop.initializer.is_none()
             && !is_private_in_ambient
             && !self.property_assigned_in_enclosing_class_constructor(prop.name)
@@ -358,8 +344,8 @@ impl<'a> CheckerState<'a> {
 
         // Cache the inferred type for the property node so DeclarationEmitter can use it
         // Get type: either from annotation or inferred from initializer
-        let prop_type = if prop.type_annotation.is_some() {
-            self.get_type_from_type_node(prop.type_annotation)
+        let prop_type = if let Some(declared_type) = effective_declared_type {
+            declared_type
         } else if prop.initializer.is_some() {
             let init_type = self.get_type_of_node(prop.initializer);
             let init_type =

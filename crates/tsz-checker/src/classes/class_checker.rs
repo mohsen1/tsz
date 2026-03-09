@@ -570,8 +570,10 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&prop.modifiers);
-                let prop_type = if prop.type_annotation.is_some() {
-                    self.get_type_from_type_node(prop.type_annotation)
+                let prop_type = if let Some(declared_type) =
+                    self.effective_class_property_declared_type(member_idx, prop)
+                {
+                    declared_type
                 } else if prop.initializer.is_some() {
                     let init_type = self.get_type_of_node(prop.initializer);
                     if self.has_readonly_modifier(&prop.modifiers) {

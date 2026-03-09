@@ -960,7 +960,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check a statement inside an ambient context (declare namespace/module).
     /// Emits TS1036 for non-declaration statements, plus specific errors for
     /// continue (TS1104), return (TS1108), and with (TS2410).
-    pub(crate) fn check_statement_in_ambient_context(&mut self, stmt_idx: NodeIndex) {
+    pub(crate) fn check_statement_in_ambient_context(
+        &mut self,
+        stmt_idx: NodeIndex,
+        reported_generic_ambient_statement_error: &mut bool,
+    ) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -986,7 +990,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 || k == syntax_kind_ext::EMPTY_STATEMENT
         );
 
-        if is_non_declaration {
+        if is_non_declaration && !*reported_generic_ambient_statement_error {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(
@@ -995,6 +999,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
                     diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
                 );
+                *reported_generic_ambient_statement_error = true;
             }
         }
 
@@ -1038,7 +1043,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             && let Some(labeled) = self.ctx.arena.get_labeled_statement(node)
         {
             self.check_label_on_declaration(labeled.label, labeled.statement);
-            self.check_statement_in_ambient_context(labeled.statement);
+            self.check_statement_in_ambient_context(
+                labeled.statement,
+                reported_generic_ambient_statement_error,
+            );
         }
     }
 

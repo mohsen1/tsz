@@ -4,8 +4,8 @@
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
 use tsz_solver::TypeId;
 
 /// Result from resolving literal string keys against an object type.
@@ -22,6 +22,21 @@ impl<'a> CheckerState<'a> {
     // ============================================================================
     // Section 52: Parameter Type Utilities
     // ============================================================================
+
+    pub(crate) fn effective_class_property_declared_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+    ) -> Option<TypeId> {
+        if !self.is_js_file() {
+            return prop
+                .type_annotation
+                .is_some()
+                .then(|| self.get_type_from_type_node(prop.type_annotation));
+        }
+
+        self.jsdoc_type_annotation_for_node(member_idx)
+    }
 
     /// Cache parameter types for function parameters.
     ///

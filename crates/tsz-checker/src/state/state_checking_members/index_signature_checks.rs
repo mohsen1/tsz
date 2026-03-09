@@ -421,8 +421,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                    let prop_type = if prop.type_annotation.is_some() {
-                        self.get_type_from_type_node(prop.type_annotation)
+                    let prop_type = if let Some(declared_type) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        declared_type
                     } else {
                         self.get_type_of_node(member_idx)
                     };

@@ -245,11 +245,10 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
                     let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                         || self.jsdoc_has_readonly_tag(member_idx);
-                    let type_id = if prop.type_annotation.is_some() {
-                        self.get_type_from_type_node(prop.type_annotation)
-                    } else if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(member_idx)
+                    let type_id = if let Some(declared_type) =
+                        self.effective_class_property_declared_type(member_idx, prop)
                     {
-                        jsdoc_type
+                        declared_type
                     } else if prop.initializer.is_some() {
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
