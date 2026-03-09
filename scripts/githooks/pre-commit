@@ -418,5 +418,9 @@ echo "5/5 Microbenchmark check disabled"
 echo ""
 echo "All pre-commit checks passed!"
 
+# Signal post-commit hook to write the stamp (pre-commit runs before the
+# commit object exists, so we can't record HEAD here).
+touch "$ROOT_DIR/.git/pre-commit-ok" 2>/dev/null || true
+
 # NOTE: Conformance regression check was removed from pre-commit (too slow).
 # Run manually when needed: ./scripts/conformance.sh run

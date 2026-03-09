@@ -2,13 +2,16 @@
 #
 # pre-push hook for tsz
 #
-# 1. Runs ALL workspace tests before pushing to main/master to catch
-#    cross-crate regressions that the per-crate pre-commit hook misses.
-# 2. Schedules artifact cleanup after push completes.
+# 1. Fast lint gate (cargo fmt --check) — always runs.
+# 2. Full workspace tests — only when pre-commit didn't already verify HEAD.
+#    The pre-commit hook writes a stamp file after passing; if HEAD matches,
+#    we skip the redundant full test run.
+# 3. Schedules artifact cleanup after push completes.
 #
 # Env vars:
 #   TSZ_SKIP_HOOKS=1         Skip the entire hook
 #   TSZ_SKIP_PUSH_TESTS=1    Skip pre-push tests (only cleanup)
+#   TSZ_FORCE_PUSH_TESTS=1   Force full tests even if pre-commit stamp matches
 
 set -e
 
@@ -18,6 +21,7 @@ if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../" && pwd)"
 CLEAN_SCRIPT="$SCRIPT_DIR/../clean.sh"
+STAMP_FILE="$ROOT_DIR/.git/pre-commit-passed"
 
 # ─── Test gate: only for pushes to main/master ────────────────────────────────
 
@@ -32,7 +36,7 @@ done
 if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; then
     cd "$ROOT_DIR"
 
-    # ─── Lint gate: cargo fmt ────────────────────────────────────────────────
+    # ─── Lint gate: cargo fmt (always, fast) ─────────────────────────────────
     echo "Pre-push: checking formatting (cargo fmt --check)..."
     if ! cargo fmt -- --check >/dev/null 2>&1; then
         echo ""
@@ -43,32 +47,43 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
         exit 1
     fi
 
-    echo "Pre-push: running all workspace tests before pushing to main..."
-
-    # Note: tsz-core (root) excluded — its integration tests require special
-    # environment setup (lib directory) that CI provides but local dev may not.
-    ALL_CRATES="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-lowering -p tsz-emitter -p tsz-lsp"
-
-    if cargo nextest --version >/dev/null 2>&1; then
-        TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass $ALL_CRATES 2>&1) || {
-            echo ""
-            echo "$TEST_OUTPUT" | tail -30
-            echo ""
-            echo "ERROR: Tests failed. Fix failures before pushing to main."
-            echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
-            exit 1
-        }
-        echo "$TEST_OUTPUT" | tail -5
-    else
-        TEST_OUTPUT=$(cargo test $ALL_CRATES 2>&1) || {
-            echo ""
-            echo "$TEST_OUTPUT" | tail -30
-            echo ""
-            echo "ERROR: Tests failed. Fix failures before pushing to main."
-            exit 1
-        }
+    # ─── Test gate: skip if pre-commit already verified HEAD ─────────────────
+    HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    STAMP_SHA=""
+    if [ -f "$STAMP_FILE" ]; then
+        STAMP_SHA=$(cat "$STAMP_FILE" 2>/dev/null || true)
     fi
-    echo "Pre-push: all tests passed."
+
+    if [ "$HEAD_SHA" = "$STAMP_SHA" ] && [ "${TSZ_FORCE_PUSH_TESTS:-}" != "1" ]; then
+        echo "Pre-push: tests skipped (pre-commit already verified $HEAD_SHA)."
+    else
+        echo "Pre-push: running all workspace tests before pushing to main..."
+
+        # Note: tsz-core (root) excluded — its integration tests require special
+        # environment setup (lib directory) that CI provides but local dev may not.
+        ALL_CRATES="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-lowering -p tsz-emitter -p tsz-lsp"
+
+        if cargo nextest --version >/dev/null 2>&1; then
+            TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass $ALL_CRATES 2>&1) || {
+                echo ""
+                echo "$TEST_OUTPUT" | tail -30
+                echo ""
+                echo "ERROR: Tests failed. Fix failures before pushing to main."
+                echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
+                exit 1
+            }
+            echo "$TEST_OUTPUT" | tail -5
+        else
+            TEST_OUTPUT=$(cargo test $ALL_CRATES 2>&1) || {
+                echo ""
+                echo "$TEST_OUTPUT" | tail -30
+                echo ""
+                echo "ERROR: Tests failed. Fix failures before pushing to main."
+                exit 1
+            }
+        fi
+        echo "Pre-push: all tests passed."
+    fi
 fi
 
 # ─── Post-push cleanup (background) ──────────────────────────────────────────
