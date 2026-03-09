@@ -275,7 +275,7 @@ impl<'a> CheckerState<'a> {
                     length,
                     message_text: format!("'{name}' is declared but its value is never read."),
                     category: crate::diagnostics::DiagnosticCategory::Error,
-                    code: 6133,
+                    code: crate::diagnostics::diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
                     related_information: Vec::new(),
                 });
             }

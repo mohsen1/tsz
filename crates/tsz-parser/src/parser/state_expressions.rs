@@ -1823,7 +1823,7 @@ impl ParserState {
                 // TS1127: Invalid character - emit specific error for invalid characters
 
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 let start_pos = self.token_pos();

@@ -854,8 +854,8 @@ impl ScannerState {
                             self.scanner_diagnostics.push(ScannerDiagnostic {
                                 pos: self.pos,
                                 length: 0,
-                                message: "'*/' expected.",
-                                code: 1010,
+                                message: diagnostic_messages::EXPECTED_2,
+                                code: diagnostic_codes::EXPECTED_2,
                             });
                         }
                         if self.skip_trivia {
@@ -2749,8 +2749,8 @@ impl ScannerState {
         self.scanner_diagnostics.push(ScannerDiagnostic {
             pos: self.pos,
             length: Self::MERGE_CONFLICT_MARKER_LENGTH,
-            message: "Merge conflict marker encountered.",
-            code: 1185,
+            message: diagnostic_messages::MERGE_CONFLICT_MARKER_ENCOUNTERED,
+            code: diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED,
         });
 
         let ch = self.char_code_unchecked(self.pos);

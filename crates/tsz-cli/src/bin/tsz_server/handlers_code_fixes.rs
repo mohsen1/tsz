@@ -2078,7 +2078,7 @@ impl Server {
                 if name_len > 0 {
                     return Some(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Suggestion,
-                        code: 80004,
+                        code: tsz_checker::diagnostics::diagnostic_codes::JSDOC_TYPES_MAY_BE_MOVED_TO_TYPESCRIPT_TYPES,
                         file: file_path.to_string(),
                         start: target_offset + (var_pos + 4) as u32,
                         length: name_len as u32,
@@ -2097,7 +2097,7 @@ impl Server {
                 if name_len > 0 {
                     return Some(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Suggestion,
-                        code: 80004,
+                        code: tsz_checker::diagnostics::diagnostic_codes::JSDOC_TYPES_MAY_BE_MOVED_TO_TYPESCRIPT_TYPES,
                         file: file_path.to_string(),
                         start: target_offset + (function_pos + "function ".len()) as u32,
                         length: name_len as u32,
@@ -2118,7 +2118,7 @@ impl Server {
                 if name_len > 0 {
                     return Some(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Suggestion,
-                        code: 80004,
+                        code: tsz_checker::diagnostics::diagnostic_codes::JSDOC_TYPES_MAY_BE_MOVED_TO_TYPESCRIPT_TYPES,
                         file: file_path.to_string(),
                         start: target_offset + name_start as u32,
                         length: name_len as u32,
@@ -2138,7 +2138,7 @@ impl Server {
                     if !name.is_empty() {
                         return Some(tsz::checker::diagnostics::Diagnostic {
                             category: DiagnosticCategory::Suggestion,
-                            code: 80004,
+                            code: tsz_checker::diagnostics::diagnostic_codes::JSDOC_TYPES_MAY_BE_MOVED_TO_TYPESCRIPT_TYPES,
                             file: file_path.to_string(),
                             start: target_offset + name_start as u32,
                             length: name.len() as u32,
@@ -2225,7 +2225,7 @@ impl Server {
                     if !suffix.trim_start().starts_with(':') {
                         diagnostics.push(tsz::checker::diagnostics::Diagnostic {
                             category: DiagnosticCategory::Suggestion,
-                            code: 7043,
+                            code: tsz_checker::diagnostics::diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE_BUT_A_BETTER_TYPE_MAY_BE_INFERRED_FROM_USAGE,
                             file: file_path.to_string(),
                             start: target_offset + (var_pos + 4) as u32,
                             length: name_len as u32,
@@ -2257,7 +2257,7 @@ impl Server {
                     }
                     diagnostics.push(tsz::checker::diagnostics::Diagnostic {
                         category: DiagnosticCategory::Suggestion,
-                        code: 7044,
+                        code: tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE_BUT_A_BETTER_TYPE_MAY_BE_INFERRED_FROM_USAGE,
                         file: file_path.to_string(),
                         start: target_offset + (open + 1 + name_rel) as u32,
                         length: param_name.len() as u32,
@@ -2545,7 +2545,8 @@ impl Server {
             .unwrap_or(0);
         vec![tsz::checker::diagnostics::Diagnostic {
             category: DiagnosticCategory::Error,
-            code: 2420,
+            code:
+                tsz_checker::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
             file: file_path.to_string(),
             start: class_name_offset,
             length: class_name.len() as u32,
@@ -2567,7 +2568,7 @@ impl Server {
         let start = content.find("=>").unwrap_or(0) as u32;
         Some(tsz::checker::diagnostics::Diagnostic {
             category: DiagnosticCategory::Suggestion,
-            code: 1308,
+            code: tsz_checker::diagnostics::diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
             file: file_path.to_string(),
             start,
             length: 1,
@@ -2586,7 +2587,7 @@ impl Server {
         let start = content.find('(').unwrap_or(0) as u32;
         Some(tsz::checker::diagnostics::Diagnostic {
             category: DiagnosticCategory::Suggestion,
-            code: 7006,
+            code: tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
             file: file_path.to_string(),
             start,
             length: 1,
@@ -2603,7 +2604,7 @@ impl Server {
         let start = content.find('<').unwrap_or(0) as u32;
         Some(tsz::checker::diagnostics::Diagnostic {
             category: DiagnosticCategory::Suggestion,
-            code: 2739,
+            code: tsz_checker::diagnostics::diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
             file: file_path.to_string(),
             start,
             length: 1,
