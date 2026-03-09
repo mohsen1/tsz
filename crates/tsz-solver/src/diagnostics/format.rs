@@ -723,7 +723,7 @@ impl<'a> TypeFormatter<'a> {
             let key_name = idx
                 .param_name
                 .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "index".to_owned());
+                .unwrap_or_else(|| "x".to_owned());
             parts.push(format!(
                 "[{key_name}: string]: {}",
                 self.format(idx.value_type)
@@ -733,7 +733,7 @@ impl<'a> TypeFormatter<'a> {
             let key_name = idx
                 .param_name
                 .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "index".to_owned());
+                .unwrap_or_else(|| "x".to_owned());
             parts.push(format!(
                 "[{key_name}: number]: {}",
                 self.format(idx.value_type)
@@ -939,10 +939,24 @@ impl<'a> TypeFormatter<'a> {
             parts.push(self.format_call_signature(sig, true, shape.is_abstract));
         }
         if let Some(ref idx) = shape.string_index {
-            parts.push(format!("[index: string]: {}", self.format(idx.value_type)));
+            let key_name = idx
+                .param_name
+                .map(|a| self.atom(a).to_string())
+                .unwrap_or_else(|| "x".to_owned());
+            parts.push(format!(
+                "[{key_name}: string]: {}",
+                self.format(idx.value_type)
+            ));
         }
         if let Some(ref idx) = shape.number_index {
-            parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
+            let key_name = idx
+                .param_name
+                .map(|a| self.atom(a).to_string())
+                .unwrap_or_else(|| "x".to_owned());
+            parts.push(format!(
+                "[{key_name}: number]: {}",
+                self.format(idx.value_type)
+            ));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
         // Sort by declaration_order (same logic as format_object)
@@ -1638,8 +1652,8 @@ mod tests {
         let obj = db.object_with_index(shape);
         let result = fmt.format(obj);
         assert!(
-            result.contains("[index: string]: number"),
-            "Expected string index signature, got: {result}"
+            result.contains("[x: string]: number"),
+            "Expected string index signature with default param name 'x', got: {result}"
         );
     }
 
@@ -1663,8 +1677,8 @@ mod tests {
         let obj = db.object_with_index(shape);
         let result = fmt.format(obj);
         assert!(
-            result.contains("[index: number]: string"),
-            "Expected number index signature, got: {result}"
+            result.contains("[x: number]: string"),
+            "Expected number index signature with default param name 'x', got: {result}"
         );
     }
 
