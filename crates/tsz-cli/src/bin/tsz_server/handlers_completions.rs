@@ -229,6 +229,44 @@ impl Server {
                 .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
+    fn is_class_member_declaration_prefix_context(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let prefix = &source_text[..offset as usize];
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = prefix[line_start..].trim();
+        if !(line.is_empty() || Self::is_identifier(line)) {
+            return false;
+        }
+
+        let mut brace_stack: Vec<usize> = Vec::new();
+        for (idx, ch) in prefix.char_indices() {
+            match ch {
+                '{' => brace_stack.push(idx),
+                '}' => {
+                    let _ = brace_stack.pop();
+                }
+                _ => {}
+            }
+        }
+        let Some(class_body_start) = brace_stack.last().copied() else {
+            return false;
+        };
+        let before_brace = prefix[..class_body_start].trim_end();
+        let header_start = before_brace
+            .rfind(|ch| matches!(ch, '{' | '}' | ';'))
+            .map_or(0, |idx| idx + 1);
+        let header = before_brace[header_start..].trim();
+        header
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+            .any(|part| part == "class")
+    }
+
     fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
         let mut best_rank_by_label: std::collections::HashMap<String, (usize, usize)> =
             std::collections::HashMap::new();
@@ -1591,6 +1629,12 @@ impl Server {
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
             let is_new_identifier_location =
                 if include_class_member_snippets && has_class_member_snippet {
+                    true
+                } else if Self::is_class_member_declaration_prefix_context(
+                    &source_text,
+                    &line_map,
+                    completion_position,
+                ) {
                     true
                 } else if Self::is_bare_identifier_expression_prefix(
                     &source_text,
