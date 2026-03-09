@@ -1408,12 +1408,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     }
 
                                     if !have_overlap {
-                                        // tsc anchors TS2352 at the expression being
-                                        // asserted, not at the `<T>` / `as T` node.
+                                        // tsc anchors TS2352 at the full assertion node
+                                        // (`<T>expr` / `expr as T`), not just the inner
+                                        // expression. See checkAssertionDeferred:
+                                        //   errNode = isParenthesizedExpression(node) ? type : node
                                         self.checker.error_type_assertion_no_overlap(
                                             expr_type,
                                             asserted_type,
-                                            assertion.expression,
+                                            idx,
                                         );
                                     }
                                 }
