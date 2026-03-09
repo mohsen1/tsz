@@ -619,7 +619,9 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TS2717 on the subsequent declaration when types differ
+                // TS2717 on the subsequent declaration when types differ.
+                // Use display text for the property name to match TSC's
+                // declarationNameToString (e.g., "1.0" not "1").
                 let first_type = if prev_type_ann.is_some() {
                     self.get_type_from_type_node(prev_type_ann)
                 } else {
@@ -634,12 +636,15 @@ impl<'a> CheckerState<'a> {
                     && !self.type_contains_error(this_type)
                     && first_type != this_type
                 {
+                    let display_name = self
+                        .get_member_name_display_text(name_idx)
+                        .unwrap_or_else(|| name.clone());
                     let first_type_str = self.format_type(first_type);
                     let this_type_str = self.format_type(this_type);
                     self.error_at_node_msg(
                         name_idx,
                         diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                        &[&name, &first_type_str, &this_type_str],
+                        &[&display_name, &first_type_str, &this_type_str],
                     );
                 }
             } else {
