@@ -398,8 +398,8 @@ run_tests() {
         "${runner_flags[@]}" \
         "${extra_args[@]}" 2>/dev/null | tee "$tmpout" || true
 
-    # Extract sorted PASS/FAIL lines for diffing
-    grep -E '^(PASS|FAIL) ' "$tmpout" | sort > "$last_run" 2>/dev/null || true
+    # Extract sorted PASS/FAIL lines with expected/actual codes for diffing
+    python3 "$REPO_ROOT/scripts/extract-baseline.py" "$tmpout" > "$last_run" 2>/dev/null || true
     rm -f "$tmpout"
 
     # Auto-diff against baseline if it exists and this was an unfiltered run
@@ -485,26 +485,30 @@ areas_analysis() {
 diff_results() {
     # Compare two per-test result files and show regressions/improvements.
     # Usage: diff_results <baseline_file> <current_file>
+    # Format: "PASS path" or "FAIL path | expected:[...] actual:[...]"
     local baseline_file="$1"
     local current_file="$2"
 
     python3 -c "
 import sys
 
-baseline = {}
-current = {}
+def parse_result_file(path):
+    \"\"\"Parse a result file into {test_path: status} dict.
+    Handles both old format (PASS/FAIL path) and new format
+    (FAIL path | expected:[...] actual:[...]).\"\"\"
+    results = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            parts = line.split(' ', 1)
+            if len(parts) == 2 and parts[0] in ('PASS', 'FAIL'):
+                # Strip ' | expected:... actual:...' suffix if present
+                test_path = parts[1].split(' | ')[0]
+                results[test_path] = parts[0]
+    return results
 
-with open(sys.argv[1]) as f:
-    for line in f:
-        parts = line.strip().split(' ', 1)
-        if len(parts) == 2:
-            baseline[parts[1]] = parts[0]
-
-with open(sys.argv[2]) as f:
-    for line in f:
-        parts = line.strip().split(' ', 1)
-        if len(parts) == 2:
-            current[parts[1]] = parts[0]
+baseline = parse_result_file(sys.argv[1])
+current = parse_result_file(sys.argv[2])
 
 regressions = sorted(t for t in baseline if baseline[t] == 'PASS' and current.get(t) == 'FAIL')
 improvements = sorted(t for t in current if current[t] == 'PASS' and baseline.get(t) == 'FAIL')
@@ -741,9 +745,9 @@ print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
     # Verify snapshot is valid JSON
     python3 -m json.tool "$snapshot_file" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
 
-    # 6) Save per-test baseline for regression diffing
+    # 6) Save per-test baseline for regression diffing (with expected/actual codes)
     local baseline_file="$REPO_ROOT/scripts/conformance-baseline.txt"
-    grep -E '^(PASS|FAIL) ' "$tmpfile" | sort > "$baseline_file" 2>/dev/null || true
+    python3 "$REPO_ROOT/scripts/extract-baseline.py" "$tmpfile" > "$baseline_file" 2>/dev/null || true
     local baseline_count
     baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
     echo -e "${GREEN}Baseline saved: $baseline_file ($baseline_count tests)${NC}"
