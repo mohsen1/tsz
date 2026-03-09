@@ -89,11 +89,27 @@ impl BlockScopeState {
     /// Register a variable declaration in the current scope
     /// Returns the name to emit (may be renamed if shadowing)
     pub fn register_variable(&mut self, original_name: &str) -> String {
-        // Check if this name exists in any parent scope (shadowing)
-        let needs_rename = self
-            .scope_stack
-            .iter()
-            .any(|scope| scope.contains_key(original_name));
+        // When the current scope IS a function scope (i.e., the `let`/`const` is at the
+        // direct function body level), `var` naturally shadows parent scopes via function
+        // scoping — no rename needed.  Only check scopes within the current function.
+        //
+        // When the declaration is inside a nested block within a function, we must check
+        // ALL parent scopes (including across function boundaries) because the hoisted
+        // `var` could shadow variables referenced elsewhere in the function.
+        let at_function_level = self.function_scope_marks.last().copied().unwrap_or(false);
+
+        let needs_rename = if at_function_level {
+            // At function body level: only check the current function scope itself
+            // (for redeclarations within the same scope)
+            self.scope_stack
+                .last()
+                .is_some_and(|scope| scope.contains_key(original_name))
+        } else {
+            // In a nested block: check all parent scopes (original behavior)
+            self.scope_stack
+                .iter()
+                .any(|scope| scope.contains_key(original_name))
+        };
 
         let emitted_name = if needs_rename {
             // Find a unique suffix by checking both existing scopes and reserved names
