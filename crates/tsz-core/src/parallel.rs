@@ -29,6 +29,7 @@
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
+use crate::binder::symbol_flags;
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -777,6 +778,10 @@ pub struct MergedProgram {
     pub lib_symbol_ids: FxHashSet<SymbolId>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
+    /// Alias partners: maps TYPE_ALIAS SymbolId → ALIAS SymbolId for merged type+namespace exports.
+    /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
+    /// holds the TYPE_ALIAS symbol and this map links it to the ALIAS symbol for value resolution.
+    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 
 /// High-level residency counters for `MergedProgram` state.
@@ -1010,6 +1015,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
+    let mut alias_partners: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
     let mut reexports: Reexports = FxHashMap::default();
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
     let mut wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>> =
@@ -1672,6 +1678,30 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         for (module_key, exports_table) in &result.module_exports {
             if module_key == &result.file_name {
+                // Same-file module_exports: detect TYPE_ALIAS/ALIAS partnerships.
+                // When `export type X = ...` and `export * as X from "..."` coexist,
+                // file_locals-derived exports have TYPE_ALIAS and module_exports has ALIAS.
+                // Link them via alias_partners so the checker can use both meanings.
+                let remapped = remap_symbol_table(exports_table, &id_remap);
+                if let Some(existing_exports) = module_exports.get(module_key) {
+                    for (name, alias_sym_id) in remapped.iter() {
+                        if let Some(existing_sym_id) = existing_exports.get(name) {
+                            let existing_flags = global_symbols
+                                .get(existing_sym_id)
+                                .map(|s| s.flags)
+                                .unwrap_or(0);
+                            let alias_flags = global_symbols
+                                .get(*alias_sym_id)
+                                .map(|s| s.flags)
+                                .unwrap_or(0);
+                            if (existing_flags & symbol_flags::TYPE_ALIAS != 0)
+                                && (alias_flags & symbol_flags::ALIAS != 0)
+                            {
+                                alias_partners.insert(existing_sym_id, *alias_sym_id);
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             let remapped = remap_symbol_table(exports_table, &id_remap);
@@ -1990,6 +2020,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         lib_binders,
         lib_symbol_ids: global_lib_symbol_ids,
         type_interner: TypeInterner::new(),
+        alias_partners,
     }
 }
 
@@ -2397,6 +2428,7 @@ pub fn create_binder_from_bound_file(
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
+            alias_partners: program.alias_partners.clone(),
         },
     );
 

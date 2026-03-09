@@ -349,6 +349,13 @@ pub struct BinderState {
     /// Language features detected during binding (generators, decorators, using, etc.).
     /// Populated during `bind_source_file` with zero overhead since the binder already walks every node.
     pub file_features: FileFeatures,
+
+    /// Alias partners: maps a `TYPE_ALIAS` SymbolId to its ALIAS (namespace export) partner.
+    /// When `export type X = ...` and `export * as X from "..."` coexist in the same module,
+    /// the exports table holds the `TYPE_ALIAS` symbol (for type reference resolution) and this
+    /// map links it to the ALIAS symbol (for value/namespace resolution).
+    /// Populated by `merge_bind_results` in parallel.rs.
+    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 
 /// Validation result describing issues found in the symbol table
@@ -396,6 +403,7 @@ pub struct BinderStateScopeInputs {
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 
 #[cfg(test)]

@@ -93,6 +93,7 @@ impl BinderState {
             continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
+            alias_partners: FxHashMap::default(),
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -280,6 +281,7 @@ impl BinderState {
             continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
+            alias_partners: FxHashMap::default(),
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -336,6 +338,7 @@ impl BinderState {
             node_flow,
             switch_clause_to_switch,
             expando_properties,
+            alias_partners,
         } = inputs;
 
         // Find the unreachable flow node in the existing flow_nodes, or create a new one
@@ -394,6 +397,7 @@ impl BinderState {
             continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
+            alias_partners,
         };
         binder.recompute_module_export_equals_non_module();
         binder
