@@ -1018,10 +1018,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
     fn normalize_source_type_text(text: &str) -> String {
         let mut text = text.trim().to_string();
-        loop {
-            let Some(last) = text.chars().last() else {
-                break;
-            };
+        while let Some(last) = text.chars().last() {
             let should_trim = match last {
                 ',' | ';' | '=' => true,
                 ')' => Self::has_unmatched_trailing_closer(&text, '(', ')'),
@@ -1036,6 +1033,7 @@ impl<'a> SignatureHelpProvider<'a> {
             text.pop();
             text = text.trim_end().to_string();
         }
+
         text
     }
 
