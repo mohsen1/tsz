@@ -318,3 +318,10 @@ with open('scripts/conformance-detail.json') as f:
 - Run `./scripts/setup.sh` once per workspace and keep `scripts/githooks` active.
 - This ensures `pre-commit` checks run locally before commits.
 - If hooks are not installed, local lint guardrails can be bypassed accidentally.
+
+
+## 24) Critical: Work Philosophy
+- Prioritize **architectural integrity** over quick fixes.
+- When in doubt, choose the path that preserves the clean separation of concerns and long-term maintainability, even if it requires more upfront work.
+- Avoid patching symptoms in the checker; instead, invest in the solver and boundary helpers to keep the architecture sound.
+- Use the conformance analysis tools to guide work towards root causes, not just individual test failures.
