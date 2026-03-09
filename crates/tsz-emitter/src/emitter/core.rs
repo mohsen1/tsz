@@ -240,6 +240,10 @@ pub struct Printer<'a> {
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(crate) in_namespace_iife: bool,
 
+    /// End position of the current namespace body in source text.
+    /// Used to scope reference searches for namespace-scoped import aliases.
+    pub(crate) namespace_scope_end: u32,
+
     /// When set, the next enum emit should fold the namespace export into the IIFE closing.
     /// E.g., `(Color = A.Color || (A.Color = {}))` instead of `(Color || (Color = {}))`.
     pub(crate) enum_namespace_export: Option<String>,
@@ -510,6 +514,7 @@ impl<'a> Printer<'a> {
             function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            namespace_scope_end: u32::MAX,
             enum_namespace_export: None,
             namespace_export_inner: false,
             emitting_function_body_block: false,

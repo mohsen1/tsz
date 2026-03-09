@@ -948,6 +948,11 @@ impl<'a> Printer<'a> {
                                     || module_node.kind
                                         == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                             });
+                    // TS1147: import = require() inside a namespace is always invalid;
+                    // tsc erases these regardless of usage.
+                    if is_external && self.in_namespace_iife {
+                        return true;
+                    }
                     if is_es_module_output && is_external {
                         return true;
                     }

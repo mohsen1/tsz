@@ -111,6 +111,8 @@ impl<'a> Printer<'a> {
     /// Check if an import alias name has value usage in the remaining source.
     /// Used for namespace-scoped import alias elision: tsc erases `import X = Y`
     /// inside namespaces when X is only used in type positions.
+    /// The search is scope-limited via `namespace_scope_end` to prevent
+    /// sibling namespace references from keeping an alias alive.
     fn import_alias_is_referenced_after_node(
         &self,
         node: &Node,
@@ -123,7 +125,20 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
+        let full_haystack = Self::source_after_import(source_text, node, import_data, self.arena);
+        // Limit the search to the current namespace body scope
+        let haystack = if self.namespace_scope_end < u32::MAX {
+            let full_start_in_source = source_text.len() - full_haystack.len();
+            let scope_end_usize = self.namespace_scope_end as usize;
+            if scope_end_usize <= full_start_in_source {
+                ""
+            } else {
+                let end_in_full = scope_end_usize - full_start_in_source;
+                &full_haystack[..end_in_full.min(full_haystack.len())]
+            }
+        } else {
+            full_haystack
+        };
         // Strip type-only content including inline type annotations so that
         // type-position references (e.g., `p1: modes.IMode`) don't count as
         // value usage. This matches tsc which erases namespace import aliases
