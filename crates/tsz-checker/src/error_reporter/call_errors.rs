@@ -358,16 +358,18 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Only elaborate when the overall assignment fails
-        if self.is_assignable_to(init_type, declared_type) {
-            return false;
-        }
-
         // Check if initializer is an array literal
         let init_node = match self.ctx.arena.get(init_idx) {
             Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
             _ => return false,
         };
+
+        // Only elaborate array literal elements when the overall assignment fails.
+        // Non-array initializers should return early above without triggering an
+        // unrelated assignability relation on the full source/target types.
+        if self.is_assignable_to(init_type, declared_type) {
+            return false;
+        }
 
         // When the source array has more elements than the target tuple,
         // the arity mismatch should be reported at the whole-assignment level,

@@ -544,6 +544,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2372:
     /// "Parameter 'x' cannot reference itself."
     pub(crate) fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
+        let factory = self.ctx.types.factory();
         for (param_pos, &param_idx) in parameters.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -574,13 +575,48 @@ impl<'a> CheckerState<'a> {
                 if !self_refs.is_empty() {
                     use crate::diagnostics::diagnostic_codes;
                     let msg = format!("Parameter '{param_name}' cannot reference itself.");
-                    for ref_node in self_refs {
+                    for &ref_node in &self_refs {
                         self.error_at_node(
                             ref_node,
                             &msg,
                             diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
                         );
                     }
+                }
+
+                // TS2502: When a typed parameter's effective type includes
+                // `undefined`, the optionality-removal path reads the parameter's
+                // own type while checking its default. A self-referential default
+                // therefore becomes circular even when the annotation text itself
+                // is not a `typeof` query.
+                let declared_type = if param.type_annotation.is_some() {
+                    let mut t = self.get_type_from_type_node(param.type_annotation);
+                    if param.question_token
+                        && self.ctx.strict_null_checks()
+                        && t != TypeId::ANY
+                        && t != TypeId::UNKNOWN
+                        && t != TypeId::ERROR
+                    {
+                        t = factory.union(vec![t, TypeId::UNDEFINED]);
+                    }
+                    Some(t)
+                } else {
+                    None
+                };
+                let has_effective_undefined = declared_type.is_some_and(|t| {
+                    t != TypeId::ANY
+                        && t != TypeId::UNKNOWN
+                        && t != TypeId::ERROR
+                        && tsz_solver::remove_undefined(self.ctx.types, t) != t
+                });
+                if !self_refs.is_empty() && has_effective_undefined {
+                    self.error_at_node(
+                        param.name,
+                        &format!(
+                            "'{param_name}' is referenced directly or indirectly in its own type annotation."
+                        ),
+                        2502,
+                    );
                 }
 
                 // TS2373: parameter default cannot reference later parameters
@@ -617,7 +653,16 @@ impl<'a> CheckerState<'a> {
             // E.g., `function f(p: 1 = 1)` — without contextual typing, `1` widens
             // to `number` and fails assignability. With it, `1` stays as literal `1`.
             let declared_type = if param.type_annotation.is_some() {
-                Some(self.get_type_from_type_node(param.type_annotation))
+                let mut t = self.get_type_from_type_node(param.type_annotation);
+                if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && t != TypeId::ANY
+                    && t != TypeId::UNKNOWN
+                    && t != TypeId::ERROR
+                {
+                    t = factory.union(vec![t, TypeId::UNDEFINED]);
+                }
+                Some(t)
             } else {
                 None
             };

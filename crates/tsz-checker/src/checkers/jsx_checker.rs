@@ -217,6 +217,7 @@ impl<'a> CheckerState<'a> {
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
+            let jsx_element_expr_type = self.get_jsx_element_type_for_check();
 
             // TS2786: component return type must be valid JSX element
             self.check_jsx_component_return_type(evaluated, tag_name_idx);
@@ -276,17 +277,8 @@ impl<'a> CheckerState<'a> {
             // We look up JSX.Element directly here instead of calling get_jsx_element_type()
             // to avoid re-running the factory-in-scope diagnostics that were already
             // emitted at the top of get_type_of_jsx_opening_element.
-            if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
-                let lib_binders = self.get_lib_binders();
-                if let Some(symbol) = self
-                    .ctx
-                    .binder
-                    .get_symbol_with_libs(jsx_sym_id, &lib_binders)
-                    && let Some(exports) = symbol.exports.as_ref()
-                    && let Some(element_sym_id) = exports.get("Element")
-                {
-                    return self.type_reference_symbol_type(element_sym_id);
-                }
+            if let Some(element_type) = jsx_element_expr_type {
+                return element_type;
             }
             // Fallback: return ANY when JSX.Element can't be resolved (e.g. no JSX types configured)
             TypeId::ANY
@@ -486,9 +478,12 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
-        // Skip string types — dynamic tag names like `<CustomTag>` where CustomTag
-        // is a string value are valid JSX (treated as intrinsic element lookups)
-        if self.is_assignable_to(component_type, TypeId::STRING) {
+        // Skip string-like tag values without going through full assignability.
+        // Dynamic tag names like `<Tag>` where `Tag` is `string` or a union of
+        // string literals are valid JSX and should be treated like intrinsic
+        // element lookups. A structural relation check here is unnecessarily
+        // heavy for `React.ReactType`-style unions.
+        if self.is_jsx_string_tag_type(component_type) {
             return;
         }
         // Skip if file has parse errors (avoid cascading diagnostics)
@@ -529,6 +524,31 @@ impl<'a> CheckerState<'a> {
                 &[&tag_text],
             );
         }
+    }
+
+    fn is_jsx_string_tag_type(&self, type_id: TypeId) -> bool {
+        if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
+            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
+        {
+            return true;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .all(|&member| self.is_jsx_string_tag_type(member));
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&member| self.is_jsx_string_tag_type(member));
+        }
+
+        false
     }
 
     /// TS2786: Check that a JSX component's return type is assignable to

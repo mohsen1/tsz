@@ -3,6 +3,7 @@
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -145,7 +146,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: tsz_binder::SymbolId,
         type_args_list: &tsz_parser::parser::NodeList,
-        type_name_idx: NodeIndex,
+        type_ref_idx: NodeIndex,
     ) {
         use tsz_binder::symbol_flags;
 
@@ -172,7 +173,7 @@ impl<'a> CheckerState<'a> {
             if !has_type_params_in_decl
                 && symbol_type != TypeId::ERROR
                 && symbol_type != TypeId::ANY
-                && !type_args_list.nodes.is_empty()
+                && let Some(&arg_idx) = type_args_list.nodes.first()
             {
                 let lib_binders = self.get_lib_binders();
                 let name = self
@@ -181,7 +182,7 @@ impl<'a> CheckerState<'a> {
                     .get_symbol_with_libs(sym_id, &lib_binders)
                     .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
                 self.error_at_node_msg(
-                    type_name_idx,
+                    arg_idx,
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                     &[name.as_str()],
                 );
@@ -189,35 +190,73 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Collect the provided type arguments for circular reference check
-        let type_args: Vec<TypeId> = type_args_list
-            .nodes
-            .iter()
-            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-            .collect();
+        if self.type_args_reference_resolving_alias(type_args_list) {
+            let lib_binders = self.get_lib_binders();
+            let name = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
 
-        let symbol_type = self.get_type_of_symbol(sym_id);
-
-        if type_args.contains(&symbol_type) {
-            // Report TS4109 at the specific type argument node
-            if let Some(&arg_idx) = type_args_list.nodes.first() {
-                let lib_binders = self.get_lib_binders();
-                let name = self
-                    .ctx
-                    .binder
-                    .get_symbol_with_libs(sym_id, &lib_binders)
-                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-
-                self.error_at_node_msg(
-                    arg_idx,
-                    crate::diagnostics::diagnostic_codes::TYPE_ARGUMENTS_FOR_CIRCULARLY_REFERENCE_THEMSELVES,
-                    &[name.as_str()],
-                );
-            }
+            self.error_at_node_msg(
+                type_ref_idx,
+                crate::diagnostics::diagnostic_codes::TYPE_ARGUMENTS_FOR_CIRCULARLY_REFERENCE_THEMSELVES,
+                &[name.as_str()],
+            );
         }
 
         // Validate type arguments against their constraints
         self.validate_type_args_against_params(&type_params, type_args_list);
+    }
+
+    fn type_args_reference_resolving_alias(
+        &self,
+        type_args_list: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        type_args_list
+            .nodes
+            .iter()
+            .copied()
+            .any(|arg_idx| self.type_node_references_resolving_alias(arg_idx))
+    }
+
+    fn type_node_references_resolving_alias(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            || node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
+        {
+            let sym_id = if node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).and_then(|type_ref| {
+                    self.resolve_type_symbol_for_lowering(type_ref.type_name)
+                        .map(tsz_binder::SymbolId)
+                })
+            } else {
+                self.resolve_type_symbol_for_lowering(node_idx)
+                    .map(tsz_binder::SymbolId)
+            };
+
+            if let Some(sym_id) = sym_id
+                && self.ctx.symbol_resolution_set.contains(&sym_id)
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+            {
+                return true;
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.type_node_references_resolving_alias(child_idx) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Validate explicit type arguments against their constraints for new expressions.

@@ -22,6 +22,39 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn match_rest_infer_tuple(
+        &self,
+        source_params: &[ParamInfo],
+        infer_ty: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let source_tuple_or_array = if source_params.len() == 1 && source_params[0].rest {
+            source_params[0].type_id
+        } else if source_params.iter().any(|param| param.rest) {
+            return false;
+        } else {
+            let tuple_elems: Vec<TupleElement> = source_params
+                .iter()
+                .map(|p| TupleElement {
+                    type_id: p.type_id,
+                    name: p.name,
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect();
+            self.interner().tuple(tuple_elems)
+        };
+        let mut local_visited = FxHashSet::default();
+        self.match_infer_pattern(
+            source_tuple_or_array,
+            infer_ty,
+            bindings,
+            &mut local_visited,
+            checker,
+        )
+    }
+
     pub(crate) fn match_infer_function_pattern(
         &self,
         source: TypeId,
@@ -37,43 +70,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .iter()
             .any(|param| self.type_contains_infer(param.type_id));
         let has_return_infer = self.type_contains_infer(pattern_fn.return_type);
+        let has_single_rest_infer = pattern_fn.params.len() == 1
+            && pattern_fn.params[0].rest
+            && self.type_contains_infer(pattern_fn.params[0].type_id);
 
         if pattern_fn.this_type.is_none() && has_param_infer && has_return_infer {
-            // Check if pattern has a single rest parameter (e.g., (...args: any[]) => infer R)
-            // This should match any function signature and only extract the return type
-            let has_single_rest_param = pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
-
             let mut match_params_and_return = |_source_type: TypeId,
                                                source_params: &[ParamInfo],
                                                source_return: TypeId,
                                                bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
                 let mut local_visited = FxHashSet::default();
-                if has_single_rest_param {
-                    // For a pattern like (...args: any[]) => infer R, we only care about
-                    // matching the return type. The parameters are ignored.
-                    // However, if the pattern parameter type contains infer, we still need to match it.
-                    if self.type_contains_infer(pattern_fn.params[0].type_id) {
-                        let pattern_param = &pattern_fn.params[0];
-                        for source_param in source_params {
-                            let source_param_type = if source_param.optional {
-                                self.interner()
-                                    .union2(source_param.type_id, TypeId::UNDEFINED)
-                            } else {
-                                source_param.type_id
-                            };
-                            if !self.match_infer_pattern(
-                                source_param_type,
-                                pattern_param.type_id,
-                                bindings,
-                                &mut local_visited,
-                                checker,
-                            ) {
-                                return false;
-                            }
-                        }
+                if has_single_rest_infer {
+                    if !self.match_rest_infer_tuple(
+                        source_params,
+                        pattern_fn.params[0].type_id,
+                        bindings,
+                        checker,
+                    ) {
+                        return false;
                     }
-                    // If the pattern param doesn't contain infer, skip parameter matching entirely
                 } else if !self.match_signature_params(
                     source_params,
                     &pattern_fn.params,
@@ -328,6 +344,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                              bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
                 let source_fn = self.interner().function_shape(source_fn_id);
+                if has_single_rest_infer {
+                    return self.match_rest_infer_tuple(
+                        &source_fn.params,
+                        pattern_fn.params[0].type_id,
+                        bindings,
+                        checker,
+                    );
+                }
                 if source_fn.params.len() != pattern_fn.params.len() {
                     return false;
                 }
@@ -373,6 +397,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     }
                     let source_sig = source_shape.call_signatures.last().unwrap();
+                    if has_single_rest_infer {
+                        return self.match_rest_infer_tuple(
+                            &source_sig.params,
+                            pattern_fn.params[0].type_id,
+                            bindings,
+                            checker,
+                        );
+                    }
                     // Allow source to have more params than pattern (structural subtyping)
                     if source_sig.params.len() < pattern_fn.params.len() {
                         return false;
@@ -779,6 +811,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .iter()
             .any(|param| self.type_contains_infer(param.type_id));
         let has_return_infer = self.type_contains_infer(pattern_sig.return_type);
+        let has_single_rest_infer = pattern_sig.params.len() == 1
+            && pattern_sig.params[0].rest
+            && self.type_contains_infer(pattern_sig.params[0].type_id);
         if pattern_sig.this_type.is_none() && has_param_infer && has_return_infer {
             let mut match_params_and_return = |_source_type: TypeId,
                                                source_params: &[ParamInfo],
@@ -786,7 +821,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                                bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
                 let mut local_visited = FxHashSet::default();
-                if !self.match_signature_params(
+                if has_single_rest_infer {
+                    if !self.match_rest_infer_tuple(
+                        source_params,
+                        pattern_sig.params[0].type_id,
+                        bindings,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                } else if !self.match_signature_params(
                     source_params,
                     &pattern_sig.params,
                     bindings,
@@ -895,6 +939,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if pattern_sig.this_type.is_none() && has_param_infer && !has_return_infer {
             let mut match_params =
                 |source_params: &[ParamInfo], bindings: &mut FxHashMap<Atom, TypeId>| -> bool {
+                    if has_single_rest_infer {
+                        return self.match_rest_infer_tuple(
+                            source_params,
+                            pattern_sig.params[0].type_id,
+                            bindings,
+                            checker,
+                        );
+                    }
                     let mut local_visited = FxHashSet::default();
                     // Match params and infer types. Skip subtype check since pattern matching
                     // success implies compatibility. The subtype check can fail for optional

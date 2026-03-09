@@ -7,6 +7,7 @@
 //! resolve types, then use the solver to explain any failures.
 
 use crate::context::CheckerContext;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -283,6 +284,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
         let factory = self.ctx.types.factory();
 
+        if self.tuple_type_directly_references_resolving_alias(idx) {
+            self.ctx.error(
+                node.pos,
+                node.end - node.pos,
+                crate::diagnostics::diagnostic_messages::TUPLE_TYPE_ARGUMENTS_CIRCULARLY_REFERENCE_THEMSELVES.to_string(),
+                crate::diagnostics::diagnostic_codes::TUPLE_TYPE_ARGUMENTS_CIRCULARLY_REFERENCE_THEMSELVES,
+            );
+        }
+
         if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
             let mut elements = Vec::new();
             let mut seen_optional = false;
@@ -424,6 +434,69 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         TypeId::ERROR
+    }
+
+    fn tuple_type_directly_references_resolving_alias(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) else {
+            return false;
+        };
+
+        tuple_type
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .any(|elem_idx| self.type_node_references_resolving_alias(elem_idx, true))
+    }
+
+    fn type_node_references_resolving_alias(
+        &self,
+        node_idx: NodeIndex,
+        stop_at_nested_tuple: bool,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if stop_at_nested_tuple && node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return false;
+        }
+
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::TYPE_REFERENCE
+        {
+            let sym_id = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx
+                    .arena
+                    .get_type_ref(node)
+                    .and_then(|type_ref| self.resolve_type_symbol(type_ref.type_name))
+                    .map(SymbolId)
+            } else {
+                self.resolve_type_symbol(node_idx).map(SymbolId)
+            };
+
+            if let Some(sym_id) = sym_id
+                && self.ctx.symbol_resolution_set.contains(&sym_id)
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+            {
+                return true;
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.type_node_references_resolving_alias(child_idx, false) {
+                return true;
+            }
+        }
+
+        false
     }
 
     // =========================================================================
