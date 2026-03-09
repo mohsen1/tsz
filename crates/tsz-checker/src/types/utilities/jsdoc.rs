@@ -1856,7 +1856,6 @@ impl<'a> CheckerState<'a> {
         statements: &[NodeIndex],
     ) -> Vec<(&'static str, u32, u32)> {
         use tsz_parser::parser::syntax_kind_ext;
-
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return Vec::new();
         };
@@ -1864,13 +1863,11 @@ impl<'a> CheckerState<'a> {
         let comments = &sf.comments;
         let mut results = Vec::new();
         let mut handled_comment_positions = Vec::new();
-
         // Phase 1: Check each top-level statement's leading JSDoc
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
-
             // Skip class declarations — @extends is valid on classes
             if node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || node.kind == syntax_kind_ext::CLASS_EXPRESSION
@@ -1912,7 +1909,6 @@ impl<'a> CheckerState<'a> {
 
             results.push((tag, pos, len));
         }
-
         // Phase 2: Check for dangling JSDoc comments not attached to any statement
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
         for comment in comments {
@@ -1934,7 +1930,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 continue;
             };
-
             // Check if this comment is the direct leading JSDoc of any statement.
             // We cannot use positional containment (n.pos <= comment.pos) because
             // node.pos includes leading trivia — a dangling comment between two
@@ -1968,7 +1963,6 @@ impl<'a> CheckerState<'a> {
 
             results.push((tag, pos, len));
         }
-
         results
     }
 }

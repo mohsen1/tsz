@@ -242,6 +242,31 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
 
+        // Nominal identity check: when both types come from different named type
+        // references (Application with different bases, or Lazy with different DefIds),
+        // tsc's isTypeIdenticalTo rejects them even if structurally equivalent.
+        // e.g., `IPromise<string>` vs `Promise<string>` are NOT identical in tsc.
+        // This check must happen BEFORE evaluation strips the nominal info.
+        {
+            use tsz_solver::type_queries;
+            // For Application types: different base types → different nominal origins
+            let prev_base = type_queries::get_application_base(self.ctx.types, prev_type);
+            let curr_base = type_queries::get_application_base(self.ctx.types, current_type);
+            if let (Some(pb), Some(cb)) = (prev_base, curr_base)
+                && pb != cb
+            {
+                return false;
+            }
+            // For non-generic named types: different Lazy(DefId) → different origins
+            let prev_def = type_queries::get_lazy_def_id(self.ctx.types, prev_type);
+            let curr_def = type_queries::get_lazy_def_id(self.ctx.types, current_type);
+            if let (Some(pd), Some(cd)) = (prev_def, curr_def)
+                && pd != cd
+            {
+                return false;
+            }
+        }
+
         // Evaluate Application types (mapped types, conditional types) so that
         // e.g. `UnNullify<[1, 2?]>` is reduced to `[1, 2?]` before comparison.
         // Without this, unevaluated Application types fail identity/subtype checks
