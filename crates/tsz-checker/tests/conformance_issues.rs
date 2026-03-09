@@ -5685,6 +5685,29 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
     );
 }
 
+#[test]
+fn test_no_false_ts2344_for_interface_extending_array_constraint() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r"
+interface CoolArray<E> extends Array<E> {
+    hello: number;
+}
+
+declare function foo<T extends any[]>(): void;
+
+foo<CoolArray<any>>();
+        ",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Interface types extending Array should satisfy `T extends any[]` constraints.\nActual: {diagnostics:?}"
+    );
+}
+
 /// Issue: instanceof narrowing uses structural subtyping instead of nominal class identity.
 ///
 /// When class A has only optional properties, `is_assignable_to(B, A)` returns true
@@ -6279,5 +6302,47 @@ function f() {
         ts2365[0].1.contains("'string | number' and 'number'")
             && !ts2365[0].1.contains("'string | number' and '1'"),
         "Relational operator diagnostics should widen literal operands to their primitive types.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2344_for_explicit_array_subtype_type_arguments() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface CoolArray<E> extends Array<E> {
+    hello: number;
+}
+
+declare function foo<T extends any[]>(cb: (...args: T) => void): void;
+foo<CoolArray<any>>(function (...args: CoolArray<any>) {});
+
+function bar<T extends any[]>(...args: T): T {
+    return args;
+}
+
+bar<CoolArray<number>>(10, 20);
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344.is_empty(),
+        "Explicit array-subtype type arguments should not fail `T extends any[]` with TS2344.\nGot: {diagnostics:?}"
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert!(
+        !ts2345.is_empty(),
+        "The explicit `bar<CoolArray<number>>(10, 20)` call should still fail on the argument shape, just not with TS2344.\nGot: {diagnostics:?}"
     );
 }

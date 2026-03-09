@@ -433,6 +433,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if !self.is_assignable_to(base, inst_constraint)
+                            && !self.satisfies_array_like_constraint(base, inst_constraint)
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
                         {
                             self.error_type_constraint_not_satisfied(
@@ -477,6 +478,10 @@ impl<'a> CheckerState<'a> {
                     let db = self.ctx.types.as_type_database();
                     is_satisfied = self.is_function_constraint(original_constraint)
                         && tsz_solver::type_queries::is_callable_type(db, type_arg);
+                }
+                if !is_satisfied {
+                    is_satisfied =
+                        self.satisfies_array_like_constraint(type_arg, instantiated_constraint);
                 }
 
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
@@ -527,6 +532,59 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         false
+    }
+
+    fn satisfies_array_like_constraint(&mut self, source: TypeId, target: TypeId) -> bool {
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+        let target_elem = crate::query_boundaries::checkers::call::array_element_type_for_type(
+            self.ctx.types,
+            target,
+        )
+        .unwrap_or_else(|| self.get_element_access_type(target, TypeId::NUMBER, Some(0)));
+        if target_elem == TypeId::ERROR {
+            return false;
+        }
+
+        if !self.is_array_like_type(source)
+            && !self.has_structural_array_surface(source, target)
+        {
+            return false;
+        }
+
+        if target_elem == TypeId::ANY {
+            return true;
+        }
+
+        let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
+        source_elem != TypeId::ERROR && self.is_assignable_to(source_elem, target_elem)
+    }
+
+    fn has_structural_array_surface(&self, source: TypeId, target: TypeId) -> bool {
+        use tsz_solver::type_queries::{self as query, ArrayLikeKind};
+
+        let Some(shape) = query::get_object_shape(self.ctx.types, source) else {
+            return false;
+        };
+        if shape.number_index.is_none() {
+            return false;
+        }
+
+        for name in ["length", "concat", "slice"] {
+            if query::find_property_in_object_by_str(self.ctx.types, source, name).is_none() {
+                return false;
+            }
+        }
+
+        if !matches!(
+            query::classify_array_like(self.ctx.types, target),
+            ArrayLikeKind::Readonly(_)
+        ) && query::find_property_in_object_by_str(self.ctx.types, source, "push").is_none()
+        {
+            return false;
+        }
+
+        true
     }
 
     /// Check if a symbol's declaration has type parameters, even if they couldn't be
