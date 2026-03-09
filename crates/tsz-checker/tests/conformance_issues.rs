@@ -5593,3 +5593,38 @@ f(1)("");
         "Returned arrow parameter `typeof` queries should inherit the narrowed return-site flow.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_computed_binding_element_literal_key_does_not_require_index_signature() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+{
+    interface Window {
+        window: Window;
+    }
+
+    let foo: string | undefined;
+    let window = {} as Window;
+    window.window = window;
+
+    const { [(() => {  return 'window' as const })()]:
+        { [(() => { foo = ""; return 'window' as const })()]: bar } } = window;
+
+    foo;
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2537: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2537)
+        .collect();
+    assert!(
+        ts2537.is_empty(),
+        "Computed binding-element keys that resolve to a literal property name should not require an index signature.\nGot: {diagnostics:?}"
+    );
+}

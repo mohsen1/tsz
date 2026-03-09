@@ -983,29 +983,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns None for truly dynamic computed keys (e.g., `{ [expr]: a }`).
     fn extract_binding_property_name(
-        &self,
+        &mut self,
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> Option<String> {
         if element_data.property_name.is_some() {
-            let prop_node = self.ctx.arena.get(element_data.property_name)?;
-            // Try identifier: { x: a }
-            if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
-                return Some(ident.escaped_text.clone());
-            }
-            // Try string/numeric literal: { 'b': a }
-            if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
-                return Some(lit.text.clone());
-            }
-            // Try computed property with static literal value: { ['b']: a } or { [42]: a }
-            // Note: { [ident]: a } is NOT static — the property depends on the runtime
-            // value of `ident`, so we return None for computed-with-identifier.
-            if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
-                let expr_node = self.ctx.arena.get(computed.expression)?;
-                if let Some(lit) = self.ctx.arena.get_literal(expr_node) {
-                    return Some(lit.text.clone());
-                }
-            }
-            None
+            self.get_property_name_resolved(element_data.property_name)
         } else {
             // Shorthand: { x } — the name itself is the property name
             let name_node = self.ctx.arena.get(element_data.name)?;
