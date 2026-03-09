@@ -137,6 +137,15 @@ impl<'a> CheckerState<'a> {
         // Get the class symbol for nominal identity
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
 
+        // Pre-compute inherited static properties from base class so they are available
+        // for partial constructor types built during static initializer evaluation.
+        // Without this, self-referencing initializers like `static x = P.BaseMethod()`
+        // would not see inherited statics in the partial constructor type.
+        let inherited_static_props: Vec<PropertyInfo> = self
+            .collect_inherited_static_properties(class)
+            .into_values()
+            .collect();
+
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
@@ -221,6 +230,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: current_sym,
                                     declaration_order: 0,
                                 }),
+                                &inherited_static_props,
                             );
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                         }
@@ -324,6 +334,7 @@ impl<'a> CheckerState<'a> {
                             &static_string_index,
                             &static_number_index,
                             None,
+                            &inherited_static_props,
                         );
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
@@ -395,6 +406,7 @@ impl<'a> CheckerState<'a> {
                                     &static_string_index,
                                     &static_number_index,
                                     None,
+                                    &inherited_static_props,
                                 );
                                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
                             }
@@ -1201,6 +1213,48 @@ impl<'a> CheckerState<'a> {
         constructor_type
     }
 
+    /// Collect inherited static properties from the base class (extends clause).
+    /// Returns a map of property name → `PropertyInfo` for each inherited static.
+    fn collect_inherited_static_properties(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> rustc_hash::FxHashMap<Atom, PropertyInfo> {
+        let mut base_props = rustc_hash::FxHashMap::default();
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    break;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    break;
+                };
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+                if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
+                    && let Some(&base_type) = self.ctx.symbol_types.get(&base_sym_id)
+                {
+                    base_props = self.static_properties_from_type(base_type);
+                }
+                break;
+            }
+        }
+        base_props
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn build_partial_static_constructor_type(
         &self,
         current_sym: Option<tsz_binder::SymbolId>,
@@ -1210,6 +1264,7 @@ impl<'a> CheckerState<'a> {
         static_string_index: &Option<IndexSignature>,
         static_number_index: &Option<IndexSignature>,
         extra_property: Option<PropertyInfo>,
+        inherited_static_props: &[PropertyInfo],
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let mut partial_ctor_props: Vec<PropertyInfo> = properties.values().cloned().collect();
@@ -1273,6 +1328,15 @@ impl<'a> CheckerState<'a> {
 
         if let Some(extra_property) = extra_property {
             partial_ctor_props.push(extra_property);
+        }
+
+        // Include inherited static properties from base class
+        let own_names: std::collections::HashSet<_> =
+            partial_ctor_props.iter().map(|p| p.name).collect();
+        for prop in inherited_static_props {
+            if !own_names.contains(&prop.name) {
+                partial_ctor_props.push(prop.clone());
+            }
         }
 
         factory.callable(CallableShape {
