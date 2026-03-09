@@ -768,16 +768,9 @@ impl Server {
                     };
                 }
 
-                let has_add_missing_await = error_codes.iter().any(|code| {
-                    CodeFixRegistry::fixes_for_error_code(*code)
-                        .iter()
-                        .any(|(fix_name, _, _, _)| *fix_name == "addMissingAwait")
-                });
-
                 if error_codes.contains(
                     &tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                ) && !has_add_missing_await
-                    && add_missing_await_preview.is_none()
+                ) && add_missing_await_preview.is_none()
                 {
                     let prop_name = request
                         .arguments
@@ -853,11 +846,27 @@ impl Server {
                 }
 
                 let mut seen_fixes = std::collections::HashSet::new();
+                let has_concrete_missing_member_variants = response_actions.iter().any(|action| {
+                    action.get("fixId").and_then(serde_json::Value::as_str)
+                        == Some("fixMissingMember")
+                        && action
+                            .get("description")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|desc| {
+                                desc.starts_with("Declare ")
+                                    || desc.starts_with("Add index signature for property ")
+                            })
+                });
                 for code in &error_codes {
                     let fix_entries: Vec<(&str, &str, &str, &str)> =
                         CodeFixRegistry::fixes_for_error_code(*code)
                             .into_iter()
                             .filter(|(_, fix_id, _, _)| {
+                                if has_concrete_missing_member_variants
+                                    && *fix_id == "fixMissingMember"
+                                {
+                                    return false;
+                                }
                                 if *fix_id == "fixMissingImport"
                                     && *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME && import_candidates_is_empty {
                                         return false;

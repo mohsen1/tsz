@@ -232,6 +232,61 @@ fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
 }
 
 #[test]
+fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/declarations.d.ts".to_string(),
+        "interface Response {}\n".to_string(),
+    );
+    let content = "import './declarations.d.ts'\ndeclare const resp: Response\nresp.test()\n";
+    server
+        .open_files
+        .insert("/foo.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content.find("test").expect("expected test property access") as u32;
+    let end = start + "test".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/foo.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2339]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let descriptions: Vec<_> = actions
+        .iter()
+        .filter_map(|action| action.get("description").and_then(serde_json::Value::as_str))
+        .collect();
+
+    assert_eq!(
+        descriptions,
+        vec![
+            "Declare method 'test'",
+            "Declare property 'test'",
+            "Add index signature for property 'test'",
+        ],
+        "unexpected codefix list for plain TS2339 missing property: {actions:?}"
+    );
+}
+
+#[test]
 fn collect_import_candidates_uses_external_project_files() {
     let mut server = make_server();
     let temp_dir = std::env::temp_dir().join(format!(
