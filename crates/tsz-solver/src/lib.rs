@@ -98,7 +98,9 @@ pub use operations::expression_ops;
 pub use operations::expression_ops::*;
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-    MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass, get_contextual_signature_with_compat_checker,
+    MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass,
+    get_contextual_signature_for_arity_with_compat_checker,
+    get_contextual_signature_with_compat_checker,
 };
 pub use relations::compat::*;
 pub use relations::judge::*;

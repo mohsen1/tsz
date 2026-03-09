@@ -1318,15 +1318,15 @@ pub(super) fn no_input_diagnostics_for_config(
     let config_name = tsconfig_path
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| "tsconfig.json".to_string());
-    let include_str = include
-        .filter(|v| !v.is_empty())
-        .map(|v| {
-            v.iter()
-                .map(|s| format!("\"{s}\""))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .unwrap_or_default();
+    let include_str = match include {
+        Some(v) if !v.is_empty() => v
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(","),
+        Some(_) => String::new(),
+        None => "\"**/*\"".to_string(),
+    };
     let exclude_str = exclude
         .filter(|v| !v.is_empty())
         .map(|v| {
@@ -1895,10 +1895,15 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.allow_js {
         options.allow_js = true;
+        options.checker.allow_js = true;
     }
     if args.check_js {
         options.check_js = true;
         options.checker.check_js = true;
+    }
+    if args.isolated_declarations {
+        options.isolated_declarations = true;
+        options.checker.isolated_declarations = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());

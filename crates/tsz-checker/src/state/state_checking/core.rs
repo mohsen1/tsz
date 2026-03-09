@@ -279,6 +279,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.is_unreachable = prev_unreachable;
             self.ctx.has_reported_unreachable = prev_reported;
 
+            self.check_isolated_declaration_exports(&sf.statements.nodes);
             self.check_reserved_await_identifier_in_module(root_idx);
             // Check for function overload implementations (2389, 2391)
             self.check_function_implementations(&sf.statements.nodes);
@@ -1385,6 +1386,72 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
                 diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
             );
+        }
+    }
+
+    /// Emit TS1148 if module=none and the file contains imports, exports, or module augmentations.
+    fn check_isolated_declaration_exports(&mut self, stmts: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.ctx.isolated_declarations() || self.ctx.is_declaration_file() {
+            return;
+        }
+
+        for &stmt_idx in stmts {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            let var_stmt_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
+                    continue;
+                };
+                let export_clause = export_decl.export_clause;
+                if export_clause == NodeIndex::NONE {
+                    continue;
+                }
+                let Some(exported_node) = self.ctx.arena.get(export_clause) else {
+                    continue;
+                };
+                if exported_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                    continue;
+                }
+                exported_node
+            } else if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && self.is_declaration_exported(self.ctx.arena, stmt_idx)
+            {
+                node
+            } else {
+                continue;
+            };
+
+            let Some(stmt) = self.ctx.arena.get_variable(var_stmt_node) else {
+                continue;
+            };
+            for &list_idx in &stmt.declarations.nodes {
+                let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    if decl.type_annotation.is_some() || decl.initializer.is_none() {
+                        continue;
+                    }
+                    self.error_at_node(
+                        decl.name,
+                        diagnostic_messages::VARIABLE_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                        diagnostic_codes::VARIABLE_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                    );
+                }
+            }
         }
     }
 

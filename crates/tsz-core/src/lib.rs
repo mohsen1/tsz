@@ -616,7 +616,9 @@ impl CompilerOptions {
             always_strict: strict,
             resolve_json_module: false, // WASM API: defaults to false
             check_js: false,            // WASM API: defaults to false
+            allow_js: false,
             no_resolve: false,
+            isolated_declarations: false,
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,

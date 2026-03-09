@@ -15,6 +15,7 @@ use crate::types::{
     TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
+use crate::{TypeSubstitution, instantiate_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
@@ -182,6 +183,136 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if pattern_fn.this_type.is_none() && has_param_infer && !has_return_infer {
+            let has_single_rest_infer = pattern_fn.params.len() == 1
+                && pattern_fn.params[0].rest
+                && self.type_contains_infer(pattern_fn.params[0].type_id);
+
+            if has_single_rest_infer {
+                let infer_ty = pattern_fn.params[0].type_id;
+                let erase_type_params =
+                    |source_type_params: &[TypeParamInfo]| -> Option<TypeSubstitution> {
+                        if source_type_params.is_empty() {
+                            return None;
+                        }
+                        let mut subst = TypeSubstitution::new();
+                        for tp in source_type_params {
+                            subst.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                        }
+                        Some(subst)
+                    };
+                let mut match_params_tuple = |source_params: &[ParamInfo],
+                                              source_type_params: &[TypeParamInfo],
+                                              bindings: &mut FxHashMap<Atom, TypeId>|
+                 -> bool {
+                    let mut local_visited = FxHashSet::default();
+                    let erased_subst = erase_type_params(source_type_params);
+
+                    if source_params.len() == 1 && source_params[0].rest {
+                        let source_param = &source_params[0];
+                        let source_param_type = if let Some(subst) = &erased_subst {
+                            instantiate_type(self.interner(), source_param.type_id, subst)
+                        } else {
+                            source_param.type_id
+                        };
+                        let source_param_type = if source_param.optional {
+                            self.interner().union2(source_param_type, TypeId::UNDEFINED)
+                        } else {
+                            source_param_type
+                        };
+                        return self.match_infer_pattern(
+                            source_param_type,
+                            infer_ty,
+                            bindings,
+                            &mut local_visited,
+                            checker,
+                        );
+                    }
+
+                    let tuple_elems: Vec<TupleElement> = source_params
+                        .iter()
+                        .map(|param| TupleElement {
+                            type_id: if let Some(subst) = &erased_subst {
+                                instantiate_type(self.interner(), param.type_id, subst)
+                            } else {
+                                param.type_id
+                            },
+                            name: param.name,
+                            optional: param.optional,
+                            rest: param.rest,
+                        })
+                        .collect();
+                    let tuple_ty = self.interner().tuple(tuple_elems);
+                    self.match_infer_pattern(
+                        tuple_ty,
+                        infer_ty,
+                        bindings,
+                        &mut local_visited,
+                        checker,
+                    )
+                };
+
+                return match self.interner().lookup(source) {
+                    Some(TypeData::Function(source_fn_id)) => {
+                        let source_fn = self.interner().function_shape(source_fn_id);
+                        match_params_tuple(&source_fn.params, &source_fn.type_params, bindings)
+                    }
+                    Some(TypeData::Callable(source_shape_id)) => {
+                        let source_shape = self.interner().callable_shape(source_shape_id);
+                        if source_shape.call_signatures.is_empty() {
+                            return false;
+                        }
+                        let source_sig = source_shape.call_signatures.last().unwrap();
+                        match_params_tuple(&source_sig.params, &source_sig.type_params, bindings)
+                    }
+                    Some(TypeData::Union(members)) => {
+                        let members = self.interner().type_list(members);
+                        let mut combined = FxHashMap::default();
+                        for &member in members.iter() {
+                            let mut member_bindings = FxHashMap::default();
+                            match self.interner().lookup(member) {
+                                Some(TypeData::Function(source_fn_id)) => {
+                                    let source_fn = self.interner().function_shape(source_fn_id);
+                                    if !match_params_tuple(
+                                        &source_fn.params,
+                                        &source_fn.type_params,
+                                        &mut member_bindings,
+                                    ) {
+                                        return false;
+                                    }
+                                }
+                                Some(TypeData::Callable(source_shape_id)) => {
+                                    let source_shape =
+                                        self.interner().callable_shape(source_shape_id);
+                                    if source_shape.call_signatures.is_empty() {
+                                        return false;
+                                    }
+                                    let source_sig = source_shape.call_signatures.last().unwrap();
+                                    if !match_params_tuple(
+                                        &source_sig.params,
+                                        &source_sig.type_params,
+                                        &mut member_bindings,
+                                    ) {
+                                        return false;
+                                    }
+                                }
+                                _ => return false,
+                            }
+                            for (name, ty) in member_bindings {
+                                combined
+                                    .entry(name)
+                                    .and_modify(|existing| {
+                                        *existing = self.interner().union2(*existing, ty);
+                                    })
+                                    .or_insert(ty);
+                            }
+                        }
+                        bindings.extend(combined);
+                        true
+                    }
+                    _ => false,
+                };
+            }
+
             // Handle constructor function patterns differently
             if pattern_fn.is_constructor {
                 return self.match_infer_constructor_pattern(

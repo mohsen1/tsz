@@ -688,8 +688,9 @@ pub(super) fn collect_diagnostics(
                 .filter(|d| is_real_syntax_error(d.code))
                 .map(|d| d.start)
                 .collect();
+            let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
             let mut file_diagnostics = Vec::new();
-            for parse_diagnostic in &file.parse_diagnostics {
+            for parse_diagnostic in filtered_parse_diagnostics {
                 file_diagnostics.push(parse_diagnostic_to_checker(
                     &file.file_name,
                     parse_diagnostic,
@@ -1039,11 +1040,11 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| is_real_syntax_error(d.code))
         .map(|d| d.start)
         .collect();
+    let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
 
     // Collect parse diagnostics
-    let mut file_diagnostics: Vec<Diagnostic> = file
-        .parse_diagnostics
-        .iter()
+    let mut file_diagnostics: Vec<Diagnostic> = filtered_parse_diagnostics
+        .into_iter()
         .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
         .collect();
 

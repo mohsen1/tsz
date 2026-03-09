@@ -942,6 +942,19 @@ pub(super) fn parse_diagnostic_to_checker(
     )
 }
 
+pub(super) fn filtered_parse_diagnostics<'a>(
+    parse_diagnostics: &'a [ParseDiagnostic],
+) -> Vec<&'a ParseDiagnostic> {
+    let has_real_syntax_error = parse_diagnostics
+        .iter()
+        .any(|diagnostic| is_real_syntax_error(diagnostic.code));
+
+    parse_diagnostics
+        .iter()
+        .filter(|diagnostic| !(has_real_syntax_error && diagnostic.code == 1184))
+        .collect()
+}
+
 pub(super) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,

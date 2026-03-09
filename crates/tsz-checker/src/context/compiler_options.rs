@@ -104,6 +104,11 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.isolated_modules
     }
 
+    /// Check if isolatedDeclarations is enabled.
+    pub const fn isolated_declarations(&self) -> bool {
+        self.compiler_options.isolated_declarations
+    }
+
     /// Check if noUncheckedIndexedAccess is enabled.
     /// When enabled, index signature access adds `| undefined` to the result type.
     pub const fn no_unchecked_indexed_access(&self) -> bool {

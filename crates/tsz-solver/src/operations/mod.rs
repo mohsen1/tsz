@@ -55,9 +55,10 @@ pub mod widening;
 pub use self::core::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult,
     MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
-    compute_contextual_types_with_compat_checker, get_contextual_signature_with_compat_checker,
-    infer_call_signature, infer_generic_function, resolve_call_with_checker,
-    resolve_new_with_checker,
+    compute_contextual_types_with_compat_checker,
+    get_contextual_signature_for_arity_with_compat_checker,
+    get_contextual_signature_with_compat_checker, infer_call_signature, infer_generic_function,
+    resolve_call_with_checker, resolve_new_with_checker,
 };
 
 // Re-exports from submodules
