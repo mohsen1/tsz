@@ -1341,19 +1341,31 @@ impl<'a> CheckerState<'a> {
 
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
-            if cached == TypeId::ERROR
-                && self.ctx.symbol_resolution_set.contains(&sym_id)
-                && let Some(provisional) = self.provisional_circular_function_symbol_type(sym_id)
-            {
-                self.ctx.symbol_types.insert(sym_id, provisional);
-                trace!(
-                    sym_id = sym_id.0,
-                    type_id = provisional.0,
-                    file = self.ctx.file_name.as_str(),
-                    "(cached provisional) get_type_of_symbol"
-                );
-                return provisional;
+            if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {
+                // Pre-cache ANY sentinel to prevent re-entrancy: provisional_circular_function_symbol_type
+                // processes type annotations which may call get_type_of_symbol for the same symbol
+                // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
+                // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
+                self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
+                if let Some(provisional) = self.provisional_circular_function_symbol_type(sym_id) {
+                    self.ctx.symbol_types.insert(sym_id, provisional);
+                    trace!(
+                        sym_id = sym_id.0,
+                        type_id = provisional.0,
+                        file = self.ctx.file_name.as_str(),
+                        "(cached provisional) get_type_of_symbol"
+                    );
+                    return provisional;
+                }
+                // Restore ERROR if provisional failed
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             }
+            let cached = self
+                .ctx
+                .symbol_types
+                .get(&sym_id)
+                .copied()
+                .unwrap_or(TypeId::ERROR);
             trace!(
                 sym_id = sym_id.0,
                 type_id = cached.0,
@@ -1452,6 +1464,11 @@ impl<'a> CheckerState<'a> {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
                 factory.lazy(def_id)
             } else if flags & symbol_flags::FUNCTION != 0 && flags & symbol_flags::INTERFACE == 0 {
+                // Pre-cache ANY sentinel to break re-entrancy during provisional computation.
+                // Without this, processing `typeof foo<T>` in foo's return type calls
+                // get_type_of_symbol(foo) which finds nothing cached → enters circular
+                // detection → calls provisional again → stack overflow.
+                self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
                 self.provisional_circular_function_symbol_type(sym_id)
                     .unwrap_or(TypeId::ERROR)
             } else {
