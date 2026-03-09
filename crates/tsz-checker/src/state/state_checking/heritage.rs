@@ -1035,8 +1035,24 @@ impl<'a> CheckerState<'a> {
 
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        // Get the name from the usage site
-        let name = self.heritage_name_text(usage_idx).unwrap_or_default();
+        // Get the simple name from the symbol, not the full qualified expression text.
+        // tsc uses the symbol's simple name (e.g., 'E') not the qualified name ('N.E').
+        let name = symbol.escaped_name.clone();
+
+        // For property access expressions like N.E, point the error at the right-hand
+        // identifier (E), not the whole expression (N.E). tsc reports the error span
+        // on just the class name, not the qualified access path.
+        let error_node = if let Some(usage_node_data) = self.ctx.arena.get(usage_idx)
+            && usage_node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            if let Some(access) = self.ctx.arena.get_access_expr(usage_node_data) {
+                access.name_or_argument
+            } else {
+                usage_idx
+            }
+        } else {
+            usage_idx
+        };
 
         let (msg_template, code) = if is_class {
             (
@@ -1050,7 +1066,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         let message = format_message(msg_template, &[&name]);
-        self.error_at_node(usage_idx, &message, code);
+        self.error_at_node(error_node, &message, code);
     }
 
     /// Check if a type (including intersection members) has generic construct signatures.
