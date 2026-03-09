@@ -1,6 +1,6 @@
 //! Unit tests for the flow module.
 //!
-//! Tests for FlowNodeId, FlowNode, FlowNodeArena, and flow_flags.
+//! Tests for FlowNodeId, `FlowNode`, `FlowNodeArena`, and `flow_flags`.
 
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 

@@ -927,45 +927,81 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the display text for a class member name, matching TSC's `declarationNameToString`.
+    ///
+    /// Unlike `get_member_name_text` which canonicalizes numeric names for dedup keys,
+    /// this preserves the original source representation for diagnostic messages.
+    /// - Identifiers: `foo` → `"foo"`
+    /// - Numeric literals: `0.0` → `"0.0"` (NOT canonicalized to `"0"`)
+    /// - String literals: `'0'` → `"'0'"` (wrapped in single quotes)
+    fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
+        if name_idx.is_none() {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(name_idx)?;
+
+        // Identifier — same as canonical
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.clone());
+        }
+
+        // String literal — wrap in single quotes like TSC's declarationNameToString
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(name_node)
+        {
+            return Some(format!("'{}'", lit.text));
+        }
+
+        // Numeric literal — preserve source text (no canonicalization)
+        if name_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(name_node)
+        {
+            return Some(lit.text.clone());
+        }
+
+        // Fall back to get_member_name_text for computed properties, etc.
+        self.get_member_name_text(name_idx)
+    }
+
     /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
     /// Helper function to avoid code duplication in `check_duplicate_class_members`.
     fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
 
         let member_node = self.ctx.arena.get(member_idx);
-        let (name, error_node) = match member_node.map(|n| n.kind) {
+        let (name_idx, error_node) = match member_node.map(|n| n.kind) {
             Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 let prop = self.ctx.arena.get_property_decl(member_node.unwrap());
-                let name = prop.and_then(|p| self.get_member_name_text(p.name));
-                let node = prop
-                    .map(|p| p.name)
-                    .filter(|idx| idx.is_some())
-                    .unwrap_or(member_idx);
-                (name, node)
+                let name_idx = prop.map(|p| p.name).filter(|idx| idx.is_some());
+                let node = name_idx.unwrap_or(member_idx);
+                (name_idx, node)
             }
             Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let method = self.ctx.arena.get_method_decl(member_node.unwrap());
-                let name = method.and_then(|m| self.get_member_name_text(m.name));
-                let node = method
-                    .map(|m| m.name)
-                    .filter(|idx| idx.is_some())
-                    .unwrap_or(member_idx);
-                (name, node)
+                let name_idx = method.map(|m| m.name).filter(|idx| idx.is_some());
+                let node = name_idx.unwrap_or(member_idx);
+                (name_idx, node)
             }
             Some(k) if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 let accessor = self.ctx.arena.get_accessor(member_node.unwrap());
-                let name = accessor.and_then(|a| self.get_member_name_text(a.name));
-                let node = accessor
-                    .map(|a| a.name)
-                    .filter(|idx| idx.is_some())
-                    .unwrap_or(member_idx);
-                (name, node)
+                let name_idx = accessor.map(|a| a.name).filter(|idx| idx.is_some());
+                let node = name_idx.unwrap_or(member_idx);
+                (name_idx, node)
             }
             _ => return,
         };
 
-        if let Some(name) = name {
-            self.error_at_node_msg(error_node, diagnostic_codes::DUPLICATE_IDENTIFIER, &[&name]);
+        // Use display text (preserves source representation) for the diagnostic message,
+        // matching TSC's declarationNameToString behavior.
+        if let Some(name_idx) = name_idx
+            && let Some(display_name) = self.get_member_name_display_text(name_idx)
+        {
+            self.error_at_node_msg(
+                error_node,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                &[&display_name],
+            );
         }
     }
 
