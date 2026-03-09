@@ -428,6 +428,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS1221 / TS1222
+        // TSC anchors these errors at the `*` asterisk token, not the whole method node.
         if method.asterisk_token {
             let in_declared_class = self
                 .ctx
@@ -441,13 +442,15 @@ impl<'a> CheckerState<'a> {
                 || self.is_ambient_declaration(member_idx);
 
             if is_ambient {
-                self.error_at_node(
+                self.emit_generator_error_at_asterisk(
+                    method.name,
                     member_idx,
                     "Generators are not allowed in an ambient context.",
                     diagnostic_codes::GENERATORS_ARE_NOT_ALLOWED_IN_AN_AMBIENT_CONTEXT,
                 );
             } else if method.body.is_none() {
-                self.error_at_node(
+                self.emit_generator_error_at_asterisk(
+                    method.name,
                     member_idx,
                     "An overload signature cannot be declared as a generator.",
                     diagnostic_codes::AN_OVERLOAD_SIGNATURE_CANNOT_BE_DECLARED_AS_A_GENERATOR,

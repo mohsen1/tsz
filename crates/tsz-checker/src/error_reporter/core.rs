@@ -550,6 +550,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit a generator-related error (TS1221/TS1222) at the `*` asterisk token.
+    ///
+    /// TSC's `grammarErrorOnNode(node.asteriskToken!, ...)` anchors these errors
+    /// at the asterisk, not the function/method node. Since our AST stores
+    /// `asterisk_token` as a `bool` (not a node), we scan backward from the
+    /// name node's position in source text to locate the `*`.
+    pub(crate) fn emit_generator_error_at_asterisk(
+        &mut self,
+        name_idx: NodeIndex,
+        fallback_idx: NodeIndex,
+        message: &str,
+        code: u32,
+    ) {
+        // Try to find the `*` by scanning backward from the name node's start position
+        if let Some(name_node) = self.ctx.arena.get(name_idx)
+            && let Some(sf) = self.ctx.arena.source_files.first()
+        {
+            let text = sf.text.as_bytes();
+            let name_pos = name_node.pos as usize;
+            // Scan backward from the name position to find `*`
+            for i in (0..name_pos).rev() {
+                match text.get(i) {
+                    Some(b'*') => {
+                        self.error_at_position(i as u32, 1, message, code);
+                        return;
+                    }
+                    Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => continue,
+                    _ => break, // Hit a non-whitespace, non-asterisk char — give up
+                }
+            }
+        }
+        // Fallback: error at the entire node
+        self.error_at_node(fallback_idx, message, code);
+    }
+
     /// Emit a templated diagnostic error at a node.
     ///
     /// Looks up the message template for `code` via `get_message_template`,
