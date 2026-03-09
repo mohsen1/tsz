@@ -179,7 +179,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
-        self.lower_with_resolvers(idx, false, false)
+        self.lower_with_resolvers(idx, false, true)
     }
 
     // =========================================================================

@@ -182,11 +182,7 @@ impl<'a> CheckerState<'a> {
         (enum_type, Vec::new())
     }
 
-    /// Compute the body type of a type alias from its declarations.
-    ///
-    /// Used when a type alias is merged with a namespace so the alias body
-    /// can be registered as the "instance type" for type-position resolution.
-    /// Returns `None` if the type alias declaration can't be found.
+    /// Compute the body type of a namespace-merged type alias.
     fn compute_type_alias_body(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -219,7 +215,6 @@ impl<'a> CheckerState<'a> {
         let alias_type = self.get_type_from_type_node(type_alias.type_node);
         self.pop_type_parameters(updates);
 
-        // Also register type params + DefId so Application expansion works for generic aliases
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         if !params.is_empty() {
             self.ctx.insert_def_type_params(def_id, params);
@@ -229,9 +224,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Compute the type of a namespace or module symbol.
-    ///
-    /// Returns a Lazy type with the `DefId` for deferred resolution.
-    /// This is skipped for functions (handled separately) and enums (must come first).
     fn compute_namespace_symbol_type(
         &mut self,
         sym_id: SymbolId,
@@ -245,20 +237,13 @@ impl<'a> CheckerState<'a> {
                 .insert(sym_id, interface_type);
         }
 
-        // When a type alias is merged with a namespace (e.g.,
-        //   type Foo = Foo.A | Foo.B;
-        //   namespace Foo { export type A = number; export type B = string; }
-        // ), compute the type alias body and store it as the "instance type".
-        // Without this, resolve_lazy returns Lazy(DefId) which self-references,
-        // preventing the type alias from ever resolving to its actual body.
+        // Namespace-merged aliases need their body cached as the instance type.
         if flags & symbol_flags::TYPE_ALIAS != 0
             && let Some(alias_type) = self.compute_type_alias_body(sym_id)
         {
             self.ctx.symbol_instance_types.insert(sym_id, alias_type);
         }
 
-        // Keep namespace symbols as Lazy references so namespace member resolution
-        // can differentiate value-vs-type-only members (TS2693/TS2708 paths).
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let factory = self.ctx.types.factory();
         (factory.lazy(def_id), Vec::new())
@@ -871,13 +856,47 @@ impl<'a> CheckerState<'a> {
                         declarations.first().copied().unwrap_or(NodeIndex::NONE)
                     }
                 });
-            if decl_idx.is_some()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
-            {
-                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
-                self.pop_type_parameters(updates);
+            if decl_idx.is_some() {
+                let decl_arena = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .and_then(|v| v.first())
+                    .map(std::convert::AsRef::as_ref)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .symbol_arenas
+                            .get(&sym_id)
+                            .map(std::convert::AsRef::as_ref)
+                    })
+                    .unwrap_or(self.ctx.arena);
+
+                let Some(node) = decl_arena.get(decl_idx) else {
+                    return (TypeId::UNKNOWN, Vec::new());
+                };
+                let Some(type_alias) = decl_arena.get_type_alias(node) else {
+                    return (TypeId::UNKNOWN, Vec::new());
+                };
+
+                let has_cross_arena_metadata = self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+                    || self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .contains_key(&(sym_id, decl_idx));
+
+                let (mut alias_type, params) = if has_cross_arena_metadata {
+                    self.lower_cross_arena_type_alias_declaration(
+                        sym_id, decl_idx, decl_arena, type_alias,
+                    )
+                } else {
+                    let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                    let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    self.pop_type_parameters(updates);
+                    (alias_type, params)
+                };
 
                 // Eagerly evaluate non-generic type aliases whose body is a concrete
                 // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`

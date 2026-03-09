@@ -10,6 +10,24 @@ use tsz_solver::TypeId;
 use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextual_literal};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
+        if crate::query_boundaries::state::should_evaluate_contextual_declared_type(
+            self.ctx.types,
+            type_id,
+        ) {
+            self.evaluate_type_with_env(type_id)
+        } else {
+            type_id
+        }
+    }
+
+    pub(crate) fn contextual_type_option_for_expression(
+        &mut self,
+        type_id: Option<TypeId>,
+    ) -> Option<TypeId> {
+        type_id.map(|type_id| self.contextual_type_for_expression(type_id))
+    }
+
     pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
         let ctx_type = self.ctx.contextual_type?;
         self.contextual_type_allows_literal(ctx_type, literal_type)

@@ -13,7 +13,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
-use tsz_checker::context::CheckerOptions;
+use tsz_binder::state::LibContext as BinderLibContext;
+use tsz_checker::context::LibContext as CheckerLibContext;
+use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -165,6 +167,60 @@ fn compile_and_get_diagnostics_with_lib_and_options(
         .collect()
 }
 
+fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts = if lib_files.is_empty() {
+        Vec::new()
+    } else {
+        let raw_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&raw_contexts);
+        vec![CheckerLibContext {
+            arena: Arc::clone(&lib_files[0].arena),
+            binder: Arc::new({
+                let mut merged = BinderState::new();
+                merged.merge_lib_contexts_into_binder(&raw_contexts);
+                merged
+            }),
+        }]
+    };
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    if !checker_lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(checker_lib_contexts);
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn test_lib_global_symbol_call_does_not_emit_ts2454() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
@@ -178,6 +234,102 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
     assert!(
         !has_error(&diagnostics, 2454),
         "Lib global value reads should not trigger TS2454, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_typed_array_to_locale_string_uses_options_parameter_type() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const values: Int16Array<ArrayBuffer>;
+const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR" });
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected typed-array toLocaleString locales/options overload to type-check, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+declare const values: Int16Array<ArrayBuffer>;
+const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR" });
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected merged-lib typed-array toLocaleString overload to type-check, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn test_intl_number_format_style_alias_resolves_in_lib_context() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+namespace Intl {
+    let style: NumberFormatOptionsStyle = "currency";
+    const options: NumberFormatOptions = { style: "currency", currency: "EUR" };
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected Intl.NumberFormatOptionsStyle to resolve in lib context, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn test_intl_number_format_style_alias_resolves_in_merged_lib_contexts() {
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+namespace Intl {
+    let style: NumberFormatOptionsStyle = "currency";
+    const options: NumberFormatOptions = { style: "currency", currency: "EUR" };
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected Intl.NumberFormatOptionsStyle to resolve in merged lib contexts, got: {relevant:?}"
     );
 }
 

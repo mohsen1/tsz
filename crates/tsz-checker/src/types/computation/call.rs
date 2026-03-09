@@ -1569,9 +1569,6 @@ impl<'a> CheckerState<'a> {
                 if self.should_defer_contextual_argument_mismatch(actual, expected) {
                     return TypeId::ERROR;
                 }
-                if self.ctx.file_name.ends_with("arrayToLocaleStringES2015.ts") {
-                    return TypeId::STRING;
-                }
                 // Avoid cascading TS2345 when the argument type is already invalid or unknown.
                 // In these cases, a more specific upstream diagnostic is usually the root cause.
                 if actual == TypeId::ERROR
@@ -1633,13 +1630,6 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
                 ..
             } => {
-                // Compatibility fallback: built-in toLocaleString supports
-                // (locales?, options?) in modern lib typings. Some merged
-                // declaration paths can miss those overloads and incorrectly
-                // surface TS2769; tsc accepts these calls.
-                if self.is_tolocalestring_compat_call(callee_expr, args.len()) {
-                    return TypeId::STRING;
-                }
                 if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
@@ -1658,38 +1648,6 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
-    }
-
-    fn is_tolocalestring_compat_call(&self, callee_expr: NodeIndex, arg_count: usize) -> bool {
-        tracing::debug!(
-            "toLocaleString compat check: {:?} {:?}",
-            callee_expr,
-            arg_count
-        );
-        if arg_count > 2 {
-            return false;
-        }
-        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
-            return false;
-        };
-        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
-        }
-        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
-            return false;
-        };
-        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-        tracing::debug!(
-            "toLocaleString compat check: {:?} {:?}",
-            callee_expr,
-            arg_count
-        );
-        ident.escaped_text == "toLocaleString"
     }
 
     pub(crate) fn should_defer_contextual_argument_mismatch(

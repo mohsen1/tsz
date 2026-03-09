@@ -2,6 +2,7 @@
 //! type queries, and contextual literal type analysis.
 
 pub(crate) mod computed;
+mod computed_alias;
 pub(crate) mod computed_helpers;
 mod core;
 pub(crate) mod cross_file;

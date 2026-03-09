@@ -114,23 +114,11 @@ impl<'a> CheckerState<'a> {
                         .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
                 };
 
-                // Name-based resolver: resolves identifier text directly without NodeIndex.
-                // This avoids cross-arena NodeIndex collisions where the same index maps to
-                // different identifiers in different arenas (e.g., ConcatArray in es5 vs
-                // DecoratorMetadata in esnext at the same NodeIndex).
-                // CRITICAL: Use the MAIN file's binder (self.ctx.binder), not lib_ctx.binder.
-                // The main binder has lib symbols merged with unique SymbolIds via
-                // merge_lib_contexts_into_binder. Using lib_ctx.binder's SymbolIds with
-                // get_or_create_def_id causes SymbolId collisions and wrong type resolution.
-                let main_binder = &self.ctx.binder;
-                let name_resolver = |ident_name: &str| -> Option<tsz_solver::DefId> {
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    if let Some(found_sym) = main_binder.file_locals.get(ident_name) {
-                        return Some(self.ctx.get_or_create_def_id(found_sym));
-                    }
-                    None
+                // Name-based resolver: resolves both simple identifiers and qualified
+                // names through the main merged binder, avoiding cross-arena NodeIndex
+                // collisions for references like `Intl.NumberFormatOptions`.
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
 
                 let lowering = TypeLowering::with_hybrid_resolver(
@@ -336,13 +324,17 @@ impl<'a> CheckerState<'a> {
                             .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
                     )
                 };
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     arena_ref,
                     self.ctx.types,
                     &resolver,
                     &def_id_resolver,
                     &|_| None,
-                );
+                )
+                .with_name_def_id_resolver(&name_resolver);
                 let aug_type = lowering.lower_interface_declarations(decls);
                 lib_type_id = if let Some(lib_type) = lib_type_id {
                     Some(factory.intersection(vec![lib_type, aug_type]))
