@@ -5580,6 +5580,111 @@ type DS<TRec extends MyRecord | { [key: string]: unknown }> =
     );
 }
 
+#[test]
+fn test_ts2344_reports_for_composite_indexed_access_type_args() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+interface CallableFunction extends Function {}
+interface NewableFunction extends Function {}
+
+type ReturnType<T extends (...args: any) => any> =
+    T extends (...args: any) => infer R ? R : any;
+
+type DataFetchFns = {
+    Boat: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        description: (id: string) => string;
+        displacement: (id: string) => number;
+        name: (id: string) => string;
+    };
+};
+
+type TypeHardcodedAsParameterWithoutReturnType<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = DataFetchFns[T][F];
+
+type FailingCombo<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = ReturnType<TypeHardcodedAsParameterWithoutReturnType<T, F>>;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 for composite indexed-access type arguments like `DataFetchFns[T][F]`.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2344_reports_for_recursive_composite_type_args() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+declare class Component<P> {
+    readonly props: Readonly<P> & Readonly<{ children?: {} }>;
+}
+
+interface ComponentClass<P = {}> {
+    new (props: P, context?: any): Component<P>;
+}
+
+interface FunctionComponent<P = {}> {
+    (props: P & { children?: {} }, context?: any): {} | null;
+}
+
+type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+
+type Shared<
+    InjectedProps,
+    DecorationTargetProps extends Shared<InjectedProps, DecorationTargetProps>
+> = {
+    [P in Extract<keyof InjectedProps, keyof DecorationTargetProps>]?: InjectedProps[P] extends DecorationTargetProps[P]
+        ? DecorationTargetProps[P]
+        : never;
+};
+
+type GetProps<C> = C extends ComponentType<infer P> ? P : never;
+
+type Matching<InjectedProps, DecorationTargetProps> = {
+    [P in keyof DecorationTargetProps]: P extends keyof InjectedProps
+        ? InjectedProps[P] extends DecorationTargetProps[P]
+            ? DecorationTargetProps[P]
+            : InjectedProps[P]
+        : DecorationTargetProps[P];
+};
+
+type Omit<T, K extends keyof T> = Pick<T, Exclude<keyof T, K>>;
+
+type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
+    <C extends ComponentType<Matching<TInjectedProps, GetProps<C>>>>(
+        component: C
+    ) => Omit<GetProps<C>, keyof Shared<TInjectedProps, GetProps<C>>> & TNeedsProps;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 when a recursive composite type argument fails its self-referential constraint.\nActual: {diagnostics:?}"
+    );
+}
+
 /// Issue: instanceof narrowing uses structural subtyping instead of nominal class identity.
 ///
 /// When class A has only optional properties, `is_assignable_to(B, A)` returns true
