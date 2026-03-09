@@ -2439,3 +2439,39 @@ fn test_completion_info_class_member_snippet_sets_new_identifier_location() {
         entry.get("source").and_then(serde_json::Value::as_str) == Some("ClassMemberSnippet/")
     }));
 }
+
+#[test]
+fn test_completion_info_class_member_declaration_prefix_is_new_identifier_location() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "class B {\n  blah\n  con\n}".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 6,
+            "preferences": {
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    assert_eq!(
+        completion_body["isNewIdentifierLocation"],
+        serde_json::json!(true)
+    );
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("constructor")
+    }));
+}
