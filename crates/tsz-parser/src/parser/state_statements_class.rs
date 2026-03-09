@@ -28,11 +28,13 @@ impl ParserState {
 
         // Parse optional name (class expressions can be anonymous)
         // Like class declarations, keywords can be used as class names
-        // EXCEPT extends/implements which start heritage clauses
-        let name = if self.is_identifier_or_keyword()
-            && !self.is_token(SyntaxKind::ExtendsKeyword)
-            && !self.is_token(SyntaxKind::ImplementsKeyword)
-        {
+        // EXCEPT extends/implements which start heritage clauses.
+        // Special case: if extends/implements is followed by `{`, it's the
+        // class name, not a heritage clause start.
+        let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
+            || self.is_token(SyntaxKind::ImplementsKeyword))
+            && !self.next_token_is_open_brace();
+        let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             self.parse_identifier_name()
         } else {
             NodeIndex::NONE
