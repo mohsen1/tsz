@@ -376,7 +376,9 @@ impl<'a> Printer<'a> {
         let mut emitted_any = false;
         let mut last_comment_end = 0u32;
         let mut last_comment_had_trailing_newline = false;
-        let mut previous_comment_had_trailing_newline = false;
+        // When normalizing JSX comment leading text, trim any leading
+        // horizontal whitespace before the first comment (e.g. `{ // x}` → `{// x}`).
+        let mut previous_comment_had_trailing_newline = normalize_leading_text;
         let mut cursor_pos = start_pos as usize;
 
         while self.comment_emit_idx < self.all_comments.len() {

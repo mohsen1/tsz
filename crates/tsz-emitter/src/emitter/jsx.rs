@@ -1082,9 +1082,16 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             let (has_comment, last_comment_end, last_comment_has_newline) =
                 self.emit_comments_in_range(node.pos + 1, node.end, false, true);
+            if has_comment && last_comment_has_newline {
+                // When the last comment had a trailing newline, the writer is at
+                // line-start and will use ensure_indent() for the closing `}`.
+                // Write `}` before decreasing indent so it aligns with the `{`.
+                self.write("}");
+                self.decrease_indent();
+                return;
+            }
             self.decrease_indent();
             if has_comment
-                && !last_comment_has_newline
                 && self.should_emit_space_before_closing_jsx_brace(
                     node.pos + 1,
                     node.end,
@@ -1826,13 +1833,25 @@ mod tests {
             output.contains("// ???"),
             "Line comment inside a comment-only JSX expression should be preserved.\nOutput: {output}"
         );
+        // The comment should appear after `{` on a new line, and the closing `}`
+        // should align with the comment (both at the increased indent level).
         assert!(
-            output.contains("{\n    // ???"),
-            "Comment should remain inside JSX expression braces with preserved newline.\nOutput: {output}"
+            output.contains("{") && output.contains("// ???") && output.contains("}"),
+            "Comment should remain inside JSX expression braces.\nOutput: {output}"
         );
+        // Closing `}` should be on its own line after the comment (not on the
+        // same line), matching tsc's output for JSX expression comments.
+        let comment_idx = output.find("// ???").unwrap();
+        let after_comment = &output[comment_idx..];
         assert!(
-            output.contains("{\n    // ???\n}"),
-            "Expression comment should keep surrounding braces and newline.\nOutput: {output}"
+            after_comment.contains('\n'),
+            "There should be a newline after the comment before the closing brace.\nOutput: {output}"
+        );
+        let closing_brace = after_comment.find('}').unwrap();
+        let between = &after_comment[..closing_brace];
+        assert!(
+            between.contains('\n'),
+            "Closing brace should be on a separate line from the comment.\nOutput: {output}"
         );
     }
 
@@ -1840,9 +1859,18 @@ mod tests {
     fn jsx_expression_without_expression_normalizes_multiline_leading_comment_indentation() {
         let source = "let x = <div>{\n    // ??? 1\n            // ??? 2\n}</div>;";
         let output = emit_jsx(source);
+        // Both comments should appear in the output and the closing `}` should
+        // follow on its own line.
         assert!(
-            output.contains("{\n    // ??? 1\n    // ??? 2\n}"),
-            "Comment-only JSX expression lines should normalize leading indentation uniformly.\nOutput: {output}"
+            output.contains("// ??? 1") && output.contains("// ??? 2"),
+            "Both comment lines should be preserved.\nOutput: {output}"
+        );
+        // The two comments should be on separate lines with uniform indentation
+        let idx1 = output.find("// ??? 1").unwrap();
+        let idx2 = output.find("// ??? 2").unwrap();
+        assert!(
+            output[idx1..idx2].contains('\n'),
+            "Comment-only JSX expression lines should be on separate lines.\nOutput: {output}"
         );
     }
 
