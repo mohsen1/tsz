@@ -85,6 +85,11 @@ pub struct PrinterOptions {
     pub resolved_node_module_to_esm: bool,
     /// When true, preserve const enum declarations instead of erasing them
     pub preserve_const_enums: bool,
+    /// When true, disable const enum value inlining at usage sites.
+    /// Set by `--isolatedModules` and `--verbatimModuleSyntax` which prevent
+    /// cross-file const enum inlining. Note: `--preserveConstEnums` alone
+    /// preserves declarations but still inlines values.
+    pub no_const_enum_inlining: bool,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -117,6 +122,7 @@ impl Default for PrinterOptions {
             module_detection_force: false,
             resolved_node_module_to_esm: false,
             preserve_const_enums: false,
+            no_const_enum_inlining: false,
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,

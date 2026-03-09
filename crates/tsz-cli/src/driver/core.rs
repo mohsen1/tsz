@@ -1953,14 +1953,17 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     // isolatedModules implies preserveConstEnums: const enums cannot be
     // inlined across file boundaries, so they must be emitted as regular enums.
+    // Also disables const enum value inlining at usage sites.
     if args.isolated_modules {
         options.printer.preserve_const_enums = true;
+        options.printer.no_const_enum_inlining = true;
     }
     // verbatimModuleSyntax implies preserveConstEnums (tsc 5.0+): import/export
     // syntax is preserved verbatim, so const enums must be emitted as regular
     // enums rather than erased+inlined.
     if args.verbatim_module_syntax {
         options.printer.preserve_const_enums = true;
+        options.printer.no_const_enum_inlining = true;
         options.checker.verbatim_module_syntax = true;
     }
     if let Some(jsx) = args.jsx {
