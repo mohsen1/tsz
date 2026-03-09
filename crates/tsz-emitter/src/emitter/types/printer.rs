@@ -322,15 +322,30 @@ impl<'a> TypePrinter<'a> {
         Some(format!("import(\"{module_path}\").{name}"))
     }
 
-    fn print_named_symbol_reference(&self, sym_id: SymbolId, needs_typeof: bool) -> Option<String> {
-        let is_local_import_alias = self
-            .symbol_arena
+    fn is_local_import_alias(&self, sym_id: SymbolId) -> bool {
+        self.symbol_arena
             .and_then(|arena| arena.get(sym_id))
             .is_some_and(|symbol| {
                 symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
-            });
+            })
+    }
 
-        if !is_local_import_alias && let Some(name) = self.import_qualified_symbol_name(sym_id) {
+    fn can_reference_symbol_by_name(&self, sym_id: SymbolId) -> bool {
+        if self.is_local_import_alias(sym_id) {
+            return true;
+        }
+
+        if self.resolve_symbol_module_path(sym_id).is_some() {
+            return false;
+        }
+
+        self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id)
+    }
+
+    fn print_named_symbol_reference(&self, sym_id: SymbolId, needs_typeof: bool) -> Option<String> {
+        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+        {
             return Some(if needs_typeof {
                 format!("typeof {name}")
             } else {
@@ -338,10 +353,8 @@ impl<'a> TypePrinter<'a> {
             });
         }
 
-        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
-            && (self.is_symbol_visible(sym_id)
-                || self.is_global_symbol(sym_id)
-                || is_local_import_alias)
+        if !self.is_local_import_alias(sym_id)
+            && let Some(name) = self.import_qualified_symbol_name(sym_id)
         {
             return Some(if needs_typeof {
                 format!("typeof {name}")
@@ -358,9 +371,7 @@ impl<'a> TypePrinter<'a> {
             return Some(format!("typeof {alias}"));
         }
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
-            && (self.is_symbol_visible(sym_id)
-                || self.is_global_symbol(sym_id)
-                || self.symbol_is_nameable(sym_id))
+            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
         {
             return Some(format!("typeof {name}"));
         }
@@ -454,14 +465,12 @@ impl<'a> TypePrinter<'a> {
             if let Some(arena) = self.symbol_arena
                 && let Some(symbol) = arena.get(sym_id)
                 && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-                && let Some(name) = if self.is_symbol_visible(sym_id)
-                    || self.is_global_symbol(sym_id)
-                    || self.symbol_is_nameable(sym_id)
-                {
-                    self.resolve_symbol_qualified_name(sym_id)
-                } else {
-                    self.import_qualified_symbol_name(sym_id)
-                }
+                && let Some(name) =
+                    if self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id) {
+                        self.resolve_symbol_qualified_name(sym_id)
+                    } else {
+                        self.import_qualified_symbol_name(sym_id)
+                    }
             {
                 return name;
             }
@@ -471,9 +480,7 @@ impl<'a> TypePrinter<'a> {
                 return self.print_type(symbol_type);
             }
             if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
-                && (self.is_symbol_visible(sym_id)
-                    || self.is_global_symbol(sym_id)
-                    || self.symbol_is_nameable(sym_id))
+                && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
             {
                 return format!("typeof {name}");
             }
@@ -591,7 +598,7 @@ impl<'a> TypePrinter<'a> {
         // If this object has a nominal symbol (class/interface instance), print the name.
         // Use the name when the symbol is visible (exported) or reachable (module-level).
         if let Some(sym_id) = shape.symbol
-            && (self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
+            && self.can_reference_symbol_by_name(sym_id)
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
             return name;

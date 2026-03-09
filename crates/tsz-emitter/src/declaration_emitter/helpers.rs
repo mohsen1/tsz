@@ -4548,7 +4548,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let data = self.arena.get_property_assignment(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
-                    .infer_fallback_type_text_at(data.initializer, depth)
+                    .preferred_object_member_initializer_type_text(data.initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -4556,7 +4556,10 @@ impl<'a> DeclarationEmitter<'a> {
                 let data = self.arena.get_shorthand_property(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
-                    .infer_fallback_type_text_at(data.object_assignment_initializer, depth)
+                    .preferred_object_member_initializer_type_text(
+                        data.object_assignment_initializer,
+                        depth,
+                    )
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -4581,6 +4584,46 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn preferred_object_member_initializer_type_text(
+        &self,
+        initializer: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let type_id = self.get_node_type_or_names(&[initializer]);
+        if let Some(typeof_text) = self.typeof_prefix_for_value_entity(initializer, true, type_id) {
+            return Some(typeof_text);
+        }
+        if let Some(enum_type_text) = self.enum_member_widened_type_text(initializer) {
+            return Some(enum_type_text);
+        }
+        self.preferred_expression_type_text(initializer)
+            .or_else(|| self.infer_fallback_type_text_at(initializer, depth))
+    }
+
+    fn enum_member_widened_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        let binder = self.binder?;
+
+        let member_sym_id = self.value_reference_symbol(expr_idx)?;
+        let member_symbol = binder.symbols.get(member_sym_id)?;
+        if !member_symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+
+        let enum_expr = self.skip_parenthesized_non_null_and_comma(access.expression);
+        let enum_sym_id = self.value_reference_symbol(enum_expr)?;
+        let enum_symbol = binder.symbols.get(enum_sym_id)?;
+        if !enum_symbol.has_any_flags(symbol_flags::ENUM)
+            || enum_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
+        {
+            return None;
+        }
+
+        self.nameable_constructor_expression_text(enum_expr)
     }
 
     fn infer_property_name_text(&self, node_id: NodeIndex) -> Option<String> {
@@ -4817,28 +4860,12 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        object.elements.nodes.iter().copied().any(|member_idx| {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                return false;
-            };
-            let name_idx = if let Some(data) = self.arena.get_property_assignment(member_node) {
-                Some(data.name)
-            } else if let Some(data) = self.arena.get_shorthand_property(member_node) {
-                Some(data.name)
-            } else if let Some(data) = self.arena.get_accessor(member_node) {
-                Some(data.name)
-            } else {
-                self.arena
-                    .get_method_decl(member_node)
-                    .map(|data| data.name)
-            };
-
-            name_idx.is_some_and(|name_idx| {
-                self.arena.get(name_idx).is_some_and(|name_node| {
-                    name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                })
-            })
-        })
+        object
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| self.object_literal_member_needs_syntax_override(member_idx))
     }
 
     fn rewrite_object_literal_computed_member_type_text(
@@ -4853,6 +4880,7 @@ impl<'a> DeclarationEmitter<'a> {
         let object = self.arena.get_literal_expr(init_node)?;
 
         let mut computed_members = Vec::new();
+        let mut overridden_members = Vec::new();
         let mut only_numeric_like = true;
 
         for &member_idx in &object.elements.nodes {
@@ -4876,25 +4904,35 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_node) = self.arena.get(name_idx) else {
                 continue;
             };
-            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if !self.object_literal_member_needs_syntax_override(member_idx) {
                 continue;
             }
 
             let Some(name_text) = self.infer_property_name_text(name_idx) else {
                 continue;
             };
-            only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
-
             let Some(member_text) =
                 self.infer_object_member_type_text_at(member_idx, self.indent_level + 1)
             else {
                 continue;
             };
-            computed_members.push(member_text);
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
+                computed_members.push(member_text);
+            } else {
+                overridden_members.push((name_text, member_text));
+            }
         }
 
-        if computed_members.is_empty() {
+        if computed_members.is_empty() && overridden_members.is_empty() {
             return None;
+        }
+
+        if overridden_members
+            .iter()
+            .any(|(_, member_text)| member_text.contains('\n'))
+        {
+            return self.infer_object_literal_type_text_at(initializer, self.indent_level);
         }
 
         let printed = self.print_type_id(type_id);
@@ -4907,8 +4945,22 @@ impl<'a> DeclarationEmitter<'a> {
             lines.retain(|line| !line.trim_start().starts_with("[x: string]:"));
         }
 
-        let insert_at = lines.len().saturating_sub(1);
         let indent = "    ".repeat((self.indent_level + 1) as usize);
+        for (name_text, member_text) in overridden_members {
+            let replacement = format!("{indent}{member_text};");
+            if let Some(existing_idx) = lines.iter().position(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with(&format!("{name_text}:"))
+                    || trimmed.starts_with(&format!("readonly {name_text}:"))
+            }) {
+                lines[existing_idx] = replacement;
+            } else {
+                let insert_at = lines.len().saturating_sub(1);
+                lines.insert(insert_at, replacement);
+            }
+        }
+
+        let insert_at = lines.len().saturating_sub(1);
         for (offset, member_text) in computed_members.into_iter().enumerate() {
             let line = format!("{indent}{member_text};");
             if !lines.iter().any(|existing| existing.trim() == line.trim()) {
@@ -4917,6 +4969,62 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn object_literal_member_needs_syntax_override(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+            return false;
+        };
+        if self
+            .arena
+            .get(name_idx)
+            .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        {
+            return true;
+        }
+
+        let Some(initializer) = self.object_literal_member_initializer(member_node) else {
+            return false;
+        };
+        if self
+            .arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && self.object_literal_prefers_syntax_type_text(initializer)
+        {
+            return true;
+        }
+        let type_id = self.get_node_type_or_names(&[initializer]);
+        self.typeof_prefix_for_value_entity(initializer, true, type_id)
+            .is_some()
+            || self.enum_member_widened_type_text(initializer).is_some()
+    }
+
+    fn object_literal_member_name_idx(&self, member_node: &Node) -> Option<NodeIndex> {
+        if let Some(data) = self.arena.get_property_assignment(member_node) {
+            return Some(data.name);
+        }
+        if let Some(data) = self.arena.get_shorthand_property(member_node) {
+            return Some(data.name);
+        }
+        if let Some(data) = self.arena.get_accessor(member_node) {
+            return Some(data.name);
+        }
+        self.arena
+            .get_method_decl(member_node)
+            .map(|data| data.name)
+    }
+
+    fn object_literal_member_initializer(&self, member_node: &Node) -> Option<NodeIndex> {
+        if let Some(data) = self.arena.get_property_assignment(member_node) {
+            return Some(data.initializer);
+        }
+        self.arena
+            .get_shorthand_property(member_node)
+            .map(|data| data.object_assignment_initializer)
     }
 
     fn is_numeric_property_name_text(name: &str) -> bool {
@@ -5095,6 +5203,10 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
             let arena_addr = Arc::as_ptr(source_arena) as usize;
             if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
+                if self.paths_refer_to_same_source_file(current_path, source_path) {
+                    return None;
+                }
+
                 // Symbols sourced from node_modules should retain the package
                 // export subpath that tsc would print in declaration emit rather
                 // than the raw source import text or a relative filesystem path.
@@ -5495,6 +5607,35 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         path.to_string()
+    }
+
+    fn normalized_source_path(&self, path: &str) -> std::path::PathBuf {
+        use std::path::Component;
+
+        std::path::Path::new(&self.strip_ts_extensions(path))
+            .components()
+            .filter(|component| !matches!(component, Component::CurDir))
+            .collect()
+    }
+
+    fn paths_refer_to_same_source_file(&self, current_path: &str, source_path: &str) -> bool {
+        let current = self.normalized_source_path(current_path);
+        let source = self.normalized_source_path(source_path);
+
+        if current == source || current.ends_with(&source) || source.ends_with(&current) {
+            return true;
+        }
+
+        let canonical_current = std::fs::canonicalize(current_path)
+            .ok()
+            .map(|path| self.normalized_source_path(path.to_string_lossy().as_ref()));
+        let canonical_source = std::fs::canonicalize(source_path)
+            .ok()
+            .map(|path| self.normalized_source_path(path.to_string_lossy().as_ref()));
+
+        canonical_current
+            .zip(canonical_source)
+            .is_some_and(|(a, b)| a == b)
     }
 
     /// Group foreign symbols by their module paths.
@@ -6680,6 +6821,10 @@ impl<'a> DeclarationEmitter<'a> {
         let init_node = self.arena.get(initializer)?;
         let interner = self.type_interner?;
 
+        if let Some(typeof_text) = self.direct_value_reference_typeof_text(initializer) {
+            return Some(typeof_text);
+        }
+
         if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(init_node)?;
             let rhs = self.get_identifier_text(access.name_or_argument)?;
@@ -6760,6 +6905,31 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn direct_value_reference_typeof_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let binder = self.binder?;
+        let sym_id = binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.value_reference_symbol(expr_idx))?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if !(symbol.has_any_flags(
+            symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::ENUM
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::METHOD,
+        ) || self.is_namespace_import_alias_symbol(sym_id))
+            || symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
+        {
+            return None;
+        }
+
+        let reference_text = self
+            .nameable_constructor_expression_text(expr_idx)
+            .or_else(|| self.get_identifier_text(expr_idx))?;
+        Some(format!("typeof {reference_text}"))
+    }
+
     fn value_reference_symbol_needs_typeof(&self, expr_idx: NodeIndex) -> Option<bool> {
         let binder = self.binder?;
         let sym_id = self.value_reference_symbol(expr_idx)?;
@@ -6785,10 +6955,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(expr_node)?;
-            if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
+            if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
                 return Some(sym_id);
             }
-            if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
+            if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
                 return Some(sym_id);
             }
             let base_sym_id = self.value_reference_symbol(access.expression)?;
