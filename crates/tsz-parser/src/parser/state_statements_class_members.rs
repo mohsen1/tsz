@@ -643,6 +643,29 @@ impl ParserState {
         body
     }
 
+    /// Emit TS1031 at the position of a specific modifier keyword in the modifier list.
+    /// Used for constructor declarations where tsc's grammarErrorOnNode anchors at the modifier.
+    fn emit_modifier_error_on_constructor(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        kind: SyntaxKind,
+        message: &str,
+        code: u32,
+    ) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == kind as u16
+                {
+                    self.parse_error_at(node.pos, node.end - node.pos, message, code);
+                    return;
+                }
+            }
+        }
+        // Fallback if modifier not found in list
+        self.parse_error_at_current_token(message, code);
+    }
+
     /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
     /// at the position of the `declare` modifier in the given modifier list.
     fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
@@ -973,13 +996,18 @@ impl ParserState {
                 );
             }
 
+            // TS1031: tsc anchors at the modifier keyword via grammarErrorOnNode(modifier)
             if has_export_modifier {
-                self.parse_error_at_current_token(
+                self.emit_modifier_error_on_constructor(
+                    &modifiers,
+                    SyntaxKind::ExportKeyword,
                     "'export' modifier cannot appear on class elements of this kind.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
                 );
             } else if has_declare_modifier {
-                self.parse_error_at_current_token(
+                self.emit_modifier_error_on_constructor(
+                    &modifiers,
+                    SyntaxKind::DeclareKeyword,
                     "'declare' modifier cannot appear on class elements of this kind.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
                 );
