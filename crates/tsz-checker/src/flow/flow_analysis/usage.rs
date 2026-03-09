@@ -1325,7 +1325,7 @@ impl<'a> CheckerState<'a> {
         let is_multi_file = self.ctx.all_arenas.is_some();
 
         // Get the declaration position
-        let decl_idx = if symbol.value_declaration.is_some() {
+        let mut decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -1346,6 +1346,26 @@ impl<'a> CheckerState<'a> {
         {
             decl_node_opt = arena.get(decl_idx);
             decl_arena = arena.as_ref();
+        }
+
+        if let Some(decl_node) = decl_node_opt
+            && decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ext) = decl_arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = decl_arena.get(ext.parent)
+            && matches!(
+                parent_node.kind,
+                syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::BINDING_ELEMENT
+                    | syntax_kind_ext::PARAMETER
+            )
+        {
+            // Destructured bindings are declared on the enclosing binding element,
+            // not on the bound identifier token itself. Normalize to the container
+            // so self-references in default initializers count as "inside the
+            // declaration" for TDZ checks.
+            decl_idx = ext.parent;
+            decl_node_opt = Some(parent_node);
         }
 
         let Some(decl_node) = decl_node_opt else {

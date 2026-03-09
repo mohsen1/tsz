@@ -671,8 +671,12 @@ fn test_ts2454_not_emitted_in_class_computed_property_name() {
 fn test_tdz_in_binding_default_initializer_has_no_ts2454_companion() {
     let source = r"
         const {
-            a = f,
-            f = 1,
+            a = 1,
+            b = 2,
+            c = b,
+            d = a,
+            e = f,
+            f = f,
         } = {} as any;
     ";
     let diags = diagnostics_with_options(
@@ -682,12 +686,13 @@ fn test_tdz_in_binding_default_initializer_has_no_ts2454_companion() {
             ..Default::default()
         },
     );
-    assert!(
+    assert_eq!(
         count_code(
             &diags,
             diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION
-        ) >= 1,
-        "Expected TS2448 for binding default TDZ, got: {diags:?}"
+        ),
+        2,
+        "Expected both destructuring TDZ sites to emit TS2448, got: {diags:?}"
     );
     assert_eq!(
         count_code(

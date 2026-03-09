@@ -598,7 +598,7 @@ impl<'a> TypeFormatter<'a> {
         }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
-            return members.iter().any(|&m| m == TypeId::UNDEFINED);
+            return members.contains(&TypeId::UNDEFINED);
         }
         false
     }
