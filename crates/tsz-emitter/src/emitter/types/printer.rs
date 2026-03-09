@@ -1642,9 +1642,10 @@ impl<'a> TypePrinter<'a> {
         // Try to resolve the enum name via DefId -> SymbolId -> symbol name
         if let Some(cache) = self.type_cache
             && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
-            && let Some(name) = self.print_named_symbol_reference(sym_id, false) {
-                return name;
-            }
+            && let Some(name) = self.print_named_symbol_reference(sym_id, false)
+        {
+            return name;
+        }
         // Fallback: print the member type structure
         format!("enum({})", def_id.0)
     }
