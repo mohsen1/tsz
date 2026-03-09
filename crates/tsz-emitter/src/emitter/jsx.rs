@@ -707,9 +707,10 @@ impl<'a> Printer<'a> {
     fn skip_empty_jsx_children_comments(&mut self, children: &[NodeIndex]) {
         for &child in children {
             if self.is_empty_jsx_expression(child)
-                && let Some(node) = self.arena.get(child) {
-                    self.skip_comments_for_empty_jsx_expr(node);
-                }
+                && let Some(node) = self.arena.get(child)
+            {
+                self.skip_comments_for_empty_jsx_expr(node);
+            }
         }
     }
 
@@ -747,9 +748,10 @@ impl<'a> Printer<'a> {
             if filtered_idx >= filtered_children.len() {
                 // All filtered children emitted; skip remaining empty exprs
                 if self.is_empty_jsx_expression(child)
-                    && let Some(node) = self.arena.get(child) {
-                        self.skip_comments_for_empty_jsx_expr(node);
-                    }
+                    && let Some(node) = self.arena.get(child)
+                {
+                    self.skip_comments_for_empty_jsx_expr(node);
+                }
                 continue;
             }
 
@@ -773,9 +775,10 @@ impl<'a> Printer<'a> {
                 }
                 filtered_idx += 1;
             } else if self.is_empty_jsx_expression(child)
-                && let Some(node) = self.arena.get(child) {
-                    self.skip_comments_for_empty_jsx_expr(node);
-                }
+                && let Some(node) = self.arena.get(child)
+            {
+                self.skip_comments_for_empty_jsx_expr(node);
+            }
         }
     }
 
