@@ -348,6 +348,7 @@ impl<'a> CheckerContext<'a> {
 
         TypeFormatter::with_symbols(self.types, &self.binder.symbols)
             .with_def_store(&self.definition_store)
+            .with_namespace_module_names(&self.namespace_module_names)
     }
 
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.

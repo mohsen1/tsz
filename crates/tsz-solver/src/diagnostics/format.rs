@@ -52,6 +52,9 @@ pub struct TypeFormatter<'a> {
     def_store: Option<&'a DefinitionStore>,
     /// Maps `file_id` -> module specifier for import-qualified type display.
     module_specifiers: Option<&'a FxHashMap<u32, String>>,
+    /// Maps object `TypeId` -> module name for namespace types that were
+    /// created as plain objects but should display as `typeof import("module")`.
+    namespace_module_names: Option<&'a FxHashMap<TypeId, String>>,
     /// The `file_id` of the file currently being checked.
     current_file_id: Option<u32>,
     /// Maximum depth for nested type printing
@@ -70,6 +73,7 @@ impl<'a> TypeFormatter<'a> {
             symbol_arena: None,
             def_store: None,
             module_specifiers: None,
+            namespace_module_names: None,
             current_file_id: None,
             max_depth: 8,
             max_union_members: 10,
@@ -88,6 +92,7 @@ impl<'a> TypeFormatter<'a> {
             symbol_arena: Some(symbol_arena),
             def_store: None,
             module_specifiers: None,
+            namespace_module_names: None,
             current_file_id: None,
             max_depth: 8,
             max_union_members: 10,
@@ -108,6 +113,16 @@ impl<'a> TypeFormatter<'a> {
         module_specifiers: &'a FxHashMap<u32, String>,
     ) -> Self {
         self.module_specifiers = Some(module_specifiers);
+        self
+    }
+
+    /// Add namespace module name mapping for displaying module namespace types
+    /// as `typeof import("module")` instead of their object shape.
+    pub const fn with_namespace_module_names(
+        mut self,
+        names: &'a FxHashMap<TypeId, String>,
+    ) -> Self {
+        self.namespace_module_names = Some(names);
         self
     }
 
@@ -278,6 +293,16 @@ impl<'a> TypeFormatter<'a> {
                 }
                 return name.into();
             }
+        }
+
+        // Check if this type is a module namespace object that should display
+        // as `typeof import("module")` instead of its expanded object shape.
+        if matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            && let Some(ns_names) = self.namespace_module_names
+            && let Some(module_name) = ns_names.get(&type_id)
+        {
+            let display_name = module_name.strip_prefix("./").unwrap_or(module_name);
+            return format!("typeof import(\"{display_name}\")").into();
         }
 
         self.current_depth += 1;

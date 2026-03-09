@@ -54,6 +54,16 @@ impl<'a> DiagnosticBuilder<'a> {
         self
     }
 
+    /// Add namespace module name mapping for displaying module namespace types
+    /// as `typeof import("module")` instead of their object shape.
+    pub fn with_namespace_module_names(
+        mut self,
+        names: &'a rustc_hash::FxHashMap<crate::types::TypeId, String>,
+    ) -> Self {
+        self.formatter = self.formatter.with_namespace_module_names(names);
+        self
+    }
+
     /// Create a "Type X is not assignable to type Y" diagnostic.
     pub fn type_not_assignable(&mut self, source: TypeId, target: TypeId) -> TypeDiagnostic {
         let source_str = self.formatter.format(source);
@@ -264,6 +274,15 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
     /// Add access to definition store for `DefId` name resolution.
     pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.builder = self.builder.with_def_store(def_store);
+        self
+    }
+
+    /// Add namespace module name mapping for displaying module namespace types.
+    pub fn with_namespace_module_names(
+        mut self,
+        names: &'a rustc_hash::FxHashMap<crate::types::TypeId, String>,
+    ) -> Self {
+        self.builder = self.builder.with_namespace_module_names(names);
         self
     }
 
