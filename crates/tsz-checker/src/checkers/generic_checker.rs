@@ -378,75 +378,69 @@ impl<'a> CheckerState<'a> {
                 // against the required constraint. This matches tsc: `U extends number`
                 // used as `T extends string` → TS2344 because `number` is not
                 // assignable to `string`.
-                if query::contains_type_parameters(self.ctx.types, type_arg) {
+                let type_arg_contains_type_parameters =
+                    query::contains_type_parameters(self.ctx.types, type_arg);
+                if type_arg_contains_type_parameters {
                     let db = self.ctx.types.as_type_database();
                     let base = tsz_solver::type_queries::get_base_constraint_of_type(db, type_arg);
-                    if base == type_arg {
-                        // Not a bare type parameter — composite type with type params.
-                        // Defer constraint checking to instantiation time.
-                        continue;
-                    }
-                    // base is the type parameter's constraint (or `unknown`).
-                    // Resolve lazy types in the base constraint.
-                    let base = self.resolve_lazy_type(base);
-                    // If the base constraint is `unknown`, the type parameter has no
-                    // usable constraint (e.g., unconstrained params or call-signature
-                    // type params whose constraints aren't populated). Skip.
-                    if base == TypeId::UNKNOWN {
-                        continue;
-                    }
-                    // If the base constraint is a union, skip. Union-constrained type
-                    // params often appear in conditional types where the true branch
-                    // narrows to a specific union member. Checking the full union
-                    // against the narrowed constraint would produce false positives.
-                    if tsz_solver::type_queries::get_union_members(db, base).is_some() {
-                        continue;
-                    }
-                    if query::contains_type_parameters(self.ctx.types, base) {
-                        // Base constraint itself contains type parameters
-                        // (e.g., from outer generic scope). Defer check.
-                        continue;
-                    }
-                    let constraint_resolved = self.resolve_lazy_type(constraint);
-                    if query::contains_type_parameters(self.ctx.types, constraint_resolved) {
-                        continue;
-                    }
-                    // Instantiate the constraint with all provided type arguments
-                    let mut subst = tsz_solver::TypeSubstitution::new();
-                    for (j, p) in type_params.iter().enumerate() {
-                        if let Some(&arg) = type_args.get(j) {
-                            subst.insert(p.name, arg);
+                    if base != type_arg {
+                        // Bare type parameter — check its base constraint instead of
+                        // eagerly validating the unresolved type parameter itself.
+                        // Composite generic arguments like `T[K]` or `GetProps<C>`
+                        // must still flow through the full relation check below; tsc
+                        // reports TS2344 for those when the generic structure itself
+                        // fails the target constraint.
+                        let base = self.resolve_lazy_type(base);
+                        // If the base constraint is `unknown`, the type parameter has no
+                        // usable constraint (e.g., unconstrained params or call-signature
+                        // type params whose constraints aren't populated). Skip.
+                        if base == TypeId::UNKNOWN {
+                            continue;
                         }
-                    }
-                    let inst_constraint = if subst.is_empty() {
-                        constraint_resolved
-                    } else {
-                        tsz_solver::instantiate_type(self.ctx.types, constraint_resolved, &subst)
-                    };
-                    if query::contains_type_parameters(self.ctx.types, inst_constraint) {
-                        continue;
-                    }
-                    if !self.is_assignable_to(base, inst_constraint)
-                        && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    {
-                        self.error_type_constraint_not_satisfied(
-                            type_arg,
-                            inst_constraint,
-                            arg_idx,
-                        );
-                    }
-                    continue;
-                }
-
-                // Skip self-referential constraints (e.g., `T extends Foo<T>`).
-                // TypeScript's `hasNonCircularBaseConstraint` returns false for these,
-                // causing `getConstraintOfTypeParameter` to return undefined, which
-                // means the constraint check is skipped entirely.
-                {
-                    let db = self.ctx.types.as_type_database();
-                    let is_circular =
-                        tsz_solver::contains_type_parameter_named(db, constraint, param.name);
-                    if is_circular {
+                        // If the base constraint is a union, skip. Union-constrained type
+                        // params often appear in conditional types where the true branch
+                        // narrows to a specific union member. Checking the full union
+                        // against the narrowed constraint would produce false positives.
+                        if tsz_solver::type_queries::get_union_members(db, base).is_some() {
+                            continue;
+                        }
+                        if query::contains_type_parameters(self.ctx.types, base) {
+                            // Base constraint itself contains type parameters
+                            // (e.g., from outer generic scope). Defer check.
+                            continue;
+                        }
+                        let constraint_resolved = self.resolve_lazy_type(constraint);
+                        if query::contains_type_parameters(self.ctx.types, constraint_resolved) {
+                            continue;
+                        }
+                        // Instantiate the constraint with all provided type arguments
+                        let mut subst = tsz_solver::TypeSubstitution::new();
+                        for (j, p) in type_params.iter().enumerate() {
+                            if let Some(&arg) = type_args.get(j) {
+                                subst.insert(p.name, arg);
+                            }
+                        }
+                        let inst_constraint = if subst.is_empty() {
+                            constraint_resolved
+                        } else {
+                            tsz_solver::instantiate_type(
+                                self.ctx.types,
+                                constraint_resolved,
+                                &subst,
+                            )
+                        };
+                        if query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                            continue;
+                        }
+                        if !self.is_assignable_to(base, inst_constraint)
+                            && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                        {
+                            self.error_type_constraint_not_satisfied(
+                                type_arg,
+                                inst_constraint,
+                                arg_idx,
+                            );
+                        }
                         continue;
                     }
                 }
@@ -468,11 +462,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
-
-                // Skip if the instantiated constraint contains type parameters
-                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
-                    continue;
-                }
 
                 let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
