@@ -54,6 +54,46 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check type parameter names for strict-mode reserved words (TS1212/TS1213/TS1214).
+    /// In strict mode, using a reserved word like `implements`, `interface`, `let`, etc.
+    /// as a type parameter name is an error.
+    pub(crate) fn check_strict_mode_reserved_type_parameter_names(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        strict_context_node: NodeIndex,
+        use_class_strict_message: bool,
+    ) {
+        let Some(type_params) = type_parameters else {
+            return;
+        };
+        if !self.is_strict_mode_for_node(strict_context_node) {
+            return;
+        }
+
+        for &param_idx in &type_params.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(type_param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(type_param.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+
+            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+                self.emit_strict_mode_reserved_word_error(
+                    type_param.name,
+                    &ident.escaped_text,
+                    use_class_strict_message,
+                );
+            }
+        }
+    }
+
     fn collect_parameter_forward_references_recursive(
         &self,
         node_idx: NodeIndex,

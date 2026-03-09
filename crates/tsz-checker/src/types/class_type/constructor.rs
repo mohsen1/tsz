@@ -107,8 +107,8 @@ impl<'a> CheckerState<'a> {
 
         // Register constructor type -> DefId(ClassConstructor) so the formatter
         // displays it as "typeof ClassName" instead of expanding the object shape.
-        if result != TypeId::ERROR {
-            if let Some(sym_id) = current_sym
+        if result != TypeId::ERROR
+            && let Some(sym_id) = current_sym
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
                 let name = self.ctx.types.intern_string(&symbol.escaped_name);
@@ -134,7 +134,6 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .register_type_to_def(result, ctor_def_id);
             }
-        }
 
         result
     }

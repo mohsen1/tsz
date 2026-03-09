@@ -744,6 +744,12 @@ impl<'a> CheckerState<'a> {
             // Type parameter (generic like T in function<T>)
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
+                // TS1212/TS1213/TS1214: Strict-mode reserved word used as type reference
+                if crate::state_checking::is_strict_mode_reserved_name(name)
+                    && self.is_strict_mode_for_node(type_name_idx)
+                {
+                    self.emit_strict_mode_reserved_word_error(type_name_idx, name, true);
+                }
                 if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
                     && enclosing_class.in_static_member
                     && enclosing_class.type_param_names.iter().any(|n| n == name)

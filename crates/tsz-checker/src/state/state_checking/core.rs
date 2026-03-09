@@ -71,6 +71,39 @@ impl<'a> CheckerState<'a> {
         self.emit_strict_mode_reserved_word_error(name_idx, &ident.escaped_text, true);
     }
 
+    /// Check a class declaration name for strict-mode reserved words.
+    /// Class definitions are automatically in strict mode, so the class name
+    /// always gets TS1213 (class context), regardless of whether there's an
+    /// enclosing class. This matches tsc behavior where `class implements {}`
+    /// in a namespace emits TS1213, not TS1212.
+    pub(crate) fn check_class_name_strict_mode_reserved(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        if name_idx.is_none() {
+            return;
+        }
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+        if !is_strict_mode_reserved_name(&ident.escaped_text) {
+            return;
+        }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let message = format_message(
+            diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            &[&ident.escaped_text],
+        );
+        self.error_at_node(
+            name_idx,
+            &message,
+            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+        );
+    }
+
     /// Emit the appropriate TS1212/TS1213/TS1214 diagnostic for a strict-mode reserved word.
     ///
     /// When `use_class_message` is true and we're inside a class, emits TS1213 (class context).
