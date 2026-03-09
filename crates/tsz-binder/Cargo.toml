@@ -29,5 +29,9 @@ path = "tests/symbols_tests.rs"
 name = "flow_tests"
 path = "tests/flow_tests.rs"
 
+[[test]]
+name = "scopes_tests"
+path = "tests/scopes_tests.rs"
+
 [lints]
 workspace = true
