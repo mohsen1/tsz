@@ -358,7 +358,7 @@ impl<'a> CheckerState<'a> {
         let mut stack: Vec<(NodeIndex, TypeId, u16, String)> =
             vec![(pattern_idx, source_type, pattern_kind, String::new())];
 
-        while let Some((curr_pattern_idx, curr_source_type, curr_kind, base_path)) = stack.pop() {
+        while let Some((curr_pattern_idx, _curr_source_type, curr_kind, base_path)) = stack.pop() {
             let Some(curr_pattern_node) = self.ctx.arena.get(curr_pattern_idx) else {
                 continue;
             };
@@ -436,22 +436,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                {
-                    let nested_source_type = self.get_binding_element_type(
-                        curr_pattern_idx,
-                        i,
-                        curr_source_type,
-                        element_data,
-                    );
-                    stack.push((
-                        element_data.name,
-                        nested_source_type,
-                        name_node.kind,
-                        property_name,
-                    ));
-                }
+                // Keep correlated narrowing scoped to direct siblings from the same
+                // destructuring layer. TypeScript does not correlate nested aliases
+                // like `const { resp: { data }, type } = value`.
             }
         }
     }
