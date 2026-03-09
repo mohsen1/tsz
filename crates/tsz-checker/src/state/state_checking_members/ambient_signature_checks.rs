@@ -127,29 +127,57 @@ impl<'a> CheckerState<'a> {
             let is_static = self.has_static_modifier(&prop.modifiers);
             let is_abstract = self.has_abstract_modifier(&prop.modifiers);
 
+            // tsc points TS1255/TS1263/TS1264 at the `!` token itself.
+            // For class property names parsed via parse_property_name(), the name
+            // node's `end` is one past the `!` (due to end_pos being captured after
+            // next_token()). So the `!` is at name_node.end - 1.
+            let excl_pos = self
+                .ctx
+                .arena
+                .get(prop.name)
+                .map(|n| n.end.saturating_sub(1));
+
             // TS1255: ! is not permitted on static, abstract, or ambient properties
             if in_ambient || is_static || is_abstract {
-                self.error_at_node(
-                    prop.name,
-                    diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
-                    diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
-                );
+                if let Some(pos) = excl_pos {
+                    self.emit_error_at(
+                        pos,
+                        1,
+                        diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                        diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    );
+                } else {
+                    self.error_at_node(
+                        prop.name,
+                        diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                        diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    );
+                }
             }
 
             // TS1263: ! with initializer is contradictory
             if prop.initializer.is_some() {
-                self.error_at_node(
-                    prop.name,
-                    diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
-                    diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
-                );
+                if let Some(pos) = excl_pos {
+                    self.emit_error_at(
+                        pos,
+                        1,
+                        diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    );
+                } else {
+                    self.error_at_node(
+                        prop.name,
+                        diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    );
+                }
             }
 
             // TS1264: ! without type annotation is meaningless
             if prop.type_annotation.is_none() {
-                if let Some(name_node) = self.ctx.arena.get(prop.name) {
+                if let Some(pos) = excl_pos {
                     self.emit_error_at(
-                        name_node.pos.saturating_add(1),
+                        pos,
                         1,
                         diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
                         diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
