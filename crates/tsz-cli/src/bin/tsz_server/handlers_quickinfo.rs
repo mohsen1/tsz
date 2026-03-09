@@ -348,9 +348,15 @@ impl Server {
             Self::find_named_member_declaration(arena, binder, &container_type_name, &member_name)?;
         let member_name_node = arena.get(member_decl_name_idx)?;
         let decl_pos = line_map.offset_to_position(member_name_node.pos, source_text);
-        if let Some(hover) = provider.get_hover(root, decl_pos, type_cache)
+        let raw_doc = jsdoc_for_node(arena, root, member_decl_idx, source_text);
+        let parsed_doc = parse_jsdoc(&raw_doc);
+        let documentation = parsed_doc.summary.unwrap_or_default();
+        if let Some(mut hover) = provider.get_hover(root, decl_pos, type_cache)
             && !hover.display_string.is_empty()
         {
+            if hover.documentation.is_empty() && !documentation.is_empty() {
+                hover.documentation = documentation;
+            }
             return Some(hover);
         }
 
@@ -379,9 +385,6 @@ impl Server {
 
         let display_string =
             format!("(property) {container_type_name}.{member_name}: {member_type}");
-        let raw_doc = jsdoc_for_node(arena, root, member_decl_idx, source_text);
-        let parsed_doc = parse_jsdoc(&raw_doc);
-        let documentation = parsed_doc.summary.unwrap_or_default();
         let start = line_map.offset_to_position(member_name_node.pos, source_text);
         let end = line_map.offset_to_position(member_name_node.end, source_text);
 

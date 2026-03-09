@@ -100,7 +100,7 @@ impl<'a> HoverProvider<'a> {
             Some(symbol_id) => symbol_id,
             None => {
                 if let Some(member_hover) =
-                    self.hover_for_property_access_member_name(node_idx, type_cache)
+                    self.hover_for_property_access_member_name(root, node_idx, type_cache)
                 {
                     return Some(member_hover);
                 }
@@ -188,6 +188,10 @@ impl<'a> HoverProvider<'a> {
                     type_string = initializer_type;
                 }
             }
+        } else if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+            && let Some(annotation) = self.type_alias_annotation_text(decl_node_idx)
+        {
+            type_string = annotation;
         }
 
         // Extract and save the updated cache for future queries
@@ -240,6 +244,7 @@ impl<'a> HoverProvider<'a> {
 
     fn hover_for_property_access_member_name(
         &self,
+        root: NodeIndex,
         node_idx: NodeIndex,
         type_cache: &mut Option<tsz_checker::TypeCache>,
     ) -> Option<HoverInfo> {
@@ -328,6 +333,12 @@ impl<'a> HoverProvider<'a> {
         } else {
             format!("(property) {name}: {type_string}")
         };
+        let documentation = if is_simple_name {
+            self.property_access_member_documentation(root, &container_name, &name)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let start = self.line_map.offset_to_position(node.pos, self.source_text);
         let end = self.line_map.offset_to_position(node.end, self.source_text);
         Some(HoverInfo {
@@ -336,9 +347,116 @@ impl<'a> HoverProvider<'a> {
             display_string,
             kind: "property".to_string(),
             kind_modifiers: String::new(),
-            documentation: String::new(),
+            documentation,
             tags: Vec::new(),
         })
+    }
+
+    fn property_access_member_documentation(
+        &self,
+        root: NodeIndex,
+        container_type_name: &str,
+        member_name: &str,
+    ) -> Option<String> {
+        let lookup_name = container_type_name
+            .split_once('<')
+            .map_or(container_type_name, |(base, _)| base)
+            .trim();
+        let (member_decl_idx, _) = self.find_named_member_declaration(lookup_name, member_name)?;
+        let raw_documentation = jsdoc_for_node(self.arena, root, member_decl_idx, self.source_text);
+        let parsed_doc = parse_jsdoc(&raw_documentation);
+        parsed_doc.summary
+    }
+
+    fn member_name_node_if_matches(
+        &self,
+        member_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<NodeIndex> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(sig) = self.arena.get_signature(member_node)
+            && self.arena.get_identifier_text(sig.name) == Some(member_name)
+        {
+            return Some(sig.name);
+        }
+
+        if let Some(prop) = self.arena.get_property_decl(member_node)
+            && self.arena.get_identifier_text(prop.name) == Some(member_name)
+        {
+            return Some(prop.name);
+        }
+
+        if let Some(method) = self.arena.get_method_decl(member_node)
+            && self.arena.get_identifier_text(method.name) == Some(member_name)
+        {
+            return Some(method.name);
+        }
+
+        if let Some(accessor) = self.arena.get_accessor(member_node)
+            && self.arena.get_identifier_text(accessor.name) == Some(member_name)
+        {
+            return Some(accessor.name);
+        }
+
+        None
+    }
+
+    fn find_named_member_declaration(
+        &self,
+        container_type_name: &str,
+        member_name: &str,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let mut candidate_decls = Vec::new();
+        if let Some(sym_id) = self.binder.file_locals.get(container_type_name)
+            && let Some(symbol) = self.binder.symbols.get(sym_id)
+        {
+            candidate_decls.extend(symbol.declarations.iter().copied());
+        }
+
+        if candidate_decls.is_empty() {
+            for (idx, node) in self.arena.nodes.iter().enumerate() {
+                if let Some(iface) = self.arena.get_interface(node)
+                    && self.arena.get_identifier_text(iface.name) == Some(container_type_name)
+                {
+                    candidate_decls.push(NodeIndex(idx as u32));
+                    continue;
+                }
+                if let Some(class) = self.arena.get_class(node)
+                    && self.arena.get_identifier_text(class.name) == Some(container_type_name)
+                {
+                    candidate_decls.push(NodeIndex(idx as u32));
+                }
+            }
+        }
+
+        for decl_idx in candidate_decls {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(iface) = self.arena.get_interface(decl_node) {
+                for &member_idx in &iface.members.nodes {
+                    if let Some(name_node) =
+                        self.member_name_node_if_matches(member_idx, member_name)
+                    {
+                        return Some((member_idx, name_node));
+                    }
+                }
+            }
+
+            if let Some(class) = self.arena.get_class(decl_node) {
+                for &member_idx in &class.members.nodes {
+                    if let Some(name_node) =
+                        self.member_name_node_if_matches(member_idx, member_name)
+                    {
+                        return Some((member_idx, name_node));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn hover_for_class_expression_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {
@@ -780,6 +898,19 @@ impl<'a> HoverProvider<'a> {
         })
     }
 
+    fn type_alias_annotation_text(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        let alias = self.arena.get_type_alias(decl_node)?;
+        if !alias.type_node.is_some() {
+            return None;
+        }
+        self.type_node_text(alias.type_node)
+            .map(Self::normalize_annotation_text)
+    }
+
     fn variable_initializer_display_type(
         &self,
         checker: &mut CheckerState,
@@ -799,7 +930,6 @@ impl<'a> HoverProvider<'a> {
         if init_node.kind == tsz_parser::syntax_kind_ext::NEW_EXPRESSION
             && !init_type_text.is_empty()
             && init_type_text != "error"
-            && !init_type_text.contains('<')
             && let Some(call) = self.arena.get_call_expr(init_node)
             && let Some(type_args) = &call.type_arguments
         {
@@ -832,7 +962,11 @@ impl<'a> HoverProvider<'a> {
                 .filter(|text| !text.is_empty())
                 .collect();
             if !arg_texts.is_empty() {
-                init_type_text = format!("{init_type_text}<{}>", arg_texts.join(", "));
+                let base_name = init_type_text
+                    .split_once('<')
+                    .map_or(init_type_text.as_str(), |(base, _)| base)
+                    .trim();
+                init_type_text = format!("{base_name}<{}>", arg_texts.join(", "));
             }
         }
         (!init_type_text.is_empty() && init_type_text != "error").then_some(init_type_text)

@@ -984,6 +984,31 @@ fn test_signature_with_rest_parameter() {
 }
 
 #[test]
+fn test_signature_help_prefers_source_type_alias_and_inferred_return_type() {
+    let source =
+        "type Box = { value: number };\nfunction id(value: Box) { return value; }\nid({ value: 1 });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let pos = Position::new(2, 4);
+    let mut cache = None;
+    let help = provider.get_signature_help(root, pos, &mut cache);
+    assert!(help.is_some(), "Should find signature help");
+    let h = help.unwrap();
+    let sig = &h.signatures[h.active_signature as usize];
+    assert_eq!(
+        sig.label, "id(value: Box): Box",
+        "Signature help should prefer source alias names and inferred return type"
+    );
+}
+
+#[test]
 fn test_signature_label_for_interface_method() {
     let source = "interface Obj { method(a: number, b: string): void; }\ndeclare const obj: Obj;\nobj.method(1, \"x\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);

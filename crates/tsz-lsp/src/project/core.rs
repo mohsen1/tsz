@@ -172,8 +172,7 @@ impl ProjectFile {
         self.binder.bind_source_file(arena, self.root);
 
         self.line_map = LineMap::build(self.parser.get_source_text());
-        self.type_cache = None;
-        self.scope_cache.clear();
+        self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
     }
 
@@ -182,9 +181,7 @@ impl ProjectFile {
     /// This should be called when a dependency of this file changes, forcing
     /// recomputation of type information and scope analysis on next access.
     pub fn invalidate_caches(&mut self) {
-        self.type_cache = None;
-        self.scope_cache.clear();
-        self.diagnostics_dirty = true;
+        self.reset_analysis_state();
     }
 
     pub fn update_source_with_edits(&mut self, source_text: String, edits: &[TextEdit]) {
@@ -359,11 +356,17 @@ impl ProjectFile {
             self.binder.reset();
             self.binder.bind_source_file(arena, self.root);
         }
-        self.type_cache = None;
-        self.scope_cache.clear();
+        self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
 
         true
+    }
+
+    fn reset_analysis_state(&mut self) {
+        self.type_interner = TypeInterner::new();
+        self.type_cache = None;
+        self.scope_cache.clear();
+        self.diagnostics_dirty = true;
     }
 
     pub fn get_hover(&mut self, position: Position) -> Option<HoverInfo> {
