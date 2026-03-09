@@ -328,6 +328,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.module,
                 tsz_common::common::ModuleKind::None
             ) && !is_dts
+                && !self.ctx.compiler_options.target.supports_es2015()
             {
                 self.check_module_none_statements(&sf.statements.nodes);
             }

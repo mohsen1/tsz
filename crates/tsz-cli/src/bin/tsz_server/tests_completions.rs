@@ -86,6 +86,101 @@ fn test_completion_info_global_keywords_rank_ahead_of_globals() {
 }
 
 #[test]
+fn test_completion_info_bare_identifier_expression_is_not_new_identifier_location() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "x".to_string());
+
+    let req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 2,
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completionInfo should return a body");
+    assert_eq!(body["isNewIdentifierLocation"], serde_json::json!(false));
+}
+
+#[test]
+fn test_completion_info_bare_identifier_expression_does_not_replace_auto_import_with_class_member_snippet()
+{
+    let mut server = make_server();
+
+    let open_external = make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "options": {
+                "module": "none",
+                "moduleResolution": "bundler",
+                "target": "es2015"
+            },
+            "rootFiles": [
+                {
+                    "fileName": "/node_modules/dep/index.d.ts",
+                    "content": "export const x: number;\n"
+                },
+                {
+                    "fileName": "/index.ts",
+                    "content": " x/**/"
+                }
+            ]
+        }),
+    );
+    let open_resp = server.handle_tsserver_request(open_external);
+    assert!(open_resp.success);
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 4,
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let auto_import_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("dep")
+        })
+        .expect("expected auto-import completion for `x` from `dep`");
+    assert!(
+        auto_import_entry.get("insertText").is_none(),
+        "auto-import entry should not be rewritten as a class member snippet"
+    );
+    assert!(
+        !entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        }),
+        "bare identifier completions should not synthesize class member snippets"
+    );
+}
+
+#[test]
 fn test_completion_entry_details_auto_import_omits_documentation() {
     let mut server = make_server();
     server.open_files.insert(

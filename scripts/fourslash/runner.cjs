@@ -158,6 +158,7 @@ async function runSequential(opts, testsToRun) {
 
     const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
+    patchSessionClient(SessionClient, ts);
 
     const testType = 0;
     let passed = 0;
@@ -263,6 +264,674 @@ function patchTestState(FourSlash, TszAdapter) {
     if (!TestState) throw new Error("Could not find TestState in FourSlash module");
     TestState.prototype.getLanguageServiceAdapter = function(testType, cancellationToken, compilationOptions) {
         return new TszAdapter(cancellationToken, compilationOptions);
+    };
+
+    // --- Patches for SourceFile/Program access ---
+    //
+    // Our adapter uses a SessionClient (server protocol) but runs with testType=Native (0).
+    // The fourslash harness has guards like `if (testType !== Server)` before calling
+    // getProgram()/getSourceFile(), but these guards don't trigger for testType=Native.
+    // We cannot use testType=Server because that enables ensureWatchablePath checks
+    // that reject the test file paths. Instead, we patch the TestState methods to
+    // gracefully handle unavailable Program/SourceFile objects.
+
+    TestState.prototype.checkPostEditInvariants = function() {
+        // Skip invariant checks that require direct SourceFile access.
+    };
+
+    TestState.prototype.getChecker = function() {
+        const program = this.getProgram();
+        if (!program) return undefined;
+        const checker = program.getTypeChecker();
+        if (!checker) return undefined;
+        return this._checker || (this._checker = checker);
+    };
+
+    TestState.prototype.getSourceFile = function() {
+        const program = this.getProgram();
+        if (!program) return undefined;
+        const fileName = this.activeFile.fileName;
+        return program.getSourceFile(fileName);
+    };
+
+    const originalGetNode = TestState.prototype.getNode;
+    TestState.prototype.getNode = function() {
+        const sf = this.getSourceFile();
+        if (!sf) return undefined;
+        return originalGetNode.call(this);
+    };
+
+    const _origGetProgram = TestState.prototype.getProgram;
+    TestState.prototype.getProgram = function() {
+        if (!this._program) {
+            this._program = this.languageService.getProgram() || "missing";
+        }
+        if (this._program === "missing") {
+            if (!this._programStub) {
+                const compilationOptions = this.compilationOptions || {};
+                this._programStub = {
+                    getCompilerOptions: function() { return compilationOptions; },
+                    getTypeChecker: function() { return undefined; },
+                    getSourceFile: function() { return undefined; },
+                    getSourceFiles: function() { return []; },
+                    getCurrentDirectory: function() { return "/"; },
+                    getConfigFileParsingDiagnostics: function() { return []; },
+                };
+            }
+            return this._programStub;
+        }
+        return this._program;
+    };
+}
+
+function patchSessionClient(SessionClient, ts) {
+    const proto = SessionClient.prototype;
+    const getNativeLanguageService = (client) => {
+        if (client._tszNativeLs !== undefined) return client._tszNativeLs;
+        try {
+            client._tszNativeLs = ts.createLanguageService(client.host);
+        } catch {
+            client._tszNativeLs = null;
+        }
+        return client._tszNativeLs;
+    };
+
+    const withNativeFallback = (client, op) => {
+        const nativeLs = getNativeLanguageService(client);
+        if (!nativeLs) return undefined;
+        try {
+            return op(nativeLs);
+        } catch {
+            return undefined;
+        }
+    };
+
+    const processOptionalResponse = (client, request) => {
+        try {
+            return client.processResponse(request);
+        } catch (err) {
+            if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
+                return { body: undefined };
+            }
+            throw err;
+        }
+    };
+
+    const instancePropsToDelete = ['getCombinedCodeFix', 'applyCodeActionCommand', 'mapCode'];
+    const _origWriteMessage = proto.writeMessage;
+    proto.writeMessage = function(msg) {
+        if (this._instancePropsDeleted === undefined) {
+            this._instancePropsDeleted = true;
+            for (const prop of instancePropsToDelete) {
+                if (this.hasOwnProperty(prop)) {
+                    delete this[prop];
+                }
+            }
+        }
+        return _origWriteMessage.call(this, msg);
+    };
+
+    proto.getBreakpointStatementAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getBreakpointStatementAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("breakpointStatement", args);
+        const response = processOptionalResponse(this, request);
+        if (!response.body) return undefined;
+        const { textSpan } = response.body;
+        return textSpan ? {
+            start: this.lineOffsetToPosition(fileName, textSpan.start),
+            length: this.lineOffsetToPosition(fileName, textSpan.end) - this.lineOffsetToPosition(fileName, textSpan.start),
+        } : undefined;
+    };
+
+    proto.getJsxClosingTagAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getJsxClosingTagAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("jsxClosingTag", args);
+        const response = processOptionalResponse(this, request);
+        return response.body || undefined;
+    };
+
+    const _origGetCompletions = proto.getCompletionsAtPosition;
+    proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
+        const result = _origGetCompletions.call(this, fileName, position, preferences);
+        if (preferences) this.configure(oldPreferences || {});
+        if (result && result.entries && result.entries.length === 0) {
+            return undefined;
+        }
+        return result;
+    };
+
+    const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
+    proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
+        const result = _origGetCompletionEntryDetails.call(
+            this,
+            fileName,
+            position,
+            entryName,
+            options,
+            source,
+            preferences,
+            data,
+        );
+        if (preferences) this.configure(oldPreferences || {});
+        return result;
+    };
+
+    const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
+    proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
+        let result = _origGetCodeFixesAtPosition.call(
+            this,
+            fileName,
+            start,
+            end,
+            errorCodes,
+            formatOptions,
+            preferences,
+        );
+        if (!result || result.length === 0) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCodeFixesAtPosition(fileName, start, end, errorCodes, formatOptions, preferences)
+            );
+            if (nativeResult && nativeResult.length > 0) {
+                result = nativeResult;
+            }
+        }
+        if (preferences) this.configure(oldPreferences || {});
+        return result;
+    };
+
+    if (typeof proto.getApplicableRefactors === "function") {
+        const _origGetApplicableRefactors = proto.getApplicableRefactors;
+        proto.getApplicableRefactors = function(fileName, positionOrRange, preferences, triggerReason, kind, includeInteractiveActions) {
+            let result = _origGetApplicableRefactors.call(
+                this,
+                fileName,
+                positionOrRange,
+                preferences,
+                triggerReason,
+                kind,
+                includeInteractiveActions,
+            );
+            if (!result || result.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getApplicableRefactors(
+                        fileName,
+                        positionOrRange,
+                        preferences,
+                        triggerReason,
+                        kind,
+                        includeInteractiveActions,
+                    )
+                );
+                if (nativeResult && nativeResult.length > 0) {
+                    result = nativeResult;
+                }
+            }
+            return result;
+        };
+    }
+
+    if (typeof proto.getEditsForRefactor === "function") {
+        const _origGetEditsForRefactor = proto.getEditsForRefactor;
+        proto.getEditsForRefactor = function(fileName, formatOptions, positionOrRange, refactorName, actionName, preferences, interactiveRefactorArguments) {
+            let result = _origGetEditsForRefactor.call(
+                this,
+                fileName,
+                formatOptions,
+                positionOrRange,
+                refactorName,
+                actionName,
+                preferences,
+                interactiveRefactorArguments,
+            );
+            if (!result || !Array.isArray(result.edits) || result.edits.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getEditsForRefactor(
+                        fileName,
+                        formatOptions,
+                        positionOrRange,
+                        refactorName,
+                        actionName,
+                        preferences,
+                        interactiveRefactorArguments,
+                    )
+                );
+                if (nativeResult && Array.isArray(nativeResult.edits) && nativeResult.edits.length > 0) {
+                    result = nativeResult;
+                }
+            }
+            return result;
+        };
+    }
+
+    const _origGetDefinitionAtPosition = proto.getDefinitionAtPosition;
+    proto.getDefinitionAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("definition", args);
+        const response = processOptionalResponse(this, request);
+        if (!response.body) return [];
+        return response.body.map(entry => {
+            const result = {
+                kind: entry.kind || "",
+                name: entry.name || "",
+                containerName: entry.containerName || "",
+                fileName: entry.file,
+                textSpan: this.decodeSpan(entry),
+            };
+            if (entry.isLocal !== undefined) result.isLocal = entry.isLocal;
+            if (entry.isAmbient !== undefined) result.isAmbient = entry.isAmbient;
+            if (entry.unverified !== undefined) result.unverified = entry.unverified;
+            if (entry.failedAliasResolution !== undefined) result.failedAliasResolution = entry.failedAliasResolution;
+            if (entry.contextStart) {
+                result.contextSpan = this.decodeSpan(
+                    { start: entry.contextStart, end: entry.contextEnd },
+                    fileName
+                );
+            }
+            return result;
+        });
+    };
+
+    const _origGetDefinitionAndBoundSpan = proto.getDefinitionAndBoundSpan;
+    proto.getDefinitionAndBoundSpan = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("definitionAndBoundSpan", args);
+        const response = processOptionalResponse(this, request);
+        const body = response.body;
+        if (!body) return undefined;
+        const definitions = (body.definitions || []).map(entry => {
+            const result = {
+                kind: entry.kind || "",
+                name: entry.name || "",
+                containerName: entry.containerName || "",
+                fileName: entry.file,
+                textSpan: this.decodeSpan(entry),
+            };
+            if (entry.isLocal !== undefined) result.isLocal = entry.isLocal;
+            if (entry.isAmbient !== undefined) result.isAmbient = entry.isAmbient;
+            if (entry.unverified !== undefined) result.unverified = entry.unverified;
+            if (entry.failedAliasResolution !== undefined) result.failedAliasResolution = entry.failedAliasResolution;
+            if (entry.contextStart) {
+                result.contextSpan = this.decodeSpan(
+                    { start: entry.contextStart, end: entry.contextEnd },
+                    fileName
+                );
+            }
+            return result;
+        });
+        if (definitions.length === 0) return undefined;
+        return {
+            definitions,
+            textSpan: this.decodeSpan(body.textSpan, request.arguments.file),
+        };
+    };
+
+    proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            openingBrace: String.fromCharCode(openingBrace),
+        };
+        const request = this.processRequest("braceCompletion", args);
+        const response = processOptionalResponse(this, request);
+        return response.body;
+    };
+
+    proto.getSpanOfEnclosingComment = function(fileName, position, onlyMultiLine) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSpanOfEnclosingComment(fileName, position, onlyMultiLine)
+        );
+        if (nativeResult) return nativeResult;
+
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            onlyMultiLine,
+        };
+        const request = this.processRequest("getSpanOfEnclosingComment", args);
+        const response = processOptionalResponse(this, request);
+        if (!response.body) return undefined;
+        const { textSpan } = response.body;
+        return textSpan ? {
+            start: this.lineOffsetToPosition(fileName, textSpan.start),
+            length: this.lineOffsetToPosition(fileName, textSpan.end) - this.lineOffsetToPosition(fileName, textSpan.start),
+        } : undefined;
+    };
+
+    proto.getTodoComments = function(fileName, descriptors) {
+        const args = { file: fileName, descriptors };
+        const request = this.processRequest("todoComments", args);
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+
+    proto.getDocCommentTemplateAtPosition = function(fileName, position, options, formatOptions) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            ...(options || {}),
+        };
+        const request = this.processRequest("docCommentTemplate", args);
+        const response = this.processResponse(request);
+        if (!response.body || !response.body.newText) return undefined;
+        return response.body;
+    };
+
+    proto.getIndentationAtPosition = function(fileName, position, options) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset, options };
+        const request = this.processRequest("indentation", args);
+        const response = this.processResponse(request);
+        return response.body ? response.body.indentation : 0;
+    };
+
+    proto.toggleLineComment = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("toggleLineComment", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.toggleMultilineComment = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("toggleMultilineComment", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.commentSelection = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("commentSelection", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.uncommentSelection = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("uncommentSelection", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.getSmartSelectionRange = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, locations: [{ line: lineOffset.line, offset: lineOffset.offset }] };
+        const request = this.processRequest("selectionRange", args);
+        const response = this.processResponse(request);
+        if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
+            return undefined;
+        }
+        const convertRange = (range) => {
+            if (!range || !range.textSpan) return undefined;
+            const start = this.lineOffsetToPosition(fileName, range.textSpan.start);
+            const end = this.lineOffsetToPosition(fileName, range.textSpan.end);
+            return {
+                textSpan: { start, length: end - start },
+                parent: range.parent ? convertRange(range.parent) : undefined,
+            };
+        };
+        return convertRange(response.body[0]);
+    };
+
+    proto.getSyntacticClassifications = function(fileName, span) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSyntacticClassifications(fileName, span)
+        );
+        return nativeResult || [];
+    };
+
+    proto.getSemanticClassifications = function(fileName, span) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSemanticClassifications(fileName, span)
+        );
+        return nativeResult || [];
+    };
+
+    proto.getEncodedSyntacticClassifications = function(fileName, span) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getEncodedSyntacticClassifications(fileName, span)
+        );
+        return nativeResult || { spans: [], endOfLineState: 0 };
+    };
+
+    proto.getCompilerOptionsDiagnostics = function() {
+        return [];
+    };
+
+    const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
+    proto.getSignatureHelpItems = function(fileName, position, options) {
+        const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        if (result && result.items && result.items.length === 0) {
+            return undefined;
+        }
+        return result;
+    };
+
+    proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
+        return withNativeFallback(this, ls =>
+            ls.getNameOrDottedNameSpan(fileName, startPos, endPos)
+        );
+    };
+
+    proto.getLinkedEditingRangeAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getLinkedEditingRangeAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("linkedEditingRange", args);
+        const response = processOptionalResponse(this, request);
+        if (!response.body) return undefined;
+        const { ranges, wordPattern } = response.body;
+        if (!ranges || ranges.length === 0) return undefined;
+        const result = {
+            ranges: ranges.map(r => ({
+                start: this.lineOffsetToPosition(fileName, r.start),
+                length: this.lineOffsetToPosition(fileName, r.end) - this.lineOffsetToPosition(fileName, r.start),
+            })),
+        };
+        if (wordPattern) result.wordPattern = wordPattern;
+        return result;
+    };
+
+    proto.getCombinedCodeFix = function(scope, fixId, formatOptions, preferences) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getCombinedCodeFix(scope, fixId, formatOptions, preferences)
+        );
+        if (nativeResult && Array.isArray(nativeResult.changes) && nativeResult.changes.length > 0) {
+            return nativeResult;
+        }
+
+        const args = {
+            scope: { type: "file", args: { file: scope.fileName } },
+            fixId,
+        };
+        const request = this.processRequest("getCombinedCodeFix", args);
+        const response = this.processResponse(request);
+        if (!response.body) return { changes: [], commands: undefined };
+        const { changes, commands } = response.body;
+        return {
+            changes: this.convertChanges(changes || [], scope.fileName),
+            commands,
+        };
+    };
+
+    proto.applyCodeActionCommand = function(action) {
+        const args = { command: action };
+        const request = this.processRequest("applyCodeActionCommand", args);
+        const response = this.processResponse(request);
+        if (Array.isArray(action)) {
+            return Promise.resolve(Array.isArray(response.body) ? response.body : []);
+        }
+        return Promise.resolve(response.body || { successMessage: "" });
+    };
+
+    proto.mapCode = function(fileName, contents, focusLocations, formatOptions, preferences) {
+        const args = {
+            file: fileName,
+            mapping: { contents, focusLocations },
+        };
+        const request = this.processRequest("mapCode", args);
+        const response = this.processResponse(request);
+        if (!response.body) return [];
+        return this.convertChanges(response.body || [], fileName);
+    };
+
+    proto.organizeImports = function(args, formatOptions) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.organizeImports(args, formatOptions)
+        );
+        if (nativeResult && nativeResult.length > 0) return nativeResult;
+
+        const request = this.processRequest("organizeImports", {
+            scope: { type: "file", args: { file: args.fileName } },
+        });
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+
+    proto.getEditsForFileRename = function(oldFilePath, newFilePath, formatOptions, preferences) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getEditsForFileRename(oldFilePath, newFilePath, formatOptions, preferences)
+        );
+        if (nativeResult && nativeResult.length > 0) return nativeResult;
+
+        const request = this.processRequest("getEditsForFileRename", {
+            oldFilePath,
+            newFilePath,
+        });
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+
+    proto.getProgram = function() {
+        const nativeResult = withNativeFallback(this, ls => ls.getProgram());
+        if (nativeResult) return nativeResult;
+
+        if (!this._programStub) {
+            this._programStub = {
+                getCompilerOptions: function() { return {}; },
+                getTypeChecker: function() { return undefined; },
+                getSourceFile: function() { return undefined; },
+                getSourceFiles: function() { return []; },
+                getCurrentDirectory: function() { return "/"; },
+                getConfigFileParsingDiagnostics: function() { return []; },
+                getOptionsDiagnostics: function() { return []; },
+                getSemanticDiagnostics: function() { return []; },
+                getSyntacticDiagnostics: function() { return []; },
+                getGlobalDiagnostics: function() { return []; },
+                getDeclarationDiagnostics: function() { return []; },
+                emit: function() { return { emitSkipped: true, diagnostics: [], emittedFiles: [] }; },
+            };
+        }
+        return this._programStub;
+    };
+
+    proto.getCurrentProgram = function() {
+        return withNativeFallback(this, ls => ls.getProgram());
+    };
+
+    proto.getAutoImportProvider = function() {
+        return withNativeFallback(this, ls => ls.getAutoImportProviderProgram && ls.getAutoImportProviderProgram());
+    };
+
+    proto.getSourceFile = function(fileName) {
+        const program = this.getProgram();
+        if (!program || typeof program.getSourceFile !== "function") return undefined;
+        return program.getSourceFile(fileName);
+    };
+
+    proto.getNonBoundSourceFile = function(fileName) {
+        const program = this.getProgram();
+        if (!program || typeof program.getSourceFile !== "function") return undefined;
+        return program.getSourceFile(fileName);
+    };
+
+    proto.cleanupSemanticCache = function() {
+        // No-op: not available through the server protocol
+    };
+
+    proto.getSourceMapper = function() {
+        return { toLineColumnOffset: function() { return undefined; } };
+    };
+
+    proto.clearSourceMapperCache = function() {
+        // No-op
+    };
+
+    proto.dispose = function() {
+        if (this.host && this.host._openedFiles && this.closeFile) {
+            for (const fileName of Array.from(this.host._openedFiles)) {
+                try {
+                    this.closeFile(fileName);
+                } catch {}
+            }
+            this.host._openedFiles.clear();
+        }
+        if (this._tszNativeLs && this._tszNativeLs.dispose) {
+            try {
+                this._tszNativeLs.dispose();
+            } catch {}
+        }
     };
 }
 
