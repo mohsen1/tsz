@@ -1849,6 +1849,10 @@ impl<'a> Printer<'a> {
                 self.emit_comments_before_pos(label_node.pos);
             }
             self.emit(jump.label);
+            // Emit inline comments between label and semicolon (e.g., `break foo /*c*/;`)
+            if let Some(label_node) = self.arena.get(jump.label) {
+                self.emit_comments_in_range(label_node.end, node.end, true, false);
+            }
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
@@ -1866,6 +1870,10 @@ impl<'a> Printer<'a> {
                 self.emit_comments_before_pos(label_node.pos);
             }
             self.emit(jump.label);
+            // Emit inline comments between label and semicolon (e.g., `continue foo /*c*/;`)
+            if let Some(label_node) = self.arena.get(jump.label) {
+                self.emit_comments_in_range(label_node.end, node.end, true, false);
+            }
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
