@@ -721,11 +721,88 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.emit_parameter_name_js(param.name);
-                // Skip type annotations — consume comments inside the erased range
+                // Skip type annotations — consume comments inside the erased range,
+                // but preserve trailing comments between the type and delimiter.
+                // e.g., `a: any/*2*/,` → `a /*2*/,`
+                //
+                // Note: in tsz's parser, type_node.end extends past trailing
+                // trivia into the delimiter (`,` or `)`), so we scan from
+                // type_node.pos to find the actual delimiter position.
                 if param.type_annotation.is_some()
                     && let Some(type_node) = self.arena.get(param.type_annotation)
                 {
-                    self.skip_comments_in_range(type_node.pos, type_node.end);
+                    // Find the delimiter (`,` or `)`) within the type annotation range.
+                    // The type node's range includes the delimiter, so scan from the start
+                    // to find it, properly handling nesting and string/comment literals.
+                    let delimiter_pos = if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut scan = type_node.pos as usize;
+                        let limit = type_node.end as usize;
+                        let mut depth = 0i32;
+                        let mut found = limit;
+                        while scan < limit {
+                            match bytes[scan] {
+                                b',' | b')' if depth == 0 => {
+                                    found = scan;
+                                    break;
+                                }
+                                b'(' | b'[' | b'{' | b'<' => {
+                                    depth += 1;
+                                    scan += 1;
+                                }
+                                b')' | b']' | b'}' | b'>' => {
+                                    depth -= 1;
+                                    scan += 1;
+                                }
+                                b'/' if scan + 1 < limit && bytes[scan + 1] == b'*' => {
+                                    scan += 2;
+                                    while scan + 1 < limit
+                                        && !(bytes[scan] == b'*' && bytes[scan + 1] == b'/')
+                                    {
+                                        scan += 1;
+                                    }
+                                    if scan + 1 < limit {
+                                        scan += 2;
+                                    }
+                                }
+                                b'/' if scan + 1 < limit && bytes[scan + 1] == b'/' => {
+                                    while scan < limit
+                                        && bytes[scan] != b'\n'
+                                        && bytes[scan] != b'\r'
+                                    {
+                                        scan += 1;
+                                    }
+                                }
+                                b'\'' | b'"' | b'`' => {
+                                    let q = bytes[scan];
+                                    scan += 1;
+                                    while scan < limit && bytes[scan] != q {
+                                        if bytes[scan] == b'\\' {
+                                            scan += 1;
+                                        }
+                                        scan += 1;
+                                    }
+                                    if scan < limit {
+                                        scan += 1;
+                                    }
+                                }
+                                _ => scan += 1,
+                            }
+                        }
+                        found as u32
+                    } else {
+                        type_node.end
+                    };
+                    // Skip comments inside the type annotation (before delimiter).
+                    // Using delimiter_pos ensures we don't consume trailing comments
+                    // like /*2*/ that should be preserved in the output.
+                    self.skip_comments_in_range(type_node.pos, delimiter_pos);
+                    // Emit trailing comments between erased type and delimiter
+                    if self.has_pending_comment_before(delimiter_pos) {
+                        self.write(" ");
+                        self.emit_comments_before_pos(delimiter_pos);
+                        self.pending_block_comment_space = false;
+                    }
                 }
                 if param.initializer.is_some() {
                     self.write(" = ");
