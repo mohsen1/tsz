@@ -71,8 +71,6 @@ yarn.lock
 !/Cargo.toml
 !/LICENSE.txt
 !/README.md
-!/AGENTS.md
-!/CLAUDE.md
 !/yek.yaml
 
 
@@ -82,6 +80,7 @@ yarn.lock
 
 # Claude Code - ignore everything in .claude except local settings and skills
 .claude/*
+!.claude/CLAUDE.md
 !.claude/settings.json
 .claude/settings.local.json
 !.claude/skills/
