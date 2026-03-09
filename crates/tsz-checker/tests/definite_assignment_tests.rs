@@ -730,8 +730,58 @@ fn test_ts2454_not_emitted_in_class_field_initializer() {
 }
 
 #[test]
-fn test_ts2454_emitted_for_source_file_global_inside_function() {
+fn test_ts2454_not_emitted_for_source_file_global_inside_deferred_function() {
     let source = r"
+        let cond: boolean;
+        function f() {
+            while (cond) {}
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Deferred nested-function reads of source-file globals should not emit TS2454, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_emitted_for_source_file_global_inside_iife() {
+    let source = r"
+        let cond: boolean;
+        (function () {
+            while (cond) {}
+        })();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for uninitialized source-file global read inside IIFE, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_emitted_for_source_file_global_inside_module_function() {
+    let source = r"
+        export {};
         let cond: boolean;
         function f() {
             while (cond) {}
@@ -749,7 +799,7 @@ fn test_ts2454_emitted_for_source_file_global_inside_function() {
             &diags,
             diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
         ) >= 1,
-        "Expected TS2454 for uninitialized source-file global read inside function, got: {diags:?}"
+        "Module-scoped globals should still emit TS2454 inside nested functions, got: {diags:?}"
     );
 }
 
