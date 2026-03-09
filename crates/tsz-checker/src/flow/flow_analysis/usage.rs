@@ -284,6 +284,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // `x!` is an assertion site, not a TS2454 read site.
+        if self.is_non_null_assertion_operand(idx) {
+            return false;
+        }
+
         // Skip definite assignment check if this identifier is a for-in/for-of
         // initializer — it's an assignment target, not a usage.
         // e.g., `let x: number; for (x of items) { ... }` — the `x` in `for (x of ...)`
@@ -403,9 +408,17 @@ impl<'a> CheckerState<'a> {
         // Skip TS2454 when the variable is used from a different function scope
         // than where it is declared.  The nested function could be called after
         // external code assigns the variable, so tsc suppresses TS2454 here
-        // regardless of whether the variable has an initializer.
-        if self.find_enclosing_function_or_source_file(decl_id_to_check)
-            != self.find_enclosing_function_or_source_file(idx)
+        // for captured locals. Source-file globals are different: tsc still
+        // reports TS2454 for uninitialized globals read inside functions.
+        let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
+        let usage_scope = self.find_enclosing_function_or_source_file(idx);
+        if decl_scope != usage_scope
+            && !decl_scope.is_none()
+            && self
+                .ctx
+                .arena
+                .get(decl_scope)
+                .is_none_or(|node| node.kind != syntax_kind_ext::SOURCE_FILE)
         {
             return false;
         }
@@ -474,14 +487,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-        }
-
-        // For source-file globals, skip TS2454 when the usage occurs inside a
-        // function-like body. The variable may be assigned before invocation.
-        if self.is_source_file_global_var_decl(decl_id_to_check)
-            && self.is_inside_function_like(idx)
-        {
-            return false;
         }
 
         // For namespace-scoped variables, skip TS2454 when the usage is inside
@@ -604,50 +609,21 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_source_file_global_var_decl(&self, decl_id: NodeIndex) -> bool {
-        let Some(info) = self.ctx.arena.node_info(decl_id) else {
+    fn is_non_null_assertion_operand(&self, idx: NodeIndex) -> bool {
+        let Some(info) = self.ctx.arena.node_info(idx) else {
             return false;
         };
-        let mut current = info.parent;
-        for _ in 0..50 {
-            let Some(node) = self.ctx.arena.get(current) else {
-                return false;
-            };
-            if node.kind == syntax_kind_ext::SOURCE_FILE {
-                return true;
-            }
-            if node.is_function_like() {
-                return false;
-            }
-            let Some(next) = self.ctx.arena.node_info(current).map(|n| n.parent) else {
-                return false;
-            };
-            current = next;
-            if current.is_none() {
-                return false;
-            }
+        let parent = info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::NON_NULL_EXPRESSION {
+            return false;
         }
-        false
-    }
-
-    fn is_inside_function_like(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-        for _ in 0..50 {
-            let Some(info) = self.ctx.arena.node_info(current) else {
-                return false;
-            };
-            current = info.parent;
-            let Some(node) = self.ctx.arena.get(current) else {
-                return false;
-            };
-            if node.is_function_like() {
-                return true;
-            }
-            if node.kind == syntax_kind_ext::SOURCE_FILE {
-                return false;
-            }
-        }
-        false
+        self.ctx
+            .arena
+            .get_unary_expr_ex(parent_node)
+            .is_some_and(|expr| expr.expression == idx)
     }
 
     /// Check if a declaration is inside the `try` block of a `TryStatement`.
