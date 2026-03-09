@@ -1038,8 +1038,129 @@ impl<'a> CheckerState<'a> {
             query::ArrayLikeKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_array_like_type(member)),
-            query::ArrayLikeKind::Other => false,
+            query::ArrayLikeKind::Other => self.type_has_array_like_heritage(object_type),
         }
+    }
+
+    fn type_has_array_like_heritage(&self, type_id: TypeId) -> bool {
+        let sym_id = self
+            .ctx
+            .resolve_type_to_symbol_id(type_id)
+            .or_else(|| {
+                tsz_solver::object_shape_id(self.ctx.types, type_id)
+                    .and_then(|shape_id| self.ctx.types.object_shape(shape_id).symbol)
+            })
+            .or_else(|| {
+                tsz_solver::object_with_index_shape_id(self.ctx.types, type_id)
+                    .and_then(|shape_id| self.ctx.types.object_shape(shape_id).symbol)
+            });
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        let mut visited = Vec::new();
+        self.symbol_has_array_like_heritage(sym_id, &mut visited)
+    }
+
+    fn symbol_has_array_like_heritage(
+        &self,
+        sym_id: SymbolId,
+        visited: &mut Vec<SymbolId>,
+    ) -> bool {
+        if visited.contains(&sym_id) {
+            return false;
+        }
+        visited.push(sym_id);
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            visited.pop();
+            return false;
+        };
+
+        if Self::is_builtin_array_like_name(symbol.escaped_name.as_str()) {
+            visited.pop();
+            return true;
+        }
+
+        let mut decls = symbol.declarations.clone();
+        let value_decl = symbol.value_declaration;
+        if value_decl != NodeIndex::NONE && !decls.contains(&value_decl)
+        {
+            decls.push(value_decl);
+        }
+
+        for decl_idx in decls {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            let heritage_clauses = if let Some(interface) = self.ctx.arena.get_interface(node) {
+                interface.heritage_clauses.as_ref()
+            } else if let Some(class_decl) = self.ctx.arena.get_class(node) {
+                class_decl.heritage_clauses.as_ref()
+            } else {
+                None
+            };
+
+            let Some(heritage_clauses) = heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    let expr_idx = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        expr_type_args.expression
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        self.ctx
+                            .arena
+                            .get_type_ref(type_node)
+                            .map(|type_ref| type_ref.type_name)
+                            .unwrap_or(type_idx)
+                    } else {
+                        type_idx
+                    };
+
+                    if let Some(base_name) = self.heritage_name_text(expr_idx)
+                        && Self::is_builtin_array_like_name(base_name.as_str())
+                    {
+                        visited.pop();
+                        return true;
+                    }
+
+                    if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
+                        && self.symbol_has_array_like_heritage(base_sym_id, visited)
+                    {
+                        visited.pop();
+                        return true;
+                    }
+                }
+            }
+        }
+
+        visited.pop();
+        false
+    }
+
+    fn is_builtin_array_like_name(name: &str) -> bool {
+        matches!(
+            name.rsplit('.').next().unwrap_or(name),
+            "Array" | "ReadonlyArray" | "ConcatArray"
+        )
     }
 
     /// Check if an index signature error should be reported for element access.
