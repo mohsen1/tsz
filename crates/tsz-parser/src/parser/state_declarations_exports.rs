@@ -785,7 +785,13 @@ impl ParserState {
                     self.token_pos(),
                 )
             } else {
-                self.parse_statement()
+                // Set IN_BLOCK flag so that `export`/`declare` in a single-
+                // statement if-body emit TS1184, matching tsc's behavior.
+                let saved_flags = self.context_flags;
+                self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
+                let stmt = self.parse_statement();
+                self.context_flags = saved_flags;
+                stmt
             };
         self.check_using_outside_block(then_statement);
 
@@ -802,7 +808,11 @@ impl ParserState {
         }
 
         let else_statement = if self.parse_optional(SyntaxKind::ElseKeyword) {
+            // Set IN_BLOCK for the else-clause's single-statement body too.
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
             let stmt = self.parse_statement();
+            self.context_flags = saved_flags;
             self.check_using_outside_block(stmt);
             stmt
         } else {
