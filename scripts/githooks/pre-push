@@ -31,6 +31,18 @@ done
 
 if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; then
     cd "$ROOT_DIR"
+
+    # ─── Lint gate: cargo fmt ────────────────────────────────────────────────
+    echo "Pre-push: checking formatting (cargo fmt --check)..."
+    if ! cargo fmt -- --check >/dev/null 2>&1; then
+        echo ""
+        echo "ERROR: Code is not formatted. Run 'cargo fmt' and commit the result."
+        cargo fmt -- --check 2>&1 | head -30
+        echo ""
+        echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
+        exit 1
+    fi
+
     echo "Pre-push: running all workspace tests before pushing to main..."
 
     # Note: tsz-core (root) excluded — its integration tests require special
