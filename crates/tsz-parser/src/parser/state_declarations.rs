@@ -1684,7 +1684,43 @@ impl ParserState {
         let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
         } else if import_clause_had_errors && self.is_token(SyntaxKind::FromKeyword) {
+            // The import clause had errors but we still see `from` — this happens
+            // when errors are inside `{ ... }` (e.g. `import { 0n } from "mod"`).
+            // Don't consume `from` here; let the normal parse path handle it so
+            // that the module specifier is properly parsed.
             NodeIndex::NONE
+        } else if import_clause_had_errors {
+            // The import clause had errors AND we're NOT at `from`.  This happens
+            // with malformed namespace imports like `import * from Zero from "./0"`
+            // where the parser consumed `from` as the namespace name and leftover
+            // tokens remain.  Absorb residual identifier-like tokens on the same
+            // line into the import statement to prevent them from being parsed as
+            // standalone statements (which would generate cascading TS1434
+            // diagnostics).  Stop at delimiters (`}`, `{`) which belong to
+            // legitimate syntax (e.g. `import { 0n as foo } from "./foo"`).
+            self.parse_expected(SyntaxKind::FromKeyword);
+            while !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::OpenBraceToken)
+            {
+                if self.is_token(SyntaxKind::StringLiteral)
+                    || self.is_token(SyntaxKind::FromKeyword)
+                {
+                    break;
+                }
+                self.next_token();
+            }
+            // If we reached `from STRING`, consume the module specifier.
+            if self.is_token(SyntaxKind::FromKeyword) {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_string_literal()
+            } else {
+                NodeIndex::NONE
+            }
         } else {
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
