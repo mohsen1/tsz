@@ -728,3 +728,52 @@ fn test_ts2454_not_emitted_in_class_field_initializer() {
         "Class field initializers should not trigger TS2454, got: {diags:?}"
     );
 }
+
+#[test]
+fn test_ts2454_emitted_for_source_file_global_inside_function() {
+    let source = r"
+        let cond: boolean;
+        function f() {
+            while (cond) {}
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for uninitialized source-file global read inside function, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_non_null_assertion_does_not_emit_ts2454() {
+    let source = r"
+        function f() {
+            let x: string;
+            x!.slice();
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Non-null assertions should not emit TS2454, got: {diags:?}"
+    );
+}
