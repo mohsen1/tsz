@@ -1,9 +1,7 @@
 //! Type/value mismatch and declaration error reporting (TS2693, TS2749, TS2708, TS2709).
 
 use super::TypeOnlyKind;
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -35,31 +33,21 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if let Some(loc) = self.get_source_location(idx) {
-            let prev_type_str = self.format_type(prev_type);
-            let current_type_str = self.format_type(current_type);
-            let message = format!(
-                "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP));
-        }
+        let prev_type_str = self.format_type(prev_type);
+        let current_type_str = self.format_type(current_type);
+        let message = format!(
+            "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
+        );
+        self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
     }
 
     /// Report TS2454: Variable is used before being assigned.
     pub fn error_variable_used_before_assigned_at(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
-                &[name],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
-            ));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
+            &[name],
+        );
     }
 
     // =========================================================================
@@ -73,18 +61,14 @@ impl<'a> CheckerState<'a> {
         class_name: &str,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format!(
-                "Abstract property '{prop_name}' in class '{class_name}' cannot be accessed in the constructor."
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
-            ));
-        }
+        let message = format!(
+            "Abstract property '{prop_name}' in class '{class_name}' cannot be accessed in the constructor."
+        );
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
+        );
     }
 
     // =========================================================================
@@ -98,17 +82,9 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                2694,
-            ));
-        }
+        let message =
+            format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
+        self.error_at_node(idx, &message, 2694);
     }
 
     // =========================================================================
@@ -117,19 +93,11 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2698: Spread types may only be created from object types.
     pub fn report_spread_not_object_type(&mut self, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
-                category: DiagnosticCategory::Error,
-                message_text:
-                    diagnostic_messages::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
-                        .to_string(),
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
-        }
+        self.error_at_node(
+            idx,
+            diagnostic_messages::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+        );
     }
 
     /// Report TS2693/TS2585: Symbol only refers to a type, but is used as a value.
@@ -156,68 +124,59 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
-            // Check if this is an ES2015+ type that requires specific lib support
-            let is_es2015_type = lib_loader::is_es2015_plus_type(name);
-            let allow_in_parse_recovery =
-                self.has_type_only_value_in_parse_recovery_context(name, idx);
+        // Check if this is an ES2015+ type that requires specific lib support
+        let is_es2015_type = lib_loader::is_es2015_plus_type(name);
+        let allow_in_parse_recovery = self.has_type_only_value_in_parse_recovery_context(name, idx);
 
-            // In syntax-error files, TS2693 often cascades from parser recovery and
-            // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
-            let allow_any_in_parse_recovery = name == "any";
-            if self.has_parse_errors()
-                && !is_es2015_type
-                && !allow_any_in_parse_recovery
-                && !allow_in_parse_recovery
-            {
-                return;
-            }
-
-            let (code, message) = if is_es2015_type {
-                // TS2585: Type only refers to a type, suggest changing target library
-                (
-                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
-                    format_message(
-                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
-                        &[name],
-                    ),
-                )
-            } else if let Some(type_only_kind) = self.get_type_only_import_export_kind(idx) {
-                match type_only_kind {
-                    TypeOnlyKind::Import => (
-                        diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
-                        format_message(
-                            diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
-                            &[name],
-                        ),
-                    ),
-                    TypeOnlyKind::Export => (
-                        diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
-                        format_message(
-                            diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
-                            &[name],
-                        ),
-                    ),
-                }
-            } else {
-                // TS2693: Generic type-only error
-                (
-                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
-                    format_message(
-                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
-                        &[name],
-                    ),
-                )
-            };
-
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                code,
-            ));
+        // In syntax-error files, TS2693 often cascades from parser recovery and
+        // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
+        let allow_any_in_parse_recovery = name == "any";
+        if self.has_parse_errors()
+            && !is_es2015_type
+            && !allow_any_in_parse_recovery
+            && !allow_in_parse_recovery
+        {
+            return;
         }
+
+        let (code, message) = if is_es2015_type {
+            // TS2585: Type only refers to a type, suggest changing target library
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
+                    &[name],
+                ),
+            )
+        } else if let Some(type_only_kind) = self.get_type_only_import_export_kind(idx) {
+            match type_only_kind {
+                TypeOnlyKind::Import => (
+                    diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                    format_message(
+                        diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                        &[name],
+                    ),
+                ),
+                TypeOnlyKind::Export => (
+                    diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                    format_message(
+                        diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                        &[name],
+                    ),
+                ),
+            }
+        } else {
+            // TS2693: Generic type-only error
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+            )
+        };
+
+        self.error_at_node(idx, &message, code);
     }
 
     /// Determine if the identifier at `idx` resolves to a symbol that was
@@ -490,64 +449,39 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2749: Symbol refers to a value, but is used as a type.
     pub fn error_value_only_type_at(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
-                &[name],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
+            &[name],
+        );
     }
 
     /// Report TS2702: '{0}' only refers to a type, but is being used as a namespace here.
     pub fn error_type_used_as_namespace_at(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
-                &[name],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
-            ));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
+            &[name],
+        );
     }
 
     /// Report TS2709: Cannot use namespace '{0}' as a type.
     pub fn error_namespace_used_as_type_at(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format_message(diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_TYPE, &[name]);
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
-            ));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
+            &[name],
+        );
     }
 
     /// Report TS2708: Cannot use namespace '{0}' as a value.
     pub fn error_namespace_used_as_value_at(&mut self, name: &str, idx: NodeIndex) {
         tracing::debug!("error_namespace_used_as_value_at: {name}");
-
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_VALUE,
-                &[name],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
-            ));
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+            &[name],
+        );
     }
 }
 

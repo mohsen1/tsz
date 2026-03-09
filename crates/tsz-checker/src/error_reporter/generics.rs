@@ -1,6 +1,6 @@
 //! Generic type and comparison error reporting (TS2314, TS2344, TS2367, TS2352).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -18,20 +18,12 @@ impl<'a> CheckerState<'a> {
         required_count: usize,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
-                &[name, &required_count.to_string()],
-            );
-            // Use push_diagnostic for deduplication - same type may be resolved multiple times
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
-            ));
-        }
+        let count_str = required_count.to_string();
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+            &[name, &count_str],
+        );
     }
 
     /// Report TS2314 at an explicit source location.
@@ -80,37 +72,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
-            // Deduplicate: get_type_from_type_node may re-resolve type references when
-            // type_parameter_scope changes, causing validate_type_reference_type_arguments
-            // to be called multiple times for the same node.
-            let key = (
-                loc.start,
-                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-            );
-            if self.ctx.emitted_diagnostics.contains(&key) {
-                return;
-            }
-            self.ctx.emitted_diagnostics.insert(key);
-
-            // tsc widens literal types to their base types in TS2344 messages:
-            // e.g., `42` → `number`, `"hello"` → `string`. This matches
-            // tsc's getBaseTypeOfLiteralType applied before typeToString.
-            let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
-            let type_str = self.format_type(widened_arg);
-            let constraint_str = self.format_type(constraint);
-            let message = format_message(
-                diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-                &[&type_str, &constraint_str],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-            ));
-        }
+        // tsc widens literal types to their base types in TS2344 messages:
+        // e.g., `42` → `number`, `"hello"` → `string`. This matches
+        // tsc's getBaseTypeOfLiteralType applied before typeToString.
+        let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
+        let type_str = self.format_type(widened_arg);
+        let constraint_str = self.format_type(constraint);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            &[&type_str, &constraint_str],
+        );
     }
 
     /// Report TS2559: Type has no properties in common with constraint.
@@ -133,21 +105,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
-            let type_str = self.format_type(type_arg);
-            let constraint_str = self.format_type(constraint);
-            let message = format_message(
-                diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                &[&type_str, &constraint_str],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-            ));
-        }
+        let type_str = self.format_type(type_arg);
+        let constraint_str = self.format_type(constraint);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+            &[&type_str, &constraint_str],
+        );
     }
 
     /// Report TS2352: Conversion of type 'X' to type 'Y' may be a mistake because neither type
@@ -159,15 +123,13 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let source_str = self.format_type(source_type);
-            let target_str = self.format_type(target_type);
-            let message = format_message(
-                diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
-                &[&source_str, &target_str],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV));
-        }
+        let source_str = self.format_type(source_type);
+        let target_str = self.format_type(target_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+            &[&source_str, &target_str],
+        );
     }
 
     // =========================================================================

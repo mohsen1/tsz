@@ -622,9 +622,11 @@ impl<'a> CheckerState<'a> {
     /// Report a spread argument type error (TS2556).
     /// TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
     pub fn error_spread_must_be_tuple_or_rest_at(&mut self, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), diagnostic_messages::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER.to_string(), diagnostic_codes::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER));
-        }
+        self.error_at_node(
+            idx,
+            diagnostic_messages::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER,
+            diagnostic_codes::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER,
+        );
     }
 
     /// Report an "expected at least N arguments" error (TS2555).
@@ -636,16 +638,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         let report_idx = self.call_error_anchor_node(idx);
-        if let Some(loc) = self.get_source_location(report_idx) {
-            let message = format!("Expected at least {expected_min} arguments, but got {got}.");
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
-            ));
-        }
+        let message = format!("Expected at least {expected_min} arguments, but got {got}.");
+        self.error_at_node(
+            report_idx,
+            &message,
+            diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
+        );
     }
 
     /// Prefer callee name span for call-arity diagnostics.
@@ -795,20 +793,15 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2693: type parameter used as value
     pub fn error_type_parameter_used_as_value(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
 
-            let message =
-                format!("'{name}' only refers to a type, but is being used as a value here.");
+        let message = format!("'{name}' only refers to a type, but is being used as a value here.");
 
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
-            ));
-        }
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+        );
     }
 
     /// Report a "this type mismatch" error using solver diagnostics with source tracking.
@@ -875,18 +868,11 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(idx);
 
-        if let Some(loc) = self.get_source_location(report_idx) {
-            use crate::diagnostics::diagnostic_codes;
-            self.ctx.diagnostics.push(
-                crate::diagnostics::Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    "This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?".to_string(),
-                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE_BECAUSE_IT_IS_A_GET_ACCESSOR_DID_YOU_MEAN_TO_USE,
-                ),
-            );
-        }
+        self.error_at_node(
+            report_idx,
+            "This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?",
+            diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE_BECAUSE_IT_IS_A_GET_ACCESSOR_DID_YOU_MEAN_TO_USE,
+        );
     }
 
     /// Report TS2348: "Value of type '{0}' is not callable. Did you mean to include 'new'?"
@@ -897,10 +883,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
         let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
@@ -908,13 +890,11 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
                 .replace("{0}", &type_str);
 
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
-            message,
+        self.error_at_node(
+            idx,
+            &message,
             diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW,
-        ));
+        );
     }
 
     /// TS2350 was removed in tsc 6.0 — no longer emitted.
@@ -927,10 +907,6 @@ impl<'a> CheckerState<'a> {
         nullish_cause: TypeId,
         idx: NodeIndex,
     ) {
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
         let (message, code) = if nullish_cause == TypeId::NULL {
             (
                 diagnostic_messages::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL,
@@ -949,13 +925,7 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
-            message.to_string(),
-            code,
-        ));
+        self.error_at_node(idx, message, code);
     }
 }
 

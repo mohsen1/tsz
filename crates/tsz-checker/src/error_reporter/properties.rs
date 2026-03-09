@@ -1,6 +1,6 @@
 //! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -63,13 +63,11 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
                 );
-                self.ctx.push_diagnostic(Diagnostic::error(
-                        &self.ctx.file_name,
-                        loc.start,
-                        loc.length(),
-                        message,
-                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CH,
-                    ));
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CH,
+                );
                 return;
             }
 
@@ -101,13 +99,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.ctx.push_diagnostic(Diagnostic::error(
-                    &self.ctx.file_name,
-                    loc.start,
-                    loc.length(),
-                    message,
-                    code,
-                ));
+                self.error_at_node(idx, &message, code);
                 return;
             }
 
@@ -132,13 +124,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.ctx.push_diagnostic(Diagnostic::error(
-                    &self.ctx.file_name,
-                    loc.start,
-                    loc.length(),
-                    message,
-                    code,
-                ));
+                self.error_at_node(idx, &message, code);
                 return;
             }
 
@@ -159,13 +145,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.ctx.push_diagnostic(Diagnostic::error(
-                    &self.ctx.file_name,
-                    loc.start,
-                    loc.length(),
-                    message,
-                    code,
-                ));
+                self.error_at_node(idx, &message, code);
                 return;
             }
 
@@ -201,17 +181,12 @@ impl<'a> CheckerState<'a> {
         type_display: &str,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format!("Property '{prop_name}' does not exist on type '{type_display}'.");
-            self.ctx.push_diagnostic(Diagnostic::error(
-                &self.ctx.file_name,
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-            ));
-        }
+        let message = format!("Property '{prop_name}' does not exist on type '{type_display}'.");
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        );
     }
 
     /// Report TS18046: "'x' is of type 'unknown'."
@@ -241,7 +216,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let name = expr_text;
-        if let Some(loc) = loc {
+        if loc.is_some() {
             let (code, message) = if let Some(ref name) = name {
                 (
                     diagnostic_codes::IS_OF_TYPE_UNKNOWN,
@@ -253,13 +228,7 @@ impl<'a> CheckerState<'a> {
                     "Object is of type 'unknown'.".to_string(),
                 )
             };
-            self.ctx.push_diagnostic(Diagnostic::error(
-                &self.ctx.file_name,
-                loc.start,
-                loc.length(),
-                message,
-                code,
-            ));
+            self.error_at_node(expr_idx, &message, code);
             return true;
         }
         false
@@ -358,13 +327,11 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
                 );
-                self.ctx.push_diagnostic(Diagnostic::error(
-                        &self.ctx.file_name,
-                        loc.start,
-                        loc.length(),
-                        message,
-                        diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                    ));
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                );
                 return;
             }
 
@@ -403,21 +370,12 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let type_name = self.format_type(object_type);
-            let message = format_message(
-                diagnostic_messages::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
-                &[&type_name],
-            );
-            let diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
-            );
-            self.ctx.diagnostics.push(diag);
-        }
+        let type_name = self.format_type(object_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
+            &[&type_name],
+        );
     }
 
     /// Report TS2862: Type '{0}' is generic and can only be indexed for reading.
@@ -426,39 +384,21 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let type_name = self.format_type(object_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
-                &[&type_name],
-            );
-            let diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
-            );
-            self.ctx.diagnostics.push(diag);
-        }
+        let type_name = self.format_type(object_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+            &[&type_name],
+        );
     }
 
     /// Report TS2803: Cannot assign to private method. Private methods are not writable.
     pub fn error_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
-                &[prop_name],
-            );
-            let diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
-            );
-            self.ctx.diagnostics.push(diag);
-        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
+            &[prop_name],
+        );
     }
 
     /// Report no index signature error.
