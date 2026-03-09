@@ -5626,6 +5626,44 @@ type FailingCombo<
 }
 
 #[test]
+fn test_no_ts2344_for_concrete_indexed_access_callable_union() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+interface CallableFunction extends Function {}
+interface NewableFunction extends Function {}
+
+type ReturnType<T extends (...args: any) => any> =
+    T extends (...args: any) => infer R ? R : any;
+
+type DataFetchFns = {
+    Boat: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        description: (id: string) => string;
+        displacement: (id: string) => number;
+        name: (id: string) => string;
+    };
+};
+
+type NoTypeParamBoatRequired<F extends keyof DataFetchFns['Boat']> =
+    ReturnType<DataFetchFns['Boat'][F]>;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Should not emit TS2344 when a concrete object indexed by a constrained key collapses to a callable union.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2344_reports_for_recursive_composite_type_args() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -6344,5 +6382,68 @@ bar<CoolArray<number>>(10, 20);
     assert!(
         !ts2345.is_empty(),
         "The explicit `bar<CoolArray<number>>(10, 20)` call should still fail on the argument shape, just not with TS2344.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_constraint_with_indexed_access_reports_nested_ts2536() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type ReturnType<T extends (...args: any) => any> =
+    T extends (...args: any) => infer R ? R : any;
+
+type DataFetchFns = {
+    Boat: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        description: (id: string) => string;
+        displacement: (id: string) => number;
+        name: (id: string) => string;
+    };
+    Plane: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        maxTakeoffWeight: (id: string) => number;
+        maxCruisingAltitude: (id: string) => number;
+        name: (id: string) => string;
+    }
+};
+
+export type TypeGeneric2<T extends keyof DataFetchFns, F extends keyof DataFetchFns[T]> =
+    ReturnType<DataFetchFns[T][T]>;
+export type TypeGeneric3<T extends keyof DataFetchFns, F extends keyof DataFetchFns[T]> =
+    ReturnType<DataFetchFns[F][F]>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2536: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .collect();
+    assert!(
+        ts2536.len() == 3,
+        "Expected the indexed-access checker to report all nested TS2536 diagnostics.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|(_, message)| message.contains("Type 'T' cannot be used to index type 'DataFetchFns[T]'")),
+        "Missing TS2536 for `DataFetchFns[T][T]`.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|(_, message)| message.contains("Type 'F' cannot be used to index type 'DataFetchFns'")),
+        "Missing TS2536 for the inner `DataFetchFns[F]` access.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|(_, message)| message.contains("Type 'F' cannot be used to index type 'DataFetchFns[F]'")),
+        "Missing TS2536 for the outer `DataFetchFns[F][F]` access.\nGot: {diagnostics:?}"
     );
 }

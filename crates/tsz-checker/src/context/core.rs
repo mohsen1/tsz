@@ -290,14 +290,19 @@ impl<'a> CheckerContext<'a> {
 
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
-    /// Exception: TS2430 uses (start ^ `message_hash`, code) to allow multiple
-    /// "incorrectly extends" errors at the same interface name when an interface
-    /// incompatibly extends several distinct bases.
+    /// Exceptions:
+    /// - TS2430 uses (start ^ `message_hash`, code) to allow multiple
+    ///   "incorrectly extends" errors at the same interface name when an interface
+    ///   incompatibly extends several distinct bases.
+    /// - TS2536 uses the same scheme so nested indexed-access failures can report
+    ///   multiple distinct messages at the same indexed-access start.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
         // Check if we've already emitted this diagnostic
-        let key = if code == 2430 {
+        let key = if code == 2430 || code == 2536 {
             // TS2430: an interface can fail to correctly extend multiple bases, each producing
             // a separate diagnostic at the same name position with a different message.
+            // TS2536: nested indexed accesses can fail both at the outer access and at an
+            // inner object access while sharing the same starting position.
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
@@ -341,9 +346,11 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             diag.message_text.hash(&mut hasher);
             (hasher.finish() as u32, diag.code)
-        } else if diag.code == 2430 {
+        } else if diag.code == 2430 || diag.code == 2536 {
             // TS2430: an interface can incorrectly extend multiple bases, each producing a
             // separate diagnostic at the same name position with a different message.
+            // TS2536: nested indexed-access failures can legitimately produce multiple
+            // distinct diagnostics at the same indexed-access start.
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             diag.message_text.hash(&mut hasher);

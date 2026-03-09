@@ -4,7 +4,7 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeData, TypeId};
 
 // =============================================================================
 // Generic Type Argument Checking Methods
@@ -361,7 +361,10 @@ impl<'a> CheckerState<'a> {
         let type_args: Vec<TypeId> = type_args_list
             .nodes
             .iter()
-            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .map(|&arg_idx| {
+                self.check_type_node(arg_idx);
+                self.get_type_from_type_node(arg_idx)
+            })
             .collect();
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
@@ -380,17 +383,22 @@ impl<'a> CheckerState<'a> {
                 // assignable to `string`.
                 let type_arg_contains_type_parameters =
                     query::contains_type_parameters(self.ctx.types, type_arg);
+                let base_constraint_type = type_arg_contains_type_parameters
+                    .then(|| self.constraint_check_base_type(type_arg))
+                    .filter(|&base| base != type_arg);
                 if type_arg_contains_type_parameters {
                     let db = self.ctx.types.as_type_database();
-                    let base = tsz_solver::type_queries::get_base_constraint_of_type(db, type_arg);
-                    if base != type_arg {
+                    let is_bare_type_param =
+                        matches!(db.lookup(type_arg), Some(TypeData::TypeParameter(_)));
+                    if is_bare_type_param
+                        && let Some(base) = base_constraint_type
+                    {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
                         // Composite generic arguments like `T[K]` or `GetProps<C>`
                         // must still flow through the full relation check below; tsc
                         // reports TS2344 for those when the generic structure itself
                         // fails the target constraint.
-                        let base = self.resolve_lazy_type(base);
                         // If the base constraint is `unknown`, the type parameter has no
                         // usable constraint (e.g., unconstrained params or call-signature
                         // type params whose constraints aren't populated). Skip.
@@ -483,6 +491,14 @@ impl<'a> CheckerState<'a> {
                     is_satisfied =
                         self.satisfies_array_like_constraint(type_arg, instantiated_constraint);
                 }
+                if !is_satisfied
+                    && let Some(base) = base_constraint_type
+                    && base != TypeId::UNKNOWN
+                    && !query::contains_type_parameters(self.ctx.types, base)
+                {
+                    is_satisfied = self.is_assignable_to(base, instantiated_constraint)
+                        || self.satisfies_array_like_constraint(base, instantiated_constraint);
+                }
 
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     // Check if the failure is due to a weak type violation (TS2559).
@@ -509,6 +525,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        if evaluated != type_id {
+            return self.constraint_check_base_type(evaluated);
+        }
+
+        match self.ctx.types.as_type_database().lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) => info
+                .constraint
+                .map(|constraint| self.evaluate_type_for_assignability(constraint))
+                .unwrap_or(TypeId::UNKNOWN),
+            Some(TypeData::IndexAccess(object_type, index_type)) => {
+                let constrained_index_type = self.constraint_check_base_type(index_type);
+                if constrained_index_type == TypeId::UNKNOWN || constrained_index_type == index_type
+                {
+                    type_id
+                } else {
+                    let constrained_access =
+                        self.ctx.types.index_access(object_type, constrained_index_type);
+                    self.evaluate_type_for_assignability(constrained_access)
+                }
+            }
+            _ => type_id,
         }
     }
 
