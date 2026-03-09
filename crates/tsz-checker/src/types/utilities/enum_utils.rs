@@ -1220,6 +1220,12 @@ pub(crate) fn evaluate_const_enum_initializer(
         }
         k if k == SyntaxKind::Identifier as u16 => {
             let name = arena.get_identifier_text(expr_idx)?;
+            // Recognize global numeric constants NaN and Infinity
+            match name {
+                "NaN" => return Some(f64::NAN),
+                "Infinity" => return Some(f64::INFINITY),
+                _ => {}
+            }
             resolve_enum_member_value(arena, name, enum_data, depth)
         }
         k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
