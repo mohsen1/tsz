@@ -360,13 +360,6 @@ pub struct DefinitionStore {
     /// so the `TypeFormatter` can display the class/interface name instead of expanding
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DashMap<TypeId, DefId>,
-
-    /// Display arguments for instantiated generic types.
-    ///
-    /// When a generic class/interface is instantiated (e.g., `S18<unknown, unknown, unknown>`),
-    /// the checker registers the type arguments here so the `TypeFormatter` can display
-    /// `S18<unknown, unknown, unknown>` instead of just `S18`.
-    type_display_args: DashMap<TypeId, Vec<TypeId>>,
 }
 
 impl Default for DefinitionStore {
@@ -385,7 +378,6 @@ impl DefinitionStore {
             definitions: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             type_to_def: DashMap::new(),
-            type_display_args: DashMap::new(),
         }
     }
 
@@ -496,7 +488,6 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
-        self.type_display_args.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -514,24 +505,6 @@ impl DefinitionStore {
     /// Returns `Some(def_id)` if a class/interface was registered for this type.
     pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_to_def.get(&type_id).map(|r| *r)
-    }
-
-    /// Register display type arguments for an instantiated generic type.
-    ///
-    /// Called by the checker when a generic class/interface is instantiated so the
-    /// `TypeFormatter` can display `S18<unknown, unknown, unknown>` instead of
-    /// just `S18` or `S18<B, A, C>`.
-    pub fn register_type_display_args(&self, type_id: TypeId, args: Vec<TypeId>) {
-        if !args.is_empty() {
-            self.type_display_args.insert(type_id, args);
-        }
-    }
-
-    /// Get display type arguments for an instantiated generic type.
-    ///
-    /// Returns `Some(args)` if this type was registered as a generic instantiation.
-    pub fn get_type_display_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
-        self.type_display_args.get(&type_id).map(|r| r.clone())
     }
 
     /// Get exports for a namespace/module `DefId`.

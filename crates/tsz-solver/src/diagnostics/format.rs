@@ -262,14 +262,7 @@ impl<'a> TypeFormatter<'a> {
                 if matches!(def.kind, DefKind::Enum | DefKind::Namespace) {
                     return format!("typeof {name}").into();
                 }
-                // For generic types, append type arguments or type parameter names.
-                // First check for registered display args (actual instantiation args),
-                // then fall back to type parameter names from the definition.
-                if let Some(display_args) = def_store.get_type_display_args(type_id) {
-                    let args: Vec<Cow<'static, str>> =
-                        display_args.iter().map(|&arg| self.format(arg)).collect();
-                    return format!("{}<{}>", name, args.join(", ")).into();
-                }
+                // For generic types, append type parameter names from the definition.
                 if !def.type_params.is_empty() {
                     let params: Vec<String> = def
                         .type_params
@@ -2617,70 +2610,6 @@ mod tests {
         let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
         let with = fmt.format(instance_type);
         assert_eq!(with, "B<T>", "Generic class should show type params");
-    }
-
-    #[test]
-    fn generic_class_with_display_args() {
-        // When a generic class is instantiated (e.g., `S18<unknown, unknown, unknown>`),
-        // the formatter should show the actual type arguments.
-        let db = TypeInterner::new();
-        let def_store = crate::def::DefinitionStore::new();
-
-        // Create an empty object type as the class instance body
-        let instance_type = db.object(vec![]);
-
-        // Register a class definition with three type parameters
-        let name = db.intern_string("S18");
-        let info = crate::def::DefinitionInfo {
-            kind: crate::def::DefKind::Class,
-            name,
-            type_params: vec![
-                TypeParamInfo {
-                    name: db.intern_string("B"),
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                },
-                TypeParamInfo {
-                    name: db.intern_string("A"),
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                },
-                TypeParamInfo {
-                    name: db.intern_string("C"),
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                },
-            ],
-            body: Some(instance_type),
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(),
-            span: None,
-            file_id: None,
-            symbol_id: None,
-        };
-        let def_id = def_store.register(info);
-
-        // Register type -> def mapping and display args
-        def_store.register_type_to_def(instance_type, def_id);
-        def_store.register_type_display_args(
-            instance_type,
-            vec![TypeId::UNKNOWN, TypeId::UNKNOWN, TypeId::UNKNOWN],
-        );
-
-        // With display args: should show `S18<unknown, unknown, unknown>`
-        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
-        let result = fmt.format(instance_type);
-        assert_eq!(
-            result, "S18<unknown, unknown, unknown>",
-            "Should show display args, not param names"
-        );
     }
 
     #[test]
