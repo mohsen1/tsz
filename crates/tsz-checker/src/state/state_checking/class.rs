@@ -806,8 +806,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let prop_type = if prop.type_annotation.is_some() {
-            self.get_type_from_type_node(prop.type_annotation)
+        let prop_type = if let Some(declared_type) =
+            self.effective_class_property_declared_type(member_idx, prop)
+        {
+            declared_type
         } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx) {
             self.get_type_of_symbol(sym_id)
         } else {
@@ -821,7 +823,8 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: Only check the type annotation span, not the entire member span,
         // to avoid suppressing TS2564 due to unrelated errors like TS2300 (duplicate
         // identifier) or TS2717 (incompatible property types).
-        if prop.type_annotation.is_some()
+        if !self.is_js_file()
+            && prop.type_annotation.is_some()
             && let Some(type_node) = self.ctx.arena.get(prop.type_annotation)
         {
             let type_start = type_node.pos;

@@ -1137,6 +1137,7 @@ impl ParserState {
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+            self.recover_parenthesized_expression_typed_arrow_tail();
         }
         self.context_flags = saved_context_flags;
 
@@ -1146,6 +1147,26 @@ impl ParserState {
             end_pos,
             ParenthesizedData { expression },
         )
+    }
+
+    fn recover_parenthesized_expression_typed_arrow_tail(&mut self) {
+        if !self.is_token(SyntaxKind::ColonToken) {
+            return;
+        }
+
+        self.next_token();
+        let _ = self.parse_type();
+
+        if self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            let _ = self.parse_assignment_expression();
+        }
     }
 
     /// Parse array literal

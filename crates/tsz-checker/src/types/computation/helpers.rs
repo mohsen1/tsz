@@ -1324,8 +1324,10 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Get the type: either from annotation or inferred from initializer
-                if prop.type_annotation.is_some() {
-                    self.get_type_from_type_node(prop.type_annotation)
+                if let Some(declared_type) =
+                    self.effective_class_property_declared_type(member_idx, prop)
+                {
+                    declared_type
                 } else if prop.initializer.is_some() {
                     self.get_type_of_node(prop.initializer)
                 } else {

@@ -211,8 +211,10 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
                     let readonly = self.has_readonly_modifier(&prop.modifiers);
-                    let type_id = if prop.type_annotation.is_some() {
-                        self.get_type_from_type_node(prop.type_annotation)
+                    let type_id = if let Some(declared_type) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        declared_type
                     } else if prop.initializer.is_some() {
                         // Set in_static_property_initializer for proper super checking
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
@@ -714,18 +716,19 @@ impl<'a> CheckerState<'a> {
                     let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
                         continue;
                     };
-                    // Only NON-static properties WITH type annotations
+                    // Only NON-static properties with semantic declared types.
                     if self.has_static_modifier(&prop.modifiers) {
                         continue;
                     }
-                    if !prop.type_annotation.is_some() {
+                    let Some(type_id) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    else {
                         continue;
-                    }
+                    };
                     let Some(name) = self.get_property_name_resolved(prop.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let type_id = self.get_type_from_type_node(prop.type_annotation);
                     inst_props.push(PropertyInfo {
                         name: name_atom,
                         type_id,

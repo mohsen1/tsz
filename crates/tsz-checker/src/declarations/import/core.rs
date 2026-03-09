@@ -1008,6 +1008,7 @@ impl<'a> CheckerState<'a> {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
                 && let Some(ref statements) = block.statements
             {
+                let is_ambient_body = self.ctx.is_ambient_declaration(body_idx);
                 for &stmt_idx in &statements.nodes {
                     // TS1063: export assignment cannot be used in a namespace.
                     // Emit the error and skip further checking of the statement
@@ -1023,6 +1024,13 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
                             diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
                         );
+                        continue;
+                    }
+                    if is_ambient_body
+                        && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                        && !stmt_node.is_declaration()
+                        && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
+                    {
                         continue;
                     }
                     self.check_statement(stmt_idx);

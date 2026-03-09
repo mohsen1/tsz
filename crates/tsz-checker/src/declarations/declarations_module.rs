@@ -825,9 +825,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 && let Some(ref stmts) = block.statements
             {
                 let is_ambient = self.is_in_ambient_context(body_idx);
+                let mut reported_generic_ambient_statement_error = false;
                 for &stmt_idx in &stmts.nodes {
                     if is_ambient {
-                        self.check_statement_in_ambient_context(stmt_idx);
+                        self.check_statement_in_ambient_context(
+                            stmt_idx,
+                            &mut reported_generic_ambient_statement_error,
+                        );
                     }
                     // Also check for nested module declarations in non-ambient context
                     if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {

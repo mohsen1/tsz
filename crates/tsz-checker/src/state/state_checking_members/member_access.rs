@@ -254,8 +254,10 @@ impl<'a> CheckerState<'a> {
             if let Some(&type_id) = self.ctx.node_types.get(&member_idx.0) {
                 return Some(type_id);
             }
-            if prop.type_annotation.is_some() {
-                return Some(self.get_type_from_type_node(prop.type_annotation));
+            if let Some(declared_type) =
+                self.effective_class_property_declared_type(member_idx, prop)
+            {
+                return Some(declared_type);
             }
             if prop.initializer.is_some() {
                 return Some(self.get_type_of_node(prop.initializer));
@@ -1018,8 +1020,10 @@ impl<'a> CheckerState<'a> {
         let prop = self.ctx.arena.get_property_decl(member_node)?;
         let name = self.get_member_name_text(prop.name)?;
 
-        let type_id = if prop.type_annotation.is_some() {
-            self.get_type_from_type_node(prop.type_annotation)
+        let type_id = if let Some(declared_type) =
+            self.effective_class_property_declared_type(member_idx, prop)
+        {
+            declared_type
         } else if prop.initializer.is_some() {
             // Infer type from initializer when no explicit annotation
             self.get_type_of_node(prop.initializer)
@@ -1380,8 +1384,10 @@ impl<'a> CheckerState<'a> {
             if self.type_contains_error(first_type) {
                 continue;
             }
-            let current_type = if prop.type_annotation.is_some() {
-                self.get_type_from_type_node(prop.type_annotation)
+            let current_type = if let Some(declared_type) =
+                self.effective_class_property_declared_type(member_idx, prop)
+            {
+                declared_type
             } else if prop.initializer.is_some() {
                 self.get_type_of_node(prop.initializer)
             } else {
