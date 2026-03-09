@@ -25,5 +25,9 @@ smallvec = { workspace = true }
 name = "symbols_tests"
 path = "tests/symbols_tests.rs"
 
+[[test]]
+name = "flow_tests"
+path = "tests/flow_tests.rs"
+
 [lints]
 workspace = true
