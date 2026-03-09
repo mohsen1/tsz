@@ -208,6 +208,7 @@ impl ParserState {
                     | SyntaxKind::DotDotDotToken
                     | SyntaxKind::StringLiteral
                     | SyntaxKind::NumericLiteral
+                    | SyntaxKind::BigIntLiteral
             ) || self.is_identifier_or_keyword());
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;

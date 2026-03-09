@@ -279,3 +279,88 @@ fn import_type_something_is_type_only() {
         "import {{ type something }} should be type-only"
     );
 }
+
+#[test]
+fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
+    let (parser, _root) = parse_source(r#"import { 0n as foo } from "./foo";"#);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1003),
+        "expected TS1003 for invalid import specifier, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1128),
+        "expected TS1128 from brace recovery, got {codes:?}"
+    );
+}
+
+#[test]
+fn bigint_literal_property_names_parse_without_cascading_member_errors() {
+    let (parser, _root) = parse_source(
+        r#"
+interface G {
+    2n: string;
+}
+class K {
+    4n = 0;
+}
+const x = { 1n: 123 };
+"#,
+    );
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1068),
+        "should not emit cascading TS1068 for bigint property names: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1131),
+        "should not emit TS1131 for bigint property names: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1136),
+        "should not emit TS1136 for bigint property names: {codes:?}"
+    );
+}
+
+#[test]
+fn dotted_decimal_bigint_suffix_reports_ts1353_and_ts1434() {
+    let (parser, _root) = parse_source("g.2n;");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1353),
+        "expected TS1353 for dotted bigint suffix, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1434),
+        "expected TS1434 for invalid member access recovery, got {codes:?}"
+    );
+}
+
+#[test]
+fn keyword_followed_by_string_literal_reports_ts1434() {
+    let (parser, _root) = parse_source(r#"from "./foo";"#);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1434),
+        "expected TS1434 for keyword-like statement followed by a string literal, got {codes:?}"
+    );
+}
+
+#[test]
+fn invalid_bigint_import_specifiers_preserve_followup_from_recovery() {
+    for source in [
+        r#"import { 0n as foo } from "./foo";"#,
+        r#"import { foo as 0n } from "./foo";"#,
+    ] {
+        let (parser, _root) = parse_source(source);
+        let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1128),
+            "expected stray-close-brace recovery for {source:?}, got {codes:?}"
+        );
+        assert!(
+            codes.contains(&1434),
+            "expected TS1434 from trailing `from` recovery for {source:?}, got {codes:?}"
+        );
+    }
+}

@@ -546,6 +546,32 @@ mod number_scanning {
     }
 
     #[test]
+    fn decimal_bigint_suffix_emits_ts1353_and_stays_numeric() {
+        let mut scanner = ScannerState::new(".2n".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        assert_eq!(scanner.get_token_value(), ".2");
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1353),
+            "expected TS1353, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn scientific_bigint_suffix_emits_ts1352_and_stays_numeric() {
+        let mut scanner = ScannerState::new("1e2n".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        assert_eq!(scanner.get_token_value(), "1e2");
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1352),
+            "expected TS1352, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn invalid_separator_at_start() {
         let mut scanner = ScannerState::new("_123".to_string(), true);
         let token = scanner.scan();

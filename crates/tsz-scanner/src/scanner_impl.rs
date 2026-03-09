@@ -1254,11 +1254,15 @@ impl ScannerState {
         if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N {
             self.pos += 1;
             self.token_value = self.substring(start, self.pos);
+            self.check_for_identifier_start_after_numeric_literal(
+                start, /*is_scientific*/ false,
+            );
             self.token = SyntaxKind::BigIntLiteral;
             return;
         }
 
         self.set_numeric_token_value(start);
+        self.check_for_identifier_start_after_numeric_literal(start, /*is_scientific*/ false);
         self.token = SyntaxKind::NumericLiteral;
     }
 
@@ -1294,17 +1298,21 @@ impl ScannerState {
 
     fn scan_decimal_number(&mut self, start: usize) {
         self.scan_digits_with_separators(is_digit);
+        let mut has_decimal_point = false;
 
         // Decimal point
         if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::DOT {
+            has_decimal_point = true;
             self.pos += 1;
             self.scan_digits_with_separators(is_digit);
         }
 
         // Exponent
+        let mut has_exponent = false;
         if self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::LOWER_E || ch == CharacterCodes::UPPER_E {
+                has_exponent = true;
                 self.pos += 1;
                 self.token_flags |= TokenFlags::Scientific as u32;
                 if self.pos < self.end {
@@ -1318,17 +1326,121 @@ impl ScannerState {
         }
 
         // BigInt suffix
-        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N {
+        if !has_decimal_point
+            && !has_exponent
+            && self.pos < self.end
+            && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N
+        {
             self.pos += 1;
             self.token_value = self.substring(start, self.pos);
+            self.check_for_identifier_start_after_numeric_literal(
+                start, /*is_scientific*/ false,
+            );
             self.token = SyntaxKind::BigIntLiteral;
             return;
         }
 
+        let numeric_end = self.pos;
         // OPTIMIZATION: Only allocate token_value if number contains separators
         // Plain numbers (no underscores) can use source slice via get_token_value_ref()
         self.set_numeric_token_value(start);
+        if self.check_for_identifier_start_after_numeric_literal(start, has_exponent)
+            && self.token_value.is_empty()
+        {
+            self.token_value = self.substring(start, numeric_end);
+        }
         self.token = SyntaxKind::NumericLiteral;
+    }
+
+    fn check_for_identifier_start_after_numeric_literal(
+        &mut self,
+        numeric_start: usize,
+        is_scientific: bool,
+    ) -> bool {
+        if self.pos >= self.end {
+            return false;
+        }
+
+        let starts_identifier = if self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH {
+            self.peek_unicode_escape().is_some_and(is_identifier_start)
+        } else {
+            is_identifier_start(self.char_code_unchecked(self.pos))
+        };
+
+        if !starts_identifier {
+            return false;
+        }
+
+        let identifier_start = self.pos;
+        self.scan_identifier_parts_after_numeric_literal();
+        let identifier_end = self.pos;
+        let identifier_text = &self.source[identifier_start..identifier_end];
+
+        if identifier_text == "n" {
+            self.scanner_diagnostics.push(ScannerDiagnostic {
+                pos: numeric_start,
+                length: identifier_end - numeric_start,
+                message: if is_scientific {
+                    diagnostic_messages::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
+                } else {
+                    diagnostic_messages::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER
+                },
+                code: if is_scientific {
+                    diagnostic_codes::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
+                } else {
+                    diagnostic_codes::A_BIGINT_LITERAL_MUST_BE_AN_INTEGER
+                },
+            });
+            true
+        } else {
+            self.scanner_diagnostics.push(ScannerDiagnostic {
+                pos: identifier_start,
+                length: identifier_end - identifier_start,
+                message: diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                code: diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+            });
+            self.pos = identifier_start;
+            false
+        }
+    }
+
+    fn scan_identifier_parts_after_numeric_literal(&mut self) {
+        if self.pos >= self.end {
+            return;
+        }
+
+        if self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH {
+            if let Some(code_point) = self.peek_unicode_escape() {
+                if is_identifier_start(code_point) {
+                    let _ = self.scan_unicode_escape_value();
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        } else if is_identifier_start(self.char_code_unchecked(self.pos)) {
+            self.pos += self.char_len_at(self.pos);
+        } else {
+            return;
+        }
+
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    let _ = self.scan_unicode_escape_value();
+                    continue;
+                }
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
     }
 
     fn scan_digits_with_separators(&mut self, is_valid_digit: fn(u32) -> bool) {

@@ -1458,6 +1458,7 @@ impl ParserState {
         let requires_colon = self.is_reserved_word()
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
+            || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_token(SyntaxKind::OpenBracketToken);
 
         let name = self.parse_property_name();
@@ -1562,11 +1563,12 @@ impl ParserState {
             return false;
         }
 
-        // Check if followed by property name (identifier, keyword, string, number, [)
+        // Check if followed by property name (identifier, keyword, string, number, bigint, [)
         // Keywords like 'return', 'throw', 'delete' can be method names
         let is_method = self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
+            || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_token(SyntaxKind::OpenBracketToken)
             || self.is_token(SyntaxKind::AsteriskToken) // async *foo()
             || self.is_identifier_or_keyword(); // keywords as method names
@@ -1928,7 +1930,7 @@ impl ParserState {
         )
     }
 
-    /// Parse property name (identifier, string literal, numeric literal, computed)
+    /// Parse property name (identifier, string literal, numeric literal, bigint literal, computed)
     pub(crate) fn parse_property_name(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::StringLiteral => {
@@ -1938,6 +1940,10 @@ impl ParserState {
             SyntaxKind::NumericLiteral => {
                 // Numeric literal can be property name: { 0: value }
                 self.parse_numeric_literal()
+            }
+            SyntaxKind::BigIntLiteral => {
+                // BigInt literal can be a property name for parser recovery/parity.
+                self.parse_bigint_literal()
             }
             SyntaxKind::OpenBracketToken => {
                 // Computed property name: { [expr]: value }

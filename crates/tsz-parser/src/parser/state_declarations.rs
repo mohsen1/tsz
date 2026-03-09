@@ -406,6 +406,7 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
+            || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_identifier_or_keyword()
         {
             Some(TypeMemberPropertyOrMethodName::Property(
@@ -1670,15 +1671,20 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ImportKeyword);
 
         // Check for import "module" (no import clause)
+        let diagnostics_before_import_clause = self.parse_diagnostics.len();
         let import_clause = if self.is_token(SyntaxKind::StringLiteral) {
             NodeIndex::NONE
         } else {
             self.parse_import_clause()
         };
+        let import_clause_had_errors =
+            self.parse_diagnostics.len() > diagnostics_before_import_clause;
 
         // Parse module specifier
         let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
+        } else if import_clause_had_errors && self.is_token(SyntaxKind::FromKeyword) {
+            NodeIndex::NONE
         } else {
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
@@ -1999,9 +2005,6 @@ impl ParserState {
         }
 
         self.error_identifier_expected();
-        if !self.is_token(SyntaxKind::EndOfFileToken) {
-            self.next_token();
-        }
 
         self.arena.add_identifier(
             SyntaxKind::Identifier as u16,
