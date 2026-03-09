@@ -71,27 +71,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // the DefId path which may not be available yet during lazy evaluation.
             if let Some(TypeData::Application(app_id)) = self.interner().lookup(check_type) {
                 let app = self.interner().type_application(app_id);
-                if let Some(TypeData::TypeQuery(sym_ref)) = self.interner().lookup(app.base) {
-                    if let Some(type_params) = self.resolver().get_type_params(sym_ref) {
-                        if let Some(resolved_base) =
-                            self.resolver().resolve_ref(sym_ref, self.interner())
-                        {
-                            if !type_params.is_empty() && type_params.len() == app.args.len() {
-                                let args = app.args.clone();
-                                let expanded_args = self.expand_type_args(&args);
-                                let instantiated =
-                                    crate::instantiation::instantiate::instantiate_generic(
-                                        self.interner(),
-                                        resolved_base,
-                                        &type_params,
-                                        &expanded_args,
-                                    );
-                                let resolved = self.evaluate(instantiated);
-                                if resolved != check_type {
-                                    check_type = resolved;
-                                }
-                            }
-                        }
+                if let Some(TypeData::TypeQuery(sym_ref)) = self.interner().lookup(app.base)
+                    && let Some(type_params) = self.resolver().get_type_params(sym_ref)
+                    && let Some(resolved_base) =
+                        self.resolver().resolve_ref(sym_ref, self.interner())
+                    && !type_params.is_empty()
+                    && type_params.len() == app.args.len()
+                {
+                    let args = app.args.clone();
+                    let expanded_args = self.expand_type_args(&args);
+                    let instantiated = crate::instantiation::instantiate::instantiate_generic(
+                        self.interner(),
+                        resolved_base,
+                        &type_params,
+                        &expanded_args,
+                    );
+                    let resolved = self.evaluate(instantiated);
+                    if resolved != check_type {
+                        check_type = resolved;
                     }
                 }
             }

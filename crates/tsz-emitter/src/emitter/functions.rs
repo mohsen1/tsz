@@ -808,6 +808,66 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit(param.initializer);
                 }
+
+                // Emit trailing comments between the parameter and its delimiter
+                // (`,` or `)`). For typed parameters, this is handled above via
+                // delimiter_pos. For untyped parameters, scan for the delimiter
+                // within the parameter node's range.
+                // e.g., `a /* comment */, b` → preserve comment before the comma.
+                if param.type_annotation.is_none()
+                    && let Some(text) = self.source_text
+                {
+                    // Scan from the end of the parameter name/initializer to
+                    // find the next `,` or `)`, bounded by param_node.end
+                    // to avoid scanning into arrow function bodies or other
+                    // unrelated syntax.
+                    let scan_start = if param.initializer.is_some()
+                        && let Some(init_node) = self.arena.get(param.initializer)
+                    {
+                        init_node.end as usize
+                    } else if let Some(name_node) = self.arena.get(param.name) {
+                        name_node.end as usize
+                    } else {
+                        param_node.end as usize
+                    };
+                    let bytes = text.as_bytes();
+                    let limit = std::cmp::min(param_node.end as usize, text.len());
+                    let mut scan = std::cmp::min(scan_start, limit);
+                    let mut found_delimiter = false;
+                    while scan < limit {
+                        match bytes[scan] {
+                            b',' | b')' => {
+                                found_delimiter = true;
+                                break;
+                            }
+                            b'/' if scan + 1 < limit && bytes[scan + 1] == b'*' => {
+                                scan += 2;
+                                while scan + 1 < limit
+                                    && !(bytes[scan] == b'*' && bytes[scan + 1] == b'/')
+                                {
+                                    scan += 1;
+                                }
+                                if scan + 1 < limit {
+                                    scan += 2;
+                                }
+                            }
+                            b'/' if scan + 1 < limit && bytes[scan + 1] == b'/' => {
+                                while scan < limit && bytes[scan] != b'\n' {
+                                    scan += 1;
+                                }
+                            }
+                            _ => scan += 1,
+                        }
+                    }
+                    if found_delimiter {
+                        let delimiter_pos = scan as u32;
+                        if self.has_pending_comment_before(delimiter_pos) {
+                            self.write(" ");
+                            self.emit_comments_before_pos(delimiter_pos);
+                            self.pending_block_comment_space = false;
+                        }
+                    }
+                }
             }
         }
 
