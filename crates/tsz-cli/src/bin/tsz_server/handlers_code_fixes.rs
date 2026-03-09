@@ -2435,17 +2435,79 @@ impl Server {
                     .map(|b| *b as char);
                 let next = fragment.as_bytes().get(rel_end).map(|b| *b as char);
                 let is_qualified_name_segment = prev == Some('.') || next == Some('.');
+                let is_import_type_query_segment =
+                    Self::is_within_import_type_query(fragment, rel_start);
                 let at_word_boundary = prev
                     .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
                     && next
                         .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'));
-                if at_word_boundary && !is_qualified_name_segment {
+                if at_word_boundary
+                    && !is_qualified_name_segment
+                    && !is_import_type_query_segment
+                {
                     spans.push((ident.clone(), rel_start));
                 }
                 search_start = rel_end;
             }
         }
         spans
+    }
+
+    fn is_within_import_type_query(fragment: &str, ident_start: usize) -> bool {
+        let bytes = fragment.as_bytes();
+        let mut i = 0usize;
+
+        while i < bytes.len() {
+            let is_word_start = i == 0
+                || {
+                    let ch = bytes[i - 1] as char;
+                    !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+                };
+            if !is_word_start || !fragment[i..].starts_with("import(") {
+                i += 1;
+                continue;
+            }
+
+            let import_start = i;
+            i += "import(".len();
+            let mut depth = 1usize;
+
+            while i < bytes.len() {
+                match bytes[i] as char {
+                    '"' | '\'' => {
+                        let quote = bytes[i];
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' {
+                                i = (i + 2).min(bytes.len());
+                                continue;
+                            }
+                            let matches_quote = bytes[i] == quote;
+                            i += 1;
+                            if matches_quote {
+                                break;
+                            }
+                        }
+                    }
+                    '(' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        i += 1;
+                        if depth == 0 {
+                            return ident_start >= import_start && ident_start < i;
+                        }
+                    }
+                    _ => i += 1,
+                }
+            }
+
+            return ident_start >= import_start;
+        }
+
+        false
     }
 
     fn has_potential_auto_import_symbol(&self, current_file_path: &str, name: &str) -> bool {

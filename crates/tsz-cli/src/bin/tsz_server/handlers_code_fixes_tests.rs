@@ -1146,6 +1146,31 @@ fn synthetic_missing_name_skips_qualified_type_names() {
 }
 
 #[test]
+fn synthetic_missing_name_skips_import_type_queries() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo/types/types.ts".to_string(),
+        "export type Full = { prop: string; };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/foo/types/index.ts".to_string(),
+        "import * as foo from './types';\nexport { foo };\n".to_string(),
+    );
+    let content = "import { foo } from './foo/types';\nexport type fullType = foo.Full;\ntype namespaceImport = typeof import('./foo/types');\ntype fullType2 = import('./foo/types').foo.Full;\n".to_string();
+    server.open_files.insert("/app.ts".to_string(), content.clone());
+
+    let (_, binder, _, _) = server
+        .parse_and_bind_file("/app.ts")
+        .expect("expected parse_and_bind_file for /app.ts");
+    let synthetic = server.synthetic_missing_name_expression_diagnostics("/app.ts", &content, &binder);
+
+    assert!(
+        synthetic.is_empty(),
+        "expected no synthetic missing-name diagnostics for import type queries, got {synthetic:?}"
+    );
+}
+
+#[test]
 fn handle_get_code_fixes_jsdoc_import_returns_single_missing_import_fix() {
     let mut server = make_server();
     server.open_files.insert(
