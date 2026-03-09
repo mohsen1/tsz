@@ -94,19 +94,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // If not allowing any (nested strict any), any still matches Top types as source,
-        // but any as target ALWAYS matches (it's a top type).
+        // If not allowing any (nested strict any / identity mode), STRICT_ANY
+        // can only match STRICT_ANY, ANY, or UNKNOWN as a top-type source.
+        // Crucially, non-any types are NOT assignable to STRICT_ANY in this mode.
+        // This ensures that bidirectional subtype checks used for identity (TS2403)
+        // correctly reject `number <: any` at nested depths, matching tsc's
+        // isTypeIdenticalTo where `any` is only identical to `any`.
         if !allow_any
             && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
             && (target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN)
         {
             return SubtypeResult::True;
         }
-        // Fall through to structural check (which will fail for STRICT_ANY)
-        if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
-            return SubtypeResult::True;
-        }
-        // Fall through to structural check (which will fail for STRICT_ANY)
+        // When strict any is active, STRICT_ANY as target is NOT a universal sink.
+        // Non-any source types fall through to structural checking, which will fail
+        // because STRICT_ANY has no structural properties to match against.
 
         // Everything is assignable to unknown
         if target == TypeId::UNKNOWN {

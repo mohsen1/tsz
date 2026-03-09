@@ -601,8 +601,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // For both union and non-union types, delegate to bidirectional subtyping.
         // This handles intersection distribution, typeof resolution, and other
         // structural equivalences that TypeId-level identity misses.
+        //
+        // CRITICAL: Use TopLevelOnly any propagation for identity checking.
+        // tsc's isTypeIdenticalTo treats `any` as only identical to `any` — it does
+        // NOT use any-propagation rules. Without this, types like `Promise<any, any>`
+        // appear "identical" to `IPromise<U, W>` because nested `any` matches
+        // everything in bidirectional subtype mode, producing false negatives for TS2403.
+        let saved_any_mode = self.subtype.any_propagation;
+        self.subtype.any_propagation =
+            crate::relations::subtype::core::AnyPropagationMode::TopLevelOnly;
         let fwd = self.subtype.is_subtype_of(a, b);
         let bwd = self.subtype.is_subtype_of(b, a);
+        self.subtype.any_propagation = saved_any_mode;
         tracing::trace!(
             a = a.0,
             b = b.0,
