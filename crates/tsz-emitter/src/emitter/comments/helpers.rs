@@ -304,6 +304,20 @@ impl<'a> Printer<'a> {
         token_end
     }
 
+    /// Check if there are pending comments whose end is before `pos` without
+    /// advancing the cursor. Used to conditionally emit whitespace before
+    /// inline comments (e.g., `( /* comment */expr`).
+    pub(in crate::emitter) fn has_pending_comment_before(&self, pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        if self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        self.all_comments[self.comment_emit_idx].end <= actual_start
+    }
+
     /// Emit all pending comments from `all_comments` whose end position is before `pos`.
     /// Uses the `comment_emit_idx` cursor to advance through comments.
     /// Similar to the top-level statement comment emission logic.

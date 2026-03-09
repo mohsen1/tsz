@@ -579,6 +579,18 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                // Skip `export * from ...` re-exports inside namespaces.
+                // This syntax is invalid in namespace scope (only valid at
+                // module level) and tsc erases it.
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && export.export_clause.is_none()
+                    && export.module_specifier.is_some()
+                {
+                    self.skip_comments_for_erased_node(stmt_node);
+                    continue;
+                }
+
                 // Skip exported variable statements where all declarations have no
                 // initializer (e.g., `export var b: number;`).  These emit no code, so
                 // their leading JSDoc comment must be suppressed rather than orphaned.

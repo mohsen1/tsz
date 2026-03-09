@@ -1844,6 +1844,10 @@ impl<'a> Printer<'a> {
             && jump.label.is_some()
         {
             self.write(" ");
+            // Emit inline comments between keyword and label (e.g., `break /*c*/ label`)
+            if let Some(label_node) = self.arena.get(jump.label) {
+                self.emit_comments_before_pos(label_node.pos);
+            }
             self.emit(jump.label);
         }
         self.map_trailing_semicolon(node);
@@ -1857,6 +1861,10 @@ impl<'a> Printer<'a> {
             && jump.label.is_some()
         {
             self.write(" ");
+            // Emit inline comments between keyword and label (e.g., `continue /*c*/ label`)
+            if let Some(label_node) = self.arena.get(jump.label) {
+                self.emit_comments_before_pos(label_node.pos);
+            }
             self.emit(jump.label);
         }
         self.map_trailing_semicolon(node);
