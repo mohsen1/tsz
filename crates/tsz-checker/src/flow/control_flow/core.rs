@@ -1220,11 +1220,15 @@ impl<'a> FlowAnalyzer<'a> {
             } else {
                 // Default: continue to antecedent
                 if let Some(&ant) = flow.antecedent.first() {
-                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                        worklist.push_back((ant, current_type));
-                        in_worklist.insert(ant);
+                    if self.antecedent_requires_defer(ant, reference, symbol_id) {
+                        self.get_flow_type(reference, current_type, ant)
+                    } else {
+                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                            worklist.push_back((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                        *results.get(&ant).unwrap_or(&current_type)
                     }
-                    *results.get(&ant).unwrap_or(&current_type)
                 } else {
                     current_type
                 }
@@ -1442,6 +1446,30 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         }
+    }
+
+    fn antecedent_requires_defer(
+        &self,
+        antecedent: FlowNodeId,
+        reference: NodeIndex,
+        symbol_id: Option<SymbolId>,
+    ) -> bool {
+        let Some(ant_flow) = self.binder.flow_nodes.get(antecedent) else {
+            return false;
+        };
+        let ant_flags = ant_flow.flags;
+        let ant_is_targeting_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0
+            && ant_flow.node.is_some()
+            && (symbol_id
+                .zip(self.reference_symbol(ant_flow.node))
+                .is_some_and(|(target, assignment)| target == assignment)
+                || self.assignment_targets_reference_node(ant_flow.node, reference));
+
+        (ant_flags & flow_flags::CONDITION) != 0
+            || (ant_flags & flow_flags::CALL) != 0
+            || (ant_flags & flow_flags::LOOP_LABEL) != 0
+            || (ant_flags & flow_flags::BRANCH_LABEL) != 0
+            || ant_is_targeting_assignment
     }
 
     /// Helper function for call handling in iterative mode.

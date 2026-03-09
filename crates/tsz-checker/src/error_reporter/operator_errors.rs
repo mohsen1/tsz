@@ -406,6 +406,15 @@ impl<'a> CheckerState<'a> {
                     )),
                 )
             }
+        } else if matches!(op, "<" | ">" | "<=" | ">=") {
+            // For relational operators, use the widened operand types that the
+            // checker computed for the comparison itself. This keeps diagnostics
+            // aligned with tsc for cases like `x > 1`, which reports `number`
+            // rather than the literal `1`.
+            (
+                self.widen_enum_member_type(left_type),
+                self.widen_enum_member_type(right_type),
+            )
         } else {
             // For non-`+` operators, widen literal types to their base types
             // (e.g., literal `14` → `number`, `"hello"` → `string`) and also
@@ -579,7 +588,6 @@ impl<'a> CheckerState<'a> {
         // Handle relational operators: <, >, <=, >=
         // These require both operands to be comparable. When types have no relationship,
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
-        let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
         if is_relational
             && !emitted_nullish_error
             && let Some(loc) = self.get_source_location(node_idx)

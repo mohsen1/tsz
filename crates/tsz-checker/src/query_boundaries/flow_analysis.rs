@@ -1,9 +1,9 @@
 use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    array_element_type as get_array_element_type, contains_type_parameters, is_keyof_type,
-    is_type_parameter_like, is_unit_type, tuple_elements as tuple_elements_for_type,
-    union_members as union_members_for_type,
+    array_element_type as get_array_element_type, call_signatures_for_type,
+    contains_type_parameters, is_keyof_type, is_type_parameter_like, is_unit_type,
+    tuple_elements as tuple_elements_for_type, union_members as union_members_for_type,
 };
 
 pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
@@ -74,11 +74,19 @@ pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
 }
 
+pub(crate) fn function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_return_type(db, type_id)
+}
+
 pub(crate) fn instance_type_from_constructor(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
+}
+
+pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_promise_like(db, type_id)
 }
 
 pub(crate) fn are_types_mutually_subtype_with_env(
@@ -125,17 +133,25 @@ pub(crate) fn get_lazy_def_id(
     tsz_solver::type_queries::get_lazy_def_id(db, type_id)
 }
 
+pub(crate) fn get_application_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, Vec<TypeId>)> {
+    tsz_solver::type_queries::get_application_info(db, type_id)
+}
+
 /// If `type_id` is a promise-like application type, return the inner type argument.
 /// Used by flow-control assignment to unwrap `await` RHS types.
 pub(crate) fn unwrap_promise_type_argument(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
-    if !tsz_solver::type_queries::is_promise_like(db, type_id) {
-        return None;
+    if let Some((base, args)) = tsz_solver::type_queries::get_application_info(db, type_id)
+        && (base == TypeId::PROMISE_BASE || tsz_solver::type_queries::is_promise_like(db, type_id))
+    {
+        return args.first().copied();
     }
-    let (_, args) = tsz_solver::type_queries::get_application_info(db, type_id)?;
-    args.first().copied()
+    None
 }
 
 fn types_are_subtype_with_env(
