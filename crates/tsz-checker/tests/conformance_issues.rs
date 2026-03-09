@@ -3147,6 +3147,91 @@ if (type === 'string') {
     );
 }
 
+#[test]
+fn test_unknown_catch_variable_reassignment_does_not_narrow_alias() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+try {} catch (e) {
+    const isString = typeof e === "string";
+    e = 1;
+    if (isString) {
+        e.toUpperCase();
+    }
+}
+        "#,
+        CheckerOptions {
+            strict_null_checks: true,
+            use_unknown_in_catch_variables: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18046),
+        "Expected TS18046 after reassigned unknown catch variable alias invalidation, got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected unknown catch variable access to report TS18046 instead of TS2339, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_unknown_catch_variable_can_be_renarrowed_after_reassignment() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+try {} catch (e) {
+    e = 1;
+    if (typeof e === "string") {
+        let n: never = e;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict_null_checks: true,
+            use_unknown_in_catch_variables: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected direct typeof re-check to narrow unknown catch variable to string, got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 18046),
+        "Expected no TS18046 in re-narrowed unknown catch variable branch, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_any_catch_variable_can_be_renarrowed_after_reassignment() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+try {} catch (e) {
+    e = 1;
+    if (typeof e === "string") {
+        let n: never = e;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict_null_checks: true,
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected direct typeof re-check to narrow any catch variable to string, got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 18046),
+        "Expected no TS18046 for any catch variable branch, got: {diagnostics:#?}"
+    );
+}
+
 /// TS7034 SHOULD fire for function-scoped `var` variables captured by arrow functions.
 #[test]
 fn test_ts7034_emitted_for_var_captured_by_arrow_function() {

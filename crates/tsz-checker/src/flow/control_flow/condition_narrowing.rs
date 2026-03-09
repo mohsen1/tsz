@@ -1015,8 +1015,18 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
             // Use unified narrow_type API with TypeGuard::Typeof for both branches
             if let Some(typeof_kind) = TypeofKind::parse(type_name) {
+                let typeof_base_type = if type_id != TypeId::UNKNOWN
+                    && self
+                        .binder
+                        .resolve_identifier(self.arena, target)
+                        .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid))
+                {
+                    TypeId::UNKNOWN
+                } else {
+                    type_id
+                };
                 return narrowing.narrow_type(
-                    type_id,
+                    typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
                     GuardSense::from(effective_truth),
                 );
