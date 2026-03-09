@@ -141,7 +141,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::Unknown) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.next_token();
@@ -177,7 +177,7 @@ impl ParserState {
                     self.current_token = at_token;
                     self.next_token();
                     self.parse_error_at_current_token(
-                        "Invalid character.",
+                        tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                         tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
                     );
 
@@ -286,7 +286,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::Unknown) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.resync_after_error_with_statement_starts(false);

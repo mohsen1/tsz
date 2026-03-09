@@ -350,7 +350,7 @@ pub(super) fn collect_diagnostics(
                                 resolved_module_errors.insert(
                                         (file_idx, specifier.clone()),
                                         tsz::checker::context::ResolutionError {
-                                            code: 7016,
+                                            code: tsz::checker::diagnostics::diagnostic_codes::COULD_NOT_FIND_A_DECLARATION_FILE_FOR_MODULE_IMPLICITLY_HAS_AN_ANY_TYPE,
                                             message: format!(
                                                 "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                                                 specifier, js_path.display()

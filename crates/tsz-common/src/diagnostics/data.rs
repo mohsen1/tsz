@@ -5022,6 +5022,11 @@ pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
         message: "Cannot find module or type declarations for side-effect import of '{0}'.",
     },
     DiagnosticMessage {
+        code: 2883,
+        category: DiagnosticCategory::Error,
+        message: "The inferred type of '{0}' cannot be named without a reference to '{2}' from '{1}'. This is likely not portable. A type annotation is necessary.",
+    },
+    DiagnosticMessage {
         code: 4000,
         category: DiagnosticCategory::Error,
         message: "Import declaration '{0}' is using private name '{1}'.",
@@ -12531,6 +12536,8 @@ pub mod diagnostic_messages {
     pub const THIS_EXPRESSION_IS_NEVER_NULLISH: &str = "This expression is never nullish.";
     pub const CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF: &str =
         "Cannot find module or type declarations for side-effect import of '{0}'.";
+    pub const THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY:
+        &str = "The inferred type of '{0}' cannot be named without a reference to '{2}' from '{1}'. This is likely not portable. A type annotation is necessary.";
     pub const IMPORT_DECLARATION_IS_USING_PRIVATE_NAME: &str =
         "Import declaration '{0}' is using private name '{1}'.";
     pub const TYPE_PARAMETER_OF_EXPORTED_CLASS_HAS_OR_IS_USING_PRIVATE_NAME: &str =
@@ -15832,6 +15839,8 @@ pub mod diagnostic_codes {
         u32 = 2880;
     pub const THIS_EXPRESSION_IS_NEVER_NULLISH: u32 = 2881;
     pub const CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF: u32 = 2882;
+    pub const THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY: u32 =
+        2883;
     pub const IMPORT_DECLARATION_IS_USING_PRIVATE_NAME: u32 = 4000;
     pub const TYPE_PARAMETER_OF_EXPORTED_CLASS_HAS_OR_IS_USING_PRIVATE_NAME: u32 = 4002;
     pub const TYPE_PARAMETER_OF_EXPORTED_INTERFACE_HAS_OR_IS_USING_PRIVATE_NAME: u32 = 4004;
@@ -17258,5 +17267,4 @@ pub mod diagnostic_codes {
     pub const ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE: u32 = 95196;
     pub const ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE_TO_ALL_TYPE_ONLY_IMPORTS_THAT_NEED_IT: u32 =
         95197;
-    pub const IMPORT_EXPECTS_FROM_CLAUSE: u32 = 10001;
 }

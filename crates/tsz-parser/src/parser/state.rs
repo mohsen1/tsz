@@ -648,7 +648,7 @@ impl ParserState {
             {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
             }
@@ -1336,7 +1336,7 @@ impl ParserState {
             if self.should_report_error() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
             }
@@ -1476,7 +1476,7 @@ impl ParserState {
             if self.should_report_error() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "Invalid character.",
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
             }

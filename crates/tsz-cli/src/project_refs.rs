@@ -376,7 +376,7 @@ impl ProjectReferenceGraph {
                     // TS6306: Referenced project must have composite: true
                     if !ref_project.is_composite {
                         diagnostics.push(ProjectReferenceDiagnostic {
-                            code: 6306,
+                            code: tsz_common::diagnostics::diagnostic_codes::REFERENCED_PROJECT_MUST_HAVE_SETTING_COMPOSITE_TRUE,
                             message: format!(
                                 "Referenced project '{}' must have setting \"composite\": true.",
                                 ref_project.config_path.display()
@@ -389,7 +389,7 @@ impl ProjectReferenceGraph {
                     // TS6310: Referenced project may not disable emit
                     if ref_project.no_emit {
                         diagnostics.push(ProjectReferenceDiagnostic {
-                            code: 6310,
+                            code: tsz_common::diagnostics::diagnostic_codes::REFERENCED_PROJECT_MAY_NOT_DISABLE_EMIT,
                             message: format!(
                                 "Referenced project '{}' may not disable emit.",
                                 ref_project.config_path.display()
@@ -411,7 +411,7 @@ impl ProjectReferenceGraph {
                 .map(|p| p.config_path.display().to_string())
                 .collect();
             diagnostics.push(ProjectReferenceDiagnostic {
-                code: 6202,
+                code: tsz_common::diagnostics::diagnostic_codes::PROJECT_REFERENCES_MAY_NOT_FORM_A_CIRCULAR_GRAPH_CYCLE_DETECTED,
                 message: format!(
                     "Project references may not form a circular graph. Cycle detected: {}",
                     names.join(" -> ")
