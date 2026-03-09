@@ -892,7 +892,6 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
-FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
 FAIL TypeScript/tests/cases/compiler/privacyImportParseErrors.ts
 FAIL TypeScript/tests/cases/compiler/privateFieldsInClassExpressionDeclaration.ts
@@ -1022,7 +1021,6 @@ FAIL TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParame
 FAIL TypeScript/tests/cases/compiler/staticAsIdentifier.ts
 FAIL TypeScript/tests/cases/compiler/staticFieldWithInterfaceContext.ts
 FAIL TypeScript/tests/cases/compiler/staticInstanceResolution5.ts
-FAIL TypeScript/tests/cases/compiler/staticMemberAccessOffDerivedType1.ts
 FAIL TypeScript/tests/cases/compiler/staticMemberExportAccess.ts
 FAIL TypeScript/tests/cases/compiler/staticMethodReferencingTypeArgument1.ts
 FAIL TypeScript/tests/cases/compiler/staticOffOfInstance2.ts
@@ -2113,7 +2111,6 @@ FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/literalTypeWidening.ts
-FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts
@@ -6390,6 +6387,7 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
+PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primaryExpressionMods.ts
@@ -6917,6 +6915,7 @@ PASS TypeScript/tests/cases/compiler/staticInstanceResolution2.ts
 PASS TypeScript/tests/cases/compiler/staticInstanceResolution3.ts
 PASS TypeScript/tests/cases/compiler/staticInstanceResolution4.ts
 PASS TypeScript/tests/cases/compiler/staticInterfaceAssignmentCompat.ts
+PASS TypeScript/tests/cases/compiler/staticMemberAccessOffDerivedType1.ts
 PASS TypeScript/tests/cases/compiler/staticMemberOfClassAndPublicMemberOfAnotherClassAssignment.ts
 PASS TypeScript/tests/cases/compiler/staticMemberWithStringAndNumberNames.ts
 PASS TypeScript/tests/cases/compiler/staticMethodsReferencingClassTypeParameters.ts
@@ -11835,6 +11834,7 @@ PASS TypeScript/tests/cases/conformance/types/literal/numericLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/numericStringLiteralTypes.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes2.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks02.ts
