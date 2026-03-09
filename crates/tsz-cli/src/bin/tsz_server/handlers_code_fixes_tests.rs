@@ -1083,6 +1083,42 @@ fn handle_get_code_fixes_missing_namespace_type_only_default_import() {
 }
 
 #[test]
+fn handle_get_code_fixes_omits_registry_only_placeholders() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        "{\n  \"compilerOptions\": {\n    \"target\": \"esnext\",\n    \"strict\": true,\n    \"lib\": [\"es2015\"]\n  }\n}\n".to_string(),
+    );
+    let content = "const p4: Promise<number> = new Promise(resolve => resolve());\n";
+    server.open_files.insert("/a.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 1,
+            "startOffset": 52,
+            "endLine": 1,
+            "endOffset": 59,
+            "errorCodes": [2554]
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected actions array");
+    assert!(
+        actions.is_empty(),
+        "expected no codefixes for unsupported TS2554 case, got: {actions:?}"
+    );
+}
+
+#[test]
 fn synthetic_missing_name_skips_qualified_type_names() {
     let mut server = make_server();
     server
