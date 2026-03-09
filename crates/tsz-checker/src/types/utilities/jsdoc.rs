@@ -1,5 +1,4 @@
 //! JSDoc type annotation utilities, class and enum helper methods for `CheckerState`.
-
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -1881,7 +1880,6 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-
             let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
                 continue;
             };
@@ -1906,7 +1904,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 (node.pos, node.end - node.pos)
             };
-
             results.push((tag, pos, len));
         }
         // Phase 2: Check for dangling JSDoc comments not attached to any statement
