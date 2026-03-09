@@ -173,7 +173,7 @@ impl<'a> CheckerState<'a> {
             if !has_type_params_in_decl
                 && symbol_type != TypeId::ERROR
                 && symbol_type != TypeId::ANY
-                && let Some(&arg_idx) = type_args_list.nodes.first()
+                && !type_args_list.nodes.is_empty()
             {
                 let lib_binders = self.get_lib_binders();
                 let name = self
@@ -181,8 +181,18 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbol_with_libs(sym_id, &lib_binders)
                     .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+                // TSC points the TS2315 error at the type name (e.g. `C` in
+                // `C<string>`), not at the first type argument. Extract the
+                // type_name from the TypeReference node.
+                let error_anchor = self
+                    .ctx
+                    .arena
+                    .get(type_ref_idx)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(type_ref_idx);
                 self.error_at_node_msg(
-                    arg_idx,
+                    error_anchor,
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                     &[name.as_str()],
                 );
