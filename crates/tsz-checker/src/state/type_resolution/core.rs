@@ -1212,6 +1212,12 @@ impl<'a> CheckerState<'a> {
                     // returning None, breaking Application type resolution in narrowing contexts
                     // (e.g., type predicate narrowing can't check if ArrayLike<any> is assignable
                     // to { length: unknown } because the Application can't be expanded).
+                    if structural_type != TypeId::ERROR && structural_type != TypeId::ANY {
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        self.ctx
+                            .register_query_resolved_def(def_id, structural_type, type_params);
+                    }
+
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::ANY
                         && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()

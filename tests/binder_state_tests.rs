@@ -10,6 +10,7 @@
 //! - Module import resolution
 
 use crate::binder::{BinderState, symbol_flags};
+use crate::parser::NodeIndex;
 use crate::parser::ParserState;
 
 // =============================================================================
@@ -3138,6 +3139,50 @@ fn test_lib_symbol_merge_declaration_merging() {
         "Merged Array should be an interface"
     );
     assert_eq!(array_sym.escaped_name, "Array");
+}
+
+#[test]
+fn test_lib_symbol_merge_deduplicates_identical_declaration_arenas() {
+    use crate::binder::LibContext;
+    use std::sync::Arc;
+
+    let mut lib_binder = BinderState::new();
+    let string_id = lib_binder
+        .symbols
+        .alloc(symbol_flags::INTERFACE, "String".to_string());
+    lib_binder.file_locals.set("String".to_string(), string_id);
+    lib_binder
+        .symbols
+        .get_mut(string_id)
+        .expect("string symbol")
+        .declarations
+        .push(NodeIndex(1));
+
+    let dummy_arena = Arc::new(crate::parser::node::NodeArena::new());
+    let entry = lib_binder
+        .declaration_arenas
+        .entry((string_id, NodeIndex(1)))
+        .or_default();
+    entry.push(Arc::clone(&dummy_arena));
+    entry.push(Arc::clone(&dummy_arena));
+
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&dummy_arena),
+        binder: Arc::new(lib_binder),
+    }];
+
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&lib_contexts);
+
+    let merged_id = main_binder
+        .file_locals
+        .get("String")
+        .expect("String should exist");
+    let arenas = main_binder
+        .declaration_arenas
+        .get(&(merged_id, NodeIndex(1)))
+        .expect("merged declaration arenas");
+    assert_eq!(arenas.len(), 1);
 }
 
 /// Test that user symbols take precedence over lib symbols.

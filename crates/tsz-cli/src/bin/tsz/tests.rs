@@ -228,3 +228,42 @@ fn preprocess_non_boolean_false_not_consumed() {
     assert!(result.iter().any(|a| a == "--outDir"));
     assert!(result.iter().any(|a| a == "false"));
 }
+
+#[test]
+fn extended_diagnostics_report_includes_program_residency() {
+    let result = driver::CompilationResult {
+        diagnostics: Vec::new(),
+        emitted_files: Vec::new(),
+        files_read: Vec::new(),
+        file_infos: Vec::new(),
+        check_stats: Some(tsz::parallel::CheckStats {
+            file_count: 2,
+            function_count: 0,
+            diagnostic_count: 0,
+            program_residency: tsz::parallel::MergedProgramResidencyStats {
+                file_count: 2,
+                bound_file_arena_count: 2,
+                unique_arena_count: 4,
+                symbol_arena_count: 7,
+                declaration_arena_bucket_count: 11,
+                declaration_arena_mapping_count: 13,
+                global_symbol_count: 17,
+                file_local_symbol_count: 19,
+                module_export_symbol_count: 23,
+                cross_file_node_symbol_arena_count: 29,
+                lib_symbol_count: 31,
+            },
+        }),
+    };
+
+    let report = format_diagnostics_report(&result, std::time::Duration::from_secs_f64(1.25), true);
+
+    assert!(report.contains("Bound file arenas:"));
+    assert!(report.contains("Unique retained arenas:"));
+    assert!(report.contains("Global symbols:"));
+    assert!(report.contains("File-local symbols:"));
+    assert!(report.contains("Module export symbols:"));
+    assert!(report.contains("Cross-file symbol arenas:"));
+    assert!(report.contains("Lib symbols:"));
+    assert!(report.contains("Declaration arena mappings:"));
+}

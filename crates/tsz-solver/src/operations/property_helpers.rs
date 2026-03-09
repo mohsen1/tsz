@@ -600,11 +600,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let substitution =
                         TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
 
-                    // Instantiate both read and write types
+                    // Accessors can have divergent getter/setter types, but methods and
+                    // plain properties usually share the same type. Avoid instantiating
+                    // the same generic property twice on the hot application-member path.
                     let instantiated_read_type =
                         instantiate_type(self.interner(), prop.type_id, &substitution);
-                    let instantiated_write_type =
-                        instantiate_type(self.interner(), prop.write_type, &substitution);
+                    let instantiated_write_type = if prop.write_type == prop.type_id {
+                        instantiated_read_type
+                    } else {
+                        instantiate_type(self.interner(), prop.write_type, &substitution)
+                    };
 
                     let read_type = self.optional_property_type(&PropertyInfo {
                         name: prop.name,

@@ -158,17 +158,28 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        let classification =
+            query::classify_for_property_access_resolution(self.ctx.types, type_id);
+
         // Fast path: already property-access-ready types do not need relation-input
         // preparation or recursive resolution.
         if matches!(
-            query::classify_for_property_access_resolution(self.ctx.types, type_id),
+            classification,
             query::PropertyAccessResolutionKind::Resolved
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
             return type_id;
         }
 
-        self.ensure_relation_input_ready(type_id);
+        // Direct application receivers are handled by the property-access-specific
+        // resolver below. Running the full relation-input preparation here eagerly
+        // resolves nested generic graphs before we even know which member is needed.
+        if !matches!(
+            classification,
+            query::PropertyAccessResolutionKind::Application(_)
+        ) {
+            self.ensure_relation_input_ready(type_id);
+        }
 
         let mut visited = FxHashSet::default();
         let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
@@ -565,6 +576,11 @@ impl<'a> CheckerState<'a> {
             self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
 
+        if let Some(def_id) = def_id {
+            self.ctx
+                .register_query_resolved_def(def_id, resolved, type_params.clone());
+        }
+
         // Already fully registered with params (or not generic), nothing to do.
         if symbol_already_registered
             && def_already_registered
@@ -618,6 +634,12 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_symbol(sym_id)
         };
+
+        if resolved != TypeId::ERROR && resolved != TypeId::ANY {
+            let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+            self.ctx
+                .register_query_resolved_def(def_id, resolved, params);
+        }
 
         if resolved != TypeId::ERROR
             && resolved != TypeId::ANY

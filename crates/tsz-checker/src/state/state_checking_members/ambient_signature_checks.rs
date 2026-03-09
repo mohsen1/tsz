@@ -374,8 +374,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check a method declaration.
-    pub(crate) fn check_method_declaration(&mut self, member_idx: NodeIndex) {
+    pub(crate) fn check_method_declaration_with_progress<F: FnMut(&str)>(
+        &mut self,
+        member_idx: NodeIndex,
+        report: &mut F,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -456,6 +459,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
+        report("push_type_parameters");
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
 
         self.check_modifier_combinations(&method.modifiers);
@@ -465,6 +469,7 @@ impl<'a> CheckerState<'a> {
 
         // Extract parameter types from contextual type (for object literal methods)
         // This enables shorthand method parameter type inference
+        report("contextual_parameter_types");
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         if let Some(ctx_type) = self.ctx.contextual_type {
             let ctx_helper = ContextualTypeContext::with_expected_and_options(
@@ -498,12 +503,14 @@ impl<'a> CheckerState<'a> {
 
         // Cache parameter types for use in method body
         // If we have contextual types, use them; otherwise fall back to type annotations or UNKNOWN
+        report("cache_parameter_types");
         if param_types.is_empty() {
             self.cache_parameter_types(&method.parameters.nodes, None);
         } else {
             self.cache_parameter_types(&method.parameters.nodes, Some(&param_types));
         }
 
+        report("parameter_checks");
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&method.parameters, method.body.is_some());
 
@@ -594,6 +601,7 @@ impl<'a> CheckerState<'a> {
         // Check method body
         if method.body.is_some() {
             if !has_type_annotation {
+                report("body::infer_return_type");
                 return_type = self.infer_return_type_from_body(member_idx, method.body, None);
                 // Cache the inferred return type so the declaration emitter can look it up
                 self.ctx.node_types.insert(member_idx.0, return_type);
@@ -672,6 +680,7 @@ impl<'a> CheckerState<'a> {
                 return_type
             };
 
+            report("body::push_return_context");
             self.push_return_type(effective_return_type);
 
             // For generator functions, push the contextual yield type so that
@@ -688,13 +697,15 @@ impl<'a> CheckerState<'a> {
                 self.ctx.enter_async_context();
             }
 
-            self.check_statement(method.body);
+            report("body::check_statement");
+            self.check_method_body_with_progress(method.body, report);
 
             // Exit async context
             if is_async {
                 self.ctx.exit_async_context();
             }
 
+            report("body::post_return_checks");
             let mut check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
             if is_async
@@ -773,6 +784,226 @@ impl<'a> CheckerState<'a> {
         }
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    fn check_method_body_with_progress<F: FnMut(&str)>(
+        &mut self,
+        body_idx: NodeIndex,
+        report: &mut F,
+    ) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            self.check_statement(body_idx);
+            return;
+        }
+
+        let Some(stmts) = self
+            .ctx
+            .arena
+            .get_block(body_node)
+            .map(|block| block.statements.nodes.clone())
+        else {
+            self.check_statement(body_idx);
+            return;
+        };
+
+        report(&format!("body::statement_count_{}", stmts.len()));
+
+        let prev_unreachable = self.ctx.is_unreachable;
+        let prev_reported = self.ctx.has_reported_unreachable;
+
+        for (statement_position, &stmt_idx) in stmts.iter().enumerate() {
+            let statement_phase = if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                format!(
+                    "body::statement_{statement_position}::kind_{}",
+                    stmt_node.kind
+                )
+            } else {
+                format!("body::statement_{statement_position}")
+            };
+            report(&statement_phase);
+
+            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                && let Some(ret_stmt) = self.ctx.arena.get_return_statement(stmt_node)
+                && ret_stmt.expression.is_some()
+            {
+                let mut hotspot_report = |phase: &str| {
+                    if let Some(stripped) = phase.strip_suffix(":start") {
+                        report(stripped);
+                    } else {
+                        report(phase);
+                    }
+                };
+                self.trace_expression_hotspots_with_progress(
+                    ret_stmt.expression,
+                    &format!("{statement_phase}::return_expression"),
+                    &mut hotspot_report,
+                    0,
+                );
+                self.check_statement(stmt_idx);
+            } else if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node)
+            {
+                let mut call_trace = None;
+                if let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) {
+                    report(&format!(
+                        "{statement_phase}::expression_kind_{}",
+                        expr_node.kind
+                    ));
+                    if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                        && let Some(call) = self.ctx.arena.get_call_expr(expr_node)
+                    {
+                        let callee_idx = call.expression;
+                        let callee_receiver_idx = self
+                            .ctx
+                            .arena
+                            .get(callee_idx)
+                            .and_then(|node| self.ctx.arena.get_access_expr(node))
+                            .map(|access| access.expression);
+                        let callee_receiver_kind = callee_receiver_idx
+                            .and_then(|idx| self.ctx.arena.get(idx).map(|node| node.kind));
+                        let callee_property_name = self
+                            .ctx
+                            .arena
+                            .get(callee_idx)
+                            .and_then(|node| self.ctx.arena.get_access_expr(node))
+                            .and_then(|access| {
+                                self.ctx
+                                    .arena
+                                    .get_identifier_at(access.name_or_argument)
+                                    .map(|ident| ident.escaped_text.clone())
+                            });
+                        let arg_indices = call
+                            .arguments
+                            .as_ref()
+                            .map(|args| args.nodes.clone())
+                            .unwrap_or_default();
+                        let arg_kinds = arg_indices
+                            .iter()
+                            .map(|&arg_idx| self.ctx.arena.get(arg_idx).map(|node| node.kind))
+                            .collect::<Vec<_>>();
+
+                        if let Some(callee_node) = self.ctx.arena.get(call.expression) {
+                            report(&format!(
+                                "{statement_phase}::call_callee_kind_{}",
+                                callee_node.kind
+                            ));
+                        }
+                        let arg_count = call.arguments.as_ref().map_or(0, |args| args.nodes.len());
+                        report(&format!("{statement_phase}::call_arg_count_{arg_count}"));
+                        call_trace = Some((
+                            callee_idx,
+                            callee_receiver_idx,
+                            callee_receiver_kind,
+                            callee_property_name,
+                            arg_indices,
+                            arg_kinds,
+                        ));
+                    }
+                }
+                report(&format!("{statement_phase}::check_await_expression"));
+                self.check_await_expression(expr_stmt.expression);
+                if let Some((
+                    callee_idx,
+                    callee_receiver_idx,
+                    callee_receiver_kind,
+                    callee_property_name,
+                    arg_indices,
+                    arg_kinds,
+                )) = call_trace
+                {
+                    if let Some(receiver_kind) = callee_receiver_kind {
+                        report(&format!(
+                            "{statement_phase}::call_callee_receiver_kind_{receiver_kind}"
+                        ));
+                    }
+                    if let Some(receiver_idx) = callee_receiver_idx {
+                        report(&format!(
+                            "{statement_phase}::call_callee_receiver_get_type_of_node"
+                        ));
+                        let receiver_type = self.get_type_of_node(receiver_idx);
+                        if let Some(property_name) = callee_property_name.as_deref() {
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_type_for_property_access"
+                            ));
+                            let resolved_receiver =
+                                self.prepare_property_access_receiver_type(receiver_type);
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env"
+                            ));
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::resolve_type_query_type"
+                            ));
+                            let lookup_receiver = self.resolve_type_query_type(resolved_receiver);
+                            let resolution_kind = crate::query_boundaries::state::type_environment::classify_for_property_access_resolution(
+                                self.ctx.types,
+                                lookup_receiver,
+                            );
+                            if !matches!(
+                                resolution_kind,
+                                crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Resolved
+                                    | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::FunctionLike
+                                    | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Application(_)
+                            ) {
+                                report(&format!(
+                                    "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::ensure_relation_input_ready"
+                                ));
+                                self.ensure_relation_input_ready(lookup_receiver);
+                            }
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::initial_query"
+                            ));
+                            let lookup_result =
+                                self.ctx.types.resolve_property_access_with_options(
+                                    lookup_receiver,
+                                    property_name,
+                                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                                );
+                            report(&format!(
+                                "{statement_phase}::call_callee_receiver_resolve_property_access_with_env::post_query"
+                            ));
+                            let _ = self.resolve_property_access_with_env_post_query(
+                                lookup_receiver,
+                                property_name,
+                                lookup_result,
+                            );
+                        }
+                    }
+                    report(&format!("{statement_phase}::call_callee_get_type_of_node"));
+                    self.get_type_of_node(callee_idx);
+                    for (arg_position, arg_idx) in arg_indices.iter().copied().enumerate() {
+                        if let Some(arg_kind) = arg_kinds.get(arg_position).and_then(|kind| *kind) {
+                            report(&format!(
+                                "{statement_phase}::call_arg_{arg_position}::kind_{arg_kind}"
+                            ));
+                        }
+                        report(&format!(
+                            "{statement_phase}::call_arg_{arg_position}::get_type_of_node"
+                        ));
+                        self.get_type_of_node(arg_idx);
+                    }
+                }
+                report(&format!("{statement_phase}::get_type_of_node"));
+                self.get_type_of_node(expr_stmt.expression);
+            } else {
+                self.check_statement(stmt_idx);
+            }
+
+            if !self.statement_falls_through(stmt_idx) {
+                self.ctx.is_unreachable = true;
+            }
+        }
+
+        self.ctx.is_unreachable = prev_unreachable;
+        self.ctx.has_reported_unreachable = prev_reported;
+
+        report("body::check_function_implementations");
+        self.check_function_implementations(&stmts);
     }
 
     /// Check a constructor declaration.

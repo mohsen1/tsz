@@ -1,11 +1,15 @@
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
+use super::format_extended_diagnostics_phase_progress;
+use super::format_extended_diagnostics_phase_start;
+use super::format_extended_diagnostics_residency_snapshot;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::config::ResolvedCompilerOptions;
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use tsz::checker::diagnostics::diagnostic_codes;
 use tsz::config::ModuleResolutionKind;
@@ -243,4 +247,52 @@ fn test_grammar_error_classification() {
     assert!(!is_grammar_error_for_deprecation_priority(2345));
     assert!(!is_grammar_error_for_deprecation_priority(2358));
     assert!(!is_grammar_error_for_deprecation_priority(2559));
+}
+
+#[test]
+fn test_format_extended_diagnostics_phase_progress() {
+    let line =
+        format_extended_diagnostics_phase_progress("build_program", Duration::from_millis(1250));
+    assert_eq!(line, "[extendedDiagnostics] phase build_program: 1250.00ms");
+}
+
+#[test]
+fn test_format_extended_diagnostics_phase_start() {
+    let line = format_extended_diagnostics_phase_start("collect_diagnostics");
+    assert_eq!(
+        line,
+        "[extendedDiagnostics] phase collect_diagnostics: start"
+    );
+}
+
+#[test]
+fn test_format_extended_diagnostics_residency_snapshot() {
+    let line = format_extended_diagnostics_residency_snapshot(
+        &tsz::parallel::MergedProgramResidencyStats {
+            file_count: 4,
+            bound_file_arena_count: 4,
+            unique_arena_count: 3,
+            symbol_arena_count: 20,
+            declaration_arena_bucket_count: 5,
+            declaration_arena_mapping_count: 7,
+            global_symbol_count: 11,
+            file_local_symbol_count: 13,
+            module_export_symbol_count: 17,
+            cross_file_node_symbol_arena_count: 2,
+            lib_symbol_count: 19,
+        },
+    );
+
+    assert!(line.starts_with("[extendedDiagnostics] residency "));
+    assert!(line.contains("files=4"));
+    assert!(line.contains("bound_file_arenas=4"));
+    assert!(line.contains("unique_arenas=3"));
+    assert!(line.contains("global_symbols=11"));
+    assert!(line.contains("file_local_symbols=13"));
+    assert!(line.contains("module_export_symbols=17"));
+    assert!(line.contains("cross_file_symbol_arenas=2"));
+    assert!(line.contains("lib_symbols=19"));
+    assert!(line.contains("symbol_entries=20"));
+    assert!(line.contains("declaration_buckets=5"));
+    assert!(line.contains("declaration_mappings=7"));
 }

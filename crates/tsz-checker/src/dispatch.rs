@@ -1011,6 +1011,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_type_of_array_literal(idx)
             }
 
+            // Spread element - use the type of the spread expression itself.
+            // Array/call-specific spread semantics are handled by their parent nodes.
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => self
+                .checker
+                .ctx
+                .arena
+                .get_spread(node)
+                .map_or(TypeId::ERROR, |spread| {
+                    self.checker.get_type_of_node(spread.expression)
+                }),
+
             // Object literal
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.checker.get_type_of_object_literal(idx)
@@ -1429,6 +1440,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 TypeId::STRING,
             ),
 
+            // Regular expression literal - uses the global RegExp interface type when available.
+            // Fall back to any so missing-lib setups do not cascade after TS2318.
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => self
+                .checker
+                .resolve_global_interface_type("RegExp")
+                .unwrap_or(TypeId::ANY),
+
             // =========================================================================
             // Type Nodes - Delegate to TypeNodeChecker
             // =========================================================================
@@ -1475,7 +1493,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 || k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                 || k == syntax_kind_ext::ENUM_DECLARATION
-                || k == syntax_kind_ext::MODULE_DECLARATION =>
+                || k == syntax_kind_ext::MODULE_DECLARATION
+                || k == syntax_kind_ext::NAMED_EXPORTS =>
             {
                 TypeId::VOID
             }

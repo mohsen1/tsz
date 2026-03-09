@@ -285,6 +285,210 @@ fn test_merge_preserves_file_locals() {
 }
 
 #[test]
+fn test_merged_program_residency_stats_track_unique_file_arenas() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert_eq!(stats.file_count, 2);
+    assert_eq!(stats.bound_file_arena_count, 2);
+    assert_eq!(stats.unique_arena_count, 2);
+    assert!(stats.symbol_arena_count >= 2);
+    assert!(stats.declaration_arena_bucket_count >= 2);
+    assert!(stats.declaration_arena_mapping_count >= 2);
+    assert_eq!(stats.global_symbol_count, program.symbols.len());
+    assert_eq!(
+        stats.file_local_symbol_count,
+        program
+            .file_locals
+            .iter()
+            .map(|locals| locals.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.module_export_symbol_count,
+        program
+            .module_exports
+            .values()
+            .map(|exports| exports.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.cross_file_node_symbol_arena_count,
+        program.cross_file_node_symbols.len()
+    );
+    assert_eq!(stats.lib_symbol_count, program.lib_symbol_ids.len());
+}
+
+#[test]
+fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
+    let files = vec![(
+        "a.ts".to_string(),
+        "export const a = 1; export function b() { return a; }".to_string(),
+    )];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert_eq!(stats.file_count, 1);
+    assert_eq!(stats.bound_file_arena_count, 1);
+    assert_eq!(
+        stats.unique_arena_count, 1,
+        "symbol/declaration arena maps should point back to the same retained file arena"
+    );
+    assert!(stats.symbol_arena_count >= 2);
+    assert!(stats.declaration_arena_mapping_count >= 2);
+    assert_eq!(stats.global_symbol_count, program.symbols.len());
+    assert_eq!(
+        stats.file_local_symbol_count,
+        program
+            .file_locals
+            .iter()
+            .map(|locals| locals.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.module_export_symbol_count,
+        program
+            .module_exports
+            .values()
+            .map(|exports| exports.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        stats.cross_file_node_symbol_arena_count,
+        program.cross_file_node_symbols.len()
+    );
+    assert_eq!(stats.lib_symbol_count, program.lib_symbol_ids.len());
+}
+
+#[test]
+fn test_checker_binder_shared_data_preserves_cross_file_augmentations() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            r#"export {};
+declare global {
+    interface Window {
+        fromA: number;
+    }
+}
+declare module "pkg" {
+    interface Thing {
+        fromA: number;
+    }
+}
+"#
+            .to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            r#"export {};
+declare global {
+    interface Window {
+        fromB: string;
+    }
+}
+declare module "pkg" {
+    interface Thing {
+        fromB: string;
+    }
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let shared = program.checker_binder_shared_data();
+
+    let window_augmentations = shared
+        .merged_global_augmentations
+        .get("Window")
+        .expect("Window augmentations should be present");
+    assert_eq!(window_augmentations.len(), 2);
+    assert!(
+        window_augmentations
+            .iter()
+            .all(|augmentation| augmentation.arena.is_some())
+    );
+
+    let unique_window_arenas: FxHashSet<_> = window_augmentations
+        .iter()
+        .map(|augmentation| {
+            Arc::as_ptr(
+                augmentation
+                    .arena
+                    .as_ref()
+                    .expect("Window augmentation arena should be tagged"),
+            ) as usize
+        })
+        .collect();
+    assert_eq!(unique_window_arenas.len(), 2);
+
+    let module_augmentations = shared
+        .merged_module_augmentations
+        .get("pkg")
+        .expect("module augmentations should be present");
+    assert_eq!(module_augmentations.len(), 2);
+    assert!(
+        module_augmentations
+            .iter()
+            .all(|augmentation| augmentation.arena.is_some())
+    );
+
+    let binder =
+        create_binder_from_bound_file_with_shared_data(&program.files[0], &program, 0, &shared);
+    assert_eq!(
+        binder.global_augmentations.get("Window").map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        binder.module_augmentations.get("pkg").map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
+fn test_merge_bind_results_deduplicates_identical_declaration_arenas() {
+    let files = vec![("a.ts".to_string(), "interface Foo {}".to_string())];
+
+    let mut bind_results = parse_and_bind_parallel(files);
+    let bind_result = bind_results.first_mut().expect("bind result");
+    let string_id = bind_result
+        .file_locals
+        .get("Foo")
+        .expect("Foo symbol should exist");
+    let decl_idx = bind_result
+        .symbols
+        .get(string_id)
+        .and_then(|symbol| symbol.declarations.first().copied())
+        .expect("String declaration");
+    let entry = bind_result
+        .declaration_arenas
+        .entry((string_id, decl_idx))
+        .or_default();
+    let arena = Arc::clone(&bind_result.arena);
+    entry.push(Arc::clone(&arena));
+    entry.push(Arc::clone(&arena));
+
+    let program = merge_bind_results(bind_results);
+    let global_id = program.globals.get("Foo").expect("merged Foo symbol");
+    let merged_arenas = program
+        .declaration_arenas
+        .get(&(global_id, decl_idx))
+        .expect("merged declaration arenas");
+    assert_eq!(merged_arenas.len(), 1);
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
@@ -633,6 +837,68 @@ fn test_check_with_stats() {
     assert_eq!(stats.file_count, 3);
     assert_eq!(stats.function_count, 3);
     assert_eq!(result.file_results.len(), 3);
+    assert_eq!(stats.program_residency, program.residency_stats());
+    assert_eq!(stats.program_residency.file_count, 3);
+    assert!(stats.program_residency.global_symbol_count >= 3);
+}
+
+#[test]
+fn test_check_files_with_stats_matches_parallel_check() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "const x: number = \"oops\";".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export function ok() { return 1; }".to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let options = crate::checker::context::CheckerOptions::default();
+    let expected = check_files_parallel(&program, &options, &[]);
+    let (actual, stats) = check_files_with_stats(&program, &options, &[]);
+
+    assert_eq!(actual.file_results.len(), expected.file_results.len());
+    assert_eq!(actual.diagnostic_count, expected.diagnostic_count);
+    assert_eq!(stats.file_count, expected.file_results.len());
+    assert_eq!(stats.function_count, 0);
+    assert_eq!(stats.diagnostic_count, expected.diagnostic_count);
+    assert_eq!(stats.program_residency, program.residency_stats());
+    assert!(stats.program_residency.unique_arena_count > 0);
+
+    for (actual_file, expected_file) in actual.file_results.iter().zip(&expected.file_results) {
+        assert_eq!(actual_file.file_name, expected_file.file_name);
+
+        let actual_diags: Vec<_> = actual_file
+            .diagnostics
+            .iter()
+            .map(|diag| {
+                (
+                    diag.code,
+                    diag.start,
+                    diag.length,
+                    diag.message_text.clone(),
+                )
+            })
+            .collect();
+        let expected_diags: Vec<_> = expected_file
+            .diagnostics
+            .iter()
+            .map(|diag| {
+                (
+                    diag.code,
+                    diag.start,
+                    diag.length,
+                    diag.message_text.clone(),
+                )
+            })
+            .collect();
+
+        assert_eq!(actual_diags, expected_diags);
+    }
 }
 
 #[test]

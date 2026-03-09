@@ -939,9 +939,20 @@ impl<'a> CheckerState<'a> {
 
     fn any_ambient_module_declared(&self, module_name: &str) -> bool {
         let normalized = module_name.trim_matches('"').trim_matches('\'');
+        if let Some(cached) = self
+            .ctx
+            .ambient_module_declared_cache
+            .borrow()
+            .get(normalized)
+            .copied()
+        {
+            return cached;
+        }
+
         let Some(all_binders) = &self.ctx.all_binders else {
             return false;
         };
+        let mut found = false;
         for binder in all_binders.iter() {
             for pattern in binder
                 .declared_modules
@@ -950,11 +961,19 @@ impl<'a> CheckerState<'a> {
                 .chain(binder.module_exports.keys())
             {
                 if Self::module_name_matches_pattern_for_imports(pattern, normalized) {
-                    return true;
+                    found = true;
+                    break;
                 }
             }
+            if found {
+                break;
+            }
         }
-        false
+        self.ctx
+            .ambient_module_declared_cache
+            .borrow_mut()
+            .insert(normalized.to_string(), found);
+        found
     }
 
     fn module_name_matches_pattern_for_imports(pattern: &str, module_name: &str) -> bool {

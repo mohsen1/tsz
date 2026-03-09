@@ -350,6 +350,14 @@ impl<'a> TypeLowering<'a> {
         &self,
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> (TypeId, Vec<TypeParamInfo>) {
+        self.lower_merged_interface_declarations_with_progress(declarations, |_| {})
+    }
+
+    pub fn lower_merged_interface_declarations_with_progress(
+        &self,
+        declarations: &[(NodeIndex, &NodeArena)],
+        mut report: impl FnMut(&str),
+    ) -> (TypeId, Vec<TypeParamInfo>) {
         if declarations.is_empty() {
             return (TypeId::ERROR, Vec::new());
         }
@@ -357,6 +365,23 @@ impl<'a> TypeLowering<'a> {
         let mut parts = InterfaceParts::new();
         let mut type_params_collected = false;
         let mut collected_params = Vec::new();
+        let mut interface_declaration_count = 0usize;
+        let mut total_member_count = 0usize;
+
+        for (decl_idx, decl_arena) in declarations.iter().rev() {
+            let Some(node) = decl_arena.get(*decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            interface_declaration_count += 1;
+            total_member_count += interface.members.nodes.len();
+        }
+        let collect_members_phase = format!(
+            "collect_interface_members::decls_{interface_declaration_count}::members_{total_member_count}:start"
+        );
+        report(&collect_members_phase);
 
         // Process declarations in reverse order: TypeScript's interface merging
         // rule puts later declarations' members first for overload resolution.
@@ -376,6 +401,7 @@ impl<'a> TypeLowering<'a> {
                 && let Some(params) = &interface.type_parameters
                 && !params.nodes.is_empty()
             {
+                report("collect_type_parameters:start");
                 // Push scope on the shared state
                 self.push_type_param_scope();
                 // Use the specific lowerer to resolve param nodes in that arena
@@ -387,6 +413,7 @@ impl<'a> TypeLowering<'a> {
             lowerer.collect_interface_members(&interface.members, &mut parts);
         }
 
+        report("finish_interface_parts:start");
         let result = self.finish_interface_parts(parts, None);
 
         if type_params_collected {

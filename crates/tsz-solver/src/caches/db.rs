@@ -453,6 +453,19 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Register a `DefId` as belonging to a boxed type.
     fn register_boxed_def_id(&self, _kind: IntrinsicKind, _def_id: DefId) {}
 
+    /// Register a resolved lazy definition body and its declared type parameters.
+    ///
+    /// This lets query-only solver paths (for example application property lookup)
+    /// stay inside the query boundary once the checker has already computed a
+    /// stable body for a `DefId`.
+    fn register_resolved_def(
+        &self,
+        _def_id: DefId,
+        _type_id: TypeId,
+        _type_params: Vec<TypeParamInfo>,
+    ) {
+    }
+
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
         crate::evaluation::evaluate::evaluate_conditional(self.as_type_database(), cond)
     }

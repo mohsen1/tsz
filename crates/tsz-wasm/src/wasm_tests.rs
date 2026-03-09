@@ -1,6 +1,7 @@
 use serde_json::Value;
 use tsz_solver::TypeInterner;
 
+use crate::wasm::WasmCheckStats;
 use crate::wasm_api::diagnostics::{
     diagnostic_category_name, flatten_diagnostic_message_text, format_ts_diagnostic,
     format_ts_diagnostics_with_color_and_context,
@@ -80,6 +81,24 @@ fn test_parallel_compile_and_check() {
     let (_result, stats) = tsz::parallel::check_functions_with_stats(&program);
     assert_eq!(stats.file_count, 2);
     assert!(stats.function_count >= 2);
+    assert_eq!(stats.program_residency.file_count, 2);
+    assert!(stats.program_residency.unique_arena_count >= 2);
+}
+
+#[test]
+fn test_wasm_check_stats_preserve_program_residency() {
+    let files = vec![(
+        "a.ts".to_string(),
+        "function add(x: number, y: number): number { return x + y; }".to_string(),
+    )];
+
+    let program = tsz::parallel::compile_files(files);
+    let (_result, stats) = tsz::parallel::check_functions_with_stats(&program);
+    let expected_residency = stats.program_residency;
+    let wasm_stats = WasmCheckStats::from(stats);
+
+    assert_eq!(wasm_stats.file_count, 1);
+    assert_eq!(wasm_stats.program_residency, expected_residency);
 }
 
 #[test]

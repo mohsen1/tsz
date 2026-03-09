@@ -9,8 +9,16 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use std::time::Duration;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use web_time::Instant;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PrimeBoxedTypesStats {
+    pub register_function_def_ids_early: Duration,
+    pub register_boxed_types: Duration,
+}
 
 impl<'a> CheckerState<'a> {
     /// Check for missing global types (TS2318).
@@ -79,6 +87,10 @@ impl<'a> CheckerState<'a> {
     /// hardcoded lists. For example, "foo".length will look up the String interface
     /// from lib.d.ts and find the length property there.
     pub(crate) fn register_boxed_types(&mut self) {
+        self.register_boxed_types_with_progress(|_| {});
+    }
+
+    fn register_boxed_types_with_progress(&mut self, mut report: impl FnMut(&str)) {
         use tsz_solver::IntrinsicKind;
 
         // Only register if lib files are loaded
@@ -88,17 +100,29 @@ impl<'a> CheckerState<'a> {
 
         // 1. Resolve types first (avoids holding a mutable borrow on type_env while resolving)
         // resolve_lib_type_by_name handles looking up in lib.d.ts and merging declarations
-        let string_type = self.resolve_lib_type_by_name("String");
+        report("register_boxed_types::resolve_core_lib_types:start");
+        report("register_boxed_types::resolve_core_lib_types::String:start");
+        let string_type = self.resolve_lib_type_by_name_with_progress("String", |phase| {
+            let phase = format!("register_boxed_types::resolve_core_lib_types::String::{phase}");
+            report(&phase);
+        });
+        report("register_boxed_types::resolve_core_lib_types::Number:start");
         let number_type = self.resolve_lib_type_by_name("Number");
+        report("register_boxed_types::resolve_core_lib_types::Boolean:start");
         let boolean_type = self.resolve_lib_type_by_name("Boolean");
+        report("register_boxed_types::resolve_core_lib_types::Symbol:start");
         let symbol_type = self.resolve_lib_type_by_name("Symbol");
+        report("register_boxed_types::resolve_core_lib_types::BigInt:start");
         let bigint_type = self.resolve_lib_type_by_name("BigInt");
+        report("register_boxed_types::resolve_core_lib_types::Object:start");
         let object_type = self.resolve_lib_type_by_name("Object");
+        report("register_boxed_types::resolve_core_lib_types::Function:start");
         let function_type = self.resolve_lib_type_by_name("Function");
 
         // For Array<T>, extract the actual type parameters from the interface definition
         // rather than synthesizing fresh ones. This ensures the T used in Array's method
         // signatures has the same TypeId as the T registered in TypeEnvironment.
+        report("register_boxed_types::resolve_core_lib_types::Array:start");
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
@@ -109,13 +133,15 @@ impl<'a> CheckerState<'a> {
         // interface merging chains (ArrayIterator → IteratorObject → Iterator + Disposable
         // + esnext.iterator). Since the TypeInterner (DashMap) is shared across parallel
         // checkers, ArrayIterator is resolved lazily on first use and cached globally.
-        for array_dep in &["ConcatArray", "FlatArray"] {
-            let _ = self.resolve_lib_type_by_name(array_dep);
-        }
+        report("register_boxed_types::resolve_core_lib_types::ConcatArray:start");
+        let _ = self.resolve_lib_type_by_name("ConcatArray");
+        report("register_boxed_types::resolve_core_lib_types::FlatArray:start");
+        let _ = self.resolve_lib_type_by_name("FlatArray");
 
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.
         // Unreferenced symbols are still resolved lazily through normal lookup paths.
+        report("register_boxed_types::collect_referenced_type_names:start");
         let mut referenced_type_names = FxHashSet::default();
         for idx in 0..self.ctx.arena.len() {
             let node_idx = NodeIndex(idx as u32);
@@ -129,6 +155,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        report("register_boxed_types::prime_referenced_lib_type_params:start");
         for type_name in &[
             "ReadonlyArray",
             "Promise",
@@ -187,6 +214,7 @@ impl<'a> CheckerState<'a> {
         // Register boxed types through the query database so PropertyAccessEvaluator
         // can resolve primitive methods (e.g., "hello".match()) through the actual
         // interface types from lib.d.ts instead of falling back to hardcoded lists.
+        report("register_boxed_types::register_query_database_boxed_types:start");
         let boxed_pairs: &[(IntrinsicKind, Option<TypeId>)] = &[
             (IntrinsicKind::String, string_type),
             (IntrinsicKind::Number, number_type),
@@ -224,6 +252,7 @@ impl<'a> CheckerState<'a> {
             ("Object", object_type, IntrinsicKind::Object),
             ("Function", function_type, IntrinsicKind::Function),
         ];
+        report("register_boxed_types::register_boxed_def_ids:start");
         for &(name, type_opt, kind) in boxed_names {
             if type_opt.is_some() {
                 for ctx in &self.ctx.lib_contexts {
@@ -241,6 +270,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
+        report("register_boxed_types::populate_type_environment:start");
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
             if let Some(ty) = string_type {
                 env.set_boxed_type(IntrinsicKind::String, ty);
@@ -302,8 +332,29 @@ impl<'a> CheckerState<'a> {
     /// `ConcatArray`, causing Lazy(DefId) references in the interned Array body
     /// to resolve to wrong types.
     pub fn prime_boxed_types(&mut self) {
+        let _ = self.prime_boxed_types_with_progress(|_| {});
+    }
+
+    pub fn prime_boxed_types_with_progress(
+        &mut self,
+        mut report: impl FnMut(&str),
+    ) -> PrimeBoxedTypesStats {
+        report("register_function_def_ids_early:start");
+        let register_function_def_ids_early_start = Instant::now();
         self.register_function_def_ids_early();
-        self.register_boxed_types();
+        let register_function_def_ids_early = register_function_def_ids_early_start.elapsed();
+        report("register_function_def_ids_early:done");
+
+        report("register_boxed_types:start");
+        let register_boxed_types_start = Instant::now();
+        self.register_boxed_types_with_progress(|phase| report(phase));
+        let register_boxed_types = register_boxed_types_start.elapsed();
+        report("register_boxed_types:done");
+
+        PrimeBoxedTypesStats {
+            register_function_def_ids_early,
+            register_boxed_types,
+        }
     }
 
     /// Early-register Function interface `DefIds` in the interner (`DashMap`).

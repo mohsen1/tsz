@@ -101,6 +101,31 @@ impl<'a> CheckerState<'a> {
     // Import Declaration Validation
     // =========================================================================
 
+    fn module_declared_or_shorthand_anywhere(&self, module_name: &str) -> bool {
+        if let Some(cached) = self
+            .ctx
+            .declared_or_shorthand_module_cache
+            .borrow()
+            .get(module_name)
+            .copied()
+        {
+            return cached;
+        }
+
+        let found = self.ctx.all_binders.as_ref().is_some_and(|binders| {
+            binders.iter().any(|binder| {
+                binder.declared_modules.contains(module_name)
+                    || binder.shorthand_ambient_modules.contains(module_name)
+            })
+        });
+
+        self.ctx
+            .declared_or_shorthand_module_cache
+            .borrow_mut()
+            .insert(module_name.to_string(), found);
+        found
+    }
+
     /// TS1214: Check import binding names for strict-mode reserved words.
     /// Import declarations make the file a module (always strict mode), so TS1214 applies.
     fn check_import_binding_reserved_words(&mut self, import_clause_idx: NodeIndex) {
@@ -348,6 +373,16 @@ impl<'a> CheckerState<'a> {
 
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
+        const fn noop(_: &str) {}
+        let mut noop = noop;
+        self.check_import_declaration_with_progress(stmt_idx, &mut noop);
+    }
+
+    pub(crate) fn check_import_declaration_with_progress<F: FnMut(&str)>(
+        &mut self,
+        stmt_idx: NodeIndex,
+        report: &mut F,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -367,6 +402,7 @@ impl<'a> CheckerState<'a> {
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
+        report("deferred_import_restrictions");
         self.check_deferred_import_restrictions(import.import_clause);
 
         // TS1363: A type-only import can specify a default import or named bindings, but not both.
@@ -397,6 +433,7 @@ impl<'a> CheckerState<'a> {
         self.check_import_binding_reserved_words(import.import_clause);
 
         if import.import_clause.is_some() {
+            report("check_import_declaration_conflicts");
             self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
         }
 
@@ -405,6 +442,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        report("resolve_module_specifier");
         // Extract module specifier data eagerly to avoid borrow issues later
         let module_specifier_idx = import.module_specifier;
         let import_clause_idx = import.import_clause;
@@ -482,12 +520,8 @@ impl<'a> CheckerState<'a> {
                 );
         }
 
-        if let Some(binders) = &self.ctx.all_binders
-            && binders.iter().any(|binder| {
-                binder.declared_modules.contains(module_name)
-                    || binder.shorthand_ambient_modules.contains(module_name)
-            })
-        {
+        report("declared_or_shorthand_module_scan");
+        if self.module_declared_or_shorthand_anywhere(module_name) {
             tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
             return;
         }
@@ -539,6 +573,7 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
+        report("resolution_error_checks");
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             // Extract error values before mutable borrow
             let mut error_code = error.code;
@@ -597,6 +632,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if module was successfully resolved
+        report("check_resolved_module");
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
@@ -743,9 +779,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !skip_export_checks {
+                    report("check_imported_members");
                     self.check_imported_members(import, module_name);
                 }
             } else {
+                report("check_imported_members");
                 self.check_imported_members(import, module_name);
             }
 
@@ -762,6 +800,7 @@ impl<'a> CheckerState<'a> {
 
         if self.ctx.binder.module_exports.contains_key(module_name) {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
+            report("check_imported_members");
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {

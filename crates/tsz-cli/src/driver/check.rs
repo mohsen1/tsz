@@ -2,6 +2,13 @@
 
 use super::check_utils::*;
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+const EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD: Duration = Duration::from_millis(500);
+const EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT: usize = 4;
+const EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT: usize = 4;
+const EXTENDED_DIAGNOSTICS_HOTSPOT_PRETRACE_START_RANK: usize = 3;
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -53,18 +60,63 @@ pub(super) fn collect_diagnostics(
     lib_contexts: &[LibContext],
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
+    extended_progress_enabled: bool,
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    let report_progress = |phase: &str, start: Instant| {
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(phase, start.elapsed())
+            );
+        }
+    };
+    let report_elapsed = |phase: &str, elapsed: Duration| {
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(phase, elapsed)
+            );
+        }
+    };
+    let report_progress_start = |phase: &str| {
+        if extended_progress_enabled {
+            eprintln!("{}", format_extended_diagnostics_collect_phase_start(phase));
+        }
+    };
+    let report_parallel_file_timing = |file_name: &str,
+                                       prepare_binder: Duration,
+                                       total: Duration| {
+        if extended_progress_enabled && total >= EXTENDED_DIAGNOSTICS_SLOW_PARALLEL_FILE_THRESHOLD {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_parallel_file_timing(file_name, prepare_binder, total,)
+            );
+        }
+    };
+    let report_parallel_file_start = |rank: usize, file_name: &str| {
+        if extended_progress_enabled && rank <= EXTENDED_DIAGNOSTICS_STARTED_PARALLEL_FILE_LIMIT {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_parallel_file_start(rank, file_name)
+            );
+        }
+    };
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
+    let use_incremental_check_path = cache
+        .as_deref()
+        .is_some_and(|cache| !cache.type_caches.is_empty());
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut program_paths = FxHashSet::default();
     let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
 
     {
+        let phase_start = Instant::now();
+        report_progress_start("build_program_path_maps");
         let _span = tracing::info_span!("build_program_path_maps").entered();
         for (idx, file) in program.files.iter().enumerate() {
             let canonical = canonicalize_or_owned(Path::new(&file.file_name));
@@ -72,20 +124,8 @@ pub(super) fn collect_diagnostics(
             canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
             canonical_to_file_idx.insert(canonical, idx);
         }
+        report_progress("build_program_path_maps", phase_start);
     }
-
-    // Pre-create all binders for cross-file resolution
-    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
-        let _span = tracing::info_span!("build_cross_file_binders").entered();
-        program
-            .files
-            .iter()
-            .enumerate()
-            .map(|(file_idx, file)| {
-                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
-            })
-            .collect()
-    });
 
     // Extract is_external_module from BoundFile to preserve state across file bindings
     // This fixes TS2664 which requires accurate per-file is_external_module values
@@ -96,16 +136,6 @@ pub(super) fn collect_diagnostics(
             .map(|file| (file.file_name.clone(), file.is_external_module))
             .collect(),
     );
-
-    // Collect all arenas for cross-file resolution
-    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
-        let _span = tracing::info_span!("collect_all_arenas").entered();
-        program
-            .files
-            .iter()
-            .map(|file| Arc::clone(&file.arena))
-            .collect()
-    });
 
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
@@ -120,6 +150,8 @@ pub(super) fn collect_diagnostics(
     > = FxHashMap::default();
 
     {
+        let phase_start = Instant::now();
+        report_progress_start("build_resolved_module_maps");
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -318,7 +350,63 @@ pub(super) fn collect_diagnostics(
                 }
             }
         }
+        report_progress("build_resolved_module_maps", phase_start);
     }
+
+    if options.no_check {
+        let phase_start = Instant::now();
+        report_progress_start("collect_no_check_file_diagnostics");
+        diagnostics.extend(collect_no_check_file_diagnostics(
+            program,
+            &resolved_module_errors,
+        ));
+        report_progress("collect_no_check_file_diagnostics", phase_start);
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program, options, base_dir,
+        ));
+
+        for file in &program.files {
+            used_paths.insert(PathBuf::from(&file.file_name));
+        }
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        return diagnostics;
+    }
+
+    // Pre-create all binders for cross-file resolution
+    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
+        let phase_start = Instant::now();
+        report_progress_start("build_cross_file_binders");
+        let _span = tracing::info_span!("build_cross_file_binders").entered();
+        let binders = program
+            .files
+            .iter()
+            .enumerate()
+            .map(|(file_idx, file)| {
+                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
+            })
+            .collect();
+        report_progress("build_cross_file_binders", phase_start);
+        binders
+    });
+
+    // Collect all arenas for cross-file resolution
+    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
+        let phase_start = Instant::now();
+        report_progress_start("collect_all_arenas");
+        let _span = tracing::info_span!("collect_all_arenas").entered();
+        let arenas = program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect();
+        report_progress("collect_all_arenas", phase_start);
+        arenas
+    });
 
     let resolved_module_paths = Arc::new(resolved_module_paths);
     let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
@@ -328,13 +416,15 @@ pub(super) fn collect_diagnostics(
     // In these modes, .js/.ts files may be ESM based on package.json "type" field.
     // The checker needs this to correctly emit TS1479 (CJS importing ESM).
     let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
+        let phase_start = Instant::now();
+        report_progress_start("build_file_is_esm_map");
         let resolution_kind = options.effective_module_resolution();
         let is_node_resolution = matches!(
             resolution_kind,
             crate::config::ModuleResolutionKind::Node16
                 | crate::config::ModuleResolutionKind::NodeNext
         );
-        if is_node_resolution {
+        let file_map = if is_node_resolution {
             program
                 .files
                 .iter()
@@ -349,18 +439,28 @@ pub(super) fn collect_diagnostics(
                 .collect()
         } else {
             FxHashMap::default()
-        }
+        };
+        report_progress("build_file_is_esm_map", phase_start);
+        file_map
     });
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
+        let phase_start = Instant::now();
+        report_progress_start("prime_boxed_types");
         let prime_idx = 0;
         let file = &program.files[prime_idx];
-        let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
+        let binder = create_binder_from_bound_file_with_shared_data(
+            file,
+            program,
+            prime_idx,
+            &binder_shared_data,
+        );
         let mut checker = CheckerState::with_options(
             &file.arena,
             &binder,
@@ -372,7 +472,29 @@ pub(super) fn collect_diagnostics(
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
-        checker.prime_boxed_types();
+        let prime_stats = checker.prime_boxed_types_with_progress(|phase| {
+            if let Some(phase) = phase.strip_suffix(":start") {
+                let phase = format!("prime_boxed_types::{phase}");
+                report_progress_start(&phase);
+            }
+        });
+        if extended_progress_enabled {
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(
+                    "prime_boxed_types::register_function_def_ids_early",
+                    prime_stats.register_function_def_ids_early,
+                )
+            );
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(
+                    "prime_boxed_types::register_boxed_types",
+                    prime_stats.register_boxed_types,
+                )
+            );
+        }
+        report_progress("prime_boxed_types", phase_start);
     }
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
@@ -381,21 +503,39 @@ pub(super) fn collect_diagnostics(
     let mut work_queue: VecDeque<usize> = VecDeque::new();
     let mut checked_files: FxHashSet<usize> = FxHashSet::default();
 
-    // Mark all files as used for cache cleanup
-    for (idx, file) in program.files.iter().enumerate() {
-        let file_path = PathBuf::from(&file.file_name);
-        used_paths.insert(file_path.clone());
+    {
+        let phase_start = Instant::now();
+        report_progress_start("build_work_queue");
+        // Mark all files as used for cache cleanup
+        for (idx, file) in program.files.iter().enumerate() {
+            let file_path = PathBuf::from(&file.file_name);
+            used_paths.insert(file_path.clone());
 
-        // Check if file has cached type information
-        // If no cache or cache miss, file needs to be checked
-        let needs_check = cache
-            .as_deref()
-            .is_none_or(|c| !c.type_caches.contains_key(&file_path)); // No cache at all -> check everything
+            // Check if file has cached type information
+            // If no cache or cache miss, file needs to be checked
+            let needs_check = cache
+                .as_deref()
+                .is_none_or(|c| !c.type_caches.contains_key(&file_path)); // No cache at all -> check everything
 
-        if needs_check {
-            work_queue.push_back(idx);
-            checked_files.insert(idx);
+            if needs_check {
+                work_queue.push_back(idx);
+                checked_files.insert(idx);
+            }
         }
+        report_progress("build_work_queue", phase_start);
+    }
+    if extended_progress_enabled {
+        let (type_cache_entries, bind_cache_entries) = cache.as_deref().map_or((0, 0), |cache| {
+            (cache.type_caches.len(), cache.bind_cache.len())
+        });
+        eprintln!(
+            "{}",
+            format_extended_diagnostics_collect_cache_state(
+                type_cache_entries,
+                bind_cache_entries,
+                use_incremental_check_path,
+            )
+        );
     }
 
     // --- FILE CHECKING ---
@@ -406,41 +546,11 @@ pub(super) fn collect_diagnostics(
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
-    if cache.is_none() {
+    if !use_incremental_check_path {
+        report_progress_start("parallel_check_path");
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
-
-        // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
-        let per_file_binders: Vec<BinderState> = {
-            let _prep_span = tracing::info_span!("prepare_binders").entered();
-            work_queue
-                .iter()
-                .map(|&file_idx| {
-                    let file = &program.files[file_idx];
-                    let mut binder = create_binder_from_bound_file(file, program, file_idx);
-                    let module_specifiers =
-                        collect_module_specifiers(&file.arena, file.source_file);
-
-                    // Bridge raw module specifiers to resolved export tables using
-                    // the pre-computed resolved_module_paths map (no FS calls needed).
-                    for (specifier, _, _) in &module_specifiers {
-                        if let Some(&target_idx) =
-                            resolved_module_paths.get(&(file_idx, specifier.clone()))
-                        {
-                            propagate_module_export_maps(
-                                &mut binder,
-                                specifier,
-                                target_idx,
-                                program,
-                                &resolved_module_paths,
-                            );
-                        }
-                    }
-                    binder
-                })
-                .collect()
-        };
 
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
@@ -451,23 +561,84 @@ pub(super) fn collect_diagnostics(
         let lib_ctx_for_parallel = lib_contexts.to_vec();
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
+        let started_parallel_source_files = Arc::new(AtomicUsize::new(0));
 
         // Check all files in parallel — each file gets its own CheckerState.
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
-            use rayon::iter::{
-                IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-                ParallelIterator,
-            };
-            if work_items.len() <= 1 {
+            let phase_start = Instant::now();
+            report_progress_start("parallel_check_files");
+            use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+            let results = if work_items.len() <= 1 {
                 work_items
                     .iter()
-                    .zip(per_file_binders)
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let file = &program.files[file_idx];
+                        let source_file_rank = if extended_progress_enabled
+                            && !is_declaration_file(&file.file_name)
+                        {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
+                        let trace_parallel_file_rank = source_file_rank.filter(|rank| {
+                            *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT
+                        });
+                        let file_total_start = Instant::now();
+                        let prepare_binder_start = Instant::now();
+                        let prepared = if let Some(rank) = trace_parallel_file_rank {
+                            let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "create_binder",
+                            );
+                            let collect_module_specifiers_phase =
+                                format_extended_diagnostics_ranked_phase(
+                                    "prepare_binders",
+                                    rank,
+                                    "collect_module_specifiers",
+                                );
+                            let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "bridge_modules",
+                            );
+                            report_progress_start(&create_binder_phase);
+                            let (prepared, stats) = prepare_binder_for_check_with_stats(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            );
+                            report_elapsed(&create_binder_phase, stats.create_binder);
+                            report_progress_start(&collect_module_specifiers_phase);
+                            report_elapsed(
+                                &collect_module_specifiers_phase,
+                                stats.collect_module_specifiers,
+                            );
+                            report_progress_start(&bridge_modules_phase);
+                            report_elapsed(&bridge_modules_phase, stats.bridge_modules);
+                            prepared
+                        } else {
+                            prepare_binder_for_check(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            )
+                        };
+                        let prepare_binder_elapsed = prepare_binder_start.elapsed();
                         let context = CheckFileForParallelContext {
                             file_idx,
-                            binder,
+                            binder: prepared.binder,
+                            module_specifiers: prepared.module_specifiers,
+                            trace_parallel_file_rank,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -486,18 +657,85 @@ pub(super) fn collect_diagnostics(
                             skip_lib_check,
                             has_deprecation_diagnostics,
                         };
-                        check_file_for_parallel(context)
+                        let result = check_file_for_parallel(context);
+                        report_parallel_file_timing(
+                            &file.file_name,
+                            prepare_binder_elapsed,
+                            file_total_start.elapsed(),
+                        );
+                        result
                     })
                     .collect()
             } else {
                 tsz::parallel::ensure_rayon_global_pool();
                 work_items
                     .par_iter()
-                    .zip(per_file_binders.into_par_iter())
-                    .map(|(&file_idx, binder)| {
+                    .map(|&file_idx| {
+                        let file = &program.files[file_idx];
+                        let source_file_rank = if extended_progress_enabled
+                            && !is_declaration_file(&file.file_name)
+                        {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
+                        let trace_parallel_file_rank = source_file_rank.filter(|rank| {
+                            *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT
+                        });
+                        let file_total_start = Instant::now();
+                        let prepare_binder_start = Instant::now();
+                        let prepared = if let Some(rank) = trace_parallel_file_rank {
+                            let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "create_binder",
+                            );
+                            let collect_module_specifiers_phase =
+                                format_extended_diagnostics_ranked_phase(
+                                    "prepare_binders",
+                                    rank,
+                                    "collect_module_specifiers",
+                                );
+                            let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "bridge_modules",
+                            );
+                            report_progress_start(&create_binder_phase);
+                            let (prepared, stats) = prepare_binder_for_check_with_stats(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            );
+                            report_elapsed(&create_binder_phase, stats.create_binder);
+                            report_progress_start(&collect_module_specifiers_phase);
+                            report_elapsed(
+                                &collect_module_specifiers_phase,
+                                stats.collect_module_specifiers,
+                            );
+                            report_progress_start(&bridge_modules_phase);
+                            report_elapsed(&bridge_modules_phase, stats.bridge_modules);
+                            prepared
+                        } else {
+                            prepare_binder_for_check(
+                                file,
+                                program,
+                                file_idx,
+                                &binder_shared_data,
+                                &resolved_module_paths,
+                            )
+                        };
+                        let prepare_binder_elapsed = prepare_binder_start.elapsed();
                         let context = CheckFileForParallelContext {
                             file_idx,
-                            binder,
+                            binder: prepared.binder,
+                            module_specifiers: prepared.module_specifiers,
+                            trace_parallel_file_rank,
                             program,
                             query_cache: &query_cache,
                             compiler_options: &compiler_options,
@@ -516,41 +754,119 @@ pub(super) fn collect_diagnostics(
                             skip_lib_check,
                             has_deprecation_diagnostics,
                         };
-                        check_file_for_parallel(context)
+                        let result = check_file_for_parallel(context);
+                        report_parallel_file_timing(
+                            &file.file_name,
+                            prepare_binder_elapsed,
+                            file_total_start.elapsed(),
+                        );
+                        result
                     })
                     .collect()
-            }
+            };
+            report_progress("parallel_check_files", phase_start);
+            results
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = work_items
-            .iter()
-            .zip(per_file_binders.into_iter())
-            .map(|(&file_idx, binder)| {
-                let context = CheckFileForParallelContext {
-                    file_idx,
-                    binder,
-                    program,
-                    query_cache: &query_cache,
-                    compiler_options: &compiler_options,
-                    lib_contexts: &lib_ctx_for_parallel,
-                    all_arenas: &all_arenas,
-                    all_binders: &all_binders,
-                    resolved_module_paths: &resolved_module_paths,
-                    resolved_module_specifiers: &resolved_module_specifiers,
-                    resolved_module_errors: &resolved_module_errors,
-                    is_external_module_by_file: &is_external_module_by_file,
-                    file_is_esm_map: &file_is_esm_map,
-                    shared_lib_cache: Arc::clone(&shared_lib_cache),
-                    no_check,
-                    check_js,
-                    explicit_check_js_false,
-                    skip_lib_check,
-                    has_deprecation_diagnostics,
-                };
-                check_file_for_parallel(context)
-            })
-            .collect();
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
+            let phase_start = Instant::now();
+            let results = work_items
+                .iter()
+                .map(|&file_idx| {
+                    let file = &program.files[file_idx];
+                    let source_file_rank =
+                        if extended_progress_enabled && !is_declaration_file(&file.file_name) {
+                            let start_rank =
+                                started_parallel_source_files.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_parallel_file_start(start_rank, &file.file_name);
+                            Some(start_rank)
+                        } else {
+                            None
+                        };
+                    let trace_parallel_file_rank = source_file_rank
+                        .filter(|rank| *rank <= EXTENDED_DIAGNOSTICS_DETAILED_PARALLEL_FILE_LIMIT);
+                    let file_total_start = Instant::now();
+                    let prepare_binder_start = Instant::now();
+                    let prepared = if let Some(rank) = trace_parallel_file_rank {
+                        let create_binder_phase = format_extended_diagnostics_ranked_phase(
+                            "prepare_binders",
+                            rank,
+                            "create_binder",
+                        );
+                        let collect_module_specifiers_phase =
+                            format_extended_diagnostics_ranked_phase(
+                                "prepare_binders",
+                                rank,
+                                "collect_module_specifiers",
+                            );
+                        let bridge_modules_phase = format_extended_diagnostics_ranked_phase(
+                            "prepare_binders",
+                            rank,
+                            "bridge_modules",
+                        );
+                        report_progress_start(&create_binder_phase);
+                        let (prepared, stats) = prepare_binder_for_check_with_stats(
+                            file,
+                            program,
+                            file_idx,
+                            &binder_shared_data,
+                            &resolved_module_paths,
+                        );
+                        report_elapsed(&create_binder_phase, stats.create_binder);
+                        report_progress_start(&collect_module_specifiers_phase);
+                        report_elapsed(
+                            &collect_module_specifiers_phase,
+                            stats.collect_module_specifiers,
+                        );
+                        report_progress_start(&bridge_modules_phase);
+                        report_elapsed(&bridge_modules_phase, stats.bridge_modules);
+                        prepared
+                    } else {
+                        prepare_binder_for_check(
+                            file,
+                            program,
+                            file_idx,
+                            &binder_shared_data,
+                            &resolved_module_paths,
+                        )
+                    };
+                    let prepare_binder_elapsed = prepare_binder_start.elapsed();
+                    let context = CheckFileForParallelContext {
+                        file_idx,
+                        binder: prepared.binder,
+                        module_specifiers: prepared.module_specifiers,
+                        trace_parallel_file_rank,
+                        program,
+                        query_cache: &query_cache,
+                        compiler_options: &compiler_options,
+                        lib_contexts: &lib_ctx_for_parallel,
+                        all_arenas: &all_arenas,
+                        all_binders: &all_binders,
+                        resolved_module_paths: &resolved_module_paths,
+                        resolved_module_specifiers: &resolved_module_specifiers,
+                        resolved_module_errors: &resolved_module_errors,
+                        is_external_module_by_file: &is_external_module_by_file,
+                        file_is_esm_map: &file_is_esm_map,
+                        shared_lib_cache: Arc::clone(&shared_lib_cache),
+                        no_check,
+                        check_js,
+                        explicit_check_js_false,
+                        skip_lib_check,
+                        has_deprecation_diagnostics,
+                    };
+                    let result = check_file_for_parallel(context);
+                    report_parallel_file_timing(
+                        &file.file_name,
+                        prepare_binder_elapsed,
+                        file_total_start.elapsed(),
+                    );
+                    result
+                })
+                .collect();
+            report_progress("parallel_check_files", phase_start);
+            results
+        };
 
         {
             let mut tc_out = type_cache_output.lock().unwrap();
@@ -563,37 +879,49 @@ pub(super) fn collect_diagnostics(
             }
         }
     } else {
+        report_progress_start("incremental_check_path");
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
 
         // Process files in the work queue
+        let mut incremental_iteration = 0usize;
         while let Some(file_idx) = work_queue.pop_front() {
+            incremental_iteration += 1;
+            let trace_first_incremental_file =
+                extended_progress_enabled && incremental_iteration == 1;
             let file = &program.files[file_idx];
             let file_path = PathBuf::from(&file.file_name);
 
-            let mut binder = create_binder_from_bound_file(file, program, file_idx);
-            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-
-            // Bridge multi-file module resolution for ES module imports.
-            for (specifier, _, _) in &module_specifiers {
-                if let Some(resolved) = resolve_module_specifier(
-                    Path::new(&file.file_name),
-                    specifier,
-                    options,
-                    base_dir,
-                    &mut resolution_cache,
-                    &program_paths,
-                ) {
-                    let canonical = canonicalize_or_owned(&resolved);
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                        propagate_module_export_maps(
-                            &mut binder,
-                            specifier,
-                            target_idx,
-                            program,
-                            &resolved_module_paths,
-                        );
-                    }
-                }
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::create_binder");
+            }
+            let (prepared_binder, prepare_stats) = prepare_binder_for_check_with_stats(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+                &resolved_module_paths,
+            );
+            let binder = prepared_binder.binder;
+            let module_specifiers = prepared_binder.module_specifiers;
+            if trace_first_incremental_file {
+                report_elapsed(
+                    "incremental_first_file::create_binder",
+                    prepare_stats.create_binder,
+                );
+                report_progress_start("incremental_first_file::collect_module_specifiers");
+                report_elapsed(
+                    "incremental_first_file::collect_module_specifiers",
+                    prepare_stats.collect_module_specifiers,
+                );
+                report_progress_start("incremental_first_file::bridge_modules");
+                report_elapsed(
+                    "incremental_first_file::bridge_modules",
+                    prepare_stats.bridge_modules,
+                );
+            }
+            let create_checker_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::create_checker");
             }
             let cached = cache
                 .as_deref_mut()
@@ -634,8 +962,18 @@ pub(super) fn collect_diagnostics(
             checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
             checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
             checker.ctx.file_is_esm_map = Some(Arc::clone(&file_is_esm_map));
+            if trace_first_incremental_file {
+                report_progress(
+                    "incremental_first_file::create_checker",
+                    create_checker_start,
+                );
+            }
 
             // Build resolved_modules set for backward compatibility
+            let build_resolved_modules_start = Instant::now();
+            if trace_first_incremental_file {
+                report_progress_start("incremental_first_file::build_resolved_modules");
+            }
             let mut resolved_modules = rustc_hash::FxHashSet::default();
             for (specifier, _, _) in &module_specifiers {
                 if resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
@@ -659,6 +997,12 @@ pub(super) fn collect_diagnostics(
                 }
             }
             checker.ctx.resolved_modules = Some(resolved_modules);
+            if trace_first_incremental_file {
+                report_progress(
+                    "incremental_first_file::build_resolved_modules",
+                    build_resolved_modules_start,
+                );
+            }
             checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
             // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
             // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
@@ -705,9 +1049,32 @@ pub(super) fn collect_diagnostics(
             // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
             // even for JS files without checkJs. Only type-level errors are gated by checkJs.
             if !options.no_check {
+                if trace_first_incremental_file {
+                    report_progress_start("incremental_first_file::check_source_file");
+                }
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
-                checker.check_source_file(file.source_file);
+                if trace_first_incremental_file {
+                    let source_file_stats =
+                        checker.check_source_file_with_progress(file.source_file, |phase| {
+                            if let Some(phase) = phase.strip_suffix(":start") {
+                                let phase_name =
+                                    format!("incremental_first_file::check_source_file::{phase}");
+                                report_progress_start(&phase_name);
+                            }
+                        });
+                    report_elapsed(
+                        "incremental_first_file::check_source_file",
+                        source_file_stats.total,
+                    );
+                    report_check_source_file_stats(
+                        "incremental_first_file::check_source_file",
+                        &source_file_stats,
+                        |phase, elapsed| report_elapsed(phase, elapsed),
+                    );
+                } else {
+                    checker.check_source_file(file.source_file);
+                }
 
                 // Filter diagnostics for JS files without checkJs
                 let is_js = is_js_file(Path::new(&file.file_name));
@@ -839,7 +1206,167 @@ pub(super) fn collect_diagnostics(
     diagnostics
 }
 
-fn propagate_module_export_maps(
+fn format_extended_diagnostics_collect_progress(phase: &str, elapsed: Duration) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::{phase}: {:.2}ms",
+        elapsed.as_secs_f64() * 1000.0
+    )
+}
+
+fn format_extended_diagnostics_ranked_phase(group: &str, rank: usize, phase: &str) -> String {
+    format!("{group}::source_file_{rank}::{phase}")
+}
+
+fn format_extended_diagnostics_parallel_file_timing(
+    file_name: &str,
+    prepare_binder: Duration,
+    total: Duration,
+) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file total={:.2}ms prepare_binder={:.2}ms check_file={:.2}ms file={file_name}",
+        total.as_secs_f64() * 1000.0,
+        prepare_binder.as_secs_f64() * 1000.0,
+        total.saturating_sub(prepare_binder).as_secs_f64() * 1000.0,
+    )
+}
+
+fn format_extended_diagnostics_parallel_file_start(rank: usize, file_name: &str) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file_start rank={rank} file={file_name}"
+    )
+}
+
+fn format_extended_diagnostics_collect_phase_start(phase: &str) -> String {
+    format!("[extendedDiagnostics] collect_diagnostics::{phase}: start")
+}
+
+fn format_extended_diagnostics_collect_cache_state(
+    type_cache_entries: usize,
+    bind_cache_entries: usize,
+    use_incremental_check_path: bool,
+) -> String {
+    format!(
+        "[extendedDiagnostics] collect_diagnostics::cache_state type_cache_entries={type_cache_entries} bind_cache_entries={bind_cache_entries} incremental_path={use_incremental_check_path}"
+    )
+}
+
+fn report_check_source_file_stats(
+    base_phase: &str,
+    stats: &tsz::checker::state::CheckSourceFileStats,
+    mut report: impl FnMut(&str, Duration),
+) {
+    for (phase, elapsed) in [
+        (
+            "resolve_compiler_options_from_source",
+            stats.resolve_compiler_options_from_source,
+        ),
+        (
+            "register_function_def_ids_early",
+            stats.register_function_def_ids_early,
+        ),
+        ("build_type_environment", stats.build_type_environment),
+        ("register_boxed_types", stats.register_boxed_types),
+        (
+            "check_top_level_statements",
+            stats.check_top_level_statements,
+        ),
+        (
+            "check_reserved_await_identifier_in_module",
+            stats.check_reserved_await_identifier_in_module,
+        ),
+        (
+            "check_function_implementations",
+            stats.check_function_implementations,
+        ),
+        ("check_export_assignment", stats.check_export_assignment),
+        (
+            "check_circular_import_aliases",
+            stats.check_circular_import_aliases,
+        ),
+        (
+            "check_module_none_statements",
+            stats.check_module_none_statements,
+        ),
+        (
+            "check_duplicate_identifiers",
+            stats.check_duplicate_identifiers,
+        ),
+        (
+            "check_constructor_parameter_property_conflicts",
+            stats.check_constructor_parameter_property_conflicts,
+        ),
+        (
+            "check_built_in_global_identifier_conflicts",
+            stats.check_built_in_global_identifier_conflicts,
+        ),
+        (
+            "check_missing_global_types",
+            stats.check_missing_global_types,
+        ),
+        (
+            "check_triple_slash_references",
+            stats.check_triple_slash_references,
+        ),
+        ("check_amd_module_names", stats.check_amd_module_names),
+        ("check_unused_declarations", stats.check_unused_declarations),
+        (
+            "check_js_grammar_statements",
+            stats.check_js_grammar_statements,
+        ),
+    ] {
+        if elapsed.is_zero() {
+            continue;
+        }
+        let phase_name = format!("{base_phase}::{phase}");
+        report(&phase_name, elapsed);
+    }
+    for statement_timing in &stats.traced_top_level_statement_timings {
+        let phase_name = format!(
+            "{base_phase}::statement_{}::kind_{}",
+            statement_timing.position, statement_timing.kind
+        );
+        report(&phase_name, statement_timing.elapsed);
+    }
+}
+
+fn collect_no_check_file_diagnostics(
+    program: &MergedProgram,
+    resolved_module_errors: &FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file) in program.files.iter().enumerate() {
+        diagnostics.extend(
+            file.parse_diagnostics
+                .iter()
+                .map(|d| parse_diagnostic_to_checker(&file.file_name, d)),
+        );
+
+        for (specifier, specifier_node, _) in
+            collect_module_specifiers(&file.arena, file.source_file)
+        {
+            let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone())) else {
+                continue;
+            };
+            let (start, length) = file
+                .arena
+                .get(specifier_node)
+                .map(|node| (node.pos, node.end.saturating_sub(node.pos)))
+                .unwrap_or((0, 0));
+            diagnostics.push(Diagnostic::error(
+                file.file_name.clone(),
+                start,
+                length,
+                error.message.clone(),
+                error.code,
+            ));
+        }
+    }
+
+    diagnostics
+}
+
+pub(super) fn propagate_module_export_maps(
     binder: &mut BinderState,
     specifier: &str,
     target_idx: usize,
@@ -914,6 +1441,8 @@ fn propagate_module_export_maps(
 pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
+    module_specifiers: Vec<CollectedModuleSpecifier>,
+    trace_parallel_file_rank: Option<usize>,
     program: &'a MergedProgram,
     query_cache: &'a QueryCache<'a>,
     compiler_options: &'a tsz_common::CheckerOptions,
@@ -949,6 +1478,8 @@ pub(super) fn check_file_for_parallel<'a>(
     let CheckFileForParallelContext {
         file_idx,
         binder,
+        module_specifiers,
+        trace_parallel_file_rank,
         program,
         query_cache,
         compiler_options,
@@ -974,9 +1505,32 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
-    let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+    let parallel_trace_prefix =
+        trace_parallel_file_rank.map(|rank| format!("parallel_check_files::source_file_{rank}"));
+    let should_run_hotspot_pretrace = trace_parallel_file_rank
+        .is_some_and(|rank| rank >= EXTENDED_DIAGNOSTICS_HOTSPOT_PRETRACE_START_RANK);
+    let report_parallel_start = |phase: &str| {
+        if let Some(prefix) = parallel_trace_prefix.as_deref() {
+            let phase_name = format!("{prefix}::{phase}");
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_phase_start(&phase_name)
+            );
+        }
+    };
+    let report_parallel_elapsed = |phase: &str, elapsed: Duration| {
+        if let Some(prefix) = parallel_trace_prefix.as_deref() {
+            let phase_name = format!("{prefix}::{phase}");
+            eprintln!(
+                "{}",
+                format_extended_diagnostics_collect_progress(&phase_name, elapsed)
+            );
+        }
+    };
 
     // Build resolved_modules from the pre-computed resolved module maps
+    let resolved_modules_start = Instant::now();
+    report_parallel_start("build_resolved_modules");
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
         .filter(|(specifier, _, _)| {
@@ -985,7 +1539,10 @@ pub(super) fn check_file_for_parallel<'a>(
         })
         .map(|(specifier, _, _)| specifier.clone())
         .collect();
+    report_parallel_elapsed("build_resolved_modules", resolved_modules_start.elapsed());
 
+    let create_checker_start = Instant::now();
+    report_parallel_start("create_checker");
     let mut checker = CheckerState::with_options(
         &file.arena,
         &binder,
@@ -993,52 +1550,60 @@ pub(super) fn check_file_for_parallel<'a>(
         file.file_name.clone(),
         compiler_options,
     );
-    checker.ctx.report_unresolved_imports = true;
-    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-    checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
+    report_parallel_elapsed("create_checker", create_checker_start.elapsed());
 
-    if !lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-    }
+    let configure_context_start = Instant::now();
+    report_parallel_start("configure_context");
+    let configure_checker_context = |checker: &mut CheckerState<'_>| {
+        checker.ctx.report_unresolved_imports = true;
+        checker.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+        checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
 
-    checker.ctx.set_all_arenas(Arc::clone(all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(all_binders));
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::clone(resolved_module_paths));
-    checker
-        .ctx
-        .set_resolved_module_errors(Arc::clone(resolved_module_errors));
-    checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
-    checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
-    checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
-    checker.ctx.resolved_modules = Some(resolved_modules);
-    checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
-    // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
-    // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
-    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
-    checker.ctx.has_syntax_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| d.code != 1185 && d.code != 1009);
-    checker.ctx.syntax_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| d.code != 1185 && d.code != 1009)
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.has_real_syntax_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_real_syntax_error(d.code));
-    checker.ctx.real_syntax_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| is_real_syntax_error(d.code))
-        .map(|d| d.start)
-        .collect();
+        if !lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        }
+
+        checker.ctx.set_all_arenas(Arc::clone(all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(all_binders));
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(resolved_module_paths));
+        checker
+            .ctx
+            .set_resolved_module_errors(Arc::clone(resolved_module_errors));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
+        checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
+        checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
+        checker.ctx.resolved_modules = Some(resolved_modules.clone());
+        checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+        // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
+        // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
+        // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+        checker.ctx.has_syntax_parse_errors = file
+            .parse_diagnostics
+            .iter()
+            .any(|d| d.code != 1185 && d.code != 1009);
+        checker.ctx.syntax_parse_error_positions = file
+            .parse_diagnostics
+            .iter()
+            .filter(|d| d.code != 1185 && d.code != 1009)
+            .map(|d| d.start)
+            .collect();
+        checker.ctx.has_real_syntax_errors = file
+            .parse_diagnostics
+            .iter()
+            .any(|d| is_real_syntax_error(d.code));
+        checker.ctx.real_syntax_error_positions = file
+            .parse_diagnostics
+            .iter()
+            .filter(|d| is_real_syntax_error(d.code))
+            .map(|d| d.start)
+            .collect();
+    };
+    configure_checker_context(&mut checker);
+    report_parallel_elapsed("configure_context", configure_context_start.elapsed());
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
@@ -1051,7 +1616,64 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
-        checker.check_source_file(file.source_file);
+        if should_run_hotspot_pretrace {
+            let hotspot_trace_start = Instant::now();
+            report_parallel_start("trace_exported_variable_hotspots");
+            let hotspot_query_cache = QueryCache::new(&program.type_interner);
+            let mut hotspot_checker = CheckerState::with_options(
+                &file.arena,
+                &binder,
+                &hotspot_query_cache,
+                file.file_name.clone(),
+                compiler_options,
+            );
+            configure_checker_context(&mut hotspot_checker);
+            hotspot_checker.trace_exported_variable_hotspots_with_progress(
+                file.source_file,
+                |phase| {
+                    if let Some(phase) = phase.strip_suffix(":start") {
+                        let phase_name = format!("trace_exported_variable_hotspots::{phase}");
+                        report_parallel_start(&phase_name);
+                    } else if let Some((phase, elapsed_ms)) = phase.split_once(":slow_ms=")
+                        && let Ok(elapsed_ms) = elapsed_ms.parse::<f64>()
+                    {
+                        let phase_name = format!("trace_exported_variable_hotspots::{phase}");
+                        report_parallel_elapsed(
+                            &phase_name,
+                            Duration::from_secs_f64(elapsed_ms / 1000.0),
+                        );
+                    }
+                },
+            );
+            report_parallel_elapsed(
+                "trace_exported_variable_hotspots",
+                hotspot_trace_start.elapsed(),
+            );
+        }
+
+        report_parallel_start("check_source_file");
+        if parallel_trace_prefix.is_some() {
+            let source_file_stats =
+                checker.check_source_file_with_progress(file.source_file, |phase| {
+                    if let Some(phase) = phase.strip_suffix(":start") {
+                        let phase_name = format!("check_source_file::{phase}");
+                        report_parallel_start(&phase_name);
+                    }
+                });
+            report_parallel_elapsed("check_source_file", source_file_stats.total);
+            let base_phase = parallel_trace_prefix
+                .as_ref()
+                .map(|prefix| format!("{prefix}::check_source_file"))
+                .expect("checked above");
+            report_check_source_file_stats(&base_phase, &source_file_stats, |phase, elapsed| {
+                eprintln!(
+                    "{}",
+                    format_extended_diagnostics_collect_progress(phase, elapsed)
+                );
+            });
+        } else {
+            checker.check_source_file(file.source_file);
+        }
 
         // Filter diagnostics for JS files without checkJs
         let is_js = is_js_file(Path::new(&file.file_name));
@@ -1116,13 +1738,17 @@ pub(super) fn check_file_for_parallel<'a>(
         );
     }
 
+    let extract_cache_start = Instant::now();
+    report_parallel_start("extract_cache");
     let type_cache = checker.extract_cache();
+    report_parallel_elapsed("extract_cache", extract_cache_start.elapsed());
     (file_diagnostics, Some(type_cache))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_is_declaration_file() {
@@ -1211,5 +1837,102 @@ let __: B = new B();"#
             .resolve_import_with_reexports_type_only("./c", "A")
             .expect("expected A to resolve via wildcard chain");
         assert!(exports_via_c.1, "A should be considered type-only via ./b");
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_progress() {
+        let line = format_extended_diagnostics_collect_progress(
+            "build_resolved_module_maps",
+            Duration::from_millis(875),
+        );
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::build_resolved_module_maps: 875.00ms"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_parallel_file_timing() {
+        let line = format_extended_diagnostics_parallel_file_timing(
+            "/tmp/index.ts",
+            Duration::from_millis(125),
+            Duration::from_millis(875),
+        );
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file total=875.00ms prepare_binder=125.00ms check_file=750.00ms file=/tmp/index.ts"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_ranked_phase() {
+        let line = format_extended_diagnostics_ranked_phase(
+            "parallel_check_files",
+            2,
+            "check_source_file",
+        );
+        assert_eq!(
+            line,
+            "parallel_check_files::source_file_2::check_source_file"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_parallel_file_start() {
+        let line = format_extended_diagnostics_parallel_file_start(2, "/tmp/index.ts");
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::parallel_check_files::file_start rank=2 file=/tmp/index.ts"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_phase_start() {
+        let line = format_extended_diagnostics_collect_phase_start("prime_boxed_types");
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::prime_boxed_types: start"
+        );
+    }
+
+    #[test]
+    fn test_format_extended_diagnostics_collect_cache_state() {
+        let line = format_extended_diagnostics_collect_cache_state(12, 3, true);
+        assert_eq!(
+            line,
+            "[extendedDiagnostics] collect_diagnostics::cache_state type_cache_entries=12 bind_cache_entries=3 incremental_path=true"
+        );
+    }
+
+    #[test]
+    fn test_empty_cache_uses_parallel_check_path() {
+        let cache = CompilationCache::default();
+        let use_incremental_check_path =
+            Some(&cache).is_some_and(|cache| !cache.type_caches.is_empty());
+        assert!(!use_incremental_check_path);
+    }
+
+    #[test]
+    fn test_non_empty_cache_uses_incremental_check_path() {
+        let mut cache = CompilationCache::default();
+        cache.type_caches.insert(
+            PathBuf::from("a.ts"),
+            TypeCache {
+                symbol_types: FxHashMap::default(),
+                symbol_instance_types: FxHashMap::default(),
+                node_types: FxHashMap::default(),
+                symbol_dependencies: FxHashMap::default(),
+                def_to_symbol: FxHashMap::default(),
+                flow_analysis_cache: FxHashMap::default(),
+                class_instance_type_to_decl: FxHashMap::default(),
+                class_instance_type_cache: FxHashMap::default(),
+                class_constructor_type_cache: FxHashMap::default(),
+                type_only_nodes: FxHashSet::default(),
+                namespace_module_names: FxHashMap::default(),
+            },
+        );
+        let use_incremental_check_path =
+            Some(&cache).is_some_and(|cache| !cache.type_caches.is_empty());
+        assert!(use_incremental_check_path);
     }
 }

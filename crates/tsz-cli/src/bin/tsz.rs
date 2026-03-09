@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::io::IsTerminal;
 use std::time::Duration;
 
@@ -1306,7 +1307,16 @@ fn find_closest_option(unknown: &str) -> Option<&'static str> {
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
+    print!("{}", format_diagnostics_report(result, elapsed, extended));
+}
+
+fn format_diagnostics_report(
+    result: &driver::CompilationResult,
+    elapsed: Duration,
+    extended: bool,
+) -> String {
     let files_count = result.files_read.len();
+    let mut report = String::new();
 
     // Count lines by file category, matching tsc's --diagnostics output
     let mut lines_of_library: u64 = 0;
@@ -1350,35 +1360,85 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         .filter(|d| d.category == DiagnosticCategory::Error)
         .count();
 
-    println!();
-    println!("Files:                         {files_count}");
-    println!("Lines of Library:              {lines_of_library}");
-    println!("Lines of Definitions:          {lines_of_definitions}");
-    println!("Lines of TypeScript:           {lines_of_typescript}");
-    println!("Lines of JavaScript:           {lines_of_javascript}");
-    println!("Lines of JSON:                 {lines_of_json}");
-    println!("Lines of Other:                {lines_of_other}");
-    println!("Errors:                        {errors}");
-    println!(
-        "Total time:                    {:.2}s",
-        elapsed.as_secs_f64()
+    report.push('\n');
+    push_diagnostics_line(&mut report, "Files:", files_count);
+    push_diagnostics_line(&mut report, "Lines of Library:", lines_of_library);
+    push_diagnostics_line(&mut report, "Lines of Definitions:", lines_of_definitions);
+    push_diagnostics_line(&mut report, "Lines of TypeScript:", lines_of_typescript);
+    push_diagnostics_line(&mut report, "Lines of JavaScript:", lines_of_javascript);
+    push_diagnostics_line(&mut report, "Lines of JSON:", lines_of_json);
+    push_diagnostics_line(&mut report, "Lines of Other:", lines_of_other);
+    push_diagnostics_line(&mut report, "Errors:", errors);
+    push_diagnostics_line(
+        &mut report,
+        "Total time:",
+        format!("{:.2}s", elapsed.as_secs_f64()),
     );
 
     if extended {
         // Use process memory info if available
         let memory_used = get_memory_usage_kb();
-        println!(
-            "Emitted files:                 {}",
-            result.emitted_files.len()
-        );
-        println!(
-            "Total diagnostics:             {}",
-            result.diagnostics.len()
-        );
+        push_diagnostics_line(&mut report, "Emitted files:", result.emitted_files.len());
+        push_diagnostics_line(&mut report, "Total diagnostics:", result.diagnostics.len());
+        if let Some(check_stats) = &result.check_stats {
+            let residency = check_stats.program_residency;
+            push_diagnostics_line(
+                &mut report,
+                "Bound file arenas:",
+                residency.bound_file_arena_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Unique retained arenas:",
+                residency.unique_arena_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Global symbols:",
+                residency.global_symbol_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "File-local symbols:",
+                residency.file_local_symbol_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Module export symbols:",
+                residency.module_export_symbol_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Cross-file symbol arenas:",
+                residency.cross_file_node_symbol_arena_count,
+            );
+            push_diagnostics_line(&mut report, "Lib symbols:", residency.lib_symbol_count);
+            push_diagnostics_line(
+                &mut report,
+                "Symbol arena entries:",
+                residency.symbol_arena_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Declaration arena buckets:",
+                residency.declaration_arena_bucket_count,
+            );
+            push_diagnostics_line(
+                &mut report,
+                "Declaration arena mappings:",
+                residency.declaration_arena_mapping_count,
+            );
+        }
         if memory_used > 0 {
-            println!("Memory used:                   {memory_used}K");
+            push_diagnostics_line(&mut report, "Memory used:", format!("{memory_used}K"));
         }
     }
+
+    report
+}
+
+fn push_diagnostics_line(report: &mut String, label: &str, value: impl std::fmt::Display) {
+    let _ = writeln!(report, "{label:<30} {value}");
 }
 
 /// Get current process memory usage in KB (Linux only, returns 0 on other platforms).

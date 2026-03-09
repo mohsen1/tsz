@@ -28,7 +28,10 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
+use crate::binder::state::{
+    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap,
+    push_unique_declaration_arena,
+};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -45,6 +48,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -779,6 +783,124 @@ pub struct MergedProgram {
     pub type_interner: TypeInterner,
 }
 
+/// Precomputed immutable inputs reused by checker-time binder creation.
+///
+/// The expensive cross-file augmentation merge is purely a function of the
+/// merged program, so we build it once and reuse it across per-file binders.
+#[derive(Debug, Clone, Default)]
+pub struct CheckerBinderSharedData {
+    /// All `declare global {}` augmentations tagged with their source arena.
+    pub merged_global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
+    /// All `declare module "x" {}` augmentations tagged with their source arena.
+    pub merged_module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+}
+
+/// High-level residency counters for `MergedProgram` state.
+///
+/// These numbers give a stable baseline for large-repo performance work without
+/// pretending to be exact heap accounting. The important question is how many
+/// arenas and declaration mappings the current pipeline retains after merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MergedProgramResidencyStats {
+    /// Number of user files in the merged program.
+    pub file_count: usize,
+    /// Number of bound-file arena handles retained directly by `program.files`.
+    pub bound_file_arena_count: usize,
+    /// Number of unique `NodeArena` allocations retained across all arena maps.
+    pub unique_arena_count: usize,
+    /// Number of entries in the symbol -> arena lookup table.
+    pub symbol_arena_count: usize,
+    /// Number of declaration -> arena buckets retained for cross-file lookup.
+    pub declaration_arena_bucket_count: usize,
+    /// Total number of declaration -> arena edges across all buckets.
+    pub declaration_arena_mapping_count: usize,
+    /// Number of symbols retained in the merged global symbol arena.
+    pub global_symbol_count: usize,
+    /// Total entries retained across per-file local symbol tables.
+    pub file_local_symbol_count: usize,
+    /// Total entries retained across all module export tables.
+    pub module_export_symbol_count: usize,
+    /// Number of arena-scoped cross-file node-symbol maps retained after merge.
+    pub cross_file_node_symbol_arena_count: usize,
+    /// Number of remapped lib symbols retained in the merged symbol space.
+    pub lib_symbol_count: usize,
+}
+
+impl MergedProgram {
+    /// Precompute shared augmentation state used by checker-time binder creation.
+    #[must_use]
+    pub fn checker_binder_shared_data(&self) -> CheckerBinderSharedData {
+        let mut shared = CheckerBinderSharedData::default();
+
+        for file in &self.files {
+            for (name, decls) in &file.global_augmentations {
+                shared
+                    .merged_global_augmentations
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(decls.iter().map(|augmentation| {
+                        crate::binder::GlobalAugmentation::with_arena(
+                            augmentation.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+
+            for (specifier, augmentations) in &file.module_augmentations {
+                shared
+                    .merged_module_augmentations
+                    .entry(specifier.clone())
+                    .or_default()
+                    .extend(augmentations.iter().map(|augmentation| {
+                        crate::binder::ModuleAugmentation::with_arena(
+                            augmentation.name.clone(),
+                            augmentation.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+        }
+
+        shared
+    }
+
+    /// Return residency-oriented counters for the current merged program.
+    #[must_use]
+    pub fn residency_stats(&self) -> MergedProgramResidencyStats {
+        let mut unique_arenas: FxHashSet<usize> = FxHashSet::default();
+
+        for file in &self.files {
+            unique_arenas.insert(Arc::as_ptr(&file.arena) as usize);
+        }
+        for arena in self.symbol_arenas.values() {
+            unique_arenas.insert(Arc::as_ptr(arena) as usize);
+        }
+        for arenas in self.declaration_arenas.values() {
+            for arena in arenas {
+                unique_arenas.insert(Arc::as_ptr(arena) as usize);
+            }
+        }
+
+        MergedProgramResidencyStats {
+            file_count: self.files.len(),
+            bound_file_arena_count: self.files.len(),
+            unique_arena_count: unique_arenas.len(),
+            symbol_arena_count: self.symbol_arenas.len(),
+            declaration_arena_bucket_count: self.declaration_arenas.len(),
+            declaration_arena_mapping_count: self
+                .declaration_arenas
+                .values()
+                .map(|arenas| arenas.len())
+                .sum(),
+            global_symbol_count: self.symbols.len(),
+            file_local_symbol_count: self.file_locals.iter().map(SymbolTable::len).sum(),
+            module_export_symbol_count: self.module_exports.values().map(SymbolTable::len).sum(),
+            cross_file_node_symbol_arena_count: self.cross_file_node_symbols.len(),
+            lib_symbol_count: self.lib_symbol_ids.len(),
+        }
+    }
+}
+
 /// Check if two symbols can be merged across multiple files.
 ///
 /// TypeScript allows merging:
@@ -1053,10 +1175,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         .entry(global_id)
                         .or_insert_with(|| Arc::clone(lib_arena));
                     for &decl in &lib_sym.declarations {
-                        declaration_arenas
-                            .entry((global_id, decl))
-                            .or_default()
-                            .push(Arc::clone(lib_arena));
+                        let target = declaration_arenas.entry((global_id, decl)).or_default();
+                        push_unique_declaration_arena(target, lib_arena);
                     }
                 }
             }
@@ -1495,7 +1615,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .entry((new_sym_id, decl_idx))
                     .or_default();
                 for arena in arenas {
-                    target.push(Arc::clone(arena));
+                    push_unique_declaration_arena(target, arena);
                 }
             }
         }
@@ -1637,10 +1757,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
             // CRITICAL: Populate declaration_arenas for user symbols
             for &decl_idx in &old_sym.declarations {
-                declaration_arenas
-                    .entry((new_id, decl_idx))
-                    .or_default()
-                    .push(Arc::clone(&result.arena));
+                let target = declaration_arenas.entry((new_id, decl_idx)).or_default();
+                push_unique_declaration_arena(target, &result.arena);
             }
 
             let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
@@ -2130,6 +2248,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
@@ -2140,7 +2259,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             let functions = collect_functions(&file.arena, file.source_file);
 
             // Create a binder state from the node_symbols
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = create_binder_from_bound_file_with_shared_data(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+            );
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
@@ -2210,11 +2334,17 @@ pub fn check_files_parallel(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     // This is thread-safe (uses RwLock internally) and shared across all file checks.
     let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let binder_shared_data = Arc::new(program.checker_binder_shared_data());
 
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = create_binder_from_bound_file_with_shared_data(
+                file,
+                program,
+                file_idx,
+                &binder_shared_data,
+            );
 
             let mut checker = CheckerState::with_options(
                 &file.arena,
@@ -2257,6 +2387,17 @@ pub fn create_binder_from_bound_file(
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
+    let shared_data = program.checker_binder_shared_data();
+    create_binder_from_bound_file_with_shared_data(file, program, file_idx, &shared_data)
+}
+
+/// Create a `BinderState` from a `BoundFile` using precomputed shared data.
+pub fn create_binder_from_bound_file_with_shared_data(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    shared_data: &CheckerBinderSharedData,
+) -> BinderState {
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
 
@@ -2274,52 +2415,6 @@ pub fn create_binder_from_bound_file(
         }
     }
 
-    // Merge module augmentations from all files
-    // When checking a file, we need access to augmentations from all other files
-    let mut merged_module_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::ModuleAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (spec, augs) in &other_file.module_augmentations {
-            merged_module_augmentations
-                .entry(spec.clone())
-                .or_default()
-                .extend(augs.iter().map(|aug| {
-                    crate::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
-    // Merge global augmentations from all files
-    // When checking a file, we need access to `declare global` augmentations from all other files.
-    // Each augmentation gets tagged with its source arena for cross-file resolution.
-    let mut merged_global_augmentations: rustc_hash::FxHashMap<
-        String,
-        Vec<crate::binder::GlobalAugmentation>,
-    > = rustc_hash::FxHashMap::default();
-
-    for other_file in &program.files {
-        for (name, decls) in &other_file.global_augmentations {
-            merged_global_augmentations
-                .entry(name.clone())
-                .or_default()
-                .extend(decls.iter().map(|aug| {
-                    // Tag each augmentation with its source file's arena
-                    // so the checker can read declaration nodes from the correct arena
-                    crate::binder::GlobalAugmentation::with_arena(
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
-        }
-    }
-
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -2328,8 +2423,8 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: merged_global_augmentations,
-            module_augmentations: merged_module_augmentations,
+            global_augmentations: shared_data.merged_global_augmentations.clone(),
+            module_augmentations: shared_data.merged_module_augmentations.clone(),
             module_exports: program.module_exports.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
@@ -2359,13 +2454,18 @@ pub fn create_binder_from_bound_file(
 /// Check function bodies with statistics
 pub fn check_functions_with_stats(program: &MergedProgram) -> (CheckResult, CheckStats) {
     let result = check_functions_parallel(program);
+    let stats = build_check_stats(program, &result);
+    (result, stats)
+}
 
-    let stats = CheckStats {
-        file_count: result.file_results.len(),
-        function_count: result.function_count,
-        diagnostic_count: result.diagnostic_count,
-    };
-
+/// Type check full source files in parallel and return residency-oriented stats.
+pub fn check_files_with_stats(
+    program: &MergedProgram,
+    checker_options: &CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> (CheckResult, CheckStats) {
+    let result = check_files_parallel(program, checker_options, lib_files);
+    let stats = build_check_stats(program, &result);
     (result, stats)
 }
 
@@ -2378,6 +2478,17 @@ pub struct CheckStats {
     pub function_count: usize,
     /// Number of diagnostics produced
     pub diagnostic_count: usize,
+    /// Residency-oriented counters for the merged program being checked.
+    pub program_residency: MergedProgramResidencyStats,
+}
+
+fn build_check_stats(program: &MergedProgram, result: &CheckResult) -> CheckStats {
+    CheckStats {
+        file_count: result.file_results.len(),
+        function_count: result.function_count,
+        diagnostic_count: result.diagnostic_count,
+        program_residency: program.residency_stats(),
+    }
 }
 
 /// Parse files and collect statistics

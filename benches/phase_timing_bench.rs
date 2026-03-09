@@ -13,13 +13,12 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
 use tsz_solver::{QueryCache, TypeInterner};
 
-/// Generate a TypeScript file with N top-level declarations.
-/// Mix of functions, classes, interfaces, type aliases — realistic variety.
-fn generate_ts_file(decl_count: usize) -> String {
+fn generate_ts_file_range(start_index: usize, decl_count: usize) -> String {
     let mut src = String::with_capacity(decl_count * 400);
     src.push_str("// Generated TypeScript file for phase timing benchmark\n\n");
 
-    for i in 0..decl_count {
+    for offset in 0..decl_count {
+        let i = start_index + offset;
         match i % 5 {
             0 => {
                 // Function with type annotations and body
@@ -123,9 +122,36 @@ const DEFAULT_CONFIG_{i}: {{ status: Status{i}; retries: number }} = {{
     src
 }
 
+/// Generate a TypeScript file with N top-level declarations.
+/// Mix of functions, classes, interfaces, type aliases — realistic variety.
+fn generate_ts_file(decl_count: usize) -> String {
+    generate_ts_file_range(0, decl_count)
+}
+
 /// Count approximate lines in generated source
 fn count_lines(s: &str) -> usize {
     s.lines().count()
+}
+
+fn generate_multi_file_repo(file_count: usize, decls_per_file: usize) -> Vec<(String, String)> {
+    (0..file_count)
+        .map(|file_idx| {
+            (
+                format!("bench/file{file_idx}.ts"),
+                generate_ts_file_range(file_idx * decls_per_file, decls_per_file),
+            )
+        })
+        .collect()
+}
+
+fn strict_checker_options() -> tsz_core::checker::context::CheckerOptions {
+    tsz_core::checker::context::CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        strict_function_types: true,
+        ..Default::default()
+    }
 }
 
 fn bench_phase_timing(c: &mut Criterion) {
@@ -259,5 +285,76 @@ fn bench_cache_reuse(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_phase_timing, bench_cache_reuse);
+fn bench_multi_file_phase_timing(c: &mut Criterion) {
+    let mut group = c.benchmark_group("multi_file_phase_timing");
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(20);
+
+    let lib_paths =
+        tsz_core::config::resolve_default_lib_files(tsz_core::emitter::ScriptTarget::ESNext)
+            .expect("default lib resolution should succeed for benchmark");
+    let lib_path_refs: Vec<&std::path::Path> =
+        lib_paths.iter().map(std::path::PathBuf::as_path).collect();
+    let lib_files = tsz_core::parallel::load_lib_files_for_binding_strict(&lib_path_refs)
+        .expect("default lib loading should succeed for benchmark");
+    let checker_options = strict_checker_options();
+
+    for file_count in [4usize, 16, 64] {
+        let files = generate_multi_file_repo(file_count, 25);
+        let prebound =
+            tsz_core::parallel::parse_and_bind_parallel_with_libs(files.clone(), &lib_files);
+        let program = tsz_core::parallel::merge_bind_results(prebound);
+        let residency = program.residency_stats();
+        let label = format!(
+            "{file_count}files_25decls_{}arenas_{}globals",
+            residency.unique_arena_count, residency.global_symbol_count
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("merge_bind_residency", &label),
+            &files,
+            |b, files| {
+                b.iter(|| {
+                    let bind_results = tsz_core::parallel::parse_and_bind_parallel_with_libs(
+                        files.clone(),
+                        &lib_files,
+                    );
+                    let program = tsz_core::parallel::merge_bind_results(bind_results);
+                    criterion::black_box(program.residency_stats());
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("check_files_with_stats", &label),
+            &files,
+            |b, files| {
+                b.iter(|| {
+                    let bind_results = tsz_core::parallel::parse_and_bind_parallel_with_libs(
+                        files.clone(),
+                        &lib_files,
+                    );
+                    let program = tsz_core::parallel::merge_bind_results(bind_results);
+                    let (_result, stats) = tsz_core::parallel::check_files_with_stats(
+                        &program,
+                        &checker_options,
+                        &lib_files,
+                    );
+                    criterion::black_box(stats.program_residency);
+                    criterion::black_box(stats.diagnostic_count);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_phase_timing,
+    bench_cache_reuse,
+    bench_multi_file_phase_timing
+);
 criterion_main!(benches);

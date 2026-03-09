@@ -708,111 +708,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
-        if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
-            if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
-                // tsc points TS1319 at the `default` keyword, not `export`
-                if let Some(default_pos) = export_decl.default_keyword_pos {
-                    self.error_at_position(
-                        default_pos,
-                        7, // length of "default"
-                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    );
-                } else {
-                    self.error_at_node(
-                        export_idx,
-                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    );
-                }
-                // tsc does not further resolve the exported expression when
-                // the export default is invalid in a namespace context.
-                return;
-            }
-
-            // TS1194: `export { ... }` / `export ... from` forms are not valid inside
-            // non-ambient namespaces. Ambient namespaces (`declare namespace`) allow
-            // these re-export forms.
-            let is_reexport_syntax = export_decl.module_specifier.is_some()
-                || self
-                    .ctx
-                    .arena
-                    .get(export_decl.export_clause)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
-            let is_ambient =
-                self.ctx.is_declaration_file() || self.ctx.arena.is_in_ambient_context(export_idx);
-            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) && !is_ambient
-            {
-                let report_idx = if export_decl.module_specifier.is_some() {
-                    export_decl.module_specifier
-                } else {
-                    export_idx
-                };
-                self.error_at_node(
-                    report_idx,
-                    crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
-                    crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
-                );
-            }
-
-            // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(export_decl.attributes);
-
-            // TS2322: Check export attribute values against global ImportAttributes interface
-            self.check_import_attributes_assignability(export_decl.attributes);
-
-            // Check module specifier for unresolved modules (TS2792)
-            if export_decl.module_specifier.is_some() {
-                self.check_export_module_specifier(export_idx);
-            }
-
-            // Check the wrapped declaration
-            if export_decl.export_clause.is_some() {
-                let clause_idx = export_decl.export_clause;
-                let mut expected_type = None;
-                let mut prev_context = None;
-                if export_decl.is_default_export {
-                    expected_type = self.jsdoc_type_annotation_for_node(export_idx);
-                    if let Some(et) = expected_type {
-                        prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = Some(et);
-                    }
-                }
-
-                self.check_statement(clause_idx);
-
-                if let Some(et) = expected_type {
-                    let actual_type = self.get_type_of_node(clause_idx);
-                    self.ctx.contextual_type = prev_context;
-                    self.check_assignable_or_report(actual_type, et, clause_idx);
-                    if let Some(expr_node) = self.ctx.arena.get(clause_idx)
-                        && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    {
-                        self.check_object_literal_excess_properties(actual_type, et, clause_idx);
-                    }
-                }
-
-                if self
-                    .ctx
-                    .arena
-                    .get(clause_idx)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
-                {
-                    // TS2207: Check for specifier-level `type` modifier when
-                    // `export type { ... }` is used at the statement level.
-                    if export_decl.is_type_only {
-                        self.check_type_modifier_on_type_only_export(clause_idx);
-                    }
-
-                    if export_decl.module_specifier.is_none()
-                        && (!self.is_inside_namespace_declaration(export_idx)
-                            || self.is_inside_global_augmentation(export_idx))
-                    {
-                        self.check_local_named_exports(clause_idx);
-                    }
-                }
-            }
-        }
+        const fn noop(_: &str) {}
+        let mut noop = noop;
+        self.check_export_declaration_with_progress(export_idx, &mut noop);
     }
 
     fn check_type_alias_declaration(&mut self, type_alias_idx: NodeIndex) {
@@ -1359,6 +1257,124 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn check_export_declaration_with_progress<F: FnMut(&str)>(
+        &mut self,
+        export_idx: NodeIndex,
+        report: &mut F,
+    ) {
+        if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
+            report("namespace_checks");
+            if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
+                if let Some(default_pos) = export_decl.default_keyword_pos {
+                    self.error_at_position(
+                        default_pos,
+                        7,
+                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    );
+                } else {
+                    self.error_at_node(
+                        export_idx,
+                        crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                        crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    );
+                }
+                // tsc does not further resolve the exported expression when
+                // the export default is invalid in a namespace context.
+                return;
+            }
+
+            // TS1194: `export { ... }` / `export ... from` forms are not valid inside
+            // non-ambient namespaces. Ambient namespaces (`declare namespace`) allow
+            // these re-export forms.
+            let is_reexport_syntax = export_decl.module_specifier.is_some()
+                || self
+                    .ctx
+                    .arena
+                    .get(export_decl.export_clause)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
+            let is_ambient =
+                self.ctx.is_declaration_file() || self.ctx.arena.is_in_ambient_context(export_idx);
+            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) && !is_ambient
+            {
+                let report_idx = if export_decl.module_specifier.is_some() {
+                    export_decl.module_specifier
+                } else {
+                    export_idx
+                };
+                self.error_at_node(
+                    report_idx,
+                    crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                    crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                );
+            }
+
+            report("check_export_attributes");
+            self.check_import_attributes_module_option(export_decl.attributes);
+            self.check_import_attributes_assignability(export_decl.attributes);
+
+            if export_decl.module_specifier.is_some() {
+                report("check_export_module_specifier");
+                self.check_export_module_specifier(export_idx, report);
+            }
+
+            if export_decl.export_clause.is_some() {
+                let clause_idx = export_decl.export_clause;
+                let mut expected_type = None;
+                let mut prev_context = None;
+                if export_decl.is_default_export {
+                    expected_type = self.jsdoc_type_annotation_for_node(export_idx);
+                    if let Some(et) = expected_type {
+                        prev_context = self.ctx.contextual_type;
+                        self.ctx.contextual_type = Some(et);
+                    }
+                }
+
+                report("check_export_clause_statement");
+                let clause_kind = self.ctx.arena.get(clause_idx).map(|node| node.kind);
+                match clause_kind {
+                    Some(syntax_kind_ext::CLASS_DECLARATION) => {
+                        let mut clause_report = |phase: &str| {
+                            report(&format!("check_export_clause_statement::class::{phase}"));
+                        };
+                        self.check_class_declaration_with_progress(clause_idx, &mut clause_report);
+                    }
+                    _ => self.check_statement(clause_idx),
+                }
+
+                if let Some(et) = expected_type {
+                    let actual_type = self.get_type_of_node(clause_idx);
+                    self.ctx.contextual_type = prev_context;
+                    self.check_assignable_or_report(actual_type, et, clause_idx);
+                    if let Some(expr_node) = self.ctx.arena.get(clause_idx)
+                        && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    {
+                        self.check_object_literal_excess_properties(actual_type, et, clause_idx);
+                    }
+                }
+
+                if self
+                    .ctx
+                    .arena
+                    .get(clause_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
+                {
+                    if export_decl.is_type_only {
+                        self.check_type_modifier_on_type_only_export(clause_idx);
+                    }
+
+                    if export_decl.module_specifier.is_none()
+                        && (!self.is_inside_namespace_declaration(export_idx)
+                            || self.is_inside_global_augmentation(export_idx))
+                    {
+                        report("check_local_named_exports");
+                        self.check_local_named_exports(clause_idx);
+                    }
+                }
+            }
+        }
+    }
+
     /// TS18033: Check that computed enum member initializers are assignable to `number`.
     ///
     /// For non-const, non-ambient enums, when a member initializer doesn't evaluate

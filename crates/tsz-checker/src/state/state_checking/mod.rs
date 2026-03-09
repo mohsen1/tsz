@@ -4,6 +4,7 @@ pub(crate) mod class;
 mod core;
 pub(crate) mod directive;
 pub(crate) mod heritage;
+mod hotspot_trace;
 pub(crate) mod property;
 pub(crate) mod readonly;
 

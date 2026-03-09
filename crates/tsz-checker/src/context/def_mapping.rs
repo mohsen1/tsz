@@ -216,6 +216,16 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
+    /// Mirror a resolved lazy definition into the query database for solver-only lookups.
+    pub fn register_query_resolved_def(
+        &self,
+        def_id: DefId,
+        type_id: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.types.register_resolved_def(def_id, type_id, params);
+    }
+
     /// Get type parameters for a `DefId`.
     ///
     /// Returns None if the `DefId` has no type parameters or hasn't been registered yet.

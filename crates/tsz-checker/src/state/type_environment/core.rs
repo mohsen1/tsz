@@ -687,6 +687,52 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Imported/re-exported alias symbols are another cold-build trap for
+            // barrel files: eagerly resolving them here expands the full target
+            // export surface even when this file never uses the alias locally.
+            // The checker already resolves alias symbols on demand during actual
+            // statement checking, so reserve a stable DefId and leave the real
+            // symbol type lazy.
+            if flags & symbol_flags::ALIAS != 0 {
+                let _ = self.ctx.get_or_create_def_id(sym_id);
+                continue;
+            }
+
+            // Pure type-only declarations can stay lazy until the checker actually needs
+            // their bodies. Type references already route through Lazy(DefId) and
+            // resolve_and_insert_def_type on demand, so eagerly lowering every interface
+            // and type alias here mainly burns cold-check time on type-heavy files.
+            let is_pure_type_only = flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
+                != 0
+                && flags
+                    & (symbol_flags::CLASS
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::ENUM
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE)
+                    == 0;
+            if is_pure_type_only {
+                let _ = self.ctx.get_or_create_def_id(sym_id);
+                continue;
+            }
+
+            // Plain local class/function symbols can also stay lazy here. Their
+            // concrete types are only needed when the file actually references
+            // them during checking, and on-demand symbol resolution already
+            // knows how to populate type_env/definition_store for those cases.
+            let is_plain_local_callable_or_class =
+                flags & (symbol_flags::CLASS | symbol_flags::FUNCTION) != 0
+                    && flags
+                        & (symbol_flags::INTERFACE
+                            | symbol_flags::ENUM
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE)
+                        == 0;
+            if is_plain_local_callable_or_class {
+                let _ = self.ctx.get_or_create_def_id(sym_id);
+                continue;
+            }
+
             // Get the type for this symbol
             // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
             // returns both the type AND the correct type_params, then inserts them into

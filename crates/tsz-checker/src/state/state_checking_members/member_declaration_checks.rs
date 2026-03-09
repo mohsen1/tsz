@@ -1129,6 +1129,16 @@ impl<'a> CheckerState<'a> {
     /// Report an error with context about a related symbol.
     /// Check a class member (property, method, constructor, accessor).
     pub(crate) fn check_class_member(&mut self, member_idx: NodeIndex) {
+        const fn noop(_: &str) {}
+        let mut noop = noop;
+        self.check_class_member_with_progress(member_idx, &mut noop);
+    }
+
+    pub(crate) fn check_class_member_with_progress<F: FnMut(&str)>(
+        &mut self,
+        member_idx: NodeIndex,
+        report: &mut F,
+    ) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
         };
@@ -1181,7 +1191,7 @@ impl<'a> CheckerState<'a> {
                 self.check_property_declaration(member_idx);
             }
             syntax_kind_ext::METHOD_DECLARATION => {
-                self.check_method_declaration(member_idx);
+                self.check_method_declaration_with_progress(member_idx, report);
             }
             syntax_kind_ext::CONSTRUCTOR => {
                 self.check_constructor_declaration(member_idx);

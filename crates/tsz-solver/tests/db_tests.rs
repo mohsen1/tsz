@@ -1,6 +1,7 @@
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, RelationCacheKey,
-    RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
+    DefId, LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, RelationCacheKey,
+    RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, TypeParamInfo,
+    Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -250,6 +251,50 @@ fn query_cache_caches_object_spread_properties() {
     let props_again = db.collect_object_spread_properties(spread_type);
     assert_eq!(props_again.len(), 2);
     assert_eq!(db.object_spread_properties_cache_len(), 1);
+}
+
+#[test]
+fn query_cache_resolves_registered_application_property_with_substitution() {
+    use crate::operations::property::PropertyAccessResult;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let type_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let type_param_type = interner.type_param(type_param.clone());
+    let body = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("value"),
+        type_id: type_param_type,
+        write_type: type_param_type,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+    }]);
+    let def_id = DefId(1);
+    db.register_resolved_def(def_id, body, vec![type_param]);
+
+    let applied = interner.application(interner.lazy(def_id), vec![TypeId::NUMBER]);
+    let result = db.resolve_property_access_with_options(applied, "value", false);
+
+    assert!(
+        matches!(
+            result,
+            PropertyAccessResult::Success {
+                type_id: TypeId::NUMBER,
+                ..
+            }
+        ),
+        "expected registered application property to resolve to number, got {result:?}"
+    );
 }
 
 #[test]
