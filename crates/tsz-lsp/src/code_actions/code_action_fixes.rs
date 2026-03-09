@@ -125,13 +125,12 @@ impl CodeFixRegistry {
                 vec![("unusedIdentifier", "unusedIdentifier_delete", "Remove unused declaration", "Delete all unused declarations")]
             }
 
-            // === fixAddMissingMember (shared with spelling, addMissingAwait) ===
+            // === fixAddMissingMember (shared with addMissingAwait) ===
             // Property '{0}' does not exist on type '{1}'.
             2339 => {
                 vec![
                     ("addMissingAwait", "addMissingAwait", "Add 'await'", "Fix all expressions possibly missing 'await'"),
                     ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
-                    ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
                 ]
             }
             // Property '{0}' is missing in type '{1}' but required in type '{2}'.
