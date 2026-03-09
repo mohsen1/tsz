@@ -448,7 +448,15 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
         let has_param_decs = !ctor_param_decorators.is_empty();
-        let has_metadata = emit_metadata && !class_members.is_empty();
+        // Only emit metadata if the class actually has a constructor.
+        // `emit_metadata_for_constructor_params` only emits for constructors,
+        // so has_metadata must match to avoid trailing comma + empty line.
+        let has_ctor = class_members.iter().any(|&m_idx| {
+            self.arena
+                .get(m_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
+        });
+        let has_metadata = emit_metadata && has_ctor;
         let has_more_after_decs = has_param_decs || has_metadata;
         for (i, &dec_idx) in decorators.iter().enumerate() {
             if let Some(dec_node) = self.arena.get(dec_idx)
