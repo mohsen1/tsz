@@ -115,19 +115,16 @@ impl<'a> CheckerState<'a> {
                             // Use `idx` (the JSX element node) for the span — tsc
                             // points at `<tagName .../>`, not just the identifier.
                             // Format the type as "JSX.IntrinsicElements" (qualified name).
-                            if let Some(loc) = self.get_source_location(idx) {
-                                use crate::diagnostics::Diagnostic;
+                            {
                                 use tsz_common::diagnostics::diagnostic_codes;
                                 let message = format!(
                                     "Property '{tag}' does not exist on type 'JSX.IntrinsicElements'."
                                 );
-                                self.ctx.push_diagnostic(Diagnostic::error(
-                                    &self.ctx.file_name,
-                                    loc.start,
-                                    loc.length(),
-                                    message,
+                                self.error_at_node(
+                                    idx,
+                                    &message,
                                     diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                ));
+                                );
                             }
                             TypeId::ERROR
                         }

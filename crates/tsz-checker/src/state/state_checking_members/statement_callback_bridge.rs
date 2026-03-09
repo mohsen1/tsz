@@ -1178,24 +1178,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         if !is_comparable {
             // TS2678: Type 'X' is not comparable to type 'Y'
-            if let Some(loc) = self.get_source_location(case_expr) {
-                let case_str = self.format_type(effective_case_type);
-                let switch_str = self.format_type(effective_switch_type);
-                use crate::diagnostics::{
-                    Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
-                };
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
-                    &[&case_str, &switch_str],
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
-                ));
-            }
+            let case_str = self.format_type(effective_case_type);
+            let switch_str = self.format_type(effective_switch_type);
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                case_expr,
+                diagnostic_codes::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
+                &[&case_str, &switch_str],
+            );
         }
     }
 
