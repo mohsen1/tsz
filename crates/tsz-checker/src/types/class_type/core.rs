@@ -1274,8 +1274,7 @@ impl<'a> CheckerState<'a> {
             // Register type parameters so the TypeFormatter can display
             // generic class names (e.g., "B<T>" instead of just "B").
             if !class_type_params.is_empty() {
-                self.ctx
-                    .insert_def_type_params(def_id, class_type_params);
+                self.ctx.insert_def_type_params(def_id, class_type_params);
             }
         }
 
