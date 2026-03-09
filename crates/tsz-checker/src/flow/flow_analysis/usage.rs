@@ -65,7 +65,20 @@ impl<'a> CheckerState<'a> {
         // narrows x to `string` in the true branch, and the narrowed type means
         // x has a definite value — TS2454 should not fire in narrowed branches.
         trace!("Applying flow narrowing");
-        let narrowed_type = self.apply_flow_narrowing(idx, declared_type);
+        let mut narrowed_type = self.apply_flow_narrowing(idx, declared_type);
+        if declared_type == TypeId::ANY
+            && self.is_control_flow_typed_any_symbol(sym_id)
+            && self.is_definitely_assigned_at_with_symbol(idx, Some(sym_id))
+        {
+            let evolved_type = self.apply_flow_narrowing_with_initial_type(
+                idx,
+                declared_type,
+                Some(TypeId::NEVER),
+            );
+            if evolved_type != TypeId::NEVER && evolved_type != TypeId::ERROR {
+                narrowed_type = evolved_type;
+            }
+        }
         trace!(?narrowed_type, "flow narrowing result");
 
         // Check definite assignment for block-scoped variables without initializers.
@@ -157,6 +170,67 @@ impl<'a> CheckerState<'a> {
         };
         init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+    }
+
+    fn is_control_flow_typed_any_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let mut value_decl = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(value_decl) else {
+            return false;
+        };
+
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            value_decl = ext.parent;
+            decl_node = parent_node;
+        }
+
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || self.is_const_variable_declaration(value_decl)
+        {
+            return false;
+        }
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if var_decl.type_annotation.is_some()
+            || self
+                .ctx
+                .arena
+                .get(var_decl.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .is_none()
+        {
+            return false;
+        }
+
+        var_decl.initializer.is_none()
+            || self
+                .nullish_initializer_type(var_decl.initializer)
+                .is_some()
+    }
+
+    fn nullish_initializer_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized(idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::NullKeyword as u16 {
+            return Some(TypeId::NULL);
+        }
+        if node.kind == SyntaxKind::UndefinedKeyword as u16 {
+            return Some(TypeId::UNDEFINED);
+        }
+        self.ctx
+            .arena
+            .get_identifier(node)
+            .filter(|ident| ident.escaped_text == "undefined")
+            .map(|_| TypeId::UNDEFINED)
     }
 
     /// Emit TS2454 error for variable used before definite assignment.

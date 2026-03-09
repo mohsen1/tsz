@@ -2995,6 +2995,61 @@ func(x);
     );
 }
 
+#[test]
+fn test_control_flow_unannotated_loop_incrementor_reads_assignment_union() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f() {
+    let iNext;
+    for (let i = 0; i < 10; i = iNext) {
+        if (i == 5) {
+            iNext = "bad";
+            continue;
+        }
+        iNext = i + 1;
+    }
+}
+        "#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the incrementor read, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0].1.contains("string | number"),
+        "Expected evolved flow type in TS2322 message, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_control_flow_explicit_any_loop_incrementor_stays_any() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f() {
+    let iNext: any;
+    for (let i = 0; i < 10; i = iNext) {
+        if (i == 5) {
+            iNext = "bad";
+            continue;
+        }
+        iNext = i + 1;
+    }
+}
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Explicit any should not evolve through control flow, got: {diagnostics:#?}"
+    );
+}
+
 /// TS7034/TS7005 should fire for block-scoped `let` variables when captured by nested functions
 /// before they become definitely assigned on all paths.
 /// From: controlFlowNoImplicitAny.ts (f10)

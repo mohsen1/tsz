@@ -336,6 +336,10 @@ pub struct BinderState {
     /// When we enter a loop or switch, we push a merge label that break statements jump to.
     pub(crate) break_targets: Vec<FlowNodeId>,
 
+    /// Continue targets for control flow analysis.
+    /// When we enter a loop, we push the flow label that continue statements jump to.
+    pub(crate) continue_targets: Vec<FlowNodeId>,
+
     /// Return targets for IIFE control flow analysis.
     /// When inside an IIFE body, return statements redirect flow to this label
     /// instead of making the outer flow unreachable. This implements tsc's behavior

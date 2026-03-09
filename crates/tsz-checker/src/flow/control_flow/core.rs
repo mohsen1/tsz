@@ -618,6 +618,10 @@ impl<'a> FlowAnalyzer<'a> {
         // This prevents caching generic types across different instantiations.
         // See: https://github.com/microsoft/TypeScript/issues/9998
         let initial_has_type_params = query::contains_type_parameters(self.interner, initial_type);
+        let control_flow_typed_any_symbol = symbol_id
+            .or_else(|| self.reference_symbol(reference))
+            .is_some_and(|sid| self.is_control_flow_typed_any_symbol(sid));
+        let skip_cache_for_control_flow_typed_any = control_flow_typed_any_symbol;
 
         // Use a synthetic cache symbol for references that don't resolve to a symbol
         // (for example complex/property references). This enables cache reuse while
@@ -658,6 +662,7 @@ impl<'a> FlowAnalyzer<'a> {
             // injects entries as a recursion guard — skipping the check causes
             // stack overflow when types contain type parameters.
             if !is_switch_clause
+                && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -900,6 +905,7 @@ impl<'a> FlowAnalyzer<'a> {
                 };
 
                 if targets_reference {
+                    let is_control_flow_typed_any = control_flow_typed_any_symbol;
                     // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
                     // These types should preserve their identity across assignments to match tsc behavior
                     //
@@ -908,7 +914,9 @@ impl<'a> FlowAnalyzer<'a> {
                     //
                     // any absorbs assignments (stays any)
                     // error persists to prevent cascading errors
-                    if initial_type != TypeId::ANY && initial_type != TypeId::ERROR {
+                    if (initial_type != TypeId::ANY || is_control_flow_typed_any)
+                        && initial_type != TypeId::ERROR
+                    {
                         // Check if this is a destructuring assignment (widens literals to primitives)
                         let is_destructuring = self.is_destructuring_assignment(flow.node);
 
@@ -926,6 +934,11 @@ impl<'a> FlowAnalyzer<'a> {
                             .get_assigned_type(flow.node, reference, is_destructuring)
                             .filter(|&t| t != TypeId::ERROR)
                         {
+                            let assigned_type = if is_control_flow_typed_any {
+                                query::widen_literal_to_primitive(self.interner, assigned_type)
+                            } else {
+                                assigned_type
+                            };
                             // For logical assignments (??=, ||=, &&=), the binder creates
                             // a two-branch flow graph: one branch for the short-circuit
                             // (original value, with condition narrowing) and one branch for
@@ -935,6 +948,10 @@ impl<'a> FlowAnalyzer<'a> {
                             // type is structurally different from declared union members
                             // (e.g., arrow with different return type).
                             if self.is_logical_assignment(flow.node) {
+                                assigned_type
+                            } else if is_control_flow_typed_any {
+                                // Unannotated mutable locals such as `let x;` evolve from
+                                // their writes rather than staying explicit `any`.
                                 assigned_type
                             } else {
                                 // Killing definition: replace type with RHS type and stop traversal.
@@ -1271,6 +1288,8 @@ impl<'a> FlowAnalyzer<'a> {
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
             // Also skip caching UNREACHABLE_NEVER as it's an internal sentinel.
             if final_type != Self::UNREACHABLE_NEVER
+                && (!skip_cache_for_control_flow_typed_any
+                    || flow.has_any_flags(flow_flags::LOOP_LABEL))
                 && let Some(cache) = self.flow_cache
             {
                 let final_has_type_params =

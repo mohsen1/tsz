@@ -33,6 +33,15 @@ impl<'a> CheckerState<'a> {
     /// in the outer scope but the closure captures the variable and might execute
     /// after the variable has been reassigned to a different type.
     pub(crate) fn apply_flow_narrowing(&self, idx: NodeIndex, declared_type: TypeId) -> TypeId {
+        self.apply_flow_narrowing_with_initial_type(idx, declared_type, None)
+    }
+
+    pub(crate) fn apply_flow_narrowing_with_initial_type(
+        &self,
+        idx: NodeIndex,
+        declared_type: TypeId,
+        initial_type_override: Option<TypeId>,
+    ) -> TypeId {
         // Skip flow narrowing when getting assignment target types.
         // For assignments like `foo[x] = 1` after `if (foo[x] === undefined)`,
         // we need the declared type (e.g., `number | undefined`) not the narrowed type (`undefined`).
@@ -176,7 +185,9 @@ impl<'a> CheckerState<'a> {
         // Strip `undefined` from the initial type for parameters with default values.
         // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`
         // starts as `string` (not `string | undefined`) because the default guarantees it.
-        let initial_type = if !self.is_in_default_parameter(idx)
+        let initial_type = if let Some(initial_type) = initial_type_override {
+            initial_type
+        } else if !self.is_in_default_parameter(idx)
             && let Some(sym_id) = self.get_symbol_for_identifier(idx)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             && sym.value_declaration.is_some()
