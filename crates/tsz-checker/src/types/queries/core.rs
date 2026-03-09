@@ -12,7 +12,8 @@ use tsz_solver::TypeId;
 /// Extract a property name from a non-computed property name node.
 ///
 /// Handles identifiers, string literals, no-substitution template literals,
-/// and numeric literals (canonicalized via `canonicalize_numeric_name`).
+/// numeric literals (canonicalized via `canonicalize_numeric_name`), and
+/// signed numeric literals (`+1`, `-1`) matching TSC's `isSignedNumericLiteral`.
 /// Does NOT handle computed property names — callers must handle those separately
 /// when symbol resolution or special formatting is needed.
 pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
@@ -38,6 +39,24 @@ pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) 
             return Some(canonical);
         }
         return Some(lit.text.clone());
+    }
+
+    // Signed numeric literal: prefix +/- with numeric literal operand.
+    // TSC's isSignedNumericLiteral handles `[+1]` → "1" and `[-1]` → "-1".
+    if name_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        && let Some(unary) = arena.get_unary_expr(name_node)
+        && (unary.operator == SyntaxKind::PlusToken as u16
+            || unary.operator == SyntaxKind::MinusToken as u16)
+        && let Some(operand_node) = arena.get(unary.operand)
+        && operand_node.kind == SyntaxKind::NumericLiteral as u16
+        && let Some(lit) = arena.get_literal(operand_node)
+    {
+        let num_text = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+            .unwrap_or_else(|| lit.text.clone());
+        if unary.operator == SyntaxKind::MinusToken as u16 {
+            return Some(format!("-{num_text}"));
+        }
+        return Some(num_text);
     }
 
     None
