@@ -940,6 +940,15 @@ impl<'a> CheckerState<'a> {
             return Some(ComputedKey::Ident(access_name));
         }
 
+        // Handle assignment expressions (e.g., `[x = 0]`): extract key from left side
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            // For assignment expressions, use the left-hand side as the key
+            return self.computed_key_from_expression(binary.left);
+        }
+
         None
     }
 
