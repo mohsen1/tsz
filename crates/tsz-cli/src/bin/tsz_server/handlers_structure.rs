@@ -81,6 +81,8 @@ impl Server {
 
     fn apply_inferred_project_options(&mut self, options: Option<&serde_json::Value>) {
         if let Some(options) = options {
+            self.inferred_check_options =
+                serde_json::from_value(options.clone()).unwrap_or_default();
             self.allow_importing_ts_extensions = options
                 .get("allowImportingTsExtensions")
                 .and_then(serde_json::Value::as_bool)

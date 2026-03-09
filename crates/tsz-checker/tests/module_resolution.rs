@@ -338,13 +338,13 @@ fn test_cross_imports_between_nested() {
 }
 
 #[test]
-fn test_self_import_excluded() {
+fn test_self_import_resolves_to_same_file() {
     let files = vec!["/tmp/test/main.ts".to_string()];
 
     let (paths, _) = build_module_resolution_maps(&files);
 
-    // A file should not resolve to itself
-    assert!(paths.is_empty());
+    assert_eq!(paths.get(&(0, "./main".to_string())), Some(&0));
+    assert_eq!(paths.get(&(0, "main".to_string())), Some(&0));
 }
 
 #[test]

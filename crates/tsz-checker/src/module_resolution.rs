@@ -103,10 +103,6 @@ pub fn build_module_resolution_maps(
         };
 
         for (tgt_idx, tgt_name) in file_names.iter().enumerate() {
-            if src_idx == tgt_idx {
-                continue;
-            }
-
             let tgt_path = Path::new(tgt_name);
 
             // Compute the relative specifier from source directory to target file
