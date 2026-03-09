@@ -1,4 +1,4 @@
-//! JSDoc type annotation utilities, class and enum helper methods for `CheckerState`.
+//! JSDoc type annotation utilities for `CheckerState`.
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -1710,7 +1710,6 @@ impl<'a> CheckerState<'a> {
     fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = jsdoc.find("@typedef");
         let mut tag_pos = jsdoc.find("@type");
-
         while let Some(pos) = tag_pos {
             let next_char = jsdoc[pos + "@type".len()..].chars().next();
             if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
@@ -1957,7 +1956,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 (comment.pos, comment.end - comment.pos)
             };
-
             results.push((tag, pos, len));
         }
         results
