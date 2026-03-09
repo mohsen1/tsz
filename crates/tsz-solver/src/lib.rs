@@ -87,7 +87,7 @@ pub use inference::infer::*;
 pub use instantiation::application::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_generic,
-    instantiate_type, substitute_this_type,
+    instantiate_type, instantiate_type_preserving_meta, substitute_this_type,
 };
 pub use intern::type_factory::*;
 pub use narrowing::*;

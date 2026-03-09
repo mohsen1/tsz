@@ -1,12 +1,18 @@
 //! Contextual literal types, circular reference detection, and private property access.
 
+use crate::class_inheritance::ClassInheritanceChecker;
+use crate::query_boundaries::common::{
+    TypeTraversalKind, classify_for_traversal, object_shape_for_type,
+};
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::keyof_inner_type;
 use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextual_literal};
 
 impl<'a> CheckerState<'a> {
@@ -237,6 +243,125 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let evaluated = match classify_for_traversal(self.ctx.types, resolved_type) {
+            TypeTraversalKind::Application { .. }
+            | TypeTraversalKind::Conditional(_)
+            | TypeTraversalKind::Mapped(_)
+            | TypeTraversalKind::IndexAccess { .. }
+            | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(resolved_type),
+            _ => resolved_type,
+        };
+        if evaluated != resolved_type
+            && self.is_direct_circular_reference(
+                sym_id,
+                evaluated,
+                type_node,
+                in_union_or_intersection,
+            )
+        {
+            return true;
+        }
+
+        if let Some((object_type, index_type)) =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, resolved_type)
+        {
+            if self.is_direct_circular_reference(sym_id, object_type, type_node, true)
+                || self.is_direct_circular_reference(sym_id, index_type, type_node, true)
+            {
+                return true;
+            }
+
+            let resolved_object = self.resolve_lazy_type(object_type);
+            if let Some(shape) = object_shape_for_type(self.ctx.types, resolved_object) {
+                let index_targets_all_properties = keyof_inner_type(self.ctx.types, index_type)
+                    .is_some_and(|inner| {
+                        let resolved_inner = self.resolve_lazy_type(inner);
+                        resolved_inner == object_type || resolved_inner == resolved_object
+                    });
+
+                if index_targets_all_properties {
+                    for prop in &shape.properties {
+                        if self.is_direct_circular_reference(sym_id, prop.type_id, type_node, true)
+                            || self.is_direct_circular_reference(
+                                sym_id,
+                                prop.write_type,
+                                type_node,
+                                true,
+                            )
+                        {
+                            return true;
+                        }
+                    }
+                    if let Some(index_sig) = &shape.string_index
+                        && self.is_direct_circular_reference(
+                            sym_id,
+                            index_sig.value_type,
+                            type_node,
+                            true,
+                        )
+                    {
+                        return true;
+                    }
+                    if let Some(index_sig) = &shape.number_index
+                        && self.is_direct_circular_reference(
+                            sym_id,
+                            index_sig.value_type,
+                            type_node,
+                            true,
+                        )
+                    {
+                        return true;
+                    }
+                } else if let Some(key) =
+                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                {
+                    let key_text = self.ctx.types.resolve_atom(key);
+                    if let Some(prop) = shape
+                        .properties
+                        .iter()
+                        .find(|prop| self.ctx.types.resolve_atom(prop.name) == key_text)
+                        && (self.is_direct_circular_reference(
+                            sym_id,
+                            prop.type_id,
+                            type_node,
+                            true,
+                        ) || self.is_direct_circular_reference(
+                            sym_id,
+                            prop.write_type,
+                            type_node,
+                            true,
+                        ))
+                    {
+                        return true;
+                    }
+                    if let Some(index_sig) = &shape.string_index
+                        && self.is_direct_circular_reference(
+                            sym_id,
+                            index_sig.value_type,
+                            type_node,
+                            true,
+                        )
+                    {
+                        return true;
+                    }
+                } else if tsz_solver::type_queries::get_number_literal_value(
+                    self.ctx.types,
+                    index_type,
+                )
+                .is_some()
+                    && let Some(index_sig) = &shape.number_index
+                    && self.is_direct_circular_reference(
+                        sym_id,
+                        index_sig.value_type,
+                        type_node,
+                        true,
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+
         // Also check union/intersection members for circular references.
         // Per TS spec: "A union type directly depends on each of the constituent types."
         if let Some(members) =
@@ -256,6 +381,581 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
             }
+        }
+
+        false
+    }
+
+    /// Report TS2310 for a class/interface whose instantiated base type needs
+    /// the current symbol's structure to resolve.
+    pub(crate) fn report_recursive_base_type_for_symbol(&mut self, sym_id: SymbolId) {
+        let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
+        checker.error_recursive_base_type_for_symbol(sym_id);
+    }
+
+    /// Returns true when resolving `type_id` requires the structure of
+    /// `target_sym`. Plain occurrences like `Base<Target>` are allowed; meta-type
+    /// operations such as `keyof Target`, `Target["x"]`, mapped constraints,
+    /// or alias expansions that reduce to those forms are not.
+    pub(crate) fn type_requires_structure_of_symbol(
+        &mut self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+    ) -> bool {
+        let mut visited = FxHashSet::default();
+        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, &mut visited)
+    }
+
+    fn type_requires_structure_of_symbol_inner(
+        &mut self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+        requires_structure: bool,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) -> bool {
+        if !visited.insert((type_id, requires_structure)) {
+            return false;
+        }
+
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+            && self.ctx.def_to_symbol_id_with_fallback(def_id) == Some(target_sym)
+        {
+            return requires_structure;
+        }
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+        {
+            let mut resolved_alias = self
+                .resolve_and_insert_def_type(def_id)
+                .or_else(|| Some(self.get_type_of_symbol(sym_id)))
+                .unwrap_or(type_id);
+            if resolved_alias == type_id
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                for &decl_idx in &symbol.declarations {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                        continue;
+                    }
+                    let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                        continue;
+                    };
+                    let (_params, updates) = self.push_type_parameters(&alias.type_parameters);
+                    resolved_alias = self.get_type_from_type_node(alias.type_node);
+                    self.pop_type_parameters(updates);
+                    break;
+                }
+            }
+            if resolved_alias != type_id
+                && self.type_requires_structure_of_symbol_inner(
+                    resolved_alias,
+                    target_sym,
+                    requires_structure,
+                    visited,
+                )
+            {
+                return true;
+            }
+        }
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(type_id)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+            && let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && body != type_id
+            && self.type_requires_structure_of_symbol_inner(
+                body,
+                target_sym,
+                requires_structure,
+                visited,
+            )
+        {
+            return true;
+        }
+        if requires_structure
+            && self
+                .ctx
+                .definition_store
+                .find_def_for_type(type_id)
+                .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                == Some(target_sym)
+        {
+            return true;
+        }
+
+        let resolved_lazy = self.resolve_lazy_type(type_id);
+        if resolved_lazy != type_id
+            && self.type_requires_structure_of_symbol_inner(
+                resolved_lazy,
+                target_sym,
+                requires_structure,
+                visited,
+            )
+        {
+            return true;
+        }
+
+        let evaluated = match classify_for_traversal(self.ctx.types, type_id) {
+            TypeTraversalKind::Application { .. }
+            | TypeTraversalKind::Conditional(_)
+            | TypeTraversalKind::Mapped(_)
+            | TypeTraversalKind::IndexAccess { .. }
+            | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(type_id),
+            _ => type_id,
+        };
+        if evaluated != type_id
+            && self.type_requires_structure_of_symbol_inner(
+                evaluated,
+                target_sym,
+                requires_structure,
+                visited,
+            )
+        {
+            return true;
+        }
+
+        match classify_for_traversal(self.ctx.types, type_id) {
+            TypeTraversalKind::Terminal
+            | TypeTraversalKind::Lazy(_)
+            | TypeTraversalKind::TypeQuery(_)
+            | TypeTraversalKind::SymbolRef(_) => false,
+            TypeTraversalKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                (requires_structure && shape.symbol == Some(target_sym))
+                    || shape.properties.iter().any(|prop| {
+                        self.type_requires_structure_of_symbol_inner(
+                            prop.type_id,
+                            target_sym,
+                            false,
+                            visited,
+                        ) || self.type_requires_structure_of_symbol_inner(
+                            prop.write_type,
+                            target_sym,
+                            false,
+                            visited,
+                        )
+                    })
+                    || shape.string_index.as_ref().is_some_and(|sig| {
+                        self.type_requires_structure_of_symbol_inner(
+                            sig.key_type,
+                            target_sym,
+                            false,
+                            visited,
+                        ) || self.type_requires_structure_of_symbol_inner(
+                            sig.value_type,
+                            target_sym,
+                            false,
+                            visited,
+                        )
+                    })
+                    || shape.number_index.as_ref().is_some_and(|sig| {
+                        self.type_requires_structure_of_symbol_inner(
+                            sig.key_type,
+                            target_sym,
+                            false,
+                            visited,
+                        ) || self.type_requires_structure_of_symbol_inner(
+                            sig.value_type,
+                            target_sym,
+                            false,
+                            visited,
+                        )
+                    })
+            }
+            TypeTraversalKind::Members(members) => members.into_iter().any(|member| {
+                self.type_requires_structure_of_symbol_inner(
+                    member,
+                    target_sym,
+                    requires_structure,
+                    visited,
+                )
+            }),
+            TypeTraversalKind::Array(elem) => self.type_requires_structure_of_symbol_inner(
+                elem,
+                target_sym,
+                requires_structure,
+                visited,
+            ),
+            TypeTraversalKind::Tuple(list_id) => {
+                self.ctx.types.tuple_list(list_id).iter().any(|elem| {
+                    self.type_requires_structure_of_symbol_inner(
+                        elem.type_id,
+                        target_sym,
+                        requires_structure,
+                        visited,
+                    )
+                })
+            }
+            TypeTraversalKind::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                shape.params.iter().any(|param| {
+                    self.type_requires_structure_of_symbol_inner(
+                        param.type_id,
+                        target_sym,
+                        false,
+                        visited,
+                    )
+                }) || self.type_requires_structure_of_symbol_inner(
+                    shape.return_type,
+                    target_sym,
+                    false,
+                    visited,
+                ) || shape.this_type.is_some_and(|this_type| {
+                    self.type_requires_structure_of_symbol_inner(
+                        this_type, target_sym, false, visited,
+                    )
+                })
+            }
+            TypeTraversalKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.call_signatures.iter().any(|sig| {
+                    sig.params.iter().any(|param| {
+                        self.type_requires_structure_of_symbol_inner(
+                            param.type_id,
+                            target_sym,
+                            false,
+                            visited,
+                        )
+                    }) || self.type_requires_structure_of_symbol_inner(
+                        sig.return_type,
+                        target_sym,
+                        false,
+                        visited,
+                    )
+                }) || shape.construct_signatures.iter().any(|sig| {
+                    sig.params.iter().any(|param| {
+                        self.type_requires_structure_of_symbol_inner(
+                            param.type_id,
+                            target_sym,
+                            false,
+                            visited,
+                        )
+                    }) || self.type_requires_structure_of_symbol_inner(
+                        sig.return_type,
+                        target_sym,
+                        false,
+                        visited,
+                    )
+                }) || shape.properties.iter().any(|prop| {
+                    self.type_requires_structure_of_symbol_inner(
+                        prop.type_id,
+                        target_sym,
+                        false,
+                        visited,
+                    )
+                })
+            }
+            TypeTraversalKind::TypeParameter {
+                constraint,
+                default,
+            } => {
+                constraint.is_some_and(|constraint| {
+                    self.type_requires_structure_of_symbol_inner(
+                        constraint,
+                        target_sym,
+                        requires_structure,
+                        visited,
+                    )
+                }) || default.is_some_and(|default| {
+                    self.type_requires_structure_of_symbol_inner(
+                        default,
+                        target_sym,
+                        requires_structure,
+                        visited,
+                    )
+                })
+            }
+            TypeTraversalKind::Application { base, args, .. } => {
+                self.type_requires_structure_of_symbol_inner(base, target_sym, false, visited)
+                    || args.iter().any(|&arg| {
+                        self.type_requires_structure_of_symbol_inner(
+                            arg, target_sym, false, visited,
+                        )
+                    })
+            }
+            TypeTraversalKind::Conditional(cond_id) => {
+                let cond = self.ctx.types.conditional_type(cond_id);
+                self.type_requires_structure_of_symbol_inner(
+                    cond.check_type,
+                    target_sym,
+                    true,
+                    visited,
+                ) || self.type_requires_structure_of_symbol_inner(
+                    cond.extends_type,
+                    target_sym,
+                    true,
+                    visited,
+                ) || self.type_requires_structure_of_symbol_inner(
+                    cond.true_type,
+                    target_sym,
+                    false,
+                    visited,
+                ) || self.type_requires_structure_of_symbol_inner(
+                    cond.false_type,
+                    target_sym,
+                    false,
+                    visited,
+                )
+            }
+            TypeTraversalKind::Mapped(mapped_id) => {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                mapped.type_param.constraint.is_some_and(|constraint| {
+                    self.type_requires_structure_of_symbol_inner(
+                        constraint, target_sym, true, visited,
+                    )
+                }) || mapped.type_param.default.is_some_and(|default| {
+                    self.type_requires_structure_of_symbol_inner(default, target_sym, true, visited)
+                }) || self.type_requires_structure_of_symbol_inner(
+                    mapped.constraint,
+                    target_sym,
+                    true,
+                    visited,
+                ) || self.type_requires_structure_of_symbol_inner(
+                    mapped.template,
+                    target_sym,
+                    false,
+                    visited,
+                ) || mapped.name_type.is_some_and(|name_type| {
+                    self.type_requires_structure_of_symbol_inner(
+                        name_type, target_sym, true, visited,
+                    )
+                })
+            }
+            TypeTraversalKind::IndexAccess {
+                object: object_type,
+                index: index_type,
+            } => {
+                self.type_requires_structure_of_symbol_inner(object_type, target_sym, true, visited)
+                    || self.type_requires_structure_of_symbol_inner(
+                        index_type, target_sym, true, visited,
+                    )
+            }
+            TypeTraversalKind::TemplateLiteral(types) => types.into_iter().any(|type_id| {
+                self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, visited)
+            }),
+            TypeTraversalKind::KeyOf(inner) | TypeTraversalKind::Readonly(inner) => {
+                self.type_requires_structure_of_symbol_inner(inner, target_sym, true, visited)
+            }
+            TypeTraversalKind::StringIntrinsic(type_arg) => {
+                self.type_requires_structure_of_symbol_inner(type_arg, target_sym, false, visited)
+            }
+        }
+    }
+
+    /// Report TS2313 for mapped constraints inside a type alias once the alias is
+    /// instantiated with concrete type arguments that structurally depend on the
+    /// current base type target.
+    pub(crate) fn report_instantiated_type_alias_mapped_constraint_cycles(
+        &mut self,
+        alias_sym_id: SymbolId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args: &[TypeId],
+        current_sym: SymbolId,
+    ) {
+        let Some(symbol) = self.get_symbol_globally(alias_sym_id) else {
+            return;
+        };
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
+            return;
+        }
+
+        let declarations = symbol.declarations.clone();
+        let bindings: FxHashMap<String, TypeId> = type_params
+            .iter()
+            .zip(type_args.iter().copied())
+            .map(|(param, arg)| (self.ctx.types.resolve_atom(param.name), arg))
+            .collect();
+        let updates: Vec<(String, Option<TypeId>)> = bindings
+            .iter()
+            .map(|(name, &arg)| {
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), arg);
+                (name.clone(), previous)
+            })
+            .collect();
+
+        for &decl_idx in &declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(node) else {
+                continue;
+            };
+            self.report_instantiated_mapped_constraint_cycles_in_node(
+                alias.type_node,
+                current_sym,
+                &bindings,
+            );
+        }
+
+        for (name, previous) in updates.into_iter().rev() {
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(previous) = previous {
+                self.ctx.type_parameter_scope.insert(name, previous);
+            }
+        }
+    }
+
+    fn report_instantiated_mapped_constraint_cycles_in_node(
+        &mut self,
+        node_idx: NodeIndex,
+        current_sym: SymbolId,
+        bindings: &FxHashMap<String, TypeId>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::MAPPED_TYPE {
+            let Some(mapped) = self.ctx.arena.get_mapped_type(node) else {
+                return;
+            };
+            let Some(type_param_node) = self.ctx.arena.get(mapped.type_parameter) else {
+                return;
+            };
+            let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node) else {
+                return;
+            };
+
+            let mut local_update = None;
+            if let Some(name_node) = self.ctx.arena.get(type_param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.clone();
+                let atom = self.ctx.types.intern_string(&name);
+                let provisional = self
+                    .ctx
+                    .types
+                    .factory()
+                    .type_param(tsz_solver::TypeParamInfo {
+                        name: atom,
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    });
+                let previous = self
+                    .ctx
+                    .type_parameter_scope
+                    .insert(name.clone(), provisional);
+                local_update = Some((name, previous));
+            }
+
+            if type_param.constraint != NodeIndex::NONE {
+                let constraint_type = self.get_type_from_type_node(type_param.constraint);
+                let syntactic_cycle = self.constraint_mentions_instantiated_cycle_target(
+                    type_param.constraint,
+                    current_sym,
+                    bindings,
+                    &mut FxHashSet::default(),
+                );
+                if (self.type_requires_structure_of_symbol(constraint_type, current_sym)
+                    || syntactic_cycle)
+                    && let Some(name_node) = self.ctx.arena.get(type_param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    self.error_at_node_msg(
+                        type_param.constraint,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
+                        &[ident.escaped_text.as_str()],
+                    );
+                }
+            }
+
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                self.report_instantiated_mapped_constraint_cycles_in_node(
+                    child_idx,
+                    current_sym,
+                    bindings,
+                );
+            }
+
+            if let Some((name, previous)) = local_update {
+                self.ctx.type_parameter_scope.remove(&name);
+                if let Some(previous) = previous {
+                    self.ctx.type_parameter_scope.insert(name, previous);
+                }
+            }
+            return;
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.report_instantiated_mapped_constraint_cycles_in_node(
+                child_idx,
+                current_sym,
+                bindings,
+            );
+        }
+    }
+
+    fn constraint_mentions_instantiated_cycle_target(
+        &mut self,
+        node_idx: NodeIndex,
+        current_sym: SymbolId,
+        bindings: &FxHashMap<String, TypeId>,
+        shadowed_params: &mut FxHashSet<String>,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+            && !shadowed_params.contains(ident.escaped_text.as_str())
+            && let Some(&arg) = bindings.get(ident.escaped_text.as_str())
+        {
+            let mut visited = FxHashSet::default();
+            return self.type_requires_structure_of_symbol_inner(
+                arg,
+                current_sym,
+                true,
+                &mut visited,
+            );
+        }
+
+        let mut inserted_shadow = None;
+        if node.kind == syntax_kind_ext::MAPPED_TYPE
+            && let Some(mapped) = self.ctx.arena.get_mapped_type(node)
+            && let Some(type_param_node) = self.ctx.arena.get(mapped.type_parameter)
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
+            && let Some(name_node) = self.ctx.arena.get(type_param.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = ident.escaped_text.clone();
+            if shadowed_params.insert(name.clone()) {
+                inserted_shadow = Some(name);
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.constraint_mentions_instantiated_cycle_target(
+                child_idx,
+                current_sym,
+                bindings,
+                shadowed_params,
+            ) {
+                if let Some(name) = inserted_shadow {
+                    shadowed_params.remove(&name);
+                }
+                return true;
+            }
+        }
+
+        if let Some(name) = inserted_shadow {
+            shadowed_params.remove(&name);
         }
 
         false

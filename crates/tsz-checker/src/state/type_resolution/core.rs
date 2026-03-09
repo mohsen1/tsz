@@ -1166,30 +1166,45 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
+            let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);
+            let active_class_sym = canonical_sym.unwrap_or(sym_id);
             // Check if we're already resolving this class - return fallback to break cycle.
             // Return a Lazy(DefId) placeholder so that the parameter type remains
             // dynamically resolvable.  During class building the Lazy resolves to
             // the partial instance type via class_instance_type_cache; after
             // building completes it resolves to the final type via
             // symbol_instance_types.
-            if self.ctx.class_instance_resolution_set.contains(&sym_id) {
-                let fallback = self.ctx.create_lazy_type_ref(sym_id);
+            if self.ctx.class_instance_resolution_set.contains(&sym_id)
+                || canonical_sym
+                    .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym))
+            {
+                let fallback = self.ctx.create_lazy_type_ref(active_class_sym);
                 return Some((fallback, Vec::new()));
             }
 
             let (params, updates) = self.push_type_parameters(&class.type_parameters);
-            if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+            if let Some(&instance_type) = self
+                .ctx
+                .symbol_instance_types
+                .get(&sym_id)
+                .or_else(|| self.ctx.symbol_instance_types.get(&active_class_sym))
+            {
                 self.pop_type_parameters(updates);
                 return Some((instance_type, params));
             }
 
             let instance_type = self.get_class_instance_type(decl_idx, class);
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+            if active_class_sym != sym_id {
+                self.ctx
+                    .symbol_instance_types
+                    .insert(active_class_sym, instance_type);
+            }
 
             // Register the class instance type in the TypeEnvironment immediately
             // so that Lazy(DefId) fallbacks (created by the recursion guard above)
             // can resolve via resolve_lazy during property access checks.
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let def_id = self.ctx.get_or_create_def_id(active_class_sym);
             if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
                 env.insert_class_instance_type(def_id, instance_type);
             }

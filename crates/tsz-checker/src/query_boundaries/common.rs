@@ -7,11 +7,17 @@
 
 use tsz_solver::{CallSignature, CallableShape, ObjectShape, TupleElement, TypeDatabase, TypeId};
 
+pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
+
 pub(crate) fn callable_shape_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<CallableShape>> {
     tsz_solver::type_queries::get_callable_shape(db, type_id)
+}
+
+pub(crate) fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTraversalKind {
+    tsz_solver::type_queries::classify_for_traversal(db, type_id)
 }
 
 pub(crate) fn has_function_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

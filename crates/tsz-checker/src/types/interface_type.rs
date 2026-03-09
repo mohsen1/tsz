@@ -379,6 +379,9 @@ impl<'a> CheckerState<'a> {
 
         let mut pushed_derived = false;
         let mut derived_param_updates = Vec::new();
+        let current_sym = declarations
+            .first()
+            .and_then(|&decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
 
         for &decl_idx in declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -494,21 +497,57 @@ impl<'a> CheckerState<'a> {
                     let base_type_params = self.get_type_params_for_symbol(base_sym_id);
 
                     if type_args.len() < base_type_params.len() {
-                        for param in base_type_params.iter().skip(type_args.len()) {
+                        for (param_index, param) in
+                            base_type_params.iter().enumerate().skip(type_args.len())
+                        {
                             let fallback = param
                                 .default
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            type_args.push(fallback);
+                            let substitution = TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_type_params[..param_index],
+                                &type_args,
+                            );
+                            type_args.push(tsz_solver::instantiate_type_preserving_meta(
+                                self.ctx.types,
+                                fallback,
+                                &substitution,
+                            ));
                         }
                     }
                     if type_args.len() > base_type_params.len() {
                         type_args.truncate(base_type_params.len());
                     }
 
+                    let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
+                        type_args
+                            .iter()
+                            .copied()
+                            .any(|arg| self.type_requires_structure_of_symbol(arg, current_sym))
+                    });
+
                     let substitution =
                         TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
+                    let requires_self = current_sym.is_some_and(|current_sym| {
+                        has_structural_self_arg
+                            || self.type_requires_structure_of_symbol(base_type, current_sym)
+                    });
+
+                    if let Some(current_sym) = current_sym
+                        && requires_self
+                    {
+                        self.report_recursive_base_type_for_symbol(current_sym);
+                        self.report_instantiated_type_alias_mapped_constraint_cycles(
+                            base_sym_id,
+                            &base_type_params,
+                            &type_args,
+                            current_sym,
+                        );
+                        derived_type = self.merge_interface_types(derived_type, base_type);
+                        continue;
+                    }
 
                     derived_type = self.merge_interface_types(derived_type, base_type);
                 }

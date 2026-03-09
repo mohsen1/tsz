@@ -128,6 +128,7 @@ pub struct TypeInstantiator<'a> {
     /// Type parameter names that are shadowed in the current scope.
     shadowed: Vec<Atom>,
     substitute_infer: bool,
+    preserve_meta_types: bool,
     /// When set, substitutes `ThisType` with this concrete type.
     pub this_type: Option<TypeId>,
     depth: u32,
@@ -144,6 +145,7 @@ impl<'a> TypeInstantiator<'a> {
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
             substitute_infer: false,
+            preserve_meta_types: false,
             this_type: None,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
@@ -890,7 +892,7 @@ impl<'a> TypeInstantiator<'a> {
                 // (which has a proper TypeResolver) handle the full expansion.
                 let has_lazy_application =
                     template_has_lazy_application_in_composite(self.interner, new_template);
-                if has_lazy_extends || has_lazy_application {
+                if self.preserve_meta_types || has_lazy_extends || has_lazy_application {
                     mapped_type
                 } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
                     // Don't eagerly evaluate when the constraint still contains type
@@ -920,6 +922,9 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     return self.interner.index_access(inst_obj, inst_idx);
                 }
+                if self.preserve_meta_types {
+                    return self.interner.index_access(inst_obj, inst_idx);
+                }
                 // Evaluate immediately to achieve O(1) equality
                 crate::evaluation::evaluate::evaluate_index_access(
                     self.interner,
@@ -939,6 +944,9 @@ impl<'a> TypeInstantiator<'a> {
                 // Without this, mapped types like `{ [P in keyof T]: ... }` collapse to `{}`
                 // because `keyof object` = `never`.
                 if crate::visitor::contains_type_parameters(self.interner, inst_operand) {
+                    return self.interner.keyof(inst_operand);
+                }
+                if self.preserve_meta_types {
                     return self.interner.keyof(inst_operand);
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
@@ -1056,6 +1064,30 @@ pub fn instantiate_type(
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Convenience function for instantiating a type while preserving meta-type
+/// structure such as `keyof`, index access, and mapped types.
+///
+/// This is used when callers need to inspect whether an instantiated type still
+/// structurally depends on a nominal symbol before a later evaluation pass can
+/// safely reduce it.
+pub fn instantiate_type_preserving_meta(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.preserve_meta_types = true;
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
         TypeId::ERROR
