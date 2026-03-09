@@ -205,13 +205,13 @@ impl<'a> CheckerState<'a> {
                                 && !has_type_params_in_decl
                                 && symbol_type != TypeId::ERROR
                                 && symbol_type != TypeId::ANY
-                                && let Some(&arg_idx) = type_args.nodes.first()
+                                && !type_args.nodes.is_empty()
                             {
                                 let name = self
                                     .heritage_name_text(expr_idx)
                                     .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
-                                    arg_idx,
+                                    expr_idx,
                                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                                     &[name.as_str()],
                                 );
@@ -233,7 +233,11 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
 
-                            self.validate_type_reference_type_arguments(heritage_sym, type_args);
+                            self.validate_type_reference_type_arguments(
+                                heritage_sym,
+                                type_args,
+                                expr_idx,
+                            );
                         }
                     } else if required_count > 0
                         // In class extends clauses, TypeScript allows omitting type
@@ -495,13 +499,13 @@ impl<'a> CheckerState<'a> {
                             && !has_generic_construct_sig
                             && expr_type != TypeId::ERROR
                             && expr_type != TypeId::ANY
-                            && let Some(&arg_idx) = type_args.nodes.first()
+                            && !type_args.nodes.is_empty()
                         {
                             let name = self
                                 .heritage_name_text(expr_idx)
                                 .unwrap_or_else(|| "<expression>".to_string());
                             self.error_at_node_msg(
-                                arg_idx,
+                                expr_idx,
                                 crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                                 &[name.as_str()],
                             );
