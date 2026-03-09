@@ -2984,16 +2984,20 @@ fn remove_trailing_commas(input: &str) -> String {
 /// Valid `--target` values (normalized). The display list uses tsc's canonical casing.
 const VALID_TARGET_VALUES: &[&str] = &[
     "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
-    "es2022", "es2023", "es2024", "esnext",
+    "es2022", "es2023", "es2024", "es2025", "esnext",
 ];
-const VALID_TARGET_DISPLAY: &str = "'es5', 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'esnext'";
+// TSC 7.0 no longer lists deprecated targets (es3, es5) in the error message
+// and added es2025. Match TSC's display.
+const VALID_TARGET_DISPLAY: &str = "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'";
 
 /// Valid `--module` values (normalized).
 const VALID_MODULE_VALUES: &[&str] = &[
     "none", "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext",
     "node16", "node18", "node20", "nodenext", "preserve",
 ];
-const VALID_MODULE_DISPLAY: &str = "'none', 'commonjs', 'amd', 'system', 'umd', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'";
+// TSC 7.0 no longer lists deprecated module kinds (none, amd, system, umd) in the error
+// message, though they are still accepted. Match TSC's display.
+const VALID_MODULE_DISPLAY: &str = "'commonjs', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'";
 
 /// Valid `--moduleResolution` values (normalized).
 const VALID_MODULE_RESOLUTION_VALUES: &[&str] =
