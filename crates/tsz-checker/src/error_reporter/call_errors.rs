@@ -179,6 +179,27 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
+            // For the error message, use the property's declared type (without the
+            // `undefined` added by optional_property_type for optional properties).
+            // TSC displays `'string'` not `'string | undefined'` when the property
+            // is declared as `name?: string`.
+            let target_prop_type_for_diagnostic = {
+                let prop_atom = self.ctx.types.intern_string(&prop_name);
+                let declared = tsz_solver::type_queries::get_object_shape(
+                    self.ctx.types,
+                    effective_param_type,
+                )
+                .and_then(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == prop_atom)
+                        .filter(|p| p.optional)
+                        .map(|p| p.type_id)
+                });
+                declared.unwrap_or(target_prop_type)
+            };
+
             // Get the type of the property value in the object literal
             let source_prop_type = self.get_type_of_node(prop_value_idx);
 
@@ -200,10 +221,11 @@ impl<'a> CheckerState<'a> {
                         source_prop_type
                     };
 
-                // Emit TS2322 on the property name node
+                // Emit TS2322 on the property name node, using the declared type
+                // (without optional undefined) for the error message
                 self.error_type_not_assignable_at_with_anchor(
                     source_prop_type_for_diagnostic,
-                    target_prop_type,
+                    target_prop_type_for_diagnostic,
                     prop_name_idx,
                 );
                 elaborated = true;
