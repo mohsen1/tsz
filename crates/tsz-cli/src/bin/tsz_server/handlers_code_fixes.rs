@@ -842,7 +842,6 @@ impl Server {
                         ]);
                     }
                 }
-
             }
             normalize_response_actions(&mut response_actions);
 
@@ -2441,10 +2440,7 @@ impl Server {
                     .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
                     && next
                         .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'));
-                if at_word_boundary
-                    && !is_qualified_name_segment
-                    && !is_import_type_query_segment
-                {
+                if at_word_boundary && !is_qualified_name_segment && !is_import_type_query_segment {
                     spans.push((ident.clone(), rel_start));
                 }
                 search_start = rel_end;
@@ -2458,11 +2454,10 @@ impl Server {
         let mut i = 0usize;
 
         while i < bytes.len() {
-            let is_word_start = i == 0
-                || {
-                    let ch = bytes[i - 1] as char;
-                    !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
-                };
+            let is_word_start = i == 0 || {
+                let ch = bytes[i - 1] as char;
+                !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            };
             if !is_word_start || !fragment[i..].starts_with("import(") {
                 i += 1;
                 continue;
@@ -2789,14 +2784,21 @@ impl Server {
         let (_, interface_name, class_open_brace, class_close_brace) =
             find_first_implements_class(content)?;
         let mut class_imports = parse_named_import_map(content);
-        let interface_module_specifier = class_imports.get(&interface_name)?.clone();
-        let interface_file_path =
-            resolve_module_path(file_path, &interface_module_specifier, &self.open_files)?;
-        let interface_content = self
-            .open_files
-            .get(&interface_file_path)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&interface_file_path).ok())?;
+        let (interface_file_path, interface_content) =
+            if let Some(interface_module_specifier) = class_imports.get(&interface_name).cloned() {
+                let interface_file_path =
+                    resolve_module_path(file_path, &interface_module_specifier, &self.open_files)?;
+                let interface_content = self
+                    .open_files
+                    .get(&interface_file_path)
+                    .cloned()
+                    .or_else(|| std::fs::read_to_string(&interface_file_path).ok())?;
+                (interface_file_path, interface_content)
+            } else if content.contains(&format!("interface {interface_name}")) {
+                (file_path.to_string(), content.to_string())
+            } else {
+                return None;
+            };
 
         let interface_properties = parse_interface_properties(&interface_content, &interface_name)?;
         if interface_properties.is_empty() {

@@ -1090,7 +1090,9 @@ fn handle_get_code_fixes_omits_registry_only_placeholders() {
         "{\n  \"compilerOptions\": {\n    \"target\": \"esnext\",\n    \"strict\": true,\n    \"lib\": [\"es2015\"]\n  }\n}\n".to_string(),
     );
     let content = "const p4: Promise<number> = new Promise(resolve => resolve());\n";
-    server.open_files.insert("/a.ts".to_string(), content.to_string());
+    server
+        .open_files
+        .insert("/a.ts".to_string(), content.to_string());
 
     let req = TsServerRequest {
         seq: 1,
@@ -1157,12 +1159,15 @@ fn synthetic_missing_name_skips_import_type_queries() {
         "import * as foo from './types';\nexport { foo };\n".to_string(),
     );
     let content = "import { foo } from './foo/types';\nexport type fullType = foo.Full;\ntype namespaceImport = typeof import('./foo/types');\ntype fullType2 = import('./foo/types').foo.Full;\n".to_string();
-    server.open_files.insert("/app.ts".to_string(), content.clone());
+    server
+        .open_files
+        .insert("/app.ts".to_string(), content.clone());
 
     let (_, binder, _, _) = server
         .parse_and_bind_file("/app.ts")
         .expect("expected parse_and_bind_file for /app.ts");
-    let synthetic = server.synthetic_missing_name_expression_diagnostics("/app.ts", &content, &binder);
+    let synthetic =
+        server.synthetic_missing_name_expression_diagnostics("/app.ts", &content, &binder);
 
     assert!(
         synthetic.is_empty(),
@@ -1880,5 +1885,61 @@ fn parse_identifier_call_expression_ignores_keywords() {
     assert_eq!(
         parse_identifier_call_expression("fn(): number { return 1; }"),
         None
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implements_same_file_interface_with_negative_literal_union() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "interface X { value: -1 | 0 | 1; }\nclass Y implements X { }".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+            "formatOptions": {
+                "indentSize": 4,
+                "tabSize": 4,
+                "convertTabsToSpaces": true,
+                "newLineCharacter": "\n"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix for same-file interface");
+    assert_eq!(
+        action
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("Implement interface 'X'")
+    );
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("value: -1 | 0 | 1;"),
+        "expected generated member text in codefix, got: {new_text}"
     );
 }
