@@ -278,9 +278,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
     ) -> Result<TypeSubstitution, crate::inference::infer::InferenceError> {
         use crate::type_queries::unpack_tuple_rest_parameter;
+        use std::fmt::Write;
+
+        // Alpha-rename the source function's own type parameters before contextual
+        // inference so outer target type parameters with the same names do not collide
+        // in the inference context.
+        let mut rename_substitution = TypeSubstitution::new();
+        let mut renamed_type_params = Vec::with_capacity(source.type_params.len());
+        let mut rename_buf = String::with_capacity(32);
+        for (index, tp) in source.type_params.iter().enumerate() {
+            rename_buf.clear();
+            write!(rename_buf, "__infer_src_ctx_{index}").unwrap();
+            let fresh_name = self.interner.intern_string(&rename_buf);
+            let fresh_type = self.interner.type_param(TypeParamInfo {
+                name: fresh_name,
+                constraint: None,
+                default: None,
+                is_const: tp.is_const,
+            });
+            rename_substitution.insert(tp.name, fresh_type);
+            renamed_type_params.push(TypeParamInfo {
+                name: fresh_name,
+                constraint: tp.constraint.map(|constraint| {
+                    instantiate_type(self.interner, constraint, &rename_substitution)
+                }),
+                default: tp
+                    .default
+                    .map(|default| instantiate_type(self.interner, default, &rename_substitution)),
+                is_const: tp.is_const,
+            });
+        }
+        let renamed_source = FunctionShape {
+            type_params: renamed_type_params,
+            params: source
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_type(self.interner, p.type_id, &rename_substitution),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect(),
+            this_type: source
+                .this_type
+                .map(|this_id| instantiate_type(self.interner, this_id, &rename_substitution)),
+            return_type: instantiate_type(self.interner, source.return_type, &rename_substitution),
+            type_predicate: source.type_predicate.as_ref().map(|pred| TypePredicate {
+                asserts: pred.asserts,
+                target: pred.target.clone(),
+                type_id: pred
+                    .type_id
+                    .map(|ty| instantiate_type(self.interner, ty, &rename_substitution)),
+                parameter_index: pred.parameter_index,
+            }),
+            is_constructor: source.is_constructor,
+            is_method: source.is_method,
+        };
 
         let mut infer_ctx = InferenceContext::new(self.interner);
-        for tp in &source.type_params {
+        for tp in &renamed_source.type_params {
             let var = infer_ctx.fresh_type_param(tp.name, tp.is_const);
             if let Some(constraint) = tp.constraint {
                 infer_ctx.add_upper_bound(var, constraint);
@@ -288,7 +345,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let source_params_unpacked: Vec<ParamInfo> = source
+        let source_params_unpacked: Vec<ParamInfo> = renamed_source
             .params
             .iter()
             .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
@@ -390,11 +447,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.is_uninformative_contextual_inference_input(target.return_type) {
             let _ = infer_ctx.infer_from_types(
                 target.return_type,
-                source.return_type,
+                renamed_source.return_type,
                 InferencePriority::ReturnType,
             );
         }
-        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type)
+        if let (Some(source_this), Some(target_this)) = (renamed_source.this_type, target.this_type)
             && !self.is_uninformative_contextual_inference_input(target_this)
         {
             let _ = infer_ctx.infer_from_types(
@@ -404,7 +461,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
         if let (Some(source_pred), Some(target_pred)) =
-            (&source.type_predicate, &target.type_predicate)
+            (&renamed_source.type_predicate, &target.type_predicate)
             && let (Some(source_ty), Some(target_ty)) = (source_pred.type_id, target_pred.type_id)
             && !self.is_uninformative_contextual_inference_input(target_ty)
         {
@@ -413,16 +470,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let inferred = infer_ctx.resolve_all_with_constraints()?;
         let mut substitution = TypeSubstitution::new();
-        for tp in &source.type_params {
+        for (original_tp, renamed_tp) in source
+            .type_params
+            .iter()
+            .zip(renamed_source.type_params.iter())
+        {
             let inferred_ty = inferred
                 .iter()
-                .find_map(|(name, ty)| (*name == tp.name).then_some(*ty));
+                .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
                 TypeId::ANY
             };
-            substitution.insert(tp.name, inferred_ty.unwrap_or(fallback));
+            substitution.insert(original_tp.name, inferred_ty.unwrap_or(fallback));
         }
         Ok(substitution)
     }

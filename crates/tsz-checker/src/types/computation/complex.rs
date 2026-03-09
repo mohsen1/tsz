@@ -565,6 +565,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
+                let round1_skip_outer_context: Vec<bool> = args
+                    .iter()
+                    .map(|&arg| self.round1_should_skip_outer_contextual_type(arg))
+                    .collect();
                 let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
 
                 if needs_two_pass {
@@ -574,7 +578,11 @@ impl<'a> CheckerState<'a> {
                     let mut round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, arg_count| {
-                            if i < sensitive_args.len() && sensitive_args[i] {
+                            let skip_round1_context = (i < sensitive_args.len()
+                                && sensitive_args[i])
+                                || (i < round1_skip_outer_context.len()
+                                    && round1_skip_outer_context[i]);
+                            if skip_round1_context {
                                 None
                             } else {
                                 ctx_helper.get_parameter_type_for_call(i, arg_count)

@@ -35,6 +35,32 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Nested calls/new expressions should infer from their own callee shapes during
+    /// Round 1 generic inference. Applying the outer call's contextual parameter type
+    /// at this stage can erase useful inference from the inner call.
+    pub(crate) fn round1_should_skip_outer_contextual_type(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                        return false;
+                    };
+                    current = paren.expression;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     /// Whether an argument node needs contextual typing from the callee signature.
     ///
     /// Literal expressions need contextual typing to preserve literal types when
