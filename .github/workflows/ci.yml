@@ -50,7 +50,7 @@ jobs:
             lsp:
               - 'crates/tsz-lsp/**'
             root:
-              - 'src/**'
+              - 'crates/tsz-core/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'scripts/**'

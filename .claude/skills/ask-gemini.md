@@ -36,7 +36,7 @@ The `ask-gemini.mjs` script supports focused presets for different areas:
 ./scripts/ask-gemini.mjs --types "Explain the type inference algorithm"
 
 # With custom paths
-./scripts/ask-gemini.mjs --include="src/solver" "Custom question about solver"
+./scripts/ask-gemini.mjs --include="crates/tsz-solver/src" "Custom question about solver"
 
 # Dry run to see what files would be included
 ./scripts/ask-gemini.mjs --solver --dry
@@ -69,7 +69,7 @@ Each preset includes specialized context:
 You are focused on the TYPE SOLVER component. Key concepts:
 - Solver handles WHAT (pure type operations and relations)
 - Checker handles WHERE (AST traversal, diagnostics)
-- Use visitor pattern from src/solver/visitor.rs for type operations
+- Use visitor pattern from crates/tsz-solver/src/visitor.rs for type operations
 - Key files: state.rs (main state), infer.rs (inference), compat.rs (assignability)
 ```
 
@@ -122,7 +122,7 @@ Get an API key at: https://aistudio.google.com/apikey
 ### Custom Analysis
 ```bash
 # Focus on specific files
-./scripts/ask-gemini.mjs --include="src/solver/state.rs src/solver/infer.rs" "How are inference variables unified?"
+./scripts/ask-gemini.mjs --include="crates/tsz-solver/src/state.rs crates/tsz-solver/src/infer.rs" "How are inference variables unified?"
 ```
 
 ## Integration with Development Workflow

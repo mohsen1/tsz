@@ -2704,47 +2704,47 @@ mod p1_error_recovery_tests;
 
 // Constructor accessibility tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/constructor_accessibility.rs"]
+#[path = "../../tsz-checker/tests/constructor_accessibility.rs"]
 mod constructor_accessibility;
 
 // Void return exception tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/void_return_exception.rs"]
+#[path = "../../tsz-checker/tests/void_return_exception.rs"]
 mod void_return_exception;
 
 // Any-propagation tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/any_propagation.rs"]
+#[path = "../../tsz-checker/tests/any_propagation.rs"]
 mod any_propagation;
 
 // Tests that depend on test_fixtures (require root crate context)
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/any_propagation_tests.rs"]
+#[path = "../../tsz-checker/tests/any_propagation_tests.rs"]
 mod any_propagation_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/const_assertion_tests.rs"]
+#[path = "../../tsz-checker/tests/const_assertion_tests.rs"]
 mod const_assertion_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/freshness_stripping_tests.rs"]
+#[path = "../../tsz-checker/tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/function_bivariance.rs"]
+#[path = "../../tsz-checker/tests/function_bivariance.rs"]
 mod function_bivariance;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/global_type_tests.rs"]
+#[path = "../../tsz-checker/tests/global_type_tests.rs"]
 mod global_type_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/symbol_resolution_tests.rs"]
+#[path = "../../tsz-checker/tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/ts2304_tests.rs"]
+#[path = "../../tsz-checker/tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/ts2305_tests.rs"]
+#[path = "../../tsz-checker/tests/ts2305_tests.rs"]
 mod ts2305_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/ts2306_tests.rs"]
+#[path = "../../tsz-checker/tests/ts2306_tests.rs"]
 mod ts2306_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/widening_integration_tests.rs"]
+#[path = "../../tsz-checker/tests/widening_integration_tests.rs"]
 mod widening_integration_tests;

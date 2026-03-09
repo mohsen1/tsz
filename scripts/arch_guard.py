@@ -166,7 +166,7 @@ CHECKS = [
             r"|\bstd::time::Instant::"
         ),
         {
-            "exclude_dirs": {"tsz-cli", "conformance", "tests"},
+            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
             "ignore_comment_lines": True,
         },
     ),
@@ -180,7 +180,7 @@ CHECKS = [
             r"|\bstd::time::SystemTime::"
         ),
         {
-            "exclude_dirs": {"tsz-cli", "conformance", "tests"},
+            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
             "ignore_comment_lines": True,
         },
     ),
@@ -189,7 +189,7 @@ CHECKS = [
         ROOT / "crates",
         re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
         {
-            "exclude_dirs": {"tsz-solver", "tsz-lowering", "tests"},
+            "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
             "exclude_files": {
                 # TODO: refactor these to use solver query helpers
                 "crates/tsz-checker/src/types/computation/helpers.rs",

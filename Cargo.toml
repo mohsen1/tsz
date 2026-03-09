@@ -16,7 +16,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
-tsz = { path = ".", version = "0.1.9", package = "tsz-core" }
+tsz = { path = "crates/tsz-core", version = "0.1.9", package = "tsz-core" }
 tsz-common = { path = "crates/tsz-common", version = "0.1.9" }
 tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.9" }
 tsz-parser = { path = "crates/tsz-parser", version = "0.1.9" }
@@ -84,80 +84,6 @@ perf = { level = "deny", priority = -1 }
 complexity = { level = "deny", priority = -1 }
 # Allow some that may be too noisy for this codebase
 
-[package]
-name = "tsz-core"
-version.workspace = true
-edition.workspace = true
-autotests = false
-description = "Core TypeScript compiler and type checker library"
-repository.workspace = true
-license.workspace = true
-authors.workspace = true
-homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
-readme.workspace = true
-exclude = [
-    "TypeScript/**",
-    "tests/**",
-    "benches/**",
-    "scripts/**",
-    "docs/**",
-    "artifacts/**",
-    "logs/**",
-    "pkg/**",
-    "wasm/**",
-    "tmp/**",
-    "target/**",
-    ".claude/**",
-    ".gemini/**",
-    ".github/**",
-    ".config/**",
-    "debug*.ts",
-    "debug*.js",
-    "test*.ts",
-    "test*.js",
-    "*.py",
-    "out*.txt",
-    "output.txt",
-    "yek.yaml",
-]
-
-[lib]
-crate-type = ["rlib"]
-
-[dependencies]
-tsz-common = { workspace = true }
-tsz-scanner = { workspace = true }
-tsz-parser = { workspace = true }
-tsz-binder = { workspace = true }
-tsz-solver = { workspace = true }
-tsz-lowering = { workspace = true }
-tsz-checker = { workspace = true }
-tsz-emitter = { workspace = true }
-tsz-lsp = { workspace = true }
-anyhow = { workspace = true }
-wasm-bindgen = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde-wasm-bindgen = { workspace = true }
-rustc-hash = { workspace = true }
-rayon = { workspace = true }
-memchr = { workspace = true }
-smallvec = { workspace = true }
-dashmap = { workspace = true }
-fixedbitset = { workspace = true }
-ena = { workspace = true }
-indexmap = { workspace = true }
-bitflags = { workspace = true }
-tracing = { workspace = true }
-once_cell = { workspace = true }
-
-[dev-dependencies]
-criterion = { workspace = true }
-once_cell = { workspace = true }
-tempfile = { workspace = true }
-
 [profile.release]
 # Fast compilation with decent runtime performance (for testing)
 lto = false           # No LTO = much faster compilation
@@ -187,46 +113,3 @@ debug = true
 
 [profile.bench]
 lto = "thin"
-
-[[bench]]
-name = "scanner_bench"
-harness = false
-
-[[bench]]
-name = "parser_bench"
-harness = false
-
-[[bench]]
-name = "emitter_bench"
-harness = false
-
-[[bench]]
-name = "real_world_bench"
-harness = false
-
-[[bench]]
-name = "solver_bench"
-harness = false
-
-[[bench]]
-name = "cfa_bench"
-harness = false
-
-[[bench]]
-name = "parallel_bench"
-harness = false
-
-[[bench]]
-name = "union_reduction_bench"
-harness = false
-
-[[bench]]
-name = "object_subtype_bench"
-harness = false
-
-[[bench]]
-name = "phase_timing_bench"
-harness = false
-
-[lints]
-workspace = true

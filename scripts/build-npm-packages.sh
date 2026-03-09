@@ -241,7 +241,7 @@ done
 cp "$PROJECT_ROOT/LICENSE.txt" "$MAIN_PKG/LICENSE.txt"
 
 # Bundle TypeScript lib files
-LIB_ASSETS="$PROJECT_ROOT/src/lib-assets"
+LIB_ASSETS="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
 if [ -d "$LIB_ASSETS" ]; then
   echo "  Bundling TypeScript lib files..."
   mkdir -p "$MAIN_PKG/lib-assets"

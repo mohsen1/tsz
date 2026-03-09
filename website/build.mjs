@@ -437,7 +437,7 @@ function build() {
   }
 
   // Copy lib files for playground
-  const libAssetsDir = path.join(ROOT, "src", "lib-assets");
+  const libAssetsDir = path.join(ROOT, "crates", "tsz-core", "src", "lib-assets");
   if (fs.existsSync(libAssetsDir)) {
     console.log("  Copying lib files for playground...");
     const libDest = path.join(DIST, "lib");

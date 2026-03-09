@@ -840,7 +840,7 @@ Skip building downstream projects on error in upstream project.
 /// - `\x1b[94m` (bright blue) + `\x1b[39m` (reset fg) for flag names and commands
 ///
 /// Colors are applied when `colored::control::SHOULD_COLORIZE.should_colorize()` is true
-/// (i.e., stdout is a TTY or FORCE_COLOR is set).
+/// (i.e., stdout is a TTY or `FORCE_COLOR` is set).
 pub fn colorize_help(plain: &str) -> String {
     use colored::control::SHOULD_COLORIZE;
 

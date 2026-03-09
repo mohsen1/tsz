@@ -368,21 +368,21 @@ impl TsProgram {
         serde_json::to_string(&all_diagnostics).unwrap_or_else(|_| "[]".to_string())
     }
 
-    /// Get syntactic diagnostics as JsValue (avoids JSON string intermediate)
+    /// Get syntactic diagnostics as `JsValue` (avoids JSON string intermediate)
     #[wasm_bindgen(js_name = getSyntacticDiagnostics)]
     pub fn get_syntactic_diagnostics(&mut self, file_name: Option<String>) -> JsValue {
         let diagnostics = self.collect_syntactic_diagnostics(file_name.as_deref());
         serde_wasm_bindgen::to_value(&diagnostics).unwrap_or(JsValue::NULL)
     }
 
-    /// Get semantic diagnostics as JsValue (avoids JSON string intermediate)
+    /// Get semantic diagnostics as `JsValue` (avoids JSON string intermediate)
     #[wasm_bindgen(js_name = getSemanticDiagnostics)]
     pub fn get_semantic_diagnostics(&mut self, file_name: Option<String>) -> JsValue {
         let diagnostics = self.collect_semantic_diagnostics(file_name.as_deref());
         serde_wasm_bindgen::to_value(&diagnostics).unwrap_or(JsValue::NULL)
     }
 
-    /// Get all diagnostics (syntactic + semantic) as JsValue (avoids JSON string intermediate)
+    /// Get all diagnostics (syntactic + semantic) as `JsValue` (avoids JSON string intermediate)
     #[wasm_bindgen(js_name = getPreEmitDiagnostics)]
     pub fn get_pre_emit_diagnostics(&mut self) -> JsValue {
         let mut all = self.collect_syntactic_diagnostics(None);

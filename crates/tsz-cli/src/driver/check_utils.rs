@@ -475,7 +475,7 @@ pub(super) fn compute_export_hash(
             let type_id = checker.get_type_of_symbol(sym_id);
             let type_str = type_str_cache
                 .entry(type_id)
-                .or_insert_with(|| formatter.format(type_id).into());
+                .or_insert_with(|| formatter.format(type_id));
             type_str.hash(&mut hasher);
         }
     }
