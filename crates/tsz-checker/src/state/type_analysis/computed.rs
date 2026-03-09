@@ -356,7 +356,18 @@ impl<'a> CheckerState<'a> {
                     symbol.escaped_name.clone(),
                 ),
                 None => {
-                    return (TypeId::UNKNOWN, Vec::new());
+                    // Also try the cross-file symbol
+                    match self.get_cross_file_symbol(sym_id) {
+                        Some(symbol) => (
+                            symbol.flags,
+                            symbol.value_declaration,
+                            symbol.declarations.clone(),
+                            symbol.import_module.clone(),
+                            symbol.import_name.clone(),
+                            symbol.escaped_name.clone(),
+                        ),
+                        None => return (TypeId::UNKNOWN, Vec::new()),
+                    }
                 }
             };
 

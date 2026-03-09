@@ -670,6 +670,24 @@ impl BinderState {
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+
+                // If the name already exists as an import alias in the current scope,
+                // do NOT call declare_symbol — it would merge INTERFACE flags into the
+                // import alias, contaminating it and causing type_reference_symbol_type
+                // to build the wrong type. The augmentation is already tracked in
+                // module_augmentations and will be merged at type resolution time.
+                //
+                // However, if the name is NEW (e.g. `interface ModelWithCache` added via
+                // `declare module "backbone" { ... }`), we still need to declare it so
+                // it can be found via qualified access like `Backbone.ModelWithCache`.
+                let name_conflicts_with_import = self
+                    .current_scope
+                    .get(name)
+                    .and_then(|sym_id| self.symbols.get(sym_id))
+                    .is_some_and(|sym| sym.import_module.is_some());
+                if name_conflicts_with_import {
+                    return;
+                }
             }
 
             let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);

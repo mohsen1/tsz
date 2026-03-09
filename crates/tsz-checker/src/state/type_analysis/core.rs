@@ -1396,7 +1396,7 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol
         // because those are the same TypeIds used when lowering the type body.
         // Calling get_type_params_for_symbol would create fresh TypeIds that don't match.
-        if result != TypeId::ANY && result != TypeId::ERROR {
+        if result != TypeId::ANY && result != TypeId::ERROR && result != TypeId::UNKNOWN {
             // For class symbols, we need to cache BOTH the constructor type (for value position)
             // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {

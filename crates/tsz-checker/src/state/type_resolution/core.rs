@@ -223,6 +223,23 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+
+                // For simple name type refs like `import { Foo } from "./m"; type T = Foo`,
+                // apply module augmentations using the import symbol's module specifier.
+                if result != TypeId::ERROR {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        && let Some(module_specifier) = symbol.import_module.as_ref()
+                    {
+                        let aug_name = symbol
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&symbol.escaped_name);
+                        result =
+                            self.apply_module_augmentations(module_specifier, aug_name, result);
+                    }
+                }
+
                 return result;
             }
             return self.resolve_qualified_name(type_name_idx);
@@ -616,6 +633,84 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                                     diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                                 );
+                            }
+                        }
+                    }
+                }
+
+                // Apply module augmentations to generic type references.
+                // For types like Observable<number>, the Application hasn't been
+                // evaluated yet. We augment the DefId's body in type_env so that
+                // when the solver evaluates the Application, the augmented members
+                // (e.g., map() from `declare module "./observable"`) are included.
+                if let Some(sym_id) = sym_id {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        && let Some(module_specifier) = symbol.import_module.as_ref()
+                    {
+                        let aug_name = symbol
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&symbol.escaped_name);
+                        // Get the Application's base DefId and augment its body
+                        if let Some((app_base, _)) =
+                            query::get_application_info(self.ctx.types, result)
+                            && let Some(base_def_id) =
+                                query::get_lazy_def_id(self.ctx.types, app_base)
+                        {
+                            // Try to get the body from type_env (interface) or
+                            // class_instance_types (class).
+                            let body = self.ctx.type_env.try_borrow().ok().and_then(|env| {
+                                let def = env.get_def(base_def_id);
+                                let inst = env.get_class_instance_type(base_def_id);
+                                def.or(inst)
+                            });
+                            if let Some(body) = body {
+                                let augmented = self.apply_module_augmentations(
+                                    module_specifier,
+                                    aug_name,
+                                    body,
+                                );
+                                if augmented != body {
+                                    // Update the body in type_env so that all future
+                                    // evaluations of this Application use the augmented type.
+                                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                            env.insert_class_instance_type(base_def_id, augmented);
+                                        } else {
+                                            let params =
+                                                env.get_def_params(base_def_id).map(|s| s.to_vec());
+                                            if let Some(params) = params {
+                                                env.insert_def_with_params(
+                                                    base_def_id,
+                                                    augmented,
+                                                    params,
+                                                );
+                                            } else {
+                                                env.insert_def(base_def_id, augmented);
+                                            }
+                                        }
+                                    }
+                                    // Also update type_environment (flow analyzer snapshot)
+                                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
+                                    {
+                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                            env.insert_class_instance_type(base_def_id, augmented);
+                                        } else {
+                                            let params =
+                                                env.get_def_params(base_def_id).map(|s| s.to_vec());
+                                            if let Some(params) = params {
+                                                env.insert_def_with_params(
+                                                    base_def_id,
+                                                    augmented,
+                                                    params,
+                                                );
+                                            } else {
+                                                env.insert_def(base_def_id, augmented);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1176,13 +1271,44 @@ impl<'a> CheckerState<'a> {
                     let is_merged_with_namespace =
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
 
-                    let structural_type = if is_merged_with_namespace {
+                    let mut structural_type = if is_merged_with_namespace {
                         // Compute the interface type directly, bypassing get_type_of_symbol
                         // which would return the namespace type for merged symbols.
                         self.compute_interface_type_from_declarations(sym_id)
                     } else {
                         self.get_type_of_symbol(sym_id)
                     };
+
+                    // Cross-file fallback: if the structural type is UNKNOWN, the
+                    // declarations may be in a different arena. Delegate to a child
+                    // checker with the symbol's home arena.
+                    if structural_type == TypeId::UNKNOWN
+                        && let Some(delegate_type) =
+                            self.delegate_cross_arena_interface_type(sym_id)
+                    {
+                        structural_type = delegate_type;
+                    }
+
+                    // Step 1.25: Apply module augmentations to the structural type.
+                    // If this symbol was reached via an import alias, merge augmentation
+                    // members into the base type. This ensures ALL access paths — type
+                    // references, Application evaluation, and value-position prototype
+                    // access — see the augmented members.
+                    if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::UNKNOWN
+                        && let Some(local_sym) = self.ctx.binder.get_symbol(sym_id)
+                        && let Some(module_specifier) = local_sym.import_module.as_ref()
+                    {
+                        let aug_name = local_sym
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&local_sym.escaped_name);
+                        structural_type = self.apply_module_augmentations(
+                            module_specifier,
+                            aug_name,
+                            structural_type,
+                        );
+                    }
 
                     // Step 1.5: Cache type parameters for generic interfaces (Promise<T>, Map<K,V>, etc.)
                     // This enables the Solver to expand Application(Lazy(DefId), Args) by providing
@@ -1214,6 +1340,7 @@ impl<'a> CheckerState<'a> {
                     // to { length: unknown } because the Application can't be expanded).
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::ANY
+                        && structural_type != TypeId::UNKNOWN
                         && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
                         && env.get_def(def_id).is_none()
                     {
@@ -1232,8 +1359,12 @@ impl<'a> CheckerState<'a> {
                     //
                     // Also return structural type for interfaces with index signatures
                     // (ObjectWithIndex) — Lazy causes issues with flow analysis there.
+                    //
+                    // Also return Unknown directly when cross-file interface resolution
+                    // fails — wrapping in Lazy(DefId) would create an unresolvable ref.
                     if is_merged_with_namespace
                         || query::is_object_with_index_type(self.ctx.types, structural_type)
+                        || structural_type == TypeId::UNKNOWN
                     {
                         self.ctx.leave_recursion();
                         return structural_type;
@@ -1781,153 +1912,5 @@ impl<'a> CheckerState<'a> {
         let body_type = self.get_type_of_symbol(sym_id);
         let type_params = self.get_type_params_for_symbol(sym_id);
         (body_type, type_params)
-    }
-
-    /// Format a generic type name with its type parameter names for TS2314 messages.
-    /// e.g., "Foo" + [T, U] → "Foo<T, U>"
-    pub(crate) fn format_generic_display_name_with_interner(
-        name: &str,
-        type_params: &[tsz_solver::TypeParamInfo],
-        types: &dyn tsz_solver::QueryDatabase,
-    ) -> String {
-        if type_params.is_empty() {
-            return name.to_string();
-        }
-        let param_names: Vec<String> = type_params
-            .iter()
-            .map(|p| types.resolve_atom(p.name))
-            .collect();
-        format!("{}<{}>", name, param_names.join(", "))
-    }
-
-    /// Walk the left chain of nested qualified names to find a root import call.
-    /// For `import("./m").A.B`, the AST is:
-    ///   QualifiedName(left: QualifiedName(left: CallExpr(import("./m")), right: A), right: B)
-    /// Returns the `CALL_EXPRESSION` `NodeIndex` if the leftmost node is an `import()` call.
-    fn find_leftmost_import_call(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
-        const MAX_DEPTH: usize = 64;
-        for _ in 0..MAX_DEPTH {
-            let node = self.ctx.arena.get(idx)?;
-            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-                let qn = self.ctx.arena.get_qualified_name(node)?;
-                idx = qn.left;
-            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                // Check if it's import(...)
-                let call = self.ctx.arena.get_call_expr(node)?;
-                let expr_node = self.ctx.arena.get(call.expression)?;
-                if expr_node.kind == SyntaxKind::ImportKeyword as u16 {
-                    return Some(idx);
-                }
-                return None;
-            } else {
-                return None;
-            }
-        }
-        None
-    }
-
-    /// Extract the module specifier string from an `import()` call expression.
-    fn get_import_type_module_specifier(&self, call_idx: NodeIndex) -> Option<(String, NodeIndex)> {
-        let node = self.ctx.arena.get(call_idx)?;
-        let call = self.ctx.arena.get_call_expr(node)?;
-        let args = call.arguments.as_ref()?;
-        let &first_arg = args.nodes.first()?;
-        let arg_node = self.ctx.arena.get(first_arg)?;
-        let literal = self.ctx.arena.get_literal(arg_node)?;
-        Some((literal.text.clone(), first_arg))
-    }
-
-    /// Check an import type expression for module resolution and emit TS2307 if needed.
-    /// Returns the resolved type or `TypeId::ERROR`.
-    fn check_import_type_and_resolve(
-        &mut self,
-        call_idx: NodeIndex,
-        _type_name_idx: NodeIndex,
-        _type_ref_idx: NodeIndex,
-    ) -> TypeId {
-        let Some((module_name, specifier_node)) = self.get_import_type_module_specifier(call_idx)
-        else {
-            return TypeId::ERROR;
-        };
-
-        if !self.ctx.report_unresolved_imports {
-            return TypeId::ERROR;
-        }
-
-        // Check if the module resolves through any of the known resolution paths.
-        // Import type specifiers may not have been collected by the CLI driver's
-        // module specifier scanner (which only scans import/export declarations),
-        // so resolved_modules may not have an entry. We check multiple sources:
-
-        // 1. Driver-resolved modules (from import/export declarations)
-        if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(&module_name)
-        {
-            return TypeId::ERROR; // Module exists — return ERROR (lowering can't resolve it yet)
-        }
-
-        // 2. Binder module_exports (cross-file)
-        if self.ctx.binder.module_exports.contains_key(&module_name) {
-            return TypeId::ERROR;
-        }
-
-        // 3. Shorthand ambient modules (declare module "foo")
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(&module_name)
-        {
-            return TypeId::ERROR;
-        }
-
-        // 4. Declared modules (ambient modules with body)
-        if self.ctx.binder.declared_modules.contains(&module_name) {
-            return TypeId::ERROR;
-        }
-
-        // 5. Check if the driver has a resolution error for this specifier
-        //    (positive evidence of failed resolution)
-        if let Some(error) = self.ctx.get_resolution_error(&module_name) {
-            let error_code = error.code;
-            let error_message = error.message.clone();
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(specifier_node, &error_message, error_code);
-            }
-            return TypeId::ERROR;
-        }
-
-        // 6. For non-relative specifiers (no ./ or ../ prefix), if not found in
-        //    declared/ambient modules, emit TS2307. Non-relative specifiers target
-        //    packages or ambient modules — the binder has complete information.
-        let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
-        if !is_relative {
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                let (message, code) = self.module_not_found_diagnostic(&module_name);
-                self.error_at_node(specifier_node, &message, code);
-            }
-            return TypeId::ERROR;
-        }
-
-        // 7. For relative specifiers without resolution data, we can't determine
-        //    if the module exists (import type specifiers aren't collected by the
-        //    driver's module scanner). Check resolved_module_paths for cross-file
-        //    resolution.
-        if let Some(ref paths) = self.ctx.resolved_module_paths {
-            // If there's no entry for this (file_idx, specifier), the specifier
-            // was never resolved. Check if any project file matches.
-            let key = (self.ctx.current_file_idx, module_name);
-            if paths.contains_key(&key) {
-                return TypeId::ERROR; // Module resolved to a project file
-            }
-        }
-
-        // Relative specifier with no resolution data — we can't confirm it doesn't
-        // exist. Return ERROR without emitting TS2307 to avoid false positives.
-        TypeId::ERROR
     }
 }

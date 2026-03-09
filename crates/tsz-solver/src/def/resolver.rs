@@ -461,6 +461,11 @@ impl TypeEnvironment {
         self.def_types.insert(def_id.0, type_id);
     }
 
+    /// Get a class `DefId`'s registered instance type.
+    pub fn get_class_instance_type(&self, def_id: DefId) -> Option<TypeId> {
+        self.class_instance_types.get(&def_id.0).copied()
+    }
+
     /// Register a class `DefId`'s instance type.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
         self.class_instance_types.insert(def_id.0, instance_type);
