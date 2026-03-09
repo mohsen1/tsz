@@ -480,7 +480,7 @@ impl ParserState {
         // tsc uses the same disambiguation via isImplementsClause() lookahead.
         let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
             || self.is_token(SyntaxKind::ImplementsKeyword))
-            && !self.next_token_is_open_brace();
+            && !self.look_ahead_next_is_open_brace_on_same_line();
         let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {
@@ -544,7 +544,7 @@ impl ParserState {
         // (the class body follows immediately), not a heritage clause start.
         let is_heritage_keyword = (self.is_token(SyntaxKind::ExtendsKeyword)
             || self.is_token(SyntaxKind::ImplementsKeyword))
-            && !self.next_token_is_open_brace();
+            && !self.look_ahead_next_is_open_brace_on_same_line();
         let name = if self.is_identifier_or_keyword() && !is_heritage_keyword {
             // TS1005: Reserved words cannot be used as class names
             if self.is_reserved_word() {

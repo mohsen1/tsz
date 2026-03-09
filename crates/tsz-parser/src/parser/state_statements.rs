@@ -697,7 +697,7 @@ impl ParserState {
 
     /// Check if the next token is `{` on the same line.
     /// Used to detect `interface { }` where the interface name is missing.
-    fn look_ahead_next_is_open_brace_on_same_line(&mut self) -> bool {
+    pub(super) fn look_ahead_next_is_open_brace_on_same_line(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token();
