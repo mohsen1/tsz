@@ -52,8 +52,11 @@ fn test_format_object_type() {
 
     let formatted = formatter.format(obj);
     assert!(formatted.contains("x: number"));
-    // Optional properties display with `| undefined` to match tsc output
-    assert!(formatted.contains("y?: string | undefined"));
+    // Optional properties display without `| undefined` — the `?` already implies optionality
+    assert!(
+        formatted.contains("y?: string;"),
+        "Expected 'y?: string;', got: {formatted}"
+    );
 }
 
 #[test]
@@ -522,8 +525,8 @@ fn test_too_many_parameters_reason_produces_ts2322_not_ts2554() {
 
 #[test]
 fn test_optional_property_shows_undefined() {
-    // tsc displays optional properties as `name?: T | undefined` when
-    // exactOptionalPropertyTypes is not enabled (the default).
+    // tsc displays optional properties as `name?: T` (without `| undefined`).
+    // The `?` already implies optionality, so `| undefined` is redundant.
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -534,15 +537,15 @@ fn test_optional_property_shows_undefined() {
 
     let formatted = formatter.format(obj);
     assert_eq!(
-        formatted, "{ x: number; y?: string | undefined; }",
-        "Optional properties should include '| undefined' in display"
+        formatted, "{ x: number; y?: string; }",
+        "Optional properties should NOT include '| undefined' in display"
     );
 }
 
 #[test]
 fn test_optional_property_already_has_undefined_no_duplicate() {
     // If the property type already includes undefined (e.g., `string | undefined`),
-    // the formatter should not add a duplicate `| undefined`.
+    // the formatter should strip `undefined` since `?` already implies it.
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -554,15 +557,15 @@ fn test_optional_property_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(obj);
     assert_eq!(
-        formatted, "{ val?: string | undefined; }",
-        "Should not add duplicate '| undefined' when type already includes it"
+        formatted, "{ val?: string; }",
+        "Should strip '| undefined' when property is optional (? implies it)"
     );
 }
 
 #[test]
 fn test_optional_function_param_shows_undefined() {
-    // tsc displays optional function params with `| undefined` when the stored
-    // type doesn't already include undefined (e.g., interface member function types).
+    // tsc displays optional function params as `name?: T` without `| undefined`.
+    // The `?` already implies optionality.
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -591,14 +594,14 @@ fn test_optional_function_param_shows_undefined() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x: number, y?: number | undefined) => number",
-        "Optional params should include '| undefined' in display"
+        formatted, "(x: number, y?: number) => number",
+        "Optional params should NOT include '| undefined' in display"
     );
 }
 
 #[test]
 fn test_optional_param_already_has_undefined_no_duplicate() {
-    // If the param type already includes undefined, don't double-add it.
+    // If the param type already includes undefined, strip it since `?` implies it.
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -620,8 +623,8 @@ fn test_optional_param_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x?: number | undefined) => void",
-        "Should not add duplicate '| undefined' when param type already includes it"
+        formatted, "(x?: number) => void",
+        "Should strip '| undefined' when param is optional (? implies it)"
     );
 }
 
