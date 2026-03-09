@@ -3059,6 +3059,39 @@ function f() {
     );
 }
 
+/// Nested destructured aliases should not participate in sibling discriminant correlation.
+/// From: controlFlowAliasedDiscriminants.ts
+#[test]
+fn test_nested_destructured_alias_does_not_correlate_with_sibling_discriminant() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Nested = {
+    type: 'string';
+    resp: {
+        data: string
+    }
+} | {
+    type: 'number';
+    resp: {
+        data: number;
+    }
+};
+
+let resp!: Nested;
+const { resp: { data }, type } = resp;
+if (type === 'string') {
+    data satisfies string;
+}
+        "#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1360),
+        "Nested destructured aliases should still fail `satisfies` after sibling narrowing.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7034 SHOULD fire for function-scoped `var` variables captured by arrow functions.
 #[test]
 fn test_ts7034_emitted_for_var_captured_by_arrow_function() {
