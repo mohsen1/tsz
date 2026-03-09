@@ -326,9 +326,7 @@ impl<'a> EnumES5Transformer<'a> {
                         self.string_member_values
                             .insert(member_name.clone(), folded.clone());
                     }
-                    let value_ir = if self.is_string_member_reference(member_data.initializer) {
-                        self.transform_expression(member_data.initializer)
-                    } else if let Some(folded) = folded_string {
+                    let value_ir = if let Some(folded) = folded_string {
                         IRNode::StringLiteral(folded.into())
                     } else {
                         self.transform_expression(member_data.initializer)
@@ -1076,43 +1074,6 @@ impl<'a> EnumES5Transformer<'a> {
                 // Bare identifier that matches a known string member
                 if let Some(id) = self.arena.get_identifier(node) {
                     self.string_members.contains(id.escaped_text.as_str())
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
-    fn is_string_member_reference(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
-                .arena
-                .get_parenthesized(node)
-                .is_some_and(|paren| self.is_string_member_reference(paren.expression)),
-            k if k == SyntaxKind::Identifier as u16 => self
-                .arena
-                .get_identifier(node)
-                .is_some_and(|id| self.string_members.contains(id.escaped_text.as_str())),
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    let obj_is_enum = self.arena.get(access.expression).is_some_and(|n| {
-                        n.kind == SyntaxKind::Identifier as u16
-                            && self
-                                .arena
-                                .get_identifier(n)
-                                .is_some_and(|id| id.escaped_text == self.current_enum_name)
-                    });
-                    if !obj_is_enum {
-                        return false;
-                    }
-                    self.arena
-                        .get(access.name_or_argument)
-                        .and_then(|n| self.arena.get_identifier(n))
-                        .is_some_and(|id| self.string_members.contains(id.escaped_text.as_str()))
                 } else {
                     false
                 }
