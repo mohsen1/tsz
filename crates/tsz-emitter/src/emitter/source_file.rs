@@ -80,7 +80,11 @@ impl<'a> Printer<'a> {
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their
         // literal values (e.g., `Direction.Up` → `1 /* Direction.Up */`).
-        if !self.ctx.options.preserve_const_enums {
+        // Note: `preserveConstEnums` preserves the enum DECLARATION but still
+        // inlines usages. So we always collect values regardless of that flag.
+        // However, `isolatedModules`/`verbatimModuleSyntax` disable inlining
+        // entirely (since const enums can't be inlined across file boundaries).
+        if !self.ctx.options.no_const_enum_inlining {
             self.collect_const_enum_values(&source.statements);
         }
 
