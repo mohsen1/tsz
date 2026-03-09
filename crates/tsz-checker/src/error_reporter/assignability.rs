@@ -89,7 +89,8 @@ impl<'a> CheckerState<'a> {
                     &self.ctx.binder.symbols,
                     self.ctx.file_name.as_str(),
                 )
-                .with_def_store(&self.ctx.definition_store);
+                .with_def_store(&self.ctx.definition_store)
+                .with_namespace_module_names(&self.ctx.namespace_module_names);
                 let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
                 diag.to_checker_diagnostic(&self.ctx.file_name)
             }
@@ -280,7 +281,8 @@ impl<'a> CheckerState<'a> {
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             )
-            .with_def_store(&self.ctx.definition_store);
+            .with_def_store(&self.ctx.definition_store)
+            .with_namespace_module_names(&self.ctx.namespace_module_names);
             let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
             self.ctx
                 .diagnostics
