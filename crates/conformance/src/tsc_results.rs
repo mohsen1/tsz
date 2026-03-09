@@ -228,6 +228,8 @@ pub struct TestStats {
     pub skipped: AtomicUsize,
     pub crashed: AtomicUsize,
     pub timeout: AtomicUsize,
+    /// Tests where error codes match exactly but fingerprints differ
+    pub fingerprint_only: AtomicUsize,
 }
 
 impl TestStats {

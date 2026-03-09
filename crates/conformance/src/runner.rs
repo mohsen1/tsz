@@ -104,11 +104,12 @@ fn filter_lib_diagnostics_tsc(
     (codes, fps)
 }
 
-/// Collects paths of crashed and timed-out tests for the final summary.
+/// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
     crashed: std::sync::Mutex<Vec<String>>,
     timed_out: std::sync::Mutex<Vec<String>>,
+    fingerprint_only: std::sync::Mutex<Vec<String>>,
 }
 
 /// Test runner
@@ -268,6 +269,23 @@ impl Runner {
                                 } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
 
+                                    // Track fingerprint-only failures: error codes match
+                                    // but fingerprints differ (position/message mismatch)
+                                    if missing.is_empty()
+                                        && extra.is_empty()
+                                        && (!missing_fingerprints.is_empty()
+                                            || !extra_fingerprints.is_empty())
+                                    {
+                                        stats
+                                            .fingerprint_only
+                                            .fetch_add(1, Ordering::SeqCst);
+                                        problems
+                                            .fingerprint_only
+                                            .lock()
+                                            .unwrap()
+                                            .push(rel_path.clone());
+                                    }
+
                                     // Show file preview for failing tests only
                                     if let Some(preview) = &file_preview {
                                         buf.push_str(preview);
@@ -417,6 +435,20 @@ impl Runner {
         drop(crashed_tests);
         drop(timed_out_tests);
 
+        // Print fingerprint-only failures (same error codes, different positions/messages)
+        let fp_only_tests = self.problems.fingerprint_only.lock().unwrap();
+        if !fp_only_tests.is_empty() {
+            println!();
+            println!(
+                "Fingerprint-only failures ({}) — error codes match, position/message differs:",
+                fp_only_tests.len()
+            );
+            for path in fp_only_tests.iter() {
+                println!("  {}", path);
+            }
+        }
+        drop(fp_only_tests);
+
         println!();
         println!("{}", "=".repeat(60));
         let evaluated = stats.evaluated();
@@ -437,6 +469,8 @@ impl Runner {
         } else {
             println!("  Timeout: 0");
         }
+        let fp_only_count = stats.fingerprint_only.load(Ordering::SeqCst);
+        println!("  Fingerprint-only: {}", fp_only_count);
         println!("  Time: {:.1}s", elapsed.as_secs_f64());
 
         // Print top error codes
@@ -473,6 +507,7 @@ impl Runner {
             skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
             crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
             timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
+            fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
         })
     }
 
