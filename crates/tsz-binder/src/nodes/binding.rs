@@ -295,6 +295,7 @@ impl BinderState {
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                self.record_flow(idx);
                 self.bind_variable_declaration(arena, node, idx);
             }
 
@@ -331,11 +332,13 @@ impl BinderState {
 
             // Interface declarations
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.record_flow(idx);
                 self.bind_interface_declaration(arena, node, idx);
             }
 
             // Type alias declarations
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.record_flow(idx);
                 self.bind_type_alias_declaration(arena, node, idx);
             }
 
