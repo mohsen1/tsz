@@ -1340,7 +1340,14 @@ impl BinderState {
         // Keep source-file declarations visible through file_locals.
         // This is required for nested module scopes resolving references to
         // top-level ambient symbols (e.g. `import alias = demoNS` inside `declare module`).
+        //
+        // IMPORTANT: Do NOT add symbols from module augmentation bodies to file_locals.
+        // Module augmentation declarations (`declare module "./x" { interface Foo { ... } }`)
+        // are tracked separately via `module_augmentations` and merged at type resolution time.
+        // Adding them to file_locals pollutes the driver's cross-file merge, causing the
+        // augmentation's symbol to overwrite the original module's exported symbol.
         if self.current_scope_id.is_some()
+            && !self.in_module_augmentation
             && self
                 .scopes
                 .get(self.current_scope_id.0 as usize)

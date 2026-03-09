@@ -1321,9 +1321,9 @@ impl<'a> CheckerState<'a> {
         interface_name: &str,
         base_type: tsz_solver::TypeId,
     ) -> tsz_solver::TypeId {
+        use crate::query_boundaries::state::type_resolution as query;
         use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
-        let factory = self.ctx.types.factory();
 
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
@@ -1332,8 +1332,28 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        // Get the base type's properties and merge with augmentation members
-        let kind = classify_for_augmentation(self.ctx.types, base_type);
+        // Resolve Lazy(DefId) types to their structural representation before classifying.
+        // Interface types from other files arrive as Lazy(DefId) — we need the concrete
+        // Object/ObjectWithIndex/Callable shape to merge properties directly.
+        let resolved_base = if let Some(def_id) = query::get_lazy_def_id(self.ctx.types, base_type)
+        {
+            // Look up DefId in the type environment
+            if let Some(env_type) = self.ctx.type_env.borrow().get_def(def_id) {
+                env_type
+            } else {
+                // Fall back to full evaluation
+                let evaluated = self.evaluate_type_with_env(base_type);
+                if evaluated != base_type && !evaluated.is_intrinsic() {
+                    evaluated
+                } else {
+                    base_type
+                }
+            }
+        } else {
+            base_type
+        };
+        let kind = classify_for_augmentation(self.ctx.types, resolved_base);
+        let factory = self.ctx.types.factory();
 
         match kind {
             AugmentationTargetKind::Object(shape_id) => {
@@ -1369,9 +1389,12 @@ impl<'a> CheckerState<'a> {
                 })
             }
             AugmentationTargetKind::Other => {
-                // For other types (like ANY), create a new object type with the augmentation members
+                // For types that still can't be decomposed after evaluation (e.g.
+                // intrinsics, intersections), create an intersection of the base type
+                // and a new object with the augmentation members.
                 if !augmentation_members.is_empty() {
-                    factory.object(augmentation_members)
+                    let aug_object = factory.object(augmentation_members);
+                    factory.intersection(vec![base_type, aug_object])
                 } else {
                     base_type
                 }

@@ -500,6 +500,73 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Delegate interface type resolution to a child checker with the symbol's home arena.
+    ///
+    /// When `type_reference_symbol_type` encounters a cross-file INTERFACE symbol
+    /// whose declarations are in a different arena, `get_type_of_symbol` returns UNKNOWN.
+    /// This function creates a child checker with the correct arena and resolves the
+    /// interface type there.
+    pub(crate) fn delegate_cross_arena_interface_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        // Find the symbol's home arena
+        let delegate_arena: Option<&tsz_parser::NodeArena> = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+
+        // Guard against deep cross-arena recursion
+        if !Self::enter_cross_arena_delegation() {
+            return None;
+        }
+
+        if !self.ctx.enter_recursion() {
+            Self::leave_cross_arena_delegation();
+            return None;
+        }
+
+        let delegate_file_name = symbol_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            symbol_arena,
+            self.ctx.binder,
+            self.ctx.types,
+            delegate_file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        for &id in &self.ctx.symbol_resolution_set {
+            if id != sym_id {
+                checker.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+
+        // Try compute_interface_type_from_declarations first (more direct),
+        // fall back to get_type_of_symbol for non-pure-interface symbols.
+        let mut result = checker.compute_interface_type_from_declarations(sym_id);
+        if result == TypeId::ERROR {
+            result = checker.get_type_of_symbol(sym_id);
+        }
+        self.ctx.leave_recursion();
+        Self::leave_cross_arena_delegation();
+
+        if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
     /// Detect and record cross-file `SymbolIds`.
     ///
     /// In multi-file mode, the driver copies target file's `module_exports` into
