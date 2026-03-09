@@ -1175,6 +1175,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
+
+        // TS2808: A get accessor must be at least as accessible as the setter
+        if is_getter {
+            self.check_getter_setter_accessibility(accessor);
+        }
+
         let has_type_annotation = is_getter && accessor.type_annotation.is_some();
         let mut return_type = if is_getter {
             if has_type_annotation {
@@ -1236,6 +1242,10 @@ impl<'a> CheckerState<'a> {
 
         // For setters, check parameter constraints (1052, 1053)
         if node.kind == syntax_kind_ext::SET_ACCESSOR {
+            // TS2808: A get accessor must be at least as accessible as the setter
+            // tsc emits this on BOTH the getter and setter declarations.
+            self.check_setter_getter_accessibility(accessor);
+
             // Check if a paired getter exists — if so, setter parameter type is
             // inferred from the getter return type (contextually typed, no TS7006)
             let has_paired_getter = self.setter_has_paired_getter(member_idx, accessor);
@@ -1417,6 +1427,121 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// TS2808: Check that a getter is at least as accessible as its paired setter.
+    ///
+    /// Accessibility ordering: public(3) > protected(2) > private(1).
+    /// If the getter is less accessible than the setter, emit TS2808.
+    fn check_getter_setter_accessibility(
+        &mut self,
+        getter: &tsz_parser::parser::node::AccessorData,
+    ) {
+        let Some(ref class_info) = self.ctx.enclosing_class else {
+            return;
+        };
+
+        let getter_name = match self.get_property_name(getter.name) {
+            Some(n) => n,
+            None => return,
+        };
+
+        // Find the paired setter
+        let member_nodes = class_info.member_nodes.clone();
+        for &member_idx in &member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::SET_ACCESSOR {
+                continue;
+            }
+            let Some(setter) = self.ctx.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let Some(setter_name) = self.get_property_name(setter.name) else {
+                continue;
+            };
+            if setter_name != getter_name {
+                continue;
+            }
+
+            // Found paired setter — compare accessibility
+            let getter_level = self.accessibility_level(&getter.modifiers);
+            let setter_level = self.accessibility_level(&setter.modifiers);
+
+            if getter_level < setter_level {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    getter.name,
+                    diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                    diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                );
+            }
+            return;
+        }
+    }
+
+    /// Get the accessibility level for comparing getter/setter pairs.
+    /// Returns: 3 for public (default), 2 for protected, 1 for private.
+    fn accessibility_level(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> u8 {
+        if self.has_private_modifier(modifiers) {
+            1
+        } else if self.has_protected_modifier(modifiers) {
+            2
+        } else {
+            3 // public (explicit or implicit)
+        }
+    }
+
+    /// TS2808 (setter side): Check that the paired getter is at least as accessible.
+    ///
+    /// tsc emits TS2808 on both the getter and setter, so this method emits on the setter.
+    fn check_setter_getter_accessibility(
+        &mut self,
+        setter: &tsz_parser::parser::node::AccessorData,
+    ) {
+        let Some(ref class_info) = self.ctx.enclosing_class else {
+            return;
+        };
+
+        let setter_name = match self.get_property_name(setter.name) {
+            Some(n) => n,
+            None => return,
+        };
+
+        // Find the paired getter
+        let member_nodes = class_info.member_nodes.clone();
+        for &member_idx in &member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
+                continue;
+            }
+            let Some(getter) = self.ctx.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let Some(getter_name) = self.get_property_name(getter.name) else {
+                continue;
+            };
+            if getter_name != setter_name {
+                continue;
+            }
+
+            // Found paired getter — compare accessibility
+            let getter_level = self.accessibility_level(&getter.modifiers);
+            let setter_level = self.accessibility_level(&setter.modifiers);
+
+            if getter_level < setter_level {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    setter.name,
+                    diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                    diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                );
+            }
+            return;
+        }
     }
 
     /// Resolve the symbol of a computed property name's inner expression.
