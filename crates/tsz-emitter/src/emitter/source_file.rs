@@ -743,8 +743,10 @@ impl<'a> Printer<'a> {
         if self.ctx.is_commonjs() {
             use crate::transforms::module_commonjs;
 
-            // Emit __esModule if this is an ES module
-            if self.should_emit_es_module_marker(&source.statements) {
+            // Emit __esModule if this is an ES module.
+            // Also emit it when JSX auto-import synthesizes a require() — tsc
+            // considers the synthesized import as ESM syntax that triggers __esModule.
+            if self.should_emit_es_module_marker(&source.statements) || jsx_import_text.is_some() {
                 self.write("Object.defineProperty(exports, \"__esModule\", { value: true });");
                 self.write_line();
             }

@@ -85,8 +85,10 @@ pub fn strip_type_only_content(source: &str) -> String {
             || trimmed.starts_with("type ")
             || trimmed.starts_with("interface ")
             // Other import statements - identifiers from other
-            // imports should not count as value usages of *this* import
-            || trimmed.starts_with("import ")
+            // imports should not count as value usages of *this* import.
+            // But `import X = Y` (namespace aliases) reference identifiers as
+            // values and must be kept — only strip module-style imports.
+            || (trimmed.starts_with("import ") && !is_namespace_alias_import(trimmed))
             || trimmed.starts_with("import{")
             // Direct re-exports from other modules (`export { x } from "mod"`,
             // `export * from "mod"`) don't reference local bindings, so strip them.
@@ -95,7 +97,7 @@ pub fn strip_type_only_content(source: &str) -> String {
             || trimmed.starts_with("export *")
             || (trimmed.starts_with("export{") && is_reexport_from(trimmed))
             || (trimmed.starts_with("export {") && is_reexport_from(trimmed))
-            || trimmed.starts_with("export import ");
+            || (trimmed.starts_with("export import ") && !is_namespace_alias_import(&trimmed["export ".len()..]));
 
         if is_type_only_start {
             // Check if this line opens a brace block (multi-line declaration)
@@ -349,6 +351,23 @@ fn strip_type_annotations_safe(line: &str) -> String {
 
 /// Check if an `export { ... }` line is a re-export from another module
 /// (contains `from "..."` or `from '...'`).
+/// Check if a line starting with `import ` is a namespace alias import (`import X = Y;`).
+/// These create value references and must not be stripped.
+fn is_namespace_alias_import(trimmed: &str) -> bool {
+    // `import X = Y;` — look for `=` after the identifier (and no `from` or `{`)
+    // Skip "import " prefix
+    let Some(after_import) = trimmed.strip_prefix("import ") else {
+        return false;
+    };
+    // Namespace alias imports have the form: `import <identifier> = <entity>;`
+    // Module imports have: `import { ... } from "..."` or `import X from "..."`
+    // The key distinguisher is the `=` sign after the first identifier.
+    !after_import.starts_with('{')
+        && !after_import.starts_with('*')
+        && after_import.contains('=')
+        && !after_import.contains("from ")
+}
+
 fn is_reexport_from(trimmed: &str) -> bool {
     // Look for `from` keyword followed by a string literal after the closing `}`
     if let Some(brace_end) = trimmed.find('}') {

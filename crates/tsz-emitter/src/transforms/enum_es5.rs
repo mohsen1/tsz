@@ -548,7 +548,12 @@ impl<'a> EnumES5Transformer<'a> {
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
-                if let Some(lit) = self.arena.get_literal(node) {
+                // Use ASTRef to preserve original quote style from source text.
+                // IRNode::StringLiteral always emits double quotes, but source may
+                // use single quotes (e.g., `'foo'.length` inside an enum initializer).
+                if self.source_text.is_some() {
+                    IRNode::ASTRef(idx)
+                } else if let Some(lit) = self.arena.get_literal(node) {
                     IRNode::StringLiteral(lit.text.clone().into())
                 } else {
                     IRNode::StringLiteral(String::new().into())
