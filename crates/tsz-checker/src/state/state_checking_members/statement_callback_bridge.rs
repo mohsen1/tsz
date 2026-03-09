@@ -346,14 +346,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Skip this check if the return type is ERROR or the annotation looks like Promise
             // Note: Async generators (async function*) return AsyncGenerator, not Promise
             if func.is_async && !func.asterisk_token && has_type_annotation {
-                let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
-                    false
-                } else if self.is_non_promise_application_type(return_type) {
-                    true
-                } else {
-                    return_type != TypeId::ERROR
-                        && !self.return_type_annotation_looks_like_promise(func.type_annotation)
-                };
+                // Evaluate type aliases in the return type before checking.
+                // Without this, `type MyPromise<T> = Promise<T>; async function f(): MyPromise<void> {}`
+                // would see Application { base: Lazy(MyPromise) } which is not recognized as
+                // the global Promise type, causing a false TS1064.
+                let return_type_for_promise_check = self.evaluate_application_type(return_type);
+                let should_emit_ts2705 =
+                    if self.is_global_promise_type(return_type_for_promise_check) {
+                        false
+                    } else if self.is_non_promise_application_type(return_type_for_promise_check) {
+                        true
+                    } else {
+                        return_type != TypeId::ERROR
+                            && !self.return_type_annotation_looks_like_promise(func.type_annotation)
+                    };
 
                 if should_emit_ts2705 {
                     use crate::context::ScriptTarget;
