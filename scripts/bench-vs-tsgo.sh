@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Default lib assets for fresh checkouts (tsz expects a lib directory)
-TSZ_LIB_DIR_DEFAULT="$PROJECT_ROOT/src/lib-assets"
+TSZ_LIB_DIR_DEFAULT="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
 TSZ_LIB_DIR="${TSZ_LIB_DIR:-$TSZ_LIB_DIR_DEFAULT}"
 export TSZ_LIB_DIR
 
@@ -283,7 +283,7 @@ check_prerequisites() {
     # Check for lib assets directory used by tsz
     if [ ! -d "$TSZ_LIB_DIR" ]; then
         echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
-        echo "  Set TSZ_LIB_DIR or ensure src/lib-assets exists."
+        echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
         exit 1
     fi
     echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"

@@ -2155,19 +2155,16 @@ fn resolve_exports_target_versioned(
                     let version_range = &key[at_pos + 1..];
                     if conditions.contains(&base_condition)
                         && match_types_versions_range(version_range, compiler_version).is_some()
-                    {
-                        if let Some(resolved) =
+                        && let Some(resolved) =
                             resolve_exports_target_versioned(value, conditions, compiler_version)
-                        {
-                            return Some(resolved);
-                        }
-                    }
-                } else if conditions.contains(&key.as_str()) {
-                    if let Some(resolved) =
-                        resolve_exports_target_versioned(value, conditions, compiler_version)
                     {
                         return Some(resolved);
                     }
+                } else if conditions.contains(&key.as_str())
+                    && let Some(resolved) =
+                        resolve_exports_target_versioned(value, conditions, compiler_version)
+                {
+                    return Some(resolved);
                 }
             }
             None

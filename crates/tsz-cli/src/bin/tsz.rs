@@ -122,7 +122,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
     // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
     if let Some(ref _profile_path) = args.generate_cpu_profile {
-        eprintln!(
+        tracing::warn!(
             "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
         );
     }
@@ -548,49 +548,50 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
             let takes_value = valued_flags.contains(flag_name.as_str());
 
             // Check if next arg is "true" or "false" for boolean flags
-            if is_boolean && !arg_str.contains('=') {
-                if let Some(next) = result.get(i + 1) {
-                    let next_str = next.to_string_lossy();
-                    let next_lower = next_str.to_lowercase();
-                    if next_lower == "false" {
-                        if option_bool_flags.contains(flag_name.as_str()) {
-                            // Option<bool> flag: emit --flag=false so clap gets the value
-                            let combined = format!("{flag_name}=false");
-                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                                skip_positions[prev_idx] = true;
-                            }
-                            let current_idx = final_result.len();
-                            flag_positions.insert(flag_name, current_idx);
-                            final_result.push(OsString::from(combined));
-                            skip_positions.push(false);
-                            i += 2;
-                            continue;
-                        } else {
-                            // Plain bool flag: skip both (flag is not set)
-                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                                skip_positions[prev_idx] = true;
-                            }
-                            flag_positions.remove(&flag_name);
-                            i += 2;
-                            continue;
+            if is_boolean
+                && !arg_str.contains('=')
+                && let Some(next) = result.get(i + 1)
+            {
+                let next_str = next.to_string_lossy();
+                let next_lower = next_str.to_lowercase();
+                if next_lower == "false" {
+                    if option_bool_flags.contains(flag_name.as_str()) {
+                        // Option<bool> flag: emit --flag=false so clap gets the value
+                        let combined = format!("{flag_name}=false");
+                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                            skip_positions[prev_idx] = true;
                         }
-                    } else if next_lower == "true" {
-                        if option_bool_flags.contains(flag_name.as_str()) {
-                            // Option<bool> flag: emit --flag=true so clap gets the value
-                            let combined = format!("{flag_name}=true");
-                            if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                                skip_positions[prev_idx] = true;
-                            }
-                            let current_idx = final_result.len();
-                            flag_positions.insert(flag_name, current_idx);
-                            final_result.push(OsString::from(combined));
-                            skip_positions.push(false);
-                            i += 2;
-                            continue;
+                        let current_idx = final_result.len();
+                        flag_positions.insert(flag_name, current_idx);
+                        final_result.push(OsString::from(combined));
+                        skip_positions.push(false);
+                        i += 2;
+                        continue;
+                    } else {
+                        // Plain bool flag: skip both (flag is not set)
+                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                            skip_positions[prev_idx] = true;
                         }
-                        // Plain bool flag: keep the flag, skip the "true" token
-                        i += 1;
+                        flag_positions.remove(&flag_name);
+                        i += 2;
+                        continue;
                     }
+                } else if next_lower == "true" {
+                    if option_bool_flags.contains(flag_name.as_str()) {
+                        // Option<bool> flag: emit --flag=true so clap gets the value
+                        let combined = format!("{flag_name}=true");
+                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                            skip_positions[prev_idx] = true;
+                        }
+                        let current_idx = final_result.len();
+                        flag_positions.insert(flag_name, current_idx);
+                        final_result.push(OsString::from(combined));
+                        skip_positions.push(false);
+                        i += 2;
+                        continue;
+                    }
+                    // Plain bool flag: keep the flag, skip the "true" token
+                    i += 1;
                 }
             }
 
@@ -885,6 +886,7 @@ fn split_response_line(line: &str) -> Vec<String> {
 /// tsc v6 behavior:
 ///   - `--build` (long form) not first → TS6369 ("must be first")
 ///   - `-b` (short form) not first → TS5023 ("unknown compiler option")
+///
 /// Returns an error message if either form appears but is not first.
 fn check_build_position(args: &[OsString]) -> Option<String> {
     // Skip program name (index 0)
@@ -1259,11 +1261,11 @@ fn edit_distance(a: &str, b: &str) -> usize {
     let n = b_chars.len();
 
     let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 0..=m {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+        row[0] = i;
     }
-    for j in 0..=n {
-        dp[0][j] = j;
+    for (j, val) in dp[0].iter_mut().enumerate().take(n + 1) {
+        *val = j;
     }
     for i in 1..=m {
         for j in 1..=n {
@@ -1502,29 +1504,29 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     //   TS5081 – no --project flag, default cwd/tsconfig.json missing
     //   TS5057 – --project dir exists but has no tsconfig.json
     //   TS5058 – --project path does not exist at all
-    if let Some(ref path) = tsconfig_path {
-        if !path.exists() {
-            if args.project.is_none() {
+    if let Some(ref path) = tsconfig_path
+        && !path.exists()
+    {
+        if args.project.is_none() {
+            println!(
+                "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+                cwd.display()
+            );
+        } else {
+            let project_val = args.project.as_ref().unwrap();
+            if project_val.is_dir() {
                 println!(
-                    "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
-                    cwd.display()
+                    "error TS5057: Cannot find a tsconfig.json file at the specified directory: '{}'.",
+                    project_val.display()
                 );
             } else {
-                let project_val = args.project.as_ref().unwrap();
-                if project_val.is_dir() {
-                    println!(
-                        "error TS5057: Cannot find a tsconfig.json file at the specified directory: '{}'.",
-                        project_val.display()
-                    );
-                } else {
-                    println!(
-                        "error TS5058: The specified path does not exist: '{}'.",
-                        project_val.display()
-                    );
-                }
+                println!(
+                    "error TS5058: The specified path does not exist: '{}'.",
+                    project_val.display()
+                );
             }
-            std::process::exit(1);
         }
+        std::process::exit(1);
     }
 
     // Issue 2: load_tsconfig already resolves extends chains, so the returned
@@ -1618,7 +1620,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .as_ref()
             .and_then(|c| c.include.as_ref())
             .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{}\"", s)).collect();
+                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
                 format!("[{}]", inner.join(","))
             })
             .unwrap_or_else(|| "[]".to_string());
@@ -1626,7 +1628,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .as_ref()
             .and_then(|c| c.exclude.as_ref())
             .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{}\"", s)).collect();
+                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
                 format!("[{}]", inner.join(","))
             })
             .unwrap_or_else(|| "[]".to_string());
@@ -1701,35 +1703,35 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // tsc v6 output order: compilerOptions, references, files, include, exclude
 
     // references (before files, matching tsc v6 ordering)
-    if let Some(ref cfg) = config {
-        if let Some(ref refs) = cfg.references {
-            output.push_str(",\n    \"references\": [\n");
-            for (i, r) in refs.iter().enumerate() {
-                if r.prepend {
-                    output.push_str(&format!(
+    if let Some(ref cfg) = config
+        && let Some(ref refs) = cfg.references
+    {
+        output.push_str(",\n    \"references\": [\n");
+        for (i, r) in refs.iter().enumerate() {
+            if r.prepend {
+                output.push_str(&format!(
                         "        {{\n            \"path\": \"{}\",\n            \"prepend\": true\n        }}",
                         r.path
                     ));
-                } else {
-                    output.push_str(&format!(
-                        "        {{\n            \"path\": \"{}\"\n        }}",
-                        r.path
-                    ));
-                }
-                if i + 1 < refs.len() {
-                    output.push(',');
-                }
-                output.push('\n');
+            } else {
+                output.push_str(&format!(
+                    "        {{\n            \"path\": \"{}\"\n        }}",
+                    r.path
+                ));
             }
-            output.push_str("    ]");
+            if i + 1 < refs.len() {
+                output.push(',');
+            }
+            output.push('\n');
         }
+        output.push_str("    ]");
     }
 
     // files
     if !file_paths.is_empty() {
         output.push_str(",\n    \"files\": [\n");
         for (i, f) in file_paths.iter().enumerate() {
-            output.push_str(&format!("        \"{}\"", f));
+            output.push_str(&format!("        \"{f}\""));
             if i + 1 < file_paths.len() {
                 output.push(',');
             }
@@ -1743,7 +1745,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if let Some(ref include) = cfg.include {
             output.push_str(",\n    \"include\": [\n");
             for (i, v) in include.iter().enumerate() {
-                output.push_str(&format!("        \"{}\"", v));
+                output.push_str(&format!("        \"{v}\""));
                 if i + 1 < include.len() {
                     output.push(',');
                 }
@@ -1755,7 +1757,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if !effective_exclude.is_empty() {
             output.push_str(",\n    \"exclude\": [\n");
             for (i, v) in effective_exclude.iter().enumerate() {
-                output.push_str(&format!("        \"{}\"", v));
+                output.push_str(&format!("        \"{v}\""));
                 if i + 1 < effective_exclude.len() {
                     output.push(',');
                 }
@@ -1771,7 +1773,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Convert merged CompilerOptions (from extends-resolved TsConfig) into a JSON map
+/// Convert merged `CompilerOptions` (from extends-resolved `TsConfig`) into a JSON map
 /// for --showConfig output. Only includes options that are explicitly set (non-None).
 fn show_config_compiler_options_to_json(
     opts: Option<&tsz_cli::config::CompilerOptions>,
@@ -2246,7 +2248,7 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     }
 
     // --- Helper: compute module from target ---
-    fn compute_module(target: u8) -> &'static str {
+    const fn compute_module(target: u8) -> &'static str {
         if target == 99 {
             "esnext"
         } else if target >= 9 {
@@ -2582,13 +2584,13 @@ fn format_json_value_with_indent(key: &str, value: &serde_json::Value, indent: u
     format!("\"{key}\": {formatted_value}")
 }
 
-/// Format a serde_json::Value for --showConfig output.
+/// Format a `serde_json::Value` for --showConfig output.
 /// `indent` is the indentation level of the line containing this value.
 /// Arrays and objects are formatted multi-line with items at indent+4 and
 /// closing bracket at indent.
 fn format_json_value(value: &serde_json::Value, indent: usize) -> String {
     match value {
-        serde_json::Value::String(s) => format!("\"{}\"", s),
+        serde_json::Value::String(s) => format!("\"{s}\""),
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Array(arr) => {
@@ -2740,7 +2742,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     if !tsconfig_path.exists() {
         // Match tsc behavior: TS5083 to stdout, exit code 1
         let display_path = if tsconfig_path.is_absolute() {
-            tsconfig_path.clone()
+            tsconfig_path
         } else {
             cwd.join(&tsconfig_path)
         };

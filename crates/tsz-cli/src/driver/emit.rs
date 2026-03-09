@@ -695,7 +695,7 @@ pub(crate) fn normalize_type_roots(
 }
 
 /// Convert config `JsxEmit` to emitter `JsxEmit`.
-fn config_jsx_to_emitter_jsx(jsx: JsxEmit) -> tsz::emitter::JsxEmit {
+const fn config_jsx_to_emitter_jsx(jsx: JsxEmit) -> tsz::emitter::JsxEmit {
     match jsx {
         JsxEmit::Preserve => tsz::emitter::JsxEmit::Preserve,
         JsxEmit::React => tsz::emitter::JsxEmit::React,

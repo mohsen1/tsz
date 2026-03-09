@@ -267,15 +267,27 @@ fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
     // Use CARGO_MANIFEST_DIR for absolute paths so tests work with nextest
     // (which runs each test in a separate process with a different working directory)
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        // TypeScript submodule source lib (available in CI after `git submodule update`)
-        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+    // Search from manifest dir and ancestor dirs (workspace root)
+    let search_roots: Vec<&std::path::Path> = {
+        let mut roots = vec![manifest_dir];
+        let mut p = manifest_dir.parent();
+        while let Some(dir) = p {
+            roots.push(dir);
+            p = dir.parent();
+        }
+        roots
+    };
+    let suffixes = [
+        "scripts/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
+        "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
+        "TypeScript/src/lib/es5.d.ts",
+        "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
     ];
+    let lib_paths: Vec<std::path::PathBuf> = search_roots
+        .iter()
+        .flat_map(|root| suffixes.iter().map(move |s| root.join(s)))
+        .collect();
 
     for lib_path in &lib_paths {
         if lib_path.exists()

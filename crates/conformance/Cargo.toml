@@ -6,7 +6,7 @@ autotests = false
 publish = false
 
 [dependencies.tsz]
-path = "../.."
+path = "../tsz-core"
 package = "tsz-core"
 features = []
 

@@ -77,8 +77,8 @@ EOF
 
 # ─── Copy and chmod bin scripts ───────────────────────────────────────────────
 mkdir -p "$PKG/bin"
-cp "$PROJECT_ROOT/wasm/bin/tsz.js"        "$PKG/bin/tsz.js"
-cp "$PROJECT_ROOT/wasm/bin/tsz-server.js" "$PKG/bin/tsz-server.js"
+cp "$PROJECT_ROOT/crates/tsz-wasm/js/tsz.js"        "$PKG/bin/tsz.js"
+cp "$PROJECT_ROOT/crates/tsz-wasm/js/tsz-server.js" "$PKG/bin/tsz-server.js"
 chmod +x "$PKG/bin/tsz.js" "$PKG/bin/tsz-server.js"
 
 # Copy root LICENSE into pkg/ so it is included in the npm tarball
@@ -87,7 +87,7 @@ cp "$PROJECT_ROOT/LICENSE.txt" "$PKG/LICENSE.txt"
 # ─── Bundle TypeScript lib files ──────────────────────────────────────────────
 # lib .d.ts files provide global type definitions (Array, String, Promise, etc.)
 # The CLI wrapper loads them at startup via TsProgram.addLibFile().
-LIB_ASSETS="$PROJECT_ROOT/src/lib-assets"
+LIB_ASSETS="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
 if [ -d "$LIB_ASSETS" ]; then
     echo "Bundling TypeScript lib files..."
     mkdir -p "$PKG/lib-assets"

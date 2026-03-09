@@ -12,7 +12,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
  * @param targetDir - Directory to scan for skeletons
  * @param excludeBasenames - Set of file basenames to exclude (files already included in full)
  */
-function extractSkeletons(targetDir = 'src/', excludeBasenames = new Set()) {
+function extractSkeletons(targetDir = 'crates/', excludeBasenames = new Set()) {
   const patterns = [
     { type: 'fn', pattern: 'fn $NAME' },
     { type: 'struct', pattern: 'struct $NAME' },
@@ -165,9 +165,9 @@ function extractSignature(text, type) {
 // this repo to ask questions. Always explicitly include files or directories with --include.
 
 // Usage:
-// ./scripts/ask-gemini.mjs --include=src/solver "How does type inference work?"
-// ./scripts/ask-gemini.mjs --include=src/checker --include=src/solver "Question about checker and solver"
-// ./scripts/ask-gemini.mjs --include=src/cli --include=src/lib.rs "CLI question"
+// ./scripts/ask-gemini.mjs --include=crates/tsz-solver/src "How does type inference work?"
+// ./scripts/ask-gemini.mjs --include=crates/tsz-checker/src --include=crates/tsz-solver/src "Question about checker and solver"
+// ./scripts/ask-gemini.mjs --include=crates/tsz-cli/src --include=crates/tsz-core/src/lib.rs "CLI question"
 // ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
 // Flash model is faster and cheaper, use by default
@@ -480,14 +480,14 @@ Environment:
   GEMINI_API_KEY              Required for direct Gemini API (--no-use-vertex).
 
 Examples:
-  ./scripts/ask-gemini.mjs --include=src/solver "How does type inference work?"
-  ./scripts/ask-gemini.mjs --include=src/checker --include=src/solver "How does assignability work?"
-  ./scripts/ask-gemini.mjs --include=src/cli --include=src/lib.rs "CLI question"
-  ./scripts/ask-gemini.mjs --include=src/parser --include=src/scanner "Parser question"
-  ./scripts/ask-gemini.mjs --include=src/emitter --include=src/transforms "Emitter question"
-  ./scripts/ask-gemini.mjs --include=src/lsp "LSP question"
-  ./scripts/ask-gemini.mjs --pro --include=src/solver "Review this implementation"
-  ./scripts/ask-gemini.mjs --no-use-vertex --include=src/solver "Use direct Gemini API"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-solver/src "How does type inference work?"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-checker/src --include=crates/tsz-solver/src "How does assignability work?"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-cli/src --include=crates/tsz-core/src/lib.rs "CLI question"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-parser/src --include=crates/tsz-scanner/src "Parser question"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-emitter/src --include=crates/tsz-lowering/src "Emitter question"
+  ./scripts/ask-gemini.mjs --include=crates/tsz-lsp/src "LSP question"
+  ./scripts/ask-gemini.mjs --pro --include=crates/tsz-solver/src "Review this implementation"
+  ./scripts/ask-gemini.mjs --no-use-vertex --include=crates/tsz-solver/src "Use direct Gemini API"
 `);
   process.exit(0);
 }
@@ -593,7 +593,7 @@ try {
   }
 
   // Build a set of fully included files for exclusion from skeletons
-  // yek outputs short names like "apparent.rs", ast-grep outputs "src/solver/apparent.rs"
+  // yek outputs short names like "apparent.rs", ast-grep outputs "crates/tsz-solver/src/apparent.rs"
   // We'll store basenames and match by basename
   const includedBasenames = new Set(files.map(f => {
     // Extract basename (last part of path)
@@ -606,7 +606,7 @@ try {
   if (values.skeleton) {
     console.log('  - Extracting code skeletons with ast-grep...');
     try {
-      const skeletonDir = includePaths ? includePaths.split(' ')[0] : 'src/';
+      const skeletonDir = includePaths ? includePaths.split(' ')[0] : 'crates/';
       const { output, fileCount, entryCount } = extractSkeletons(skeletonDir, includedBasenames);
       skeletonOutput = output;
       console.log(`  - Extracted ${entryCount} signatures from ${fileCount} files (excluding ${files.length} fully-included files)`);
@@ -679,7 +679,7 @@ Key architecture concepts:
 - Solver handles WHAT (pure type operations and relations)
 - Checker handles WHERE (AST traversal, diagnostics)
 - Binder handles SYMBOLS (symbol table, scopes, control flow graph)
-- Use visitor pattern from src/solver/visitor.rs for type operations
+- Use visitor pattern from crates/tsz-solver/src/visitor.rs for type operations
 
 
 

@@ -2668,6 +2668,16 @@ pub fn default_lib_dir() -> Result<PathBuf> {
         return Ok(dir);
     }
 
+    // If manifest dir is a crate under a workspace, also check ancestor dirs
+    // (e.g., crates/tsz-core/ -> repo root where TypeScript/ lives)
+    let mut ancestor = manifest_dir.parent();
+    while let Some(dir) = ancestor {
+        if let Some(found) = lib_dir_from_root(dir) {
+            return Ok(found);
+        }
+        ancestor = dir.parent();
+    }
+
     bail!("lib directory not found under {}", manifest_dir.display());
 }
 

@@ -1938,13 +1938,13 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         None => {
             // When module detection is not set via CLI, check if the CLI also overrides
             // the module kind. If module is now a node module, apply tsc's default (Force).
-            if let Some(ref module_val) = args.module {
-                if matches!(
+            if let Some(ref module_val) = args.module
+                && matches!(
                     module_val,
                     Module::Node16 | Module::Node18 | Module::Node20 | Module::NodeNext
-                ) {
-                    options.printer.module_detection_force = true;
-                }
+                )
+            {
+                options.printer.module_detection_force = true;
             }
         }
     }

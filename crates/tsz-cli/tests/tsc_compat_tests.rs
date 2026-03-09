@@ -83,7 +83,7 @@ fn run_tsz(cwd: &Path, args: &[&str]) -> Option<String> {
     Some(normalize_output(&combined))
 }
 
-/// Run tsz and return (exit_code, combined_output).
+/// Run tsz and return (`exit_code`, `combined_output`).
 fn run_tsz_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
     let tsz_bin = find_tsz_binary()?;
     let output = Command::new(&tsz_bin)
@@ -106,7 +106,7 @@ fn run_tsz_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
     Some((code, normalize_output(&combined)))
 }
 
-/// Run tsc and return (exit_code, combined_output).
+/// Run tsc and return (`exit_code`, `combined_output`).
 fn run_tsc_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
     let output = Command::new("tsc")
         .args(args)

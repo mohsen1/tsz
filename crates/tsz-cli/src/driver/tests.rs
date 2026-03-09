@@ -38,8 +38,10 @@ fn test_module_resolution_incompatibility_preserves_existing_config_diagnostics(
         18003,
     )];
 
-    let mut printer = PrinterOptions::default();
-    printer.module = ModuleKind::CommonJS;
+    let printer = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let resolved = ResolvedCompilerOptions {
         printer,
         module_resolution: Some(ModuleResolutionKind::Node16),

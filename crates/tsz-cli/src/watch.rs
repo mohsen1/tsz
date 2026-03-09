@@ -567,10 +567,10 @@ impl WatchFilter {
         }
 
         // Check --excludeFiles
-        if let Some(ref exclude_files) = self.exclude_files {
-            if exclude_files.contains(path) {
-                return false;
-            }
+        if let Some(ref exclude_files) = self.exclude_files
+            && exclude_files.contains(path)
+        {
+            return false;
         }
 
         if !is_ts_file(path) {

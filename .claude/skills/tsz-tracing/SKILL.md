@@ -60,19 +60,19 @@ TSZ_LOG="tsz::solver::narrowing=trace" TSZ_LOG_FORMAT=tree cargo run -- file.ts
 
 The following areas have tracing instrumentation:
 
-### Solver (`src/solver/`)
+### Solver (`crates/tsz-solver/src/`)
 - `narrowing.rs` - Type narrowing operations (typeof, instanceof, discriminants)
 - `subtype.rs` - Subtype relationship checks
 - Type inference and instantiation
 
-### Checker (`src/checker/`)
+### Checker (`crates/tsz-checker/src/`)
 - `context.rs` - Type context operations
 - `state.rs` - Node type caching (`get_type_of_node`)
 - `assignability_checker.rs` - Assignability checks
 - `class_inheritance.rs` - Class hierarchy analysis
 - `dispatch.rs` - Type dispatch operations
 
-### CLI (`src/cli/`)
+### CLI (`crates/tsz-cli/src/`)
 - `driver.rs` - Compilation spans, file checking
 - `build.rs` - Build operations
 

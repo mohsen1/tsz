@@ -11,7 +11,7 @@ ignore_patterns:
   - "**/benches/**"
   - "TypeScript/**"
   - "node_modules/**"
-  - "src/test_harness.rs"
+  - "crates/tsz-core/src/test_harness.rs"
   - "docs/*"
   - "**/*debug*.rs"
   - "LICENSE.txt"
@@ -27,31 +27,31 @@ ignore_patterns:
 priority_rules:
   # Core type checking and solving (most important)
   - score: 100
-    pattern: "^src/(checker/state\\.rs|binder/state\\.rs|binder\\.rs|lowering_pass\\.rs)$"
+    pattern: "^crates/tsz-(checker|binder)/src/state\\.rs$|^crates/tsz-binder/src/lib\\.rs$|^crates/tsz-lowering/src/"
   - score: 95
-    pattern: "^src/(checker|solver)/"
+    pattern: "^crates/tsz-(checker|solver)/src/"
 
   # Parser and scanner
   - score: 90
-    pattern: "^src/(scanner|lib)\\.rs$|^src/parser/state\\.rs$"
+    pattern: "^crates/tsz-(scanner|parser)/src/lib\\.rs$|^crates/tsz-parser/src/state\\.rs$"
   - score: 85
-    pattern: "^src/(parser|scanner)/"
+    pattern: "^crates/tsz-(parser|scanner)/src/"
 
   # Emitter and code generation
   - score: 80
-    pattern: "^src/(declaration_emitter|source_writer|source_map|emit_context|printer)\\.rs$|^src/emitter/"
+    pattern: "^crates/tsz-emitter/src/(declaration_emitter|source_writer|source_map|emit_context|printer)\\.rs$"
   - score: 75
-    pattern: "^src/emitter/"
+    pattern: "^crates/tsz-emitter/src/"
   - score: 70
-    pattern: "^src/transforms/"
+    pattern: "^crates/tsz-lowering/src/transforms/"
 
   # LSP and CLI
   - score: 60
-    pattern: "^src/(lsp|cli)/"
+    pattern: "^crates/tsz-(lsp|cli)/src/"
 
   # Core infrastructure
   - score: 50
-    pattern: "^src/(interner|comments|char_codes|lib_loader|parallel|transform_context)\\.rs$"
+    pattern: "^crates/tsz-common/src/|^crates/tsz-core/src/"
 
   # Documentation
   - score: 40

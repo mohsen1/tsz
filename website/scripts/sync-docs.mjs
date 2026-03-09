@@ -11,7 +11,7 @@ const TARGET_DOCS = path.join(SRC, "docs");
 const TARGET_ARCH_TEMPLATE = path.join(SRC, "architecture.njk");
 const TARGET_ARCH_DATA = path.join(SRC, "_data", "architecture_page.js");
 const TARGET_ARCH_LEGACY_DIR = path.join(SRC, "architecture");
-const LIB_ASSETS = path.join(ROOT, "src", "lib-assets");
+const LIB_ASSETS = path.join(ROOT, "crates", "tsz-core", "src", "lib-assets");
 const TARGET_LIB = path.join(SRC, "lib");
 const DOCS_ALLOWLIST = [
   "site",
