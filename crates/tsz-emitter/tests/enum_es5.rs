@@ -171,17 +171,15 @@ fn test_cjs_exported_enum_iife_tail_folding() {
 #[test]
 fn test_template_literal_enum_no_reverse_mapping() {
     // NoSubstitutionTemplateLiteral is syntactically string — no reverse mapping.
-    // Note: backtick template literals may not parse correctly in minimal test strings,
-    // so we test the is_syntactically_string logic indirectly via string member tracking:
-    // If A is a string literal and H = A, then H should also be string (no reverse mapping).
+    // If A is a string literal and H = A, tsc folds H to the literal value "hello".
     let output = transform_enum("enum Foo { A = \"hello\", H = A }");
     assert!(
         output.contains("Foo[\"A\"] = \"hello\""),
         "String literal should not have reverse mapping, got: {output}"
     );
     assert!(
-        output.contains("Foo[\"H\"] = Foo.A"),
-        "Reference to string member should not have reverse mapping, got: {output}"
+        output.contains("Foo[\"H\"] = \"hello\""),
+        "Reference to string member should be folded to literal value, got: {output}"
     );
 }
 
@@ -211,16 +209,15 @@ fn test_enum_member_self_reference_qualified() {
 
 #[test]
 fn test_string_member_reference_no_reverse_mapping() {
-    // H = A where A is string-valued — H should also have no reverse mapping
+    // H = A where A is string-valued — tsc folds to the literal value
     let output = transform_enum("enum Foo { A = \"alpha\", H = A }");
-    // A is string, so H = Foo.A should also be treated as string (no reverse mapping)
     assert!(
         output.contains("Foo[\"A\"] = \"alpha\""),
         "A should have no reverse mapping, got: {output}"
     );
     assert!(
-        output.contains("Foo[\"H\"] = Foo.A"),
-        "H referencing string member A should have no reverse mapping, got: {output}"
+        output.contains("Foo[\"H\"] = \"alpha\""),
+        "H referencing string member A should be folded to literal value, got: {output}"
     );
 }
 
