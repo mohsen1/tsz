@@ -1340,8 +1340,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 return;
             }
             let msg = format!("'{kind_name}' declarations can only be declared inside a block.");
+
+            // tsc reports TS1156 at the declaration's name identifier, not the keyword.
+            // For `type Foo = ...`, tsc points at `Foo`, not `type`.
+            let error_node = self.get_declaration_name_node(stmt_idx).unwrap_or(stmt_idx);
+
             self.error_at_node(
-                stmt_idx,
+                error_node,
                 &msg,
                 crate::diagnostics::diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
             );
