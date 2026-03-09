@@ -58,8 +58,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
-            let check_type = self.evaluate(cond.check_type);
+            let mut check_type = self.evaluate(cond.check_type);
             let extends_type = self.evaluate(cond.extends_type);
+
+            // When check_type is an unresolvable Application (e.g., Promise<string>
+            // where Promise is referenced via TypeQuery with no DefId yet), try to
+            // resolve it structurally. This is critical for Awaited<T>-style patterns
+            // where the conditional needs to see Promise's structural members (like
+            // `then`) for infer pattern matching.
+            //
+            // Uses get_type_params + resolve_ref on the SymbolRef directly, bypassing
+            // the DefId path which may not be available yet during lazy evaluation.
+            if let Some(TypeData::Application(app_id)) = self.interner().lookup(check_type) {
+                let app = self.interner().type_application(app_id);
+                if let Some(TypeData::TypeQuery(sym_ref)) = self.interner().lookup(app.base) {
+                    if let Some(type_params) = self.resolver().get_type_params(sym_ref) {
+                        if let Some(resolved_base) =
+                            self.resolver().resolve_ref(sym_ref, self.interner())
+                        {
+                            if !type_params.is_empty() && type_params.len() == app.args.len() {
+                                let args = app.args.clone();
+                                let expanded_args = self.expand_type_args(&args);
+                                let instantiated =
+                                    crate::instantiation::instantiate::instantiate_generic(
+                                        self.interner(),
+                                        resolved_base,
+                                        &type_params,
+                                        &expanded_args,
+                                    );
+                                let resolved = self.evaluate(instantiated);
+                                if resolved != check_type {
+                                    check_type = resolved;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             trace!(
                 check_raw = cond.check_type.0,
