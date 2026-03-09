@@ -45,6 +45,88 @@ pub(super) fn load_lib_files_for_contexts(lib_files: &[Arc<LibFile>]) -> Vec<Lib
     }]
 }
 
+fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
+    program
+        .files
+        .iter()
+        .flat_map(|file| file.parse_diagnostics.iter())
+        .any(|diag| is_real_syntax_error(diag.code))
+}
+
+fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> bool {
+    // tsc suppresses type-level semantic diagnostics when any source file in the
+    // program has a real syntax error, but it still reports checker grammar
+    // diagnostics such as TS2457 alongside parse errors.
+    code < 2000 || (8000..9000).contains(&code) || code == 2457
+}
+
+fn post_process_checker_diagnostics(
+    checker_diagnostics: &mut Vec<Diagnostic>,
+    file: &BoundFile,
+    options: &ResolvedCompilerOptions,
+    program_has_real_syntax_errors: bool,
+) {
+    let is_js = is_js_file(Path::new(&file.file_name));
+    let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
+    let has_ts_nocheck_pragma = js_file_has_ts_nocheck_pragma(file);
+    let should_filter_type_errors =
+        is_js && (has_ts_nocheck_pragma || (!options.check_js && !has_ts_check_pragma));
+
+    if should_filter_type_errors {
+        // Keep syntax/semantic diagnostics (< 2000) and JS grammar diagnostics
+        // (TS8xxx). When `checkJs` is NOT explicitly false (the default
+        // no-checkJs mode), also allow the `plainJSErrors` codes that tsc
+        // surfaces even in unchecked JS files. When `checkJs: false` is
+        // explicitly set, suppress ALL semantic errors.
+        checker_diagnostics.retain(|diag| {
+            diag.code < 2000
+                || (8000..9000).contains(&diag.code)
+                || (!options.explicit_check_js_false && is_plain_js_allowed_code(diag.code))
+        });
+    }
+
+    if program_has_real_syntax_errors {
+        checker_diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+
+    // Suppress semantic errors that cascade from structural parse failures.
+    // tsc sets per-node ThisNodeHasError flags and skips semantic checks on
+    // error-recovery subtrees. We approximate this by suppressing semantic
+    // diagnostics that are near a structural parse error (within a distance
+    // window). Only structural parse failures (missing tokens, unexpected
+    // tokens) trigger suppression — grammar checks like trailing commas or
+    // strict mode violations don't cause AST malformation and shouldn't
+    // suppress semantic errors.
+    let structural_error_positions: Vec<u32> = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| is_structural_parse_error(d.code))
+        .map(|d| d.start)
+        .collect();
+    if !structural_error_positions.is_empty() {
+        const MAX_CASCADE_DISTANCE: u32 = 300;
+        checker_diagnostics.retain(|diag| {
+            // Keep parse/grammar errors (1xxx) and JS grammar errors (8xxx)
+            if diag.code < 2000 || (8000..9000).contains(&diag.code) {
+                return true;
+            }
+            // Some semantic errors are deliberately emitted alongside
+            // structural parse errors and must not be suppressed.
+            // TS2457: "Type alias name cannot be 'void'" — TSC emits
+            // this alongside TS1109 for `type void = ...`.
+            if diag.code == 2457 {
+                return true;
+            }
+            // Suppress if a structural parse error is within the cascade window
+            !structural_error_positions.iter().any(|&err_pos| {
+                let dist = diag.start.abs_diff(err_pos);
+                dist <= MAX_CASCADE_DISTANCE
+            })
+        });
+    }
+}
+
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -63,6 +145,7 @@ pub(super) fn collect_diagnostics(
     let mut program_paths = FxHashSet::default();
     let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
+    let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
 
     {
         let _span = tracing::info_span!("build_program_path_maps").entered();
@@ -485,6 +568,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             has_deprecation_diagnostics,
+                            program_has_real_syntax_errors,
                         };
                         check_file_for_parallel(context)
                     })
@@ -515,6 +599,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             has_deprecation_diagnostics,
+                            program_has_real_syntax_errors,
                         };
                         check_file_for_parallel(context)
                     })
@@ -547,6 +632,7 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     has_deprecation_diagnostics,
+                    program_has_real_syntax_errors,
                 };
                 check_file_for_parallel(context)
             })
@@ -710,66 +796,13 @@ pub(super) fn collect_diagnostics(
                     tracing::info_span!("check_file", file = %file.file_name).entered();
                 checker.check_source_file(file.source_file);
 
-                // Filter diagnostics for JS files without checkJs
-                let is_js = is_js_file(Path::new(&file.file_name));
-                let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
-                let has_ts_nocheck_pragma = js_file_has_ts_nocheck_pragma(file);
-                let should_filter_type_errors =
-                    is_js && (has_ts_nocheck_pragma || (!options.check_js && !has_ts_check_pragma));
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-
-                if should_filter_type_errors {
-                    // Keep syntax/semantic diagnostics (< 2000) and JS grammar diagnostics
-                    // (TS8xxx). When `checkJs` is NOT explicitly false (the default
-                    // no-checkJs mode), also allow the `plainJSErrors` codes that tsc
-                    // surfaces even in unchecked JS files. When `checkJs: false` is
-                    // explicitly set, suppress ALL semantic errors — tsc treats that as
-                    // a full opt-out.
-                    checker_diagnostics.retain(|diag| {
-                        diag.code < 2000
-                            || (8000..9000).contains(&diag.code)
-                            || (!options.explicit_check_js_false
-                                && is_plain_js_allowed_code(diag.code))
-                    });
-                }
-
-                // Suppress semantic errors that cascade from structural parse failures.
-                // tsc sets per-node ThisNodeHasError flags and skips semantic checks on
-                // error-recovery subtrees. We approximate this by suppressing semantic
-                // diagnostics that are near a structural parse error (within a distance
-                // window). Only structural parse failures (missing tokens, unexpected
-                // tokens) trigger suppression — grammar checks like trailing commas or
-                // strict mode violations don't cause AST malformation and shouldn't
-                // suppress semantic errors.
-                {
-                    let structural_error_positions: Vec<u32> = file
-                        .parse_diagnostics
-                        .iter()
-                        .filter(|d| is_structural_parse_error(d.code))
-                        .map(|d| d.start)
-                        .collect();
-                    if !structural_error_positions.is_empty() {
-                        const MAX_CASCADE_DISTANCE: u32 = 300;
-                        checker_diagnostics.retain(|diag| {
-                            // Keep parse/grammar errors (1xxx) and JS grammar errors (8xxx)
-                            if diag.code < 2000 || (8000..9000).contains(&diag.code) {
-                                return true;
-                            }
-                            // Some semantic errors are deliberately emitted alongside
-                            // structural parse errors and must not be suppressed.
-                            // TS2457: "Type alias name cannot be 'void'" — TSC emits
-                            // this alongside TS1109 for `type void = ...`.
-                            if diag.code == 2457 {
-                                return true;
-                            }
-                            // Suppress if a structural parse error is within the cascade window
-                            !structural_error_positions.iter().any(|&err_pos| {
-                                let dist = diag.start.abs_diff(err_pos);
-                                dist <= MAX_CASCADE_DISTANCE
-                            })
-                        });
-                    }
-                }
+                post_process_checker_diagnostics(
+                    &mut checker_diagnostics,
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                );
 
                 file_diagnostics.extend(checker_diagnostics);
             }
@@ -937,6 +970,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     skip_lib_check: bool,
     /// When true, skip lib type resolution in the checker (TS5107/TS5101 mode).
     has_deprecation_diagnostics: bool,
+    program_has_real_syntax_errors: bool,
 }
 
 /// Check a single file for the parallel checking path.
@@ -967,6 +1001,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         has_deprecation_diagnostics,
+        program_has_real_syntax_errors,
     } = context;
     let file = &program.files[file_idx];
 
@@ -1054,56 +1089,18 @@ pub(super) fn check_file_for_parallel<'a>(
     if !no_check {
         checker.check_source_file(file.source_file);
 
-        // Filter diagnostics for JS files without checkJs
-        let is_js = is_js_file(Path::new(&file.file_name));
-        let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
-        let has_ts_nocheck_pragma = js_file_has_ts_nocheck_pragma(file);
-        let should_filter_type_errors =
-            is_js && (has_ts_nocheck_pragma || (!check_js && !has_ts_check_pragma));
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-
-        if should_filter_type_errors {
-            // Keep syntax/semantic diagnostics (< 2000) and JS grammar diagnostics
-            // (TS8xxx). When `checkJs` is NOT explicitly false (the default no-checkJs
-            // mode), also allow the `plainJSErrors` codes that tsc surfaces even in
-            // unchecked JS files. When `checkJs: false` is explicitly set, suppress
-            // ALL semantic errors — tsc treats that as a full opt-out.
-            checker_diagnostics.retain(|diag| {
-                diag.code < 2000
-                    || (8000..9000).contains(&diag.code)
-                    || (!explicit_check_js_false && is_plain_js_allowed_code(diag.code))
-            });
-        }
-
-        // Suppress semantic errors that cascade from structural parse failures.
-        // (See multi-file path above for detailed rationale.)
-        {
-            let structural_error_positions: Vec<u32> = file
-                .parse_diagnostics
-                .iter()
-                .filter(|d| is_structural_parse_error(d.code))
-                .map(|d| d.start)
-                .collect();
-            if !structural_error_positions.is_empty() {
-                const MAX_CASCADE_DISTANCE: u32 = 300;
-                checker_diagnostics.retain(|diag| {
-                    if diag.code < 2000 || (8000..9000).contains(&diag.code) {
-                        return true;
-                    }
-                    // Some semantic errors are deliberately emitted alongside
-                    // structural parse errors and must not be suppressed.
-                    // TS2457: "Type alias name cannot be 'void'" — TSC emits
-                    // this alongside TS1109 for `type void = ...`.
-                    if diag.code == 2457 {
-                        return true;
-                    }
-                    !structural_error_positions.iter().any(|&err_pos| {
-                        let dist = diag.start.abs_diff(err_pos);
-                        dist <= MAX_CASCADE_DISTANCE
-                    })
-                });
-            }
-        }
+        let effective_options = ResolvedCompilerOptions {
+            check_js,
+            explicit_check_js_false,
+            ..ResolvedCompilerOptions::default()
+        };
+        post_process_checker_diagnostics(
+            &mut checker_diagnostics,
+            file,
+            &effective_options,
+            program_has_real_syntax_errors,
+        );
 
         file_diagnostics.extend(checker_diagnostics);
     }
@@ -1124,6 +1121,27 @@ pub(super) fn check_file_for_parallel<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn collect_test_diagnostics(files: &[(&str, &str)]) -> Vec<Diagnostic> {
+        let bind_results: Vec<_> = files
+            .iter()
+            .map(|(file_name, source)| {
+                parallel::parse_and_bind_single((*file_name).to_string(), (*source).to_string())
+            })
+            .collect();
+        let program = parallel::merge_bind_results(bind_results);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            &ResolvedCompilerOptions::default(),
+            std::path::Path::new("/"),
+            None,
+            &[],
+            &type_cache_output,
+            false,
+        )
+    }
 
     #[test]
     fn test_is_declaration_file() {
@@ -1212,5 +1230,41 @@ let __: B = new B();"#
             .resolve_import_with_reexports_type_only("./c", "A")
             .expect("expected A to resolve via wildcard chain");
         assert!(exports_via_c.1, "A should be considered type-only via ./b");
+    }
+
+    #[test]
+    fn real_syntax_errors_suppress_cross_file_type_diagnostics() {
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "const x =\n"),
+            ("/b.ts", "const y: number = \"s\";\n"),
+        ]);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.file == "/a.ts" && diag.code == 1109),
+            "expected the real syntax error to remain: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.file == "/b.ts" && diag.code == 2322),
+            "did not expect TS2322 when another file has a real syntax error: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn real_syntax_errors_preserve_checker_grammar_diagnostics() {
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "const x =\n"),
+            ("/b.ts", "type void = string;\n"),
+        ]);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.file == "/b.ts" && diag.code == 2457),
+            "expected TS2457 to survive program-level syntax suppression: {diagnostics:?}"
+        );
     }
 }

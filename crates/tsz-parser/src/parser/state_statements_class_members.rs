@@ -1454,8 +1454,9 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::CloseBraceToken)
                 && !self.is_token(SyntaxKind::EndOfFileToken)
                 && (self.is_token(SyntaxKind::StringLiteral)
-                    || self.is_token(SyntaxKind::NumericLiteral))
-                // Don't treat string/numeric literals as initializers if they look
+                    || self.is_token(SyntaxKind::NumericLiteral)
+                    || self.is_token(SyntaxKind::BigIntLiteral))
+                // Don't treat string/numeric/bigint literals as initializers if they look
                 // like the next class member property name (followed by `:` or `?`).
                 // e.g., `"d": string; "e": number;` — `"e"` is a property name.
                 && !self.look_ahead_is_next_class_member_property_name()

@@ -365,6 +365,7 @@ impl ParserState {
             SyntaxKind::Identifier
             | SyntaxKind::StringLiteral
             | SyntaxKind::NumericLiteral
+            | SyntaxKind::BigIntLiteral
             | SyntaxKind::PrivateIdentifier
             | SyntaxKind::OpenBracketToken // computed property name
             | SyntaxKind::GetKeyword
@@ -1660,7 +1661,17 @@ impl ParserState {
             .iter()
             .any(|&kw| kw == expression_text)
         {
-            return;
+            // Keep the suppression for bare keyword recovery, but allow keyword-like
+            // statements followed by a literal (notably `from "./mod"`) to report
+            // TS1434 like tsc does.
+            if !matches!(
+                self.token(),
+                SyntaxKind::StringLiteral
+                    | SyntaxKind::NoSubstitutionTemplateLiteral
+                    | SyntaxKind::TemplateHead
+            ) {
+                return;
+            }
         }
 
         // tsc emits TS1434 "Unexpected keyword or identifier" at the expression
