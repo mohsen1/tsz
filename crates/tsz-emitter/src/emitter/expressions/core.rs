@@ -532,6 +532,15 @@ impl<'a> Printer<'a> {
         }
 
         self.write("(");
+        // Emit inline comments between `(` and inner expression
+        // (e.g., `( /* Preserve */j = f())`)
+        if let Some(inner_node) = self.arena.get(paren.expression)
+            && self.has_pending_comment_before(inner_node.pos)
+        {
+            self.write(" ");
+            self.emit_comments_before_pos(inner_node.pos);
+            self.pending_block_comment_space = false;
+        }
         // The explicit parens already provide grouping, so clear the
         // "needs parens" flags to avoid double-parenthesization when the
         // inner expression is a downlevel optional chain or nullish coalescing.

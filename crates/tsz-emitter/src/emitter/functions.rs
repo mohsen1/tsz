@@ -710,6 +710,15 @@ impl<'a> Printer<'a> {
 
                 if param.dot_dot_dot_token {
                     self.write("...");
+                    // Emit inline comments between `...` and parameter name
+                    // (e.g., `.../*3*/y` → `... /*3*/y`)
+                    if let Some(name_node) = self.arena.get(param.name)
+                        && self.has_pending_comment_before(name_node.pos)
+                    {
+                        self.write(" ");
+                        self.emit_comments_before_pos(name_node.pos);
+                        self.pending_block_comment_space = false;
+                    }
                 }
                 self.emit_parameter_name_js(param.name);
                 // Skip type annotations — consume comments inside the erased range
