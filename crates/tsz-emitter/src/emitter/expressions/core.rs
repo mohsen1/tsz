@@ -178,9 +178,11 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
 
-        // Check if there's a line break between the operator and the right operand
-        // in the source. TypeScript preserves these line breaks.
-        let has_newline_before_right = self.source_text.is_some_and(|text| {
+        // Check if there's a line break between left operand and operator,
+        // and between operator and right operand. TypeScript preserves these
+        // line breaks and places the operator at the START of the continuation
+        // line, not at the end of the current line.
+        let (has_newline_before_op, has_newline_after_op) = if let Some(text) = self.source_text {
             if let (Some(left_node), Some(right_node)) =
                 (self.arena.get(binary.left), self.arena.get(binary.right))
             {
@@ -188,11 +190,55 @@ impl<'a> Printer<'a> {
                 let right_start = right_node.pos as usize;
                 let end = std::cmp::min(right_start, text.len());
                 let start = std::cmp::min(left_end, end);
-                text[start..end].contains('\n')
+                let gap = &text[start..end];
+                let gap_bytes = gap.as_bytes();
+                // Find operator position by skipping trivia (whitespace + comments)
+                let mut i = 0;
+                let mut op_offset = None;
+                while i < gap_bytes.len() {
+                    match gap_bytes[i] {
+                        b' ' | b'\t' | b'\r' | b'\n' => i += 1,
+                        b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'/' => {
+                            i += 2;
+                            while i < gap_bytes.len() && gap_bytes[i] != b'\n' {
+                                i += 1;
+                            }
+                        }
+                        b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'*' => {
+                            i += 2;
+                            while i + 1 < gap_bytes.len()
+                                && !(gap_bytes[i] == b'*' && gap_bytes[i + 1] == b'/')
+                            {
+                                i += 1;
+                            }
+                            if i + 1 < gap_bytes.len() {
+                                i += 2;
+                            }
+                        }
+                        _ => {
+                            op_offset = Some(i);
+                            break;
+                        }
+                    }
+                }
+                if let Some(off) = op_offset {
+                    let op_len = get_operator_text(binary.operator_token).len();
+                    let before = &gap[..off];
+                    let after = &gap[off + op_len..];
+                    (before.contains('\n'), after.contains('\n'))
+                } else {
+                    // Operator absorbed by left.end; gap is between
+                    // operator end and right start. Any newlines are
+                    // AFTER the operator.
+                    (false, gap.contains('\n'))
+                }
             } else {
-                false
+                (false, false)
             }
-        });
+        } else {
+            (false, false)
+        };
+        let has_newline_before_right = has_newline_before_op || has_newline_after_op;
 
         // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
         if binary.operator_token == SyntaxKind::CommaToken as u16 {
@@ -212,12 +258,33 @@ impl<'a> Printer<'a> {
             if let Some(left_node) = self.arena.get(binary.left) {
                 self.map_source_offset(left_node.end);
             }
-            self.write(" ");
-            self.write(get_operator_text(binary.operator_token));
-            if has_newline_before_right {
+            if has_newline_before_op && has_newline_after_op {
+                // Operator on its own line, right operand further indented
+                // e.g., source: `a\n    +\n    b` → `a\n    +\n        b`
                 self.write_line();
                 self.increase_indent();
-                // Set parens flag for right operand of non-assignment/comma operators
+                self.write(get_operator_text(binary.operator_token));
+                self.write_line();
+                self.increase_indent();
+                if !is_assignment_or_comma {
+                    self.ctx.flags.optional_chain_needs_parens = true;
+                    self.ctx.flags.nullish_coalescing_needs_parens = true;
+                }
+                self.emit(binary.right);
+                self.ctx.flags.optional_chain_needs_parens = prev_optional;
+                self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+                self.decrease_indent();
+                self.decrease_indent();
+                self.ctx.flags.in_binary_operand = prev_in_binary;
+                return;
+            }
+            if has_newline_before_op {
+                // Operator at start of continuation line with right operand
+                // e.g., source: `a\n    + b` → `a\n    + b`
+                self.write_line();
+                self.increase_indent();
+                self.write(get_operator_text(binary.operator_token));
+                self.write_space();
                 if !is_assignment_or_comma {
                     self.ctx.flags.optional_chain_needs_parens = true;
                     self.ctx.flags.nullish_coalescing_needs_parens = true;
@@ -229,6 +296,26 @@ impl<'a> Printer<'a> {
                 self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
             }
+            if has_newline_after_op {
+                // Operator at end of current line, right on next line
+                // e.g., source: `a ||\n    b` → `a ||\n    b`
+                self.write(" ");
+                self.write(get_operator_text(binary.operator_token));
+                self.write_line();
+                self.increase_indent();
+                if !is_assignment_or_comma {
+                    self.ctx.flags.optional_chain_needs_parens = true;
+                    self.ctx.flags.nullish_coalescing_needs_parens = true;
+                }
+                self.emit(binary.right);
+                self.ctx.flags.optional_chain_needs_parens = prev_optional;
+                self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+                self.decrease_indent();
+                self.ctx.flags.in_binary_operand = prev_in_binary;
+                return;
+            }
+            self.write(" ");
+            self.write(get_operator_text(binary.operator_token));
             self.write_space();
         }
         // Set parens flag for right operand of non-assignment/comma operators

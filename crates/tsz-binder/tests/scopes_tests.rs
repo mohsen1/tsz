@@ -59,7 +59,7 @@ fn scope_id_equality() {
 fn scope_id_clone_copy() {
     let id = ScopeId(42);
     let copied = id;
-    let cloned = id.clone();
+    let cloned = id;
     assert_eq!(id, copied);
     assert_eq!(id, cloned);
 }
@@ -96,7 +96,7 @@ fn container_kind_equality() {
 fn container_kind_clone_copy() {
     let kind = ContainerKind::Function;
     let copied = kind;
-    let cloned = kind.clone();
+    let cloned = kind;
     assert_eq!(kind, copied);
     assert_eq!(kind, cloned);
 }
