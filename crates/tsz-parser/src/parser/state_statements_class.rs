@@ -1130,7 +1130,11 @@ impl ParserState {
 
         if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::ImplementsKeyword)
         {
-            self.parse_error_at_current_token(
+            // Use full start position (including leading trivia) to match TSC's
+            // grammarErrorAtPos(node, types.pos, 0, ...) which uses getTokenFullStart().
+            self.parse_error_at(
+                self.token_full_start(),
+                0,
                 "'extends' list cannot be empty.",
                 diagnostic_codes::LIST_CANNOT_BE_EMPTY,
             );
@@ -1195,7 +1199,11 @@ impl ParserState {
 
         // TS1097: 'implements' list cannot be empty.
         if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::ExtendsKeyword) {
-            self.parse_error_at_current_token(
+            // Use full start position (including leading trivia) to match TSC's
+            // grammarErrorAtPos(node, types.pos, 0, ...) which uses getTokenFullStart().
+            self.parse_error_at(
+                self.token_full_start(),
+                0,
                 "'implements' list cannot be empty.",
                 diagnostic_codes::LIST_CANNOT_BE_EMPTY,
             );

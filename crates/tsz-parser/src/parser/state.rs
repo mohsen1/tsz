@@ -286,6 +286,16 @@ impl ParserState {
         self.u32_from_usize(self.scanner.get_token_start())
     }
 
+    /// Get full start position of current token (including leading trivia).
+    ///
+    /// Unlike `token_pos()` which returns the start of the token text itself,
+    /// this returns the position where leading trivia (whitespace, comments)
+    /// begins. Matches TSC's `scanner.getTokenFullStart()`.
+    #[inline]
+    pub(crate) fn token_full_start(&self) -> u32 {
+        self.u32_from_usize(self.scanner.get_token_full_start())
+    }
+
     /// Get current token end position
     #[inline]
     pub(crate) fn token_end(&self) -> u32 {

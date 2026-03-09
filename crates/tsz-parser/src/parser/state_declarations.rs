@@ -87,7 +87,11 @@ impl ParserState {
                 || self.is_token(SyntaxKind::ImplementsKeyword)
             {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
+                // Use full start position (including leading trivia) to match TSC's
+                // grammarErrorAtPos(node, types.pos, 0, ...) which uses getTokenFullStart().
+                self.parse_error_at(
+                    self.token_full_start(),
+                    0,
                     "'extends' list cannot be empty.",
                     diagnostic_codes::LIST_CANNOT_BE_EMPTY,
                 );
