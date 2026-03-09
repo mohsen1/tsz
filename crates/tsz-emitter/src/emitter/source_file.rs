@@ -415,6 +415,7 @@ impl<'a> Printer<'a> {
             && !jsx_will_add_esm_imports;
 
         let should_emit_use_strict = !source_has_use_strict
+            && !self.ctx.options.suppress_use_strict
             && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
 
         // When the source has its own "use strict" prologue AND this is a CJS

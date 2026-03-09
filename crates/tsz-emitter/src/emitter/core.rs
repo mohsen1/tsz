@@ -100,6 +100,9 @@ pub struct PrinterOptions {
     pub jsx_fragment_factory: Option<String>,
     /// Module specifier for automatic JSX runtime (e.g. "react")
     pub jsx_import_source: Option<String>,
+    /// When true, suppress "use strict" emission even if module kind is CJS.
+    /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
+    pub suppress_use_strict: bool,
 }
 
 impl Default for PrinterOptions {
@@ -128,6 +131,7 @@ impl Default for PrinterOptions {
             jsx_factory: None,
             jsx_fragment_factory: None,
             jsx_import_source: None,
+            suppress_use_strict: false,
         }
     }
 }
