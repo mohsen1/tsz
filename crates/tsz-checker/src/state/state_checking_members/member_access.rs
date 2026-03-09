@@ -934,7 +934,7 @@ impl<'a> CheckerState<'a> {
     /// - Identifiers: `foo` → `"foo"`
     /// - Numeric literals: `0.0` → `"0.0"` (NOT canonicalized to `"0"`)
     /// - String literals: `'0'` → `"'0'"` (wrapped in single quotes)
-    fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
         if name_idx.is_none() {
             return None;
         }
@@ -1234,7 +1234,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let first_type_str = self.format_type(*first_type);
                     for &idx in info.indices.iter().skip(1) {
-                        let Some((name, name_node, current_type)) =
+                        let Some((_name, name_node, current_type)) =
                             self.get_class_property_declared_type_info(idx)
                         else {
                             continue;
@@ -1244,11 +1244,15 @@ impl<'a> CheckerState<'a> {
                         }
                         // TS2717 uses type identity, not assignability.
                         if *first_type != current_type {
+                            // Use display text for the message to match TSC's declarationNameToString
+                            let display_name = self
+                                .get_member_name_display_text(name_node)
+                                .unwrap_or_else(|| _name.clone());
                             let current_type_str = self.format_type(current_type);
                             self.error_at_node_msg(
                                     name_node,
                                     diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                    &[&name, &first_type_str, &current_type_str],
+                                    &[&display_name, &first_type_str, &current_type_str],
                                 );
                         }
                     }
