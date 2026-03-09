@@ -521,6 +521,23 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // TS2696: When the source is the `Object` wrapper type, TSC emits a
+                // special diagnostic instead of TS2739/TS2740/TS2322.
+                // "The 'Object' type is assignable to very few other types."
+                {
+                    let src_str = self.format_type(*source_type);
+                    if src_str == "Object" {
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
+                                .to_string(),
+                            diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
+                        );
+                    }
+                }
+
                 // Also emit TS2322 for wrapper-like built-ins (Boolean, Number, String, Object)
                 // instead of TS2739/TS2740.
                 // These built-in types inherit properties from Object, and object literals don't
