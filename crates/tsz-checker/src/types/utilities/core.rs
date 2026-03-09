@@ -879,10 +879,8 @@ impl<'a> CheckerState<'a> {
         let result_type = if types.is_empty() {
             None
         } else if is_write_context {
-            Some(tsz_solver::utils::intersection_or_single(
-                self.ctx.types,
-                types,
-            ))
+            let intersection = tsz_solver::utils::intersection_or_single(self.ctx.types, types);
+            Some(self.evaluate_type_with_env(intersection))
         } else {
             Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
         };
@@ -936,10 +934,8 @@ impl<'a> CheckerState<'a> {
 
         // In write context, intersect (value must satisfy all possible indices).
         if is_write_context {
-            Some(tsz_solver::utils::intersection_or_single(
-                self.ctx.types,
-                types,
-            ))
+            let intersection = tsz_solver::utils::intersection_or_single(self.ctx.types, types);
+            Some(self.evaluate_type_with_env(intersection))
         } else {
             Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
         }
