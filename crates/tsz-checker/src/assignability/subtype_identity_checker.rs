@@ -281,39 +281,12 @@ impl<'a> CheckerState<'a> {
         // normalize enum types to their object shape, defeating the TS2403 check
         // by making `typeof E` vs `E` appear compatible.
 
-        // Bidirectional subtype fallback for structural equivalences.
-        // The solver's identity check cannot normalize all cases (intersection
-        // distribution, typeof evaluation, generic application results), so we
-        // fall back to bidirectional subtype checking which handles these correctly.
-        //
-        // Excluded cases:
-        // - `any` is never identical to non-`any` for redeclaration (tsc behavior)
-        // - Union vs non-union mismatch (e.g., `C` vs `C | D` where D extends C)
-        //   must NOT use this fallback — tsc's isTypeIdenticalTo rejects these
-        if prev_type == TypeId::ANY || current_type == TypeId::ANY {
-            return false;
-        }
-        // Guard: when exactly one side is a union and the other is not, tsc's
-        // isTypeIdenticalTo rejects them even if they're bidirectionally subtypes.
-        // e.g., `C` vs `C | D` (where D extends C) fails identity in tsc.
-        //
-        // EXCEPTION: When one side is an intersection, the union/non-union check does
-        // not apply. An intersection of unions distributes to a union of intersections
-        // (e.g., `(A|B)&(C|D)` === `A&C | A&D | B&C | B&D`), and tsc considers these
-        // identical for TS2403 purposes. We allow the bidirectional subtype check to
-        // handle this case.
-        {
-            use tsz_solver::type_queries;
-            let prev_is_union = type_queries::is_union_type(self.ctx.types, prev_type);
-            let curr_is_union = type_queries::is_union_type(self.ctx.types, current_type);
-            let prev_is_intersection =
-                type_queries::is_intersection_type(self.ctx.types, prev_type);
-            let curr_is_intersection =
-                type_queries::is_intersection_type(self.ctx.types, current_type);
-            if prev_is_union != curr_is_union && !prev_is_intersection && !curr_is_intersection {
-                return false;
-            }
-        }
-        self.is_subtype_of(prev_type, current_type) && self.is_subtype_of(current_type, prev_type)
+        // The solver's are_types_identical_for_redeclaration already handles
+        // bidirectional subtype checking with proper normalization (intersection
+        // distribution, typeof evaluation, generic application results) and
+        // TopLevelOnly any-propagation mode. A separate checker-side fallback
+        // is not needed and was incorrectly using AnyPropagationMode::All,
+        // which let nested `any` silently match non-`any` types.
+        false
     }
 }

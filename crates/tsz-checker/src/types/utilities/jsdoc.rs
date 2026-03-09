@@ -108,27 +108,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get `JSDoc` type annotation for a node.
-    ///
-    /// This function extracts and parses `JSDoc` `@type` annotations for a given node.
-    /// It searches for the enclosing source file, extracts `JSDoc` comments,
-    /// and parses the type annotation.
-    ///
-    /// ## Parameters:
-    /// - `idx`: The node to get `JSDoc` type annotation for
-    ///
-    /// ## Returns:
-    /// - `Some(TypeId)`: The parsed type from `JSDoc`
-    /// - `None`: If no `JSDoc` type annotation exists
-    ///
-    /// ## Example:
-    /// ```typescript
-    /// /**
-    ///  * @type {string} x - The parameter type
-    ///  */
-    /// function foo(x) {}
-    /// // The JSDoc annotation can be used for type inference
-    /// ```
+    /// Extract and parse a JSDoc `@type` annotation for the given node.
+    /// Returns `Some(TypeId)` if a valid type annotation is found.
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
         if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
