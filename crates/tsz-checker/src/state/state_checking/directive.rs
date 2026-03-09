@@ -84,7 +84,10 @@ impl<'a> CheckerState<'a> {
                     .parent()
                     .unwrap_or_else(|| Path::new(""))
                     .join(&reference_path);
-                let display_path = resolved.to_string_lossy();
+
+                // Normalize the path to resolve . and .. components.
+                // tsc reports normalized paths like "/tmp/file.ts" not "/tmp/dir/../file.ts".
+                let display_path = normalize_path(&resolved);
 
                 use crate::diagnostics::{diagnostic_codes, format_message};
                 let message = format_message("File '{0}' not found.", &[&display_path]);
@@ -139,4 +142,45 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
+}
+
+/// Normalize a path by resolving `.` and `..` components without requiring the file to exist.
+///
+/// This matches tsc behavior which reports clean paths like `/tmp/file.ts`
+/// instead of `/tmp/dir/../file.ts` or `/tmp/./file.ts`.
+fn normalize_path(path: &std::path::Path) -> String {
+    use std::path::Component;
+
+    let mut normalized = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {
+                // Skip `.` components
+            }
+            Component::ParentDir => {
+                // For `..`, pop the last component if possible
+                if normalized
+                    .last()
+                    .is_some_and(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+                {
+                    normalized.pop();
+                } else {
+                    // Can't go up (already at root or start with ..), keep the ..
+                    normalized.push(component);
+                }
+            }
+            _ => {
+                normalized.push(component);
+            }
+        }
+    }
+
+    // Reconstruct the path
+    let mut result = std::path::PathBuf::new();
+    for component in normalized {
+        result.push(component);
+    }
+
+    result.to_string_lossy().into_owned()
 }

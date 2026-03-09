@@ -603,7 +603,47 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
         // Also strip root without trailing slash (e.g., paths at end of message)
         result = result.replace(root.as_str(), "");
     }
+
+    // Normalize temp directory paths that differ across environments.
+    // On macOS, temp dirs can be in /tmp (symlink to /private/tmp),
+    // /var/folders/.../T/, or /private/var/folders/.../T/.
+    // Normalize these to /tmp for consistent fingerprint matching.
+    result = normalize_temp_directory_paths(&result);
+
     result
+}
+
+/// Normalize temp directory paths to a consistent format for fingerprint comparison.
+///
+/// Different environments have temp directories in different locations:
+/// - /tmp (Linux, macOS symlink to /private/tmp)
+/// - /private/tmp (macOS resolved path)
+/// - /var/folders/XX/.../T/ (macOS NSTemporaryDirectory)
+/// - /private/var/folders/XX/.../T/ (macOS resolved)
+///
+/// For paths that look like temp directory references (especially for files
+/// that would be outside the project root like ../file.ts), normalize to /tmp.
+fn normalize_temp_directory_paths(path: &str) -> String {
+    // Match patterns like:
+    // - /private/var/folders/_t/.../T/filename.ts
+    // - /var/folders/_t/.../T/filename.ts
+    // - /tmp/filename.ts
+    // - /private/tmp/filename.ts
+    //
+    // These all represent temp directory paths and should be normalized to /tmp/filename.ts
+
+    // Pattern 1: macOS var/folders temp paths (with or without /private prefix)
+    let var_folders_pattern = regex::Regex::new(r"/private/var/folders/[^/]+/[^/]+/T/").unwrap();
+    let result = var_folders_pattern.replace(path, "/tmp/");
+
+    let var_folders_pattern2 = regex::Regex::new(r"/var/folders/[^/]+/[^/]+/T/").unwrap();
+    let result = var_folders_pattern2.replace(&result, "/tmp/");
+
+    // Pattern 2: /private/tmp -> /tmp
+    let private_tmp_pattern = regex::Regex::new(r"/private/tmp/").unwrap();
+    let result = private_tmp_pattern.replace(&result, "/tmp/");
+
+    result.to_string()
 }
 
 /// Test harness-specific directives that should NOT be passed to tsconfig.json
