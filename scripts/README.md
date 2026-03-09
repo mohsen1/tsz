@@ -13,7 +13,8 @@ scripts/
   emit/            # Emit test harness (JS + DTS output)
   fourslash/       # Language service fourslash tests
   githooks/        # Git hooks (pre-commit, pre-push, etc.)
-  tests/           # Tests for scripts (e.g. arch_guard)
+  setup/           # Setup, cleanup, and submodule management
+  arch/            # Architecture boundary guardrails and tests
 ```
 
 ## Key Scripts
@@ -31,7 +32,7 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `scripts/emit/run.sh` | Run emit tests (JS + declaration output) |
-| `scripts/run-fourslash.sh` | Run language service fourslash tests |
+| `scripts/fourslash/run-fourslash.sh` | Run language service fourslash tests |
 
 ### Benchmarking
 | Script | Purpose |
@@ -52,19 +53,19 @@ scripts/
 ### Architecture & Linting
 | Script | Purpose |
 |--------|---------|
-| `scripts/arch_guard.py` | Architecture boundary violation detection |
-| `scripts/check-checker-boundaries.sh` | Checker boundary enforcement |
+| `scripts/arch/arch_guard.py` | Architecture boundary violation detection |
+| `scripts/arch/check-checker-boundaries.sh` | Checker boundary enforcement |
+| `scripts/arch/render_architecture_report.py` | Render architecture guard markdown report |
 
 ### Setup & Maintenance
 | Script | Purpose |
 |--------|---------|
-| `scripts/setup.sh` | One-stop setup (submodule, deps, hooks) |
-| `scripts/clean.sh` | Build artifact cleanup |
-| `scripts/reset-ts-submodule.sh` | Reset TypeScript submodule to pinned SHA |
+| `scripts/setup/setup.sh` | One-stop setup (submodule, deps, hooks) |
+| `scripts/setup/clean.sh` | Build artifact cleanup |
+| `scripts/setup/reset-ts-submodule.sh` | Reset TypeScript submodule to pinned SHA |
 
 ### Other
 | Script | Purpose |
 |--------|---------|
 | `scripts/gen_diagnostics.mjs` | Generate diagnostic code data |
 | `scripts/start-website.sh` | Local website preview |
-| `scripts/ask-gemini.mjs` | LLM integration helper |

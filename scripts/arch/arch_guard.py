@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 CHECKS = [
     (

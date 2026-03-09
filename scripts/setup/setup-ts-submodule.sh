@@ -6,7 +6,7 @@
 #   - src/lib/ for embedded lib.d.ts files
 #   - src/compiler, src/services, src/harness, etc. for test harness
 #   - scripts/ for build tooling
-# Run this after cloning the repo: ./scripts/setup-ts-submodule.sh
+# Run this after cloning the repo: ./scripts/setup/setup-ts-submodule.sh
 
 set -e
 

@@ -70,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Reminder: commit and sync with main when work is done. use scripts/ask-gemini.mjs for what to do next if you are not sure'"
+            "command": "echo 'Reminder: commit and sync with main when work is done.'"
           }
         ]
       },
@@ -100,7 +100,7 @@
         "hooks": [
           {
             "type": "agent",
-            "prompt": "Claude Code is waiting for attention (idle prompt). Use scripts/ask-gemini.mjs to find out what to do next. Make sure to commit and sync with main when work is done."
+            "prompt": "Claude Code is waiting for attention (idle prompt). Make sure to commit and sync with main when work is done."
           }
         ]
       }

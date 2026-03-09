@@ -216,7 +216,7 @@ Completed in this pass:
   - skipping synthetic `Cannot find name` diagnostics when TS1148 (`module:none`) is already present,
   - normalizing TS1148 diagnostic spans to stop at statement semicolons/newlines in `semanticDiagnosticsSync`.
 - Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for module:none fourslash diagnostic payload behavior (no synthetic `Cannot find name`, correct TS1148 message/span).
-- `./scripts/run-fourslash.sh --max=200` improved from `182/200` passing to `183/200` passing in this run, with `autoImportModuleNone1` no longer in failures.
+- `./scripts/fourslash/run-fourslash.sh --max=200` improved from `182/200` passing to `183/200` passing in this run, with `autoImportModuleNone1` no longer in failures.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still generate new local baselines in this run.
@@ -258,7 +258,7 @@ Completed in this pass:
   - `crates/tsz-lsp/tests/project_tests.rs` (`export =` auto-import completion presence)
   - `crates/tsz-lsp/src/project_imports.rs` (export-assignment candidate collection)
   - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`completionInfo` + `completionEntryDetails` for type-only default auto-import from `export = ts`)
-- `./scripts/run-fourslash.sh --max=200` improved from `185/200` passing to `186/200` passing in this run.
+- `./scripts/fourslash/run-fourslash.sh --max=200` improved from `185/200` passing to `186/200` passing in this run.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts`: still fails exact `globalsPlus` completion-list equality (cardinality/content mismatch).
@@ -309,8 +309,8 @@ Investigated but punted:
 Completed in this pass:
 - Fixed tsserver call-hierarchy incoming/outgoing bridge parity at file-start selection spans (`line:1`, `offset:1`) by treating those as source-file queries and skipping adjacent-offset probing in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs`.
 - Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` to assert `provideCallHierarchyIncomingCalls` at file-start returns no calls.
-- Verified targeted fourslash parity with `./scripts/run-fourslash.sh --skip-cargo-build --filter=callHierarchyFile --verbose` (now passing).
-- Re-ran capped fourslash sample with `./scripts/run-fourslash.sh --skip-cargo-build --max=200`: stable `186/200` passing (same sampled pass count as before this change, with no new sampled regressions).
+- Verified targeted fourslash parity with `./scripts/fourslash/run-fourslash.sh --skip-cargo-build --filter=callHierarchyFile --verbose` (now passing).
+- Re-ran capped fourslash sample with `./scripts/fourslash/run-fourslash.sh --skip-cargo-build --max=200`: stable `186/200` passing (same sampled pass count as before this change, with no new sampled regressions).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock2.ts`: still creates a local baseline (empty call hierarchy payload in this run).
@@ -335,7 +335,7 @@ Completed in this pass:
 - Fixed tsserver missing-import candidate ordering for same-symbol relative module specifiers by preferring shallower paths in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`.
 - Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` for relative specifier ordering (`./lib/main` before `./lib/components/button/Button`).
 - Verified `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts` now passes in targeted runs.
-- Re-ran capped fourslash sample with `./scripts/run-fourslash.sh --max=200`: improved from `186/200` to `187/200` passing in this run.
+- Re-ran capped fourslash sample with `./scripts/fourslash/run-fourslash.sh --max=200`: improved from `186/200` to `187/200` passing in this run.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`: still missing `container` class member snippet completions.
@@ -358,8 +358,8 @@ Completed in this pass:
   - preferring contextual container member type lookup over initializer-inferred `any`,
   - synthesizing method-style quick info signatures from contextual interface/type-literal member declarations when needed.
 - Added focused hover unit coverage in `crates/tsz-lsp/tests/hover_tests.rs` for function-valued property quick info under contextual typing (`(method) IFoo.f(i: number, s: string): string`).
-- Verified targeted improvement with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `30` to marker `31`.
-- Re-ran capped fourslash command with `./scripts/run-fourslash.sh --max=200` (current harness still executes the full set in this environment): total passes improved from `880` to `886`.
+- Verified targeted improvement with `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `30` to marker `31`.
+- Re-ran capped fourslash command with `./scripts/fourslash/run-fourslash.sh --max=200` (current harness still executes the full set in this environment): total passes improved from `880` to `886`.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `31`: expected `(parameter) i: number`, got `(parameter) i: any`).
@@ -374,8 +374,8 @@ Completed in this pass:
 - Added focused unit tests:
   - `crates/tsz-lsp/src/project/imports.rs` (`diagnostics_import_candidates_include_default_from_export_star_as_default`)
   - `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` (`handle_get_code_fixes_missing_namespace_type_only_default_import`)
-- Verified targeted fourslash parity with `./scripts/run-fourslash.sh --filter=autoImportTypeOnlyPreferred3 --verbose` (now passing).
-- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: improved from `187/200` to `188/200` passing in this run.
+- Verified targeted fourslash parity with `./scripts/fourslash/run-fourslash.sh --filter=autoImportTypeOnlyPreferred3 --verbose` (now passing).
+- Re-ran capped sample with `./scripts/fourslash/run-fourslash.sh --skip-build --max=200`: improved from `187/200` to `188/200` passing in this run.
 
 Investigated but punted:
 - None in this pass.
@@ -389,8 +389,8 @@ Completed in this pass:
   - `crates/tsz-lsp/tests/call_hierarchy_tests.rs` (`test_interface_method_signature_prepare_and_incoming_calls`)
   - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_prepare_call_hierarchy_marker_comment_before_interface_method`)
 - Verified targeted parity improvement with:
-  - `./scripts/run-fourslash.sh --filter=callHierarchyInterfaceMethod --max=20` (now passing)
-- Re-ran capped sample: `./scripts/run-fourslash.sh --skip-build --max=200` stayed at `188/200` in this run.
+  - `./scripts/fourslash/run-fourslash.sh --filter=callHierarchyInterfaceMethod --max=20` (now passing)
+- Re-ran capped sample: `./scripts/fourslash/run-fourslash.sh --skip-build --max=200` stayed at `188/200` in this run.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: still missing completion `execActionWithCount`.
@@ -401,8 +401,8 @@ Investigated but punted:
 Completed in this pass:
 - Fixed quickinfo contextual-typing fallback for function-expression parameters under object-literal contextual members by refining tsserver quickinfo recovery in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs`.
 - Added focused tsserver unit test coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for contextual object-literal function parameter quickinfo.
-- Verified targeted fourslash progress with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `31` (`(parameter) i: any`) to marker `34`.
-- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: remains `188/200` passing in this run (no sampled regressions).
+- Verified targeted fourslash progress with `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `31` (`(parameter) i: any`) to marker `34`.
+- Re-ran capped sample with `./scripts/fourslash/run-fourslash.sh --skip-build --max=200`: remains `188/200` passing in this run (no sampled regressions).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `34` (`(property) IFoo.a: any[]` vs expected `number[]`).
@@ -417,8 +417,8 @@ Completed in this pass:
   - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` (`normalize_mts_auto_import_edit_text_appends_existing_type_only_members`)
   - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_completion_entry_details_upgrades_type_only_named_import_for_value_usage` and `test_completion_entry_details_mts_type_position_adds_import_type_named_clause`)
 - Verification:
-  - `./scripts/run-fourslash.sh --filter=autoImportVerbatimTypeOnly1 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --max=200` improved from `188/200` to `189/200` passing in this run.
+  - `./scripts/fourslash/run-fourslash.sh --filter=autoImportVerbatimTypeOnly1 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` improved from `188/200` to `189/200` passing in this run.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts` and `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts` remain failing in this sample.
@@ -434,8 +434,8 @@ Completed in this pass:
   - `test_signature_help_incomplete_callable_interface_call`
 - Verification:
   - `cargo nextest run -p tsz-lsp test_signature_help_incomplete_callable_interface_call` passes.
-  - `./scripts/run-fourslash.sh --filter=callSignatureHelp --workers=1 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --max=200` remains `189/200` passing with the same 11 known failures (no regression from this change).
+  - `./scripts/fourslash/run-fourslash.sh --filter=callSignatureHelp --workers=1 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` remains `189/200` passing with the same 11 known failures (no regression from this change).
   - `cargo nextest run -p tsz-lsp` passes (`725` tests).
 
 Investigated but punted:
@@ -448,8 +448,8 @@ Completed in this pass:
 - Added focused unit tests:
   - `crates/tsz-lsp/tests/hover_tests.rs` (`test_hover_contextual_object_literal_array_property_name`)
   - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_quickinfo_contextual_object_literal_array_property_name`)
-- Verified targeted progress with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `34` (`(property) IFoo.a: any[]`) to marker `36`.
-- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: remained `189/200` passing (no sampled regressions in this run).
+- Verified targeted progress with `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `34` (`(property) IFoo.a: any[]`) to marker `36`.
+- Re-ran capped sample with `./scripts/fourslash/run-fourslash.sh --skip-build --max=200`: remained `189/200` passing (no sampled regressions in this run).
 - Broader safety check: `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1114` tests).
 
 Investigated but punted:
@@ -499,7 +499,7 @@ Completed in this pass:
   - `cargo nextest run -p tsz-cli`
   - `cargo nextest run -p tsz-lsp -p tsz-cli`
 - Verified targeted fourslash progression:
-  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `36` to marker `45`.
+  - `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `36` to marker `45`.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `45` (`(property) t1: (s: string) => string` expected, got empty quick info).
@@ -517,7 +517,7 @@ Completed in this pass:
   - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
   - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`
 - Verification:
-  - `./scripts/run-fourslash.sh --max=200` improved from `189/200` to `191/200` passing in this run.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` improved from `189/200` to `191/200` passing in this run.
   - `cargo nextest run -p tsz-cli -p tsz-lsp` passed (`1133` tests).
 
 Investigated but punted:
@@ -536,9 +536,9 @@ Completed in this pass:
 - Added focused unit coverage in `crates/tsz-lsp/tests/call_hierarchy_tests.rs`:
   - `test_incoming_calls_include_decorator_references`.
 - Verification:
-  - `./scripts/run-fourslash.sh --filter=callHierarchyDecorator --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --filter=callHierarchyDecorator --verbose` now passes.
   - `cargo nextest run -p tsz-lsp` passes.
-  - `./scripts/run-fourslash.sh --skip-build --max=200` remains `191/200` (no sampled regression).
+  - `./scripts/fourslash/run-fourslash.sh --skip-build --max=200` remains `191/200` (no sampled regression).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/callHierarchyFunctionAmbiguity.{1,2,3,4,5}.ts`: still fail with single-file declaration fallback behavior.
@@ -555,7 +555,7 @@ Completed in this pass:
   - `test_completion_info_class_member_snippet_method_trims_trailing_param_comma` (completion entry `insertText` + `completionEntryDetails` code-action text change shape).
 - Verification:
   - `cargo nextest run -p tsz-cli` passes (`408` tests).
-  - `./scripts/run-fourslash.sh --skip-ts-build --max=200 --workers=4` improved from `191/200` to `192/200` passing.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --max=200 --workers=4` improved from `191/200` to `192/200` passing.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -571,8 +571,8 @@ Completed in this pass:
   - `normalize_quickinfo_display_string_normalizes_object_call_signature_spacing`
 - Verification:
   - `cargo nextest run -p tsz-cli normalize_quickinfo_display_string_normalizes_object_call_signature_spacing` passes.
-  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` improved from marker `18` spacing mismatch to marker `45`.
-  - `./scripts/run-fourslash.sh --max=200` remains `192/200` passing in this run.
+  - `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` improved from marker `18` spacing mismatch to marker `45`.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` remains `192/200` passing in this run.
   - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1141` tests).
 
 Investigated but punted:
@@ -608,8 +608,8 @@ Completed in this pass:
   - sibling function resolution inside static blocks.
 - Validation:
   - `cargo nextest run -p tsz-lsp` => 732 passed.
-  - `./scripts/run-fourslash.sh --skip-ts-build --filter=callHierarchyClassStaticBlock --sequential --verbose` => 2/2 passed.
-  - `./scripts/run-fourslash.sh --skip-ts-build --max=200` => 192/200 passed.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --filter=callHierarchyClassStaticBlock --sequential --verbose` => 2/2 passed.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --max=200` => 192/200 passed.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still generate local baseline mismatches in this run.
@@ -633,8 +633,8 @@ Completed in this pass:
     - `test_completion_info_class_member_snippet_export_equals_default_parent`
 - Verification:
   - `cargo nextest run -p tsz-cli test_completion_info_class_member_snippet_export_equals_default_parent`
-  - `./scripts/run-fourslash.sh --filter=autoImportCompletionExportEqualsWithDefault1 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --max=200` improved from `192/200` to `193/200` passing.
+  - `./scripts/fourslash/run-fourslash.sh --filter=autoImportCompletionExportEqualsWithDefault1 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` improved from `192/200` to `193/200` passing.
   - `cargo nextest run -p tsz-cli -p tsz-lsp` passed (`1146` tests).
 
 Investigated but punted:
@@ -653,9 +653,9 @@ Completed in this pass:
     - `test_completion_entry_details_class_member_snippet_export_list_augmentation_import_order`
 - Verification:
   - `cargo nextest run -p tsz-cli` passed (`414` tests).
-  - `./scripts/run-fourslash.sh --skip-ts-build --filter=autoImportCompletionExportListAugmentation2 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --filter=autoImportCompletionExportListAugmentation4 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `193/200` to `195/200` passing.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --filter=autoImportCompletionExportListAugmentation2 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --filter=autoImportCompletionExportListAugmentation4 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `193/200` to `195/200` passing.
   - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1148` tests).
 
 Investigated but punted:
@@ -671,8 +671,8 @@ Completed in this pass:
   - `contextual_parameter_type_from_text_extracts_function_array_parameter`
 - Verification:
   - `cargo nextest run -p tsz-cli` passed (`416` tests).
-  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `61` (`(parameter) n: any`) to marker `64`.
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `195/200` passing (no sampled regression).
+  - `./scripts/fourslash/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `61` (`(parameter) n: any`) to marker `64`.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `195/200` passing (no sampled regression).
   - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1150` tests).
 
 Investigated but punted:
@@ -708,7 +708,7 @@ Completed in this pass:
 - Validation:
   - `cargo nextest run -p tsz-cli` passed (`424` tests).
   - `cargo nextest run -p tsz-lsp` passed (`734` tests).
-  - `./scripts/run-fourslash.sh --max=200` improved from `193/200` to `196/200` passing.
+  - `./scripts/fourslash/run-fourslash.sh --max=200` improved from `193/200` to `196/200` passing.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/addFunctionInDuplicatedConstructorClassBody.ts`
@@ -727,7 +727,7 @@ Completed in this pass:
   - extended `parse_identifier_call_expression_ignores_keywords` with method-declaration regression assertions.
 - Verification:
   - `cargo nextest run -p tsz-cli parse_identifier_call_expression_ignores_keywords semantic_diagnostics_sync_does_not_add_missing_name_for_class_method_declaration` passed.
-  - `./scripts/run-fourslash.sh --skip-ts-build --max=200` improved from `196/200` to `197/200` passing.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --max=200` improved from `196/200` to `197/200` passing.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -746,7 +746,7 @@ Completed in this pass:
   - `test_find_references_includes_module_namespace_string_literals`
 - Verification:
   - `cargo nextest run -p tsz-lsp` passed (`735` tests).
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `197/200` (no sampled regressions).
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `197/200` (no sampled regressions).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -767,8 +767,8 @@ Completed in this pass:
   - `test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member`
 - Verification:
   - `cargo nextest run -p tsz-cli test_completion_info_verbatim_commonjs_auto_imports_include_require_member_forms test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member` passes.
-  - `./scripts/run-fourslash.sh --skip-ts-build --filter=autoImportVerbatimCJS1 --verbose` now passes.
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `197/200` to `198/200` passing in this run.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --filter=autoImportVerbatimCJS1 --verbose` now passes.
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `197/200` to `198/200` passing in this run.
   - `cargo nextest run -p tsz-lsp` passes (`735` tests).
 
 Investigated but punted:
@@ -816,7 +816,7 @@ Completed in this pass:
 Verification:
 - `cargo nextest run -p tsz-lsp -E 'test(test_project_cross_file_references_quoted_export_name)'` passed.
 - `cargo nextest run -p tsz-cli -E 'test(test_alias_string_literal_navigation_uses_project_wide_resolution)'` passed.
-- `./scripts/run-fourslash.sh --max=200` remained `198/200` (no sampled improvement, no sampled regression).
+- `./scripts/fourslash/run-fourslash.sh --max=200` remained `198/200` (no sampled improvement, no sampled regression).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -851,7 +851,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli test_alias_string_literal_navigation_uses_project_wide_resolution test_definition_and_bound_span_quoted_local_export_alias_has_token_span test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers` passed.
-- `./scripts/run-fourslash.sh --skip-build --max=200` remained `198/200` (no sampled regression, no sampled improvement).
+- `./scripts/fourslash/run-fourslash.sh --skip-build --max=200` remained `198/200` (no sampled regression, no sampled improvement).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -869,7 +869,7 @@ Completed in this pass:
   - updated `test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers` to assert local alias usage participation.
 - Validation:
   - `cargo nextest run -p tsz-cli test_type_only_quoted_alias_references_work_from_type_keyword_offset test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers` passes.
-  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+  - `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -890,7 +890,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol` passes.
-- `./scripts/run-fourslash.sh --skip-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+- `./scripts/fourslash/run-fourslash.sh --skip-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
 - `cargo nextest run -p tsz-lsp` passes (`738` tests).
 
 Investigated but punted:
@@ -909,7 +909,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli --bin tsz-server test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers test_rename_from_export_quoted_alias_filters_non_specifier_locations test_type_only_quoted_alias_references_work_from_type_keyword_offset` passes.
-- `./scripts/run-fourslash.sh --max=200` remains `198/200` (same two failures).
+- `./scripts/fourslash/run-fourslash.sh --max=200` remains `198/200` (same two failures).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -927,7 +927,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs` passes.
-- `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+- `./scripts/fourslash/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
 - `cargo nextest run -p tsz-lsp` passes; `cargo nextest run -p tsz-cli -E 'not test(tsc_compat_)'` passes.
 
 Investigated but punted:
@@ -945,7 +945,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-lsp` passes.
-- `./scripts/run-fourslash.sh --filter=callHierarchyTaggedTemplate` now passes (`1/1`).
+- `./scripts/fourslash/run-fourslash.sh --filter=callHierarchyTaggedTemplate` now passes (`1/1`).
 - `cargo nextest run -p tsz-cli` still has existing `tsc_compat_tests::*` failures in this environment; tsserver/unit suites remain passing.
 
 Investigated but punted:
@@ -962,7 +962,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli test_references_full_quoted_alias_includes_symbol_alias_references_when_available test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs` passes.
-- `./scripts/run-fourslash.sh --max=200 --skip-ts-build --skip-cargo-build` remains `198/200` (same two failures).
+- `./scripts/fourslash/run-fourslash.sh --max=200 --skip-ts-build --skip-cargo-build` remains `198/200` (same two failures).
 - `cargo nextest run -p tsz-lsp -p tsz-cli -E 'not test(tsc_compat_)'` passes (`1162` tests).
 
 Investigated but punted:
@@ -997,7 +997,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli test_rename_quoted_alias_marker_offset_uses_literal_only_locations test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs test_references_full_quoted_alias_includes_symbol_alias_references_when_available handlers_info_alias::tests::import_statement_context_span_accepts_export_specifier_lines` passes.
-- `./scripts/run-fourslash.sh --max=200 --skip-build` remains `198/200` (same two failures).
+- `./scripts/fourslash/run-fourslash.sh --max=200 --skip-build` remains `198/200` (same two failures).
 - `cargo nextest run -p tsz-lsp -p tsz-cli -E 'not test(tsc_compat_)' --no-fail-fast` passes (`1164` tests).
 
 Investigated but punted:
@@ -1043,7 +1043,7 @@ Completed in this pass:
 
 Verification:
 - `cargo nextest run -p tsz-cli --bin tsz-server test_references_full_quoted_alias_returns_multiple_symbol_groups test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs test_references_full_quoted_alias_definition_uses_file_name_and_text_span_shape` passes.
-- `./scripts/run-fourslash.sh --skip-build --max=200` remains `198/200` (same two failures).
+- `./scripts/fourslash/run-fourslash.sh --skip-build --max=200` remains `198/200` (same two failures).
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
@@ -1055,6 +1055,6 @@ Investigated but punted:
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
-  Reason: attempted minimal `references-full` alias-group canonicalization in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` introduced regression in `test_references_full_quoted_alias_includes_symbol_alias_references_when_available` without improving `./scripts/run-fourslash.sh --max=200` (`198/200` unchanged), so changes were reverted; remaining work needs deeper symbol-group/detail parity (`defId/contextId` modeling).
+  Reason: attempted minimal `references-full` alias-group canonicalization in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` introduced regression in `test_references_full_quoted_alias_includes_symbol_alias_references_when_available` without improving `./scripts/fourslash/run-fourslash.sh --max=200` (`198/200` unchanged), so changes were reverted; remaining work needs deeper symbol-group/detail parity (`defId/contextId` modeling).
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same unresolved alias-chain `findAllReferences` grouping/detail parity gap as `_types`; safe small patch was not sufficient.

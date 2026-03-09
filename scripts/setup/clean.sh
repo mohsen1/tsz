@@ -6,7 +6,7 @@
 # incremental compilation still works. Use --full to nuke everything.
 #
 # Usage:
-#   ./scripts/clean.sh [OPTIONS]
+#   ./scripts/setup/clean.sh [OPTIONS]
 #
 # Options:
 #   --dry-run    Show what would be cleaned without deleting anything
@@ -21,15 +21,15 @@
 #   .env, .env.local, .env.* — environment config files
 #
 # Examples:
-#   ./scripts/clean.sh --dry-run    # Preview what would be removed
-#   ./scripts/clean.sh              # Clean debris, keep build caches
-#   ./scripts/clean.sh --full       # Nuke everything including build caches
-#   ./scripts/clean.sh --quiet      # Silent mode (git hooks)
+#   ./scripts/setup/clean.sh --dry-run    # Preview what would be removed
+#   ./scripts/setup/clean.sh              # Clean debris, keep build caches
+#   ./scripts/setup/clean.sh --full       # Nuke everything including build caches
+#   ./scripts/setup/clean.sh --quiet      # Silent mode (git hooks)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 DRY_RUN=false
 QUIET=false

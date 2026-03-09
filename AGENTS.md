@@ -315,7 +315,7 @@ with open('scripts/conformance/conformance-detail.json') as f:
 6. Is the diagnostic generated from solver failure reason instead of checker-local heuristics?
 
 ## 24) Local Setup Requirements
-- Run `./scripts/setup.sh` once per workspace and keep `scripts/githooks` active.
+- Run `./scripts/setup/setup.sh` once per workspace and keep `scripts/githooks` active.
 - This ensures `pre-commit` checks run locally before commits.
 - If hooks are not installed, local lint guardrails can be bypassed accidentally.
 

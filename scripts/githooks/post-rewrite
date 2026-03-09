@@ -7,4 +7,4 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
-"$ROOT_DIR/scripts/reset-ts-submodule.sh"
+"$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
