@@ -364,12 +364,20 @@ impl ParserState {
                     .bytes()
                     .filter(|&b| b != b'_')
                     .fold(0u64, |acc, b| acc * 8 + (b - b'0') as u64);
-                let suggested = format!("0o{octal_value:o}");
+                // tsc's scanner checks if the previous token was MinusToken and includes
+                // the `-` prefix in both the error span and the suggestion.
+                // e.g., `-01` → error at `-`, suggestion `'-0o1'`
+                let source = self.scanner.source_text();
+                let with_minus =
+                    start_pos > 0 && source.as_bytes().get(start_pos as usize - 1) == Some(&b'-');
+                let minus_prefix = if with_minus { "-" } else { "" };
+                let suggested = format!("{minus_prefix}0o{octal_value:o}");
+                let err_start = if with_minus { start_pos - 1 } else { start_pos };
                 let message =
                     format!("Octal literals are not allowed. Use the syntax '{suggested}'.");
                 self.parse_error_at(
-                    start_pos,
-                    end_pos - start_pos,
+                    err_start,
+                    end_pos - err_start,
                     &message,
                     diagnostic_codes::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
                 );
