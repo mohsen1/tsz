@@ -1021,6 +1021,10 @@ impl<'a> SignatureHelpProvider<'a> {
         while let Some(last) = text.chars().last() {
             let should_trim = match last {
                 ',' | ';' | '=' => true,
+                '(' => Self::has_unmatched_trailing_opener(&text, '(', ')'),
+                '[' => Self::has_unmatched_trailing_opener(&text, '[', ']'),
+                '{' => Self::has_unmatched_trailing_opener(&text, '{', '}'),
+                '<' => Self::has_unmatched_trailing_opener(&text, '<', '>'),
                 ')' => Self::has_unmatched_trailing_closer(&text, '(', ')'),
                 ']' => Self::has_unmatched_trailing_closer(&text, '[', ']'),
                 '}' => Self::has_unmatched_trailing_closer(&text, '{', '}'),
@@ -1040,6 +1044,11 @@ impl<'a> SignatureHelpProvider<'a> {
     fn has_unmatched_trailing_closer(text: &str, open: char, close: char) -> bool {
         text.chars().filter(|&ch| ch == close).count()
             > text.chars().filter(|&ch| ch == open).count()
+    }
+
+    fn has_unmatched_trailing_opener(text: &str, open: char, close: char) -> bool {
+        text.chars().filter(|&ch| ch == open).count()
+            > text.chars().filter(|&ch| ch == close).count()
     }
 
     fn signature_meta(&self, params: &[tsz_solver::ParamInfo]) -> (usize, usize, bool) {
