@@ -375,6 +375,20 @@ impl ParserState {
         }
     }
 
+    /// Check if the next token (after the current one) is `{` on the same line.
+    /// Used to disambiguate `class implements {` (class named "implements") from
+    /// `class implements SomeType {` (class with implements clause).
+    pub(crate) fn next_token_is_open_brace(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::OpenBraceToken;
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
     /// Used to emit TS1110 (Type expected) instead of TS1005 (identifier expected)
     /// when a type is expected but we encounter a token that can't start a type
     #[inline]
