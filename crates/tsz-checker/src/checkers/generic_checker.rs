@@ -145,6 +145,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: tsz_binder::SymbolId,
         type_args_list: &tsz_parser::parser::NodeList,
+        type_name_idx: NodeIndex,
     ) {
         use tsz_binder::symbol_flags;
 
@@ -171,7 +172,7 @@ impl<'a> CheckerState<'a> {
             if !has_type_params_in_decl
                 && symbol_type != TypeId::ERROR
                 && symbol_type != TypeId::ANY
-                && let Some(&arg_idx) = type_args_list.nodes.first()
+                && !type_args_list.nodes.is_empty()
             {
                 let lib_binders = self.get_lib_binders();
                 let name = self
@@ -180,7 +181,7 @@ impl<'a> CheckerState<'a> {
                     .get_symbol_with_libs(sym_id, &lib_binders)
                     .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
                 self.error_at_node_msg(
-                    arg_idx,
+                    type_name_idx,
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                     &[name.as_str()],
                 );
