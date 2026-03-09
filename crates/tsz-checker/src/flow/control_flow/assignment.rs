@@ -7,13 +7,19 @@ use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, are_types_mutually_subtype_with_env,
     fallback_compound_assignment_result, get_array_element_type, get_lazy_def_id,
-    is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,
-    unwrap_promise_type_argument, widen_literal_to_primitive,
+    is_compound_assignment_operator, map_compound_assignment_to_binary, tuple_elements_for_type,
+    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TupleElement, TypeId};
+
+#[derive(Clone, Copy, Debug)]
+struct DestructuringSource {
+    node: NodeIndex,
+    ty: TypeId,
+}
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn get_assigned_type(
@@ -104,6 +110,13 @@ impl<'a> FlowAnalyzer<'a> {
                     };
                 }
             }
+        }
+
+        if widen_literals_for_destructuring
+            && let Some(assigned_type) =
+                self.get_destructuring_assigned_type_for_reference(assignment_node, target)
+        {
+            return Some(assigned_type);
         }
 
         if let Some(rhs) = self.assignment_rhs_for_reference(assignment_node, target) {
@@ -318,6 +331,458 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(inner);
         }
         None
+    }
+
+    fn get_destructuring_assigned_type_for_reference(
+        &self,
+        assignment_node: NodeIndex,
+        reference: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.arena.get(assignment_node)?;
+        match node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.arena.get_binary_expr(node)?;
+                if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                    return None;
+                }
+                let source = self.destructuring_source_from_node(bin.right)?;
+                self.match_destructuring_assigned_type(bin.left, source, reference)
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let decl = self.arena.get_variable_declaration(node)?;
+                if decl.initializer.is_none() {
+                    return None;
+                }
+                let source = self.destructuring_source_from_node(decl.initializer)?;
+                self.match_destructuring_assigned_type(decl.name, source, reference)
+            }
+            _ => None,
+        }
+    }
+
+    fn destructuring_source_from_node(&self, node: NodeIndex) -> Option<DestructuringSource> {
+        if node.is_none() {
+            return Some(DestructuringSource {
+                node: NodeIndex::NONE,
+                ty: TypeId::UNDEFINED,
+            });
+        }
+
+        Some(DestructuringSource {
+            node: self.skip_parens_and_assertions(node),
+            ty: self.destructuring_source_type_from_node(node)?,
+        })
+    }
+
+    fn destructuring_source_type_from_node(&self, node: NodeIndex) -> Option<TypeId> {
+        if node.is_none() {
+            return Some(TypeId::UNDEFINED);
+        }
+
+        if let Some(literal_type) = self.literal_type_from_node(node) {
+            return Some(literal_type);
+        }
+        if let Some(nullish_type) = self.nullish_literal_type(node) {
+            return Some(nullish_type);
+        }
+
+        let stripped = self.skip_parens_and_assertions(node);
+        if let Some(tuple_type) = self.destructuring_tuple_type_from_array_literal(node, stripped) {
+            return Some(tuple_type);
+        }
+
+        if let Some(node_types) = self.node_types {
+            if let Some(&ty) = node_types.get(&node.0) {
+                return Some(ty);
+            }
+
+            if stripped != node {
+                return node_types.get(&stripped.0).copied();
+            }
+        }
+
+        None
+    }
+
+    fn match_destructuring_assigned_type(
+        &self,
+        pattern: NodeIndex,
+        source: DestructuringSource,
+        target: NodeIndex,
+    ) -> Option<TypeId> {
+        if pattern.is_none() {
+            return None;
+        }
+
+        let pattern = self.skip_parens_and_assertions(pattern);
+        if self.is_matching_reference(pattern, target) {
+            return Some(source.ty);
+        }
+
+        let node = self.arena.get(pattern)?;
+        match node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.arena.get_binary_expr(node)?;
+                if bin.operator_token != SyntaxKind::EqualsToken as u16
+                    || !self.assignment_targets_reference_internal(bin.left, target)
+                {
+                    return None;
+                }
+
+                let source = self.destructuring_source_with_default(source, bin.right);
+                self.match_destructuring_assigned_type(bin.left, source, target)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let elements = if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    self.arena.get_literal_expr(node).map(|lit| &lit.elements)?
+                } else {
+                    self.arena
+                        .get_binding_pattern(node)
+                        .map(|pat| &pat.elements)?
+                };
+
+                for (index, &elem) in elements.nodes.iter().enumerate() {
+                    if elem.is_none() || !self.assignment_targets_reference_internal(elem, target) {
+                        continue;
+                    }
+                    let source = self.destructuring_array_element_source(source, index)?;
+                    return self.match_destructuring_assigned_type(elem, source, target);
+                }
+                None
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
+            {
+                let elements = if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    self.arena.get_literal_expr(node).map(|lit| &lit.elements)?
+                } else {
+                    self.arena
+                        .get_binding_pattern(node)
+                        .map(|pat| &pat.elements)?
+                };
+
+                for &elem in &elements.nodes {
+                    if elem.is_none() || !self.assignment_targets_reference_internal(elem, target) {
+                        continue;
+                    }
+                    let source = self.destructuring_object_element_source(elem, source, target)?;
+                    return self.match_destructuring_assigned_type(elem, source, target);
+                }
+                None
+            }
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                let binding = self.arena.get_binding_element(node)?;
+                if binding.dot_dot_dot_token
+                    || !self.assignment_targets_reference_internal(binding.name, target)
+                {
+                    return None;
+                }
+
+                let mut source = source;
+                if let Some(ext) = self.arena.get_extended(pattern)
+                    && ext.parent.is_some()
+                    && let Some(parent_node) = self.arena.get(ext.parent)
+                    && parent_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                {
+                    let name_idx = if binding.property_name.is_some() {
+                        binding.property_name
+                    } else {
+                        binding.name
+                    };
+                    source = self.destructuring_property_source(source, name_idx)?;
+                }
+                if binding.initializer.is_some() {
+                    source = self.destructuring_source_with_default(source, binding.initializer);
+                }
+                self.match_destructuring_assigned_type(binding.name, source, target)
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_property_assignment(node)?;
+                if !self.assignment_targets_reference_internal(prop.initializer, target) {
+                    return None;
+                }
+
+                let source = self.destructuring_property_source(source, prop.name)?;
+                self.match_destructuring_assigned_type(prop.initializer, source, target)
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_shorthand_property(node)?;
+                if !self.assignment_targets_reference_internal(prop.name, target) {
+                    return None;
+                }
+
+                let mut source = self.destructuring_property_source(source, prop.name)?;
+                if prop.object_assignment_initializer.is_some() {
+                    source = self.destructuring_source_with_default(
+                        source,
+                        prop.object_assignment_initializer,
+                    );
+                }
+                self.match_destructuring_assigned_type(prop.name, source, target)
+            }
+            _ => None,
+        }
+    }
+
+    fn destructuring_array_element_source(
+        &self,
+        source: DestructuringSource,
+        index: usize,
+    ) -> Option<DestructuringSource> {
+        let literal_elements = self.array_literal_elements(source.node);
+        let node = literal_elements
+            .and_then(|elements| elements.nodes.get(index).copied())
+            .filter(|node| node.is_some())
+            .unwrap_or(NodeIndex::NONE);
+        let ty = if literal_elements.is_some() && node.is_none() {
+            TypeId::UNDEFINED
+        } else {
+            self.destructuring_numeric_access_type(source.ty, index)
+        };
+
+        Some(DestructuringSource { node, ty })
+    }
+
+    fn destructuring_tuple_type_from_array_literal(
+        &self,
+        original_node: NodeIndex,
+        stripped_node: NodeIndex,
+    ) -> Option<TypeId> {
+        let stripped_node_data = self.arena.get(stripped_node)?;
+        if stripped_node_data.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let typed_source = self
+            .node_types
+            .and_then(|node_types| node_types.get(&original_node.0).copied())
+            .or_else(|| {
+                if stripped_node != original_node {
+                    self.node_types
+                        .and_then(|node_types| node_types.get(&stripped_node.0).copied())
+                } else {
+                    None
+                }
+            })?;
+
+        let db = self.interner.as_type_database();
+        let is_tuple_like = tuple_elements_for_type(db, typed_source).is_some();
+        if !is_tuple_like {
+            return None;
+        }
+
+        let literal = self.arena.get_literal_expr(stripped_node_data)?;
+        let mut tuple_elements = Vec::with_capacity(literal.elements.nodes.len());
+        for &element in &literal.elements.nodes {
+            if element.is_none() {
+                return None;
+            }
+            let ty = self.destructuring_array_literal_element_type(element)?;
+            tuple_elements.push(TupleElement {
+                type_id: ty,
+                name: None,
+                optional: false,
+                rest: false,
+            });
+        }
+
+        Some(self.interner.tuple(tuple_elements))
+    }
+
+    fn destructuring_array_literal_element_type(&self, element: NodeIndex) -> Option<TypeId> {
+        let element = self.skip_parens_and_assertions(element);
+        let element_node = self.arena.get(element)?;
+        if element_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let bin = self.arena.get_binary_expr(element_node)?;
+            if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                return self.destructuring_source_type_from_node(bin.right);
+            }
+        }
+
+        if element_node.kind == SyntaxKind::Identifier as u16
+            && let Some(init_type) = self.destructuring_identifier_initializer_type(element)
+        {
+            return Some(init_type);
+        }
+
+        self.destructuring_source_type_from_node(element)
+    }
+
+    fn destructuring_identifier_initializer_type(&self, identifier: NodeIndex) -> Option<TypeId> {
+        let symbol = self.binder.resolve_identifier(self.arena, identifier)?;
+        let declaration = self.binder.get_symbol(symbol)?.value_declaration;
+        let declaration_node = self.arena.get(declaration)?;
+        if declaration_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+
+        let declaration = self.arena.get_variable_declaration(declaration_node)?;
+        if declaration.initializer.is_none() {
+            return None;
+        }
+
+        self.destructuring_source_type_from_node(declaration.initializer)
+    }
+
+    fn destructuring_object_element_source(
+        &self,
+        elem: NodeIndex,
+        source: DestructuringSource,
+        target: NodeIndex,
+    ) -> Option<DestructuringSource> {
+        let elem_node = self.arena.get(elem)?;
+        match elem_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_property_assignment(elem_node)?;
+                if !self.assignment_targets_reference_internal(prop.initializer, target) {
+                    return None;
+                }
+                self.destructuring_property_source(source, prop.name)
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_shorthand_property(elem_node)?;
+                if !self.assignment_targets_reference_internal(prop.name, target) {
+                    return None;
+                }
+                let mut source = self.destructuring_property_source(source, prop.name)?;
+                if prop.object_assignment_initializer.is_some() {
+                    source = self.destructuring_source_with_default(
+                        source,
+                        prop.object_assignment_initializer,
+                    );
+                }
+                Some(source)
+            }
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                let binding = self.arena.get_binding_element(elem_node)?;
+                if !self.assignment_targets_reference_internal(binding.name, target) {
+                    return None;
+                }
+                let name_idx = if binding.property_name.is_some() {
+                    binding.property_name
+                } else {
+                    binding.name
+                };
+                let mut source = self.destructuring_property_source(source, name_idx)?;
+                if binding.initializer.is_some() {
+                    source = self.destructuring_source_with_default(source, binding.initializer);
+                }
+                Some(source)
+            }
+            _ => None,
+        }
+    }
+
+    fn destructuring_property_source(
+        &self,
+        source: DestructuringSource,
+        name: NodeIndex,
+    ) -> Option<DestructuringSource> {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let key = self.property_key_from_name(name).or_else(|| {
+            if source.node.is_some() {
+                self.property_key_from_name_with_rhs_effects(name, source.node)
+            } else {
+                None
+            }
+        })?;
+
+        let ty = match key {
+            PropertyKey::Index(index) => self.destructuring_numeric_access_type(source.ty, index),
+            PropertyKey::Atom(atom) => match self.interner.resolve_property_access_with_options(
+                source.ty,
+                &self.interner.resolve_atom_ref(atom),
+                self.interner.no_unchecked_indexed_access(),
+            ) {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                PropertyAccessResult::PropertyNotFound { .. } => TypeId::UNDEFINED,
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    property_type.unwrap_or(TypeId::UNDEFINED)
+                }
+                PropertyAccessResult::IsUnknown => TypeId::UNKNOWN,
+            },
+        };
+
+        let node = if source.node.is_some() {
+            self.lookup_property_in_rhs(source.node, name)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
+
+        Some(DestructuringSource { node, ty })
+    }
+
+    fn destructuring_numeric_access_type(&self, source_ty: TypeId, index: usize) -> TypeId {
+        let db = self.interner.as_type_database();
+
+        if let Some(members) = union_members_for_type(db, source_ty) {
+            let mut member_types = Vec::new();
+            for member in members {
+                let member_type = self.destructuring_numeric_access_type(member, index);
+                if member_type != TypeId::NEVER {
+                    member_types.push(member_type);
+                }
+            }
+            return tsz_solver::utils::union_or_single(self.interner, member_types);
+        }
+
+        if let Some(elements) = tuple_elements_for_type(db, source_ty) {
+            for (position, element) in elements.iter().enumerate() {
+                if element.rest {
+                    if index >= position {
+                        return get_array_element_type(db, element.type_id)
+                            .unwrap_or(element.type_id);
+                    }
+                    break;
+                }
+
+                if index == position {
+                    if element.optional {
+                        return self
+                            .interner
+                            .union(vec![element.type_id, TypeId::UNDEFINED]);
+                    }
+                    return element.type_id;
+                }
+            }
+            return TypeId::UNDEFINED;
+        }
+
+        if let Some(element_type) = get_array_element_type(db, source_ty) {
+            return if self.interner.no_unchecked_indexed_access() {
+                self.interner.union(vec![element_type, TypeId::UNDEFINED])
+            } else {
+                element_type
+            };
+        }
+
+        TypeId::UNKNOWN
+    }
+
+    fn destructuring_source_with_default(
+        &self,
+        source: DestructuringSource,
+        default_node: NodeIndex,
+    ) -> DestructuringSource {
+        let source_node = self.skip_parens_and_assertions(default_node);
+        let Some(default_ty) = self.destructuring_source_type_from_node(default_node) else {
+            return source;
+        };
+
+        let non_undefined = tsz_solver::remove_undefined(self.interner, source.ty);
+        let ty = if non_undefined == TypeId::NEVER {
+            default_ty
+        } else {
+            self.interner.union(vec![non_undefined, default_ty])
+        };
+
+        let node = source_node;
+
+        DestructuringSource { node, ty }
     }
 
     pub(crate) fn is_await_assignment_for_reference(
