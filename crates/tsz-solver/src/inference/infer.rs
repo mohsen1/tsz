@@ -858,6 +858,106 @@ impl<'a> InferenceContext<'a> {
         self.interner
     }
 
+    /// Substitute source inference variable placeholders in the candidates
+    /// and upper bounds of a set of target variables.
+    ///
+    /// When a generic function is passed as an argument to another generic function,
+    /// the constraint collector creates "source" inference variables for the inner
+    /// function's type parameters. These may leak into the outer variables' candidates
+    /// as raw `TypeParameter` placeholders (e.g., `Array<__infer_src_3>`).
+    ///
+    /// This method resolves those source variables and substitutes their resolved
+    /// types back into the outer variables' candidates, so the resolution phase
+    /// sees concrete types instead of opaque placeholders.
+    pub fn substitute_source_vars_in_targets(
+        &mut self,
+        target_vars: &[InferenceVar],
+        source_subst: &crate::instantiation::instantiate::TypeSubstitution,
+        interner: &dyn TypeDatabase,
+    ) {
+        use crate::instantiation::instantiate::instantiate_type;
+        let target_set: FxHashSet<InferenceVar> =
+            target_vars.iter().map(|v| self.table.find(*v)).collect();
+        for &var in target_vars {
+            let root = self.table.find(var);
+            let info = self.table.probe_value(root);
+            let mut changed = false;
+            let mut new_candidates: Vec<InferenceCandidate> = info
+                .candidates
+                .iter()
+                .map(|c| {
+                    let subst_ty = instantiate_type(interner, c.type_id, source_subst);
+                    if subst_ty != c.type_id {
+                        changed = true;
+                    }
+                    InferenceCandidate {
+                        type_id: subst_ty,
+                        ..*c
+                    }
+                })
+                .collect();
+            let mut new_contra: Vec<InferenceCandidate> = info
+                .contra_candidates
+                .iter()
+                .map(|c| {
+                    let subst_ty = instantiate_type(interner, c.type_id, source_subst);
+                    if subst_ty != c.type_id {
+                        changed = true;
+                    }
+                    InferenceCandidate {
+                        type_id: subst_ty,
+                        ..*c
+                    }
+                })
+                .collect();
+            let new_upper: Vec<TypeId> = info
+                .upper_bounds
+                .iter()
+                .map(|&ub| {
+                    let subst_ty = instantiate_type(interner, ub, source_subst);
+                    if subst_ty != ub {
+                        changed = true;
+                    }
+                    subst_ty
+                })
+                .collect();
+            if changed {
+                // Filter out candidates that are themselves target inference variables.
+                // After substitution, a candidate like `__infer_src_Y` might resolve to
+                // `__infer_1`, which is another outer var. Remove such self-references
+                // to prevent circular resolution.
+                new_candidates.retain(|c| {
+                    if let Some(TypeData::TypeParameter(_)) = interner.lookup(c.type_id) {
+                        // Check if this type parameter is one of our target inference variables
+                        !target_set
+                            .iter()
+                            .any(|&tv| self.table.probe_value(tv).resolved == Some(c.type_id))
+                    } else {
+                        true
+                    }
+                });
+                new_contra.retain(|c| {
+                    if let Some(TypeData::TypeParameter(_)) = interner.lookup(c.type_id) {
+                        !target_set
+                            .iter()
+                            .any(|&tv| self.table.probe_value(tv).resolved == Some(c.type_id))
+                    } else {
+                        true
+                    }
+                });
+                self.table.union_value(
+                    root,
+                    InferenceInfo {
+                        candidates: new_candidates,
+                        contra_candidates: new_contra,
+                        upper_bounds: new_upper,
+                        resolved: info.resolved,
+                    },
+                );
+            }
+        }
+    }
+
     // =========================================================================
     // Constraint Collection
     // =========================================================================

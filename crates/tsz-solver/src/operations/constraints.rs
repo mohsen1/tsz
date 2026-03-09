@@ -782,13 +782,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                     }
                     // Covariant return: instantiated_source_return <: target_return
-                    self.constrain_types(
-                        ctx,
-                        &combined_var_map,
-                        instantiated_return,
-                        t_fn.return_type,
-                        priority,
-                    );
+                    //
+                    // When both the source return and target return are inference
+                    // placeholders, unify them so they share candidates/bounds.
+                    // This handles chains like: compose(unbox, unlist) where
+                    // unlist's U is related to B through Array<U> = B, and C = U.
+                    // Without unification, U gets no direct candidates.
+                    if let (Some(&s_var), Some(&t_var)) = (
+                        combined_var_map.get(&instantiated_return),
+                        combined_var_map.get(&t_fn.return_type),
+                    ) {
+                        let _ = ctx.unify_vars(s_var, t_var);
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            &combined_var_map,
+                            instantiated_return,
+                            t_fn.return_type,
+                            priority,
+                        );
+                    }
 
                     // Constrain type predicates if both functions have them
                     if let (Some(s_pred), Some(t_pred)) =
@@ -881,6 +894,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_call_signature_to_function(
                             ctx, var_map, sig, &t_fn, priority,
                         );
+                    } else {
+                        // Generic call signature: convert to a Function type (preserving
+                        // type_params) and re-enter constrain_types so the generic-source
+                        // function handler (lines 625-808) creates fresh inference vars
+                        // and collects constraints properly.
+                        let func_type = self.interner.function(FunctionShape {
+                            type_params: sig.type_params.clone(),
+                            params: sig.params.clone(),
+                            this_type: sig.this_type,
+                            return_type: sig.return_type,
+                            type_predicate: sig.type_predicate.clone(),
+                            is_constructor: false,
+                            is_method: false,
+                        });
+                        self.constrain_types(ctx, var_map, func_type, target, priority);
                     }
                 } else if let Some(index) = self.select_signature_for_target(
                     &s_callable.call_signatures,

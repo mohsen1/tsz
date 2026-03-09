@@ -664,6 +664,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Fall back to resolving without unification (may result in less precise types)
         }
 
+        // 4.5. Resolve source inference variables (from generic function arguments)
+        // and substitute them into outer variables' candidates.
+        //
+        // When a generic function like `list<T>` is passed as an argument, the constraint
+        // collector creates fresh inference vars (`__infer_src_*`) for its type params.
+        // These may leak into outer variables' candidates as raw TypeParam placeholders.
+        // We resolve them here and substitute concrete types back, so the outer resolution
+        // sees real types (e.g., `T[]`) instead of opaque placeholders (e.g., `__infer_src_3`).
+        //
+        // Multi-pass: After substituting resolved source vars into outer candidates,
+        // resolve outer vars, then re-derive remaining source vars from outer results.
+        {
+            let outer_var_set: FxHashSet<InferenceVar> = type_param_vars.iter().copied().collect();
+            let mut source_subst = TypeSubstitution::new();
+            let type_params_snapshot: Vec<_> = infer_ctx.type_params.clone();
+            // Pass 1: Resolve source vars with direct candidates (not unknown)
+            for (name, var, _) in &type_params_snapshot {
+                if !outer_var_set.contains(var)
+                    && let Ok(resolved) = infer_ctx.resolve_with_constraints(*var)
+                    && resolved != TypeId::UNKNOWN
+                {
+                    source_subst.insert(*name, resolved);
+                }
+            }
+            if !source_subst.is_empty() {
+                infer_ctx.substitute_source_vars_in_targets(
+                    &type_param_vars,
+                    &source_subst,
+                    self.interner,
+                );
+            }
+        }
+
         let mut final_subst = TypeSubstitution::new();
         let mut infer_subst_cache: Option<TypeSubstitution> = None;
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
