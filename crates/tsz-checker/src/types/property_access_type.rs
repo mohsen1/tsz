@@ -1217,13 +1217,17 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&decl_idx| (decl_idx, arena.as_ref()))
                 .collect();
+            let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+                self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            };
             let lowering = TypeLowering::with_hybrid_resolver(
                 arena.as_ref(),
                 self.ctx.types,
                 &resolver,
                 &def_id_resolver,
                 &|_| None,
-            );
+            )
+            .with_name_def_id_resolver(&name_resolver);
             let (aug_type, params) =
                 lowering.lower_merged_interface_declarations(&decls_with_arenas);
             if aug_type == TypeId::ERROR {
@@ -1479,13 +1483,17 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&decl_idx| (decl_idx, arena.as_ref()))
                 .collect();
+            let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+                self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            };
             let lowering = TypeLowering::with_hybrid_resolver(
                 arena.as_ref(),
                 self.ctx.types,
                 &resolver,
                 &def_id_resolver,
                 &|_| None,
-            );
+            )
+            .with_name_def_id_resolver(&name_resolver);
             let (aug_type, _params) =
                 lowering.lower_merged_interface_declarations(&decls_with_arenas);
             if aug_type == TypeId::ERROR {

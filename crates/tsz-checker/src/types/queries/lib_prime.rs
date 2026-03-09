@@ -72,14 +72,8 @@ impl<'a> CheckerState<'a> {
             resolver(node_idx)
                 .map(|found| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(found)))
         };
-        let name_resolver = |ident_name: &str| -> Option<tsz_solver::DefId> {
-            if is_compiler_managed_type(ident_name) {
-                return None;
-            }
-            binder
-                .file_locals
-                .get(ident_name)
-                .map(|found| self.ctx.get_or_create_def_id(found))
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
         };
 
         let lowering = TypeLowering::with_hybrid_resolver(

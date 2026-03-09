@@ -1748,6 +1748,9 @@ impl<'a> CheckerState<'a> {
                             })
                     }
                 };
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                };
 
                 let lowering = TypeLowering::with_hybrid_resolver(
                     fallback_arena,
@@ -1757,6 +1760,11 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
+                let lowering = if has_declaration_arenas {
+                    lowering.with_name_def_id_resolver(&name_resolver)
+                } else {
+                    lowering
+                };
 
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;
@@ -1869,13 +1877,61 @@ impl<'a> CheckerState<'a> {
                         let type_param_bindings = self.get_type_param_bindings();
                         let binder = &self.ctx.binder;
                         let lib_binders = self.get_lib_binders();
+                        let namespace_prefix = {
+                            let mut parent = lib_arena
+                                .get_extended(decl_idx)
+                                .map_or(NodeIndex::NONE, |info| info.parent);
+                            let mut prefixes = Vec::new();
+
+                            while !parent.is_none() {
+                                let Some(parent_node) = lib_arena.get(parent) else {
+                                    break;
+                                };
+                                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                    && let Some(module) = lib_arena.get_module(parent_node)
+                                    && let Some(name_node) = lib_arena.get(module.name)
+                                    && name_node.kind == SyntaxKind::Identifier as u16
+                                    && let Some(name_ident) = lib_arena.get_identifier(name_node)
+                                {
+                                    prefixes.push(name_ident.escaped_text.clone());
+                                }
+
+                                parent = lib_arena
+                                    .get_extended(parent)
+                                    .map_or(NodeIndex::NONE, |info| info.parent);
+                            }
+
+                            (!prefixes.is_empty())
+                                .then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
+                        };
+                        let resolve_type_name = |name: &str| -> Option<SymbolId> {
+                            namespace_prefix
+                                .as_ref()
+                                .and_then(|prefix| {
+                                    let mut scoped =
+                                        String::with_capacity(prefix.len() + 1 + name.len());
+                                    scoped.push_str(prefix);
+                                    scoped.push('.');
+                                    scoped.push_str(name);
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
+                                        .and_then(|def_id| {
+                                            self.ctx.def_to_symbol_id_with_fallback(def_id)
+                                        })
+                                })
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                        .and_then(|def_id| {
+                                            self.ctx.def_to_symbol_id_with_fallback(def_id)
+                                        })
+                                })
+                        };
 
                         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
                             let ident_name = lib_arena.get_identifier_text(node_idx)?;
                             if is_compiler_managed_type(ident_name) {
                                 return None;
                             }
-                            let sym_id = binder.file_locals.get(ident_name)?;
+                            let sym_id = resolve_type_name(ident_name)?;
                             let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                             ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
                         };
@@ -1888,11 +1944,26 @@ impl<'a> CheckerState<'a> {
                                 if is_compiler_managed_type(ident_name) {
                                     return None;
                                 }
-                                let sym_id = binder.file_locals.get(ident_name)?;
+                                let sym_id = resolve_type_name(ident_name)?;
                                 let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
                                 ((symbol.flags & symbol_flags::TYPE) != 0)
                                     .then(|| self.ctx.get_or_create_def_id(sym_id))
                             };
+                        let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                            namespace_prefix
+                                .as_ref()
+                                .and_then(|prefix| {
+                                    let mut scoped =
+                                        String::with_capacity(prefix.len() + 1 + type_name.len());
+                                    scoped.push_str(prefix);
+                                    scoped.push('.');
+                                    scoped.push_str(type_name);
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
+                                })
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
+                        };
 
                         let lowering = TypeLowering::with_hybrid_resolver(
                             lib_arena,
@@ -1901,7 +1972,8 @@ impl<'a> CheckerState<'a> {
                             &def_id_resolver,
                             &value_resolver,
                         )
-                        .with_type_param_bindings(type_param_bindings);
+                        .with_type_param_bindings(type_param_bindings)
+                        .with_name_def_id_resolver(&name_resolver);
 
                         let (alias_type, params) =
                             lowering.lower_type_alias_declaration(type_alias);

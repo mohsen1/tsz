@@ -636,6 +636,11 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     pub(super) fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
+        if let Some(name) = self.type_name_text(node_idx)
+            && let Some(def_id) = self.resolve_def_id_by_name(&name)
+        {
+            return self.interner.lazy(def_id);
+        }
         // Must resolve to DefId; def_id_resolver must be provided.
         if let Some(def_id) = self.resolve_def_id(node_idx) {
             return self.interner.lazy(def_id);
@@ -690,6 +695,12 @@ impl<'a> TypeLowering<'a> {
             // false positives when the same NodeIndex maps to different
             // identifiers in different arenas (e.g., NodeIndex(50) is "Promise"
             // in arena A but "AbortSignal" in arena B).
+            if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
+                && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
+            {
+                let lazy_type = self.interner.lazy(def_id);
+                return lazy_type;
+            }
             if let Some(def_id) = self.resolve_def_id_by_name(name) {
                 let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;

@@ -427,7 +427,9 @@ impl<'a> CheckerState<'a> {
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = jsdoc_declared_type.or(property_context_type);
+                    self.ctx.contextual_type = self.contextual_type_option_for_expression(
+                        jsdoc_declared_type.or(property_context_type),
+                    );
 
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
@@ -630,7 +632,8 @@ impl<'a> CheckerState<'a> {
                         None
                     };
                     let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = index_ctx_type;
+                    self.ctx.contextual_type =
+                        self.contextual_type_option_for_expression(index_ctx_type);
                     let value_type = self.get_type_of_node(prop.initializer);
                     self.ctx.contextual_type = prev_context;
 
@@ -661,7 +664,8 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = property_context_type;
+                    self.ctx.contextual_type =
+                        self.contextual_type_option_for_expression(property_context_type);
 
                     let value_type = if self.resolve_identifier_symbol(shorthand_name_idx).is_none()
                     {
@@ -842,8 +846,10 @@ impl<'a> CheckerState<'a> {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        self.ctx.contextual_type =
+                        let method_context_type =
                             self.contextual_object_literal_property_type(ctx_type, &name);
+                        self.ctx.contextual_type =
+                            self.contextual_type_option_for_expression(method_context_type);
                     }
 
                     // If no explicit ThisType marker exists, use the object literal's
@@ -1001,10 +1007,12 @@ impl<'a> CheckerState<'a> {
                     }
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        self.ctx.contextual_type = self.contextual_object_literal_property_type(
+                        let computed_context_type = self.contextual_object_literal_property_type(
                             ctx_type,
                             resolved_computed_name.as_deref().unwrap_or("__@computed"),
                         );
+                        self.ctx.contextual_type =
+                            self.contextual_type_option_for_expression(computed_context_type);
                     }
                     let method_type = self.get_type_of_function(elem_idx);
                     self.ctx.contextual_type = prev_context;

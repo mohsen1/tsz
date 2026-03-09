@@ -512,11 +512,8 @@ impl<'a> CheckerState<'a> {
                 // Name-based resolver: resolves identifier text directly without NodeIndex.
                 // This is the reliable fallback for cross-arena lowering where NodeIndex
                 // values from the current arena don't match nodes in the declaration arenas.
-                let name_resolver = |name: &str| -> Option<tsz_solver::DefId> {
-                    if is_compiler_managed_type(name) {
-                        return None;
-                    }
-                    binder.file_locals.get(name).map(&get_cached_def_id)
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
 
                 // Create base lowering with the fallback arena and both resolvers

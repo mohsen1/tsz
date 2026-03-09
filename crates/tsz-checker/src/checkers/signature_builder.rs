@@ -278,7 +278,13 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), None);
         };
 
-        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::OfNode)
+        // SignatureData belongs to type-position declarations such as interface
+        // and type-literal members. Its parameter annotations must be resolved
+        // through the binder-aware type-node path, not expression checking.
+        self.extract_params_from_parameter_list_impl(
+            params_list,
+            ParamTypeResolutionMode::FromTypeNode,
+        )
     }
 
     /// Helper to extract parameters from a parameter list.
@@ -322,7 +328,6 @@ impl<'a> CheckerState<'a> {
                     ParamTypeResolutionMode::FromTypeNode => {
                         self.get_type_from_type_node(param.type_annotation)
                     }
-                    ParamTypeResolutionMode::OfNode => self.get_type_of_node(param.type_annotation),
                 }
             } else {
                 TypeId::ANY

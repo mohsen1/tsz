@@ -166,8 +166,6 @@ pub(crate) enum ParamTypeResolutionMode {
     InTypeLiteral,
     /// Use `get_type_from_type_node` - for declaration contexts
     FromTypeNode,
-    /// Use `get_type_of_node` - for expression/general contexts
-    OfNode,
 }
 
 // =============================================================================

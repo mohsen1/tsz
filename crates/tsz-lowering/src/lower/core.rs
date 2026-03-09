@@ -501,6 +501,86 @@ impl<'a> TypeLowering<'a> {
             .and_then(|resolver| resolver(name))
     }
 
+    /// Build the full text of an entity-name type node from the current arena.
+    ///
+    /// This is used by cross-arena lowering to resolve qualified names (e.g.
+    /// `Intl.NumberFormatOptions`) through the name-based `DefId` resolver
+    /// instead of relying on arena-local `NodeIndex` values.
+    pub(super) fn type_name_text(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(node_idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.arena.get_qualified_name(node)?;
+            let left = self.type_name_text(qn.left)?;
+            let right = self.type_name_text(qn.right)?;
+            let mut combined = String::with_capacity(left.len() + 1 + right.len());
+            combined.push_str(&left);
+            combined.push('.');
+            combined.push_str(&right);
+            return Some(combined);
+        }
+
+        None
+    }
+
+    /// Build a namespace-qualified name for a simple identifier when it appears
+    /// inside nested `namespace`/`module` declarations.
+    ///
+    /// Cross-arena lib lowering often encounters unqualified references to
+    /// sibling declarations within a namespace, e.g. `NumberFormatOptionsStyle`
+    /// inside `declare namespace Intl`. In those cases the current arena can
+    /// recover the lexical namespace path even when the cross-arena
+    /// `NodeIndex`-based resolver cannot.
+    pub(super) fn scoped_identifier_name_text(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(node_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = self.arena.get_identifier(node)?;
+        let mut prefixes = Vec::new();
+        let mut parent = self
+            .arena
+            .get_extended(node_idx)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+
+        while !parent.is_none() {
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.arena.get_module(parent_node)
+                && let Some(name_node) = self.arena.get(module.name)
+                && name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(name_ident) = self.arena.get_identifier(name_node)
+            {
+                prefixes.push(name_ident.escaped_text.clone());
+            }
+
+            parent = self
+                .arena
+                .get_extended(parent)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+
+        if prefixes.is_empty() {
+            return None;
+        }
+
+        let mut combined = String::new();
+        for prefix in prefixes.iter().rev() {
+            combined.push_str(prefix);
+            combined.push('.');
+        }
+        combined.push_str(&ident.escaped_text);
+        Some(combined)
+    }
+
     /// Resolve a node to a type symbol ID if a resolver is provided.
     pub(super) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         self.type_resolver.and_then(|resolver| resolver(node_idx))

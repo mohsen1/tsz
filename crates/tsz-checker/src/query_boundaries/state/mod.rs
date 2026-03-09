@@ -15,5 +15,9 @@ pub(crate) fn should_evaluate_contextual_declared_type(
         EvaluationNeeded::Conditional { .. }
             | EvaluationNeeded::Mapped { .. }
             | EvaluationNeeded::IndexAccess { .. }
+            | EvaluationNeeded::KeyOf(_)
+            | EvaluationNeeded::Application { .. }
+            | EvaluationNeeded::Union(_)
+            | EvaluationNeeded::Intersection(_)
     )
 }

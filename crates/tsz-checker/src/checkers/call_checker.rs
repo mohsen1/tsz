@@ -555,10 +555,11 @@ impl<'a> CheckerState<'a> {
             // Regular (non-spread) argument
             let expected_type = expected_for_index(effective_index, expanded_count);
             let apply_contextual = self.argument_needs_contextual_type(arg_idx);
+            let expected_context_type = self.contextual_type_option_for_expression(expected_type);
 
             let prev_context = self.ctx.contextual_type;
             if apply_contextual {
-                self.ctx.contextual_type = expected_type;
+                self.ctx.contextual_type = expected_context_type;
             } else {
                 // Non-sensitive argument expressions should not inherit an outer
                 // contextual type (e.g. variable-initializer context) because that

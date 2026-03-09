@@ -1615,6 +1615,84 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve a simple or qualified type name through the merged checker binder.
+    ///
+    /// Cross-arena lowering cannot trust raw `NodeIndex` values because the same
+    /// index may refer to unrelated nodes in different declaration arenas. This
+    /// helper uses the text form (`A` or `A.B.C`) and walks the merged binder's
+    /// export graph to recover the correct `DefId`.
+    pub(crate) fn resolve_entity_name_text_to_def_id_for_lowering(
+        &self,
+        name: &str,
+    ) -> Option<tsz_solver::def::DefId> {
+        if is_compiler_managed_type(name) {
+            return None;
+        }
+
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let mut current_sym = self.ctx.binder.file_locals.get(root_name)?;
+        let lib_binders = self.get_lib_binders();
+
+        for segment in segments {
+            let mut visited_aliases = Vec::new();
+            current_sym = self
+                .resolve_alias_symbol(current_sym, &mut visited_aliases)
+                .unwrap_or(current_sym);
+
+            let symbol = self.get_cross_file_symbol(current_sym).or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(current_sym, &lib_binders)
+            })?;
+
+            if let Some(member_sym) = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })
+            {
+                current_sym = member_sym;
+                continue;
+            }
+
+            if let Some(ref module_specifier) = symbol.import_module {
+                let mut visited_aliases = Vec::new();
+                if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    segment,
+                    &mut visited_aliases,
+                ) {
+                    current_sym = member_sym;
+                    continue;
+                }
+            }
+
+            if symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+                && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
+                    symbol.escaped_name.as_str(),
+                    segment,
+                )
+            {
+                current_sym = member_sym;
+                continue;
+            }
+
+            return None;
+        }
+
+        let mut visited_aliases = Vec::new();
+        let resolved_sym = self
+            .resolve_alias_symbol(current_sym, &mut visited_aliases)
+            .unwrap_or(current_sym);
+        Some(self.ctx.get_or_create_def_id(resolved_sym))
+    }
+
     // =========================================================================
     // Symbol Resolution for Lowering
     // =========================================================================
