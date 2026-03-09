@@ -6429,21 +6429,20 @@ export type TypeGeneric3<T extends keyof DataFetchFns, F extends keyof DataFetch
         "Expected the indexed-access checker to report all nested TS2536 diagnostics.\nGot: {diagnostics:?}"
     );
     assert!(
-        ts2536
-            .iter()
-            .any(|(_, message)| message.contains("Type 'T' cannot be used to index type 'DataFetchFns[T]'")),
+        ts2536.iter().any(|(_, message)| message
+            .contains("Type 'T' cannot be used to index type 'DataFetchFns[T]'")),
         "Missing TS2536 for `DataFetchFns[T][T]`.\nGot: {diagnostics:?}"
     );
     assert!(
         ts2536
             .iter()
-            .any(|(_, message)| message.contains("Type 'F' cannot be used to index type 'DataFetchFns'")),
+            .any(|(_, message)| message
+                .contains("Type 'F' cannot be used to index type 'DataFetchFns'")),
         "Missing TS2536 for the inner `DataFetchFns[F]` access.\nGot: {diagnostics:?}"
     );
     assert!(
-        ts2536
-            .iter()
-            .any(|(_, message)| message.contains("Type 'F' cannot be used to index type 'DataFetchFns[F]'")),
+        ts2536.iter().any(|(_, message)| message
+            .contains("Type 'F' cannot be used to index type 'DataFetchFns[F]'")),
         "Missing TS2536 for the outer `DataFetchFns[F][F]` access.\nGot: {diagnostics:?}"
     );
 }
