@@ -102,6 +102,10 @@ pub enum DefKind {
     /// Namespace/Module: container for exported types and values.
     /// `namespace NS { export type T = number }`
     Namespace,
+
+    /// Class constructor (static side): displayed as `typeof ClassName`.
+    /// Distinguishes the constructor/static type from the instance type (`DefKind::Class`).
+    ClassConstructor,
 }
 
 // =============================================================================
