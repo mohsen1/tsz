@@ -912,8 +912,11 @@ impl<'a> CheckerState<'a> {
                     && operand_type != TypeId::ERROR
                     && !self.is_lhs_of_exponentiation(idx)
                 {
+                    // tsc's grammarErrorOnNode skips parenthesized wrappers, so
+                    // `delete (expr)` should point at `expr`, not `(`.
+                    let error_node = self.ctx.arena.skip_parenthesized(unary.operand);
                     self.error_at_node(
-                        unary.operand,
+                        error_node,
                         crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                         crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                     );
