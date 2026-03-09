@@ -509,12 +509,19 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ConstructorKeyword);
 
         // Check for type parameters on constructor (invalid but parse for better error reporting)
+        // tsc emits TS1092 in the checker at the typeParameters NodeArray position,
+        // which starts after '<' (i.e., at the first type parameter or '>' if empty).
+        // We emit it here in the parser but must match tsc's position: after '<'.
         let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
-            self.parse_error_at_current_token(
+            let less_than_end = self.token_end();
+            let type_params = self.parse_type_parameters();
+            self.parse_error_at(
+                less_than_end,
+                0,
                 "Type parameters cannot appear on a constructor declaration.",
                 diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
-            self.parse_type_parameters()
+            type_params
         });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
