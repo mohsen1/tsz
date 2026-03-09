@@ -645,16 +645,15 @@ impl ParserState {
         let param_start = self.token_pos();
 
         // TS1018: accessibility modifier on parameter
+        // Collect modifiers without emitting error - we'll emit at param name position
+        let mut has_accessibility_modifier = false;
         let mut param_modifiers = Vec::new();
         while self.is_valid_parameter_modifier() {
             param_modifiers.push(
                 self.arena
                     .create_modifier(self.current_token, self.token_pos()),
             );
-            self.parse_error_at_current_token(
-                "An index signature parameter cannot have an accessibility modifier.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_ACCESSIBILITY_MODIFIER,
-            );
+            has_accessibility_modifier = true;
             self.next_token();
         }
 
@@ -670,6 +669,24 @@ impl ParserState {
         }
 
         let param_name = self.parse_identifier();
+
+        // TS1018: accessibility modifier on parameter - emit at param name position
+        if has_accessibility_modifier {
+            if let Some(name_node) = self.arena.get(param_name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "An index signature parameter cannot have an accessibility modifier.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_ACCESSIBILITY_MODIFIER,
+                );
+            } else {
+                // Fallback if we can't get the node
+                self.parse_error_at_current_token(
+                    "An index signature parameter cannot have an accessibility modifier.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_ACCESSIBILITY_MODIFIER,
+                );
+            }
+        }
 
         // TS1019: optional parameter in index signature
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
@@ -697,16 +714,23 @@ impl ParserState {
             (tok, ty)
         };
 
-        // TS1020: initializer in index signature
+        // TS1020: initializer in index signature - emit at param name position
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-            let init_start = self.token_pos();
             let init = self.parse_assignment_expression();
-            self.parse_error_at(
-                init_start,
-                self.token_pos() - init_start,
-                "An index signature parameter cannot have an initializer.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
-            );
+            // TSC emits error at parameter name position, not initializer position
+            if let Some(name_node) = self.arena.get(param_name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "An index signature parameter cannot have an initializer.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "An index signature parameter cannot have an initializer.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+                );
+            }
             init
         } else {
             NodeIndex::NONE
@@ -714,31 +738,41 @@ impl ParserState {
 
         let param_end = self.token_end();
 
-        // TS1096: multiple parameters — consume remaining params for error recovery
+        // Handle comma after first parameter - could be trailing comma (TS1025) or multiple params (TS1096)
         let mut has_multiple_params = false;
+        let mut has_trailing_comma = false;
+        let mut trailing_comma_pos = 0;
+        let comma_pos = self.token_pos(); // Position of comma before consuming it
         if self.parse_optional(SyntaxKind::CommaToken) {
-            has_multiple_params = true;
-            // Consume remaining parameters for recovery
-            while !self.is_token(SyntaxKind::CloseBracketToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-            {
-                // Skip rest token
-                self.parse_optional(SyntaxKind::DotDotDotToken);
-                if self.is_identifier_or_keyword() {
-                    self.next_token();
-                }
-                // Skip optional marker
-                self.parse_optional(SyntaxKind::QuestionToken);
-                // Skip type annotation
-                if self.parse_optional(SyntaxKind::ColonToken) {
-                    let _ = self.parse_type();
-                }
-                // Skip initializer
-                if self.parse_optional(SyntaxKind::EqualsToken) {
-                    let _ = self.parse_assignment_expression();
-                }
-                if !self.parse_optional(SyntaxKind::CommaToken) {
-                    break;
+            // Save the comma position for TS1025 error
+            trailing_comma_pos = comma_pos;
+            // Check if this is a trailing comma (comma followed by `]`)
+            if self.is_token(SyntaxKind::CloseBracketToken) {
+                has_trailing_comma = true;
+            } else {
+                has_multiple_params = true;
+                // Consume remaining parameters for recovery
+                while !self.is_token(SyntaxKind::CloseBracketToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    // Skip rest token
+                    self.parse_optional(SyntaxKind::DotDotDotToken);
+                    if self.is_identifier_or_keyword() {
+                        self.next_token();
+                    }
+                    // Skip optional marker
+                    self.parse_optional(SyntaxKind::QuestionToken);
+                    // Skip type annotation
+                    if self.parse_optional(SyntaxKind::ColonToken) {
+                        let _ = self.parse_type();
+                    }
+                    // Skip initializer
+                    if self.parse_optional(SyntaxKind::EqualsToken) {
+                        let _ = self.parse_assignment_expression();
+                    }
+                    if !self.parse_optional(SyntaxKind::CommaToken) {
+                        break;
+                    }
                 }
             }
         }
@@ -759,6 +793,16 @@ impl ParserState {
                     diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
                 );
             }
+        }
+
+        // TS1025: trailing comma in index signature
+        if has_trailing_comma {
+            self.parse_error_at(
+                trailing_comma_pos,
+                1, // Length of the comma
+                "An index signature cannot have a trailing comma.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_CANNOT_HAVE_A_TRAILING_COMMA,
+            );
         }
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
@@ -782,6 +826,7 @@ impl ParserState {
         let has_param_errors = dot_dot_dot_token
             || question_token
             || has_multiple_params
+            || has_trailing_comma
             || !param_modifiers.is_empty();
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()

@@ -344,16 +344,29 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Entity name expressions (identifiers, property access chains) are always
+        // structurally OK for computed property names — skip the TS1166/TS1169 error.
+        if is_entity_name {
+            return;
+        }
+
+        // Assignment expressions (e.g., `x = ''`, `x = 0`) are never allowed as computed
+        // property names in classes/interfaces/type literals. They should emit TS1166/TS1169
+        // regardless of whether the type is valid for property names.
+        // Check if this is a binary expression with an equals operator (assignment).
+        if let Some(expr_node) = self.ctx.arena.get(computed.expression)
+            && expr_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
+                && binary.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                self.error_at_node(name_idx, message, code);
+                return;
+            }
+
         // Always evaluate the expression to trigger side-effect diagnostics (e.g., TS2585
         // for `Symbol` at ES5 target). Entity name expressions skip the TS1169/TS1170
         // structural error but still need type evaluation.
         let expr_type = self.get_type_of_node(computed.expression);
-
-        // Entity name expressions (identifiers, property access chains) are always
-        // structurally OK for computed property names — skip the TS1169/TS1170 error.
-        if is_entity_name {
-            return;
-        }
 
         if expr_type == tsz_solver::TypeId::ERROR {
             return;
