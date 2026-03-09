@@ -840,7 +840,12 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if !deferred_header_comments.is_empty() {
+        // Save position before deferred header comments so they can be undone
+        // if the first statement produces no output (e.g., `export var b: number;`
+        // in CJS where the preamble `exports.b = void 0;` is all that's needed).
+        let pre_deferred_comments_len = self.writer.len();
+        let mut has_deferred_header = !deferred_header_comments.is_empty();
+        if has_deferred_header {
             for (comment, has_trailing_new_line) in &deferred_header_comments {
                 self.write_comment(comment);
                 if *has_trailing_new_line {
@@ -1096,6 +1101,10 @@ impl<'a> Printer<'a> {
                     .arena
                     .get_class(stmt_node)
                     .is_some_and(|class| self.class_has_auto_accessor_members(class));
+            // Save state before leading comments so we can undo them if the
+            // statement produces no output (same pattern as emit_block_body).
+            let pre_comment_writer_len = self.writer.len();
+            let pre_comment_idx = self.comment_emit_idx;
             if !defer_for_of_comments
                 && !skip_auto_accessor_leading_comments
                 && let Some(text) = self.source_text
@@ -1152,6 +1161,9 @@ impl<'a> Printer<'a> {
 
             // Only add newline if something was actually emitted
             if emitted_output {
+                // Once a real statement produces output, its deferred header
+                // comments are "claimed" and should not be undone.
+                has_deferred_header = false;
                 // Emit trailing comments on the same line as the statement.
                 // Use the next statement's pos as upper bound to avoid scanning
                 // into the next statement's trivia (same pattern as emit_block_body).
@@ -1184,8 +1196,34 @@ impl<'a> Printer<'a> {
                 // Statement produced no output but wasn't formally erased (e.g.,
                 // `export var x: Type;` in CJS where the export was hoisted to the
                 // preamble, or an import that was elided by the text heuristic).
-                // Consume its trailing same-line comments so they don't leak to the
-                // next statement's leading comment emission.
+                // Undo any leading comments we emitted before it, then consume
+                // trailing same-line comments so they don't leak to the next
+                // statement's leading comment emission.
+                //
+                // Also undo deferred header comments if this is the first statement
+                // they were attached to (e.g., `/** b's comment*/` before
+                // `export var b: number;` in CJS/AMD mode).
+                let truncate_to =
+                    if has_deferred_header && self.writer.len() > pre_deferred_comments_len {
+                        has_deferred_header = false;
+                        pre_deferred_comments_len
+                    } else if self.writer.len() > pre_comment_writer_len {
+                        pre_comment_writer_len
+                    } else {
+                        self.writer.len()
+                    };
+                if truncate_to < self.writer.len() {
+                    self.writer.truncate(truncate_to);
+                    self.comment_emit_idx = pre_comment_idx;
+                }
+                // Skip leading comments (advance past them without emitting)
+                while self.comment_emit_idx < self.all_comments.len() {
+                    if self.all_comments[self.comment_emit_idx].end <= actual_start {
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
                 let scan_end = next_stmt_pos.unwrap_or(stmt_node.end);
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node_pos, scan_end);
                 let line_end = if let Some(text) = self.source_text {
