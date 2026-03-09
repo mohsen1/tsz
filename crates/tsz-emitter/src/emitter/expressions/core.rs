@@ -618,6 +618,50 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Emit comments that appear BEFORE the `(` in source text.
+        // JSDoc type casts like `/** @type {T} */(expr)` have the comment
+        // before the opening paren — tsc preserves this placement.
+        // Comments AFTER the `(` (e.g., `( /* Preserve */ j = f())`) stay inside.
+        let open_paren_source_pos = if let Some(text) = self.source_text {
+            let bytes = text.as_bytes();
+            let mut pos = node.pos as usize;
+            let limit = std::cmp::min(node.end as usize, bytes.len());
+            let mut found = None;
+            while pos < limit {
+                match bytes[pos] {
+                    b'(' => {
+                        found = Some(pos as u32);
+                        break;
+                    }
+                    b'/' if pos + 1 < limit && bytes[pos + 1] == b'*' => {
+                        pos += 2;
+                        while pos + 1 < limit && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                            pos += 1;
+                        }
+                        if pos + 1 < limit {
+                            pos += 2;
+                        }
+                    }
+                    b'/' if pos + 1 < limit && bytes[pos + 1] == b'/' => {
+                        while pos < limit && bytes[pos] != b'\n' {
+                            pos += 1;
+                        }
+                    }
+                    _ => pos += 1,
+                }
+            }
+            found
+        } else {
+            None
+        };
+        if let Some(paren_pos) = open_paren_source_pos
+            && self.has_pending_comment_before(paren_pos)
+        {
+            self.emit_comments_before_pos(paren_pos);
+            // Leave pending_block_comment_space intact — tsc's printer
+            // normalizes block comment spacing: `/** ... */(x)` becomes
+            // `/** ... */ (x)` with a space before the paren.
+        }
         self.write("(");
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
