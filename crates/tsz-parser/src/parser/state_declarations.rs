@@ -604,11 +604,18 @@ impl ParserState {
     ) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
 
+        let bracket_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBracketToken);
 
         // TS1096: empty index signature `[]` — no parameters at all
         if self.is_token(SyntaxKind::CloseBracketToken) {
-            self.parse_error_at_current_token(
+            // TSC emits this as grammarErrorOnNode(node, ...) in checkGrammarIndexSignatureParameters,
+            // which uses the full index signature node span starting at `[`.
+            // Use bracket_pos to match TSC's position.
+            let bracket_end = self.token_pos(); // position of `]`
+            self.parse_error_at(
+                bracket_pos,
+                bracket_end - bracket_pos,
                 "An index signature must have exactly one parameter.",
                 diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
             );
@@ -737,10 +744,21 @@ impl ParserState {
         }
 
         if has_multiple_params {
-            self.parse_error_at_current_token(
-                "An index signature must have exactly one parameter.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
-            );
+            // TSC emits grammarErrorOnNode(parameter.name, ...) — pointing at the
+            // first parameter's name, not at the end of the parameter list.
+            if let Some(name_node) = self.arena.get(param_name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "An index signature must have exactly one parameter.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "An index signature must have exactly one parameter.",
+                    diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+                );
+            }
         }
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
@@ -768,7 +786,13 @@ impl ParserState {
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else if !has_invalid_param_type && !has_param_errors {
-            self.parse_error_at_current_token(
+            // TSC emits grammarErrorOnNode(node, ...) spanning the whole index signature.
+            // Use start_pos (the index signature start, which is `[` for unmodified sigs)
+            // to match TSC's node.getStart() position.
+            let sig_end = self.token_pos(); // position after `]`
+            self.parse_error_at(
+                start_pos,
+                sig_end - start_pos,
                 "An index signature must have a type annotation.",
                 diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
             );
