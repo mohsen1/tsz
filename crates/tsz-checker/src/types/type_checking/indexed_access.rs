@@ -243,7 +243,31 @@ impl<'a> CheckerState<'a> {
             tsz_solver::mapped_type_id(self.ctx.types, object_type_for_check)
         {
             let mapped = self.ctx.types.mapped_type(mapped_id);
-            self.evaluate_mapped_constraint_with_resolution(mapped.constraint)
+            let mapped_constraint = mapped.constraint;
+            let keyof = self.evaluate_mapped_constraint_with_resolution(mapped_constraint);
+
+            // When the index is `keyof T` and the mapped type iterates over `keyof T`
+            // (same T), the index is always valid. Check both the raw constraint and
+            // the evaluated result for structural equivalence via same_object_key_space.
+            if let Some(index_operand) =
+                tsz_solver::type_queries::get_keyof_type(self.ctx.types, index_type)
+            {
+                if let Some(constraint_operand) =
+                    tsz_solver::type_queries::get_keyof_type(self.ctx.types, mapped_constraint)
+                    && same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+                {
+                    return;
+                }
+                // Also check against the evaluated keyof result
+                if let Some(keyof_operand) =
+                    tsz_solver::type_queries::get_keyof_type(self.ctx.types, keyof)
+                    && same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                {
+                    return;
+                }
+            }
+
+            keyof
         } else {
             self.ctx.types.evaluate_keyof(object_type_for_check)
         };

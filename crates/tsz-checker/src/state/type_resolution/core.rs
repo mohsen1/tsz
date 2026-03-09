@@ -1802,12 +1802,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 self.pop_type_parameters(updates);
-
-                // Store type parameters for DefId-based resolution
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     self.ctx.insert_def_type_params(def_id, params.clone());
                 }
-
                 return (merged, params);
             }
 
@@ -1859,11 +1856,9 @@ impl<'a> CheckerState<'a> {
                             self.push_type_parameters(&type_alias.type_parameters);
                         let alias_type = self.get_type_from_type_node(type_alias.type_node);
                         self.pop_type_parameters(updates);
-
                         if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                             self.ctx.insert_def_type_params(def_id, params.clone());
                         }
-
                         return (alias_type, params);
                     }
 
@@ -1897,7 +1892,6 @@ impl<'a> CheckerState<'a> {
                                 .get_extended(decl_idx)
                                 .map_or(NodeIndex::NONE, |info| info.parent);
                             let mut prefixes = Vec::new();
-
                             while !parent.is_none() {
                                 let Some(parent_node) = lib_arena.get(parent) else {
                                     break;
@@ -1910,12 +1904,10 @@ impl<'a> CheckerState<'a> {
                                 {
                                     prefixes.push(name_ident.escaped_text.clone());
                                 }
-
                                 parent = lib_arena
                                     .get_extended(parent)
                                     .map_or(NodeIndex::NONE, |info| info.parent);
                             }
-
                             (!prefixes.is_empty())
                                 .then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
                         };
@@ -1989,14 +1981,11 @@ impl<'a> CheckerState<'a> {
                         )
                         .with_type_param_bindings(type_param_bindings)
                         .with_name_def_id_resolver(&name_resolver);
-
                         let (alias_type, params) =
                             lowering.lower_type_alias_declaration(type_alias);
-
                         if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                             self.ctx.insert_def_type_params(def_id, params.clone());
                         }
-
                         return (alias_type, params);
                     }
                 }
