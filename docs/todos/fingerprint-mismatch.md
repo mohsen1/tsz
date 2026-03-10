@@ -134,6 +134,22 @@ tsz:  "Type '{ new (): { ; }; prototype: { ; }; }' is not assignable to type 'ne
 
 **Root cause:** tsz prints the structural expansion of a class constructor type instead of using the `typeof ClassName` shorthand.
 
+#### Sub-pattern F: Optional Parameter `| undefined` Display — DONE
+
+```
+tsc:  "Type '(p1?: string | undefined) => I1' is not assignable to type 'I1'."
+tsz:  "Type '(p1?: string) => I1' is not assignable to type 'I1'."
+```
+
+**Affected tests:** `optionalParamTypeComparison`, `optionalParamAssignmentCompat`, `functionSignatureAssignmentCompat1`, `assertionFunctionWildcardImport1`
+
+**Status: FIXED** (2026-03-10)
+
+**Fix:** tsc includes `| undefined` in optional parameter display in error messages even
+though the `?` already implies optionality. tsz was stripping `undefined` from optional
+param types. Changed `format_params()` in `diagnostics/format.rs` to preserve/append
+`| undefined` for optional parameters, matching tsc output.
+
 ---
 
 ### RC-2: Error Span Targeting (~27% of fingerprint mismatches)
