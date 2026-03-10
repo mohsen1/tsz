@@ -511,7 +511,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Function(s_fn_id)), Some(TypeData::Function(t_fn_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
                 let t_fn = self.interner.function_shape(t_fn_id);
-
                 tracing::debug!(
                     has_s_pred = s_fn.type_predicate.is_some(),
                     has_t_pred = t_fn.type_predicate.is_some(),

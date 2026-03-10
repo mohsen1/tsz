@@ -1096,6 +1096,22 @@ impl<'a> InferenceContext<'a> {
         !info.candidates.is_empty() || !info.contra_candidates.is_empty()
     }
 
+    /// Check whether an inference variable has `contra_candidates` with at least one
+    /// concrete (non-TypeParameter) type. `TypeParameter` types in `contra_candidates`
+    /// are typically unresolved source inference placeholders from generic function
+    /// arguments and should not drive the resolution gate.
+    pub fn has_concrete_contra_candidates(
+        &mut self,
+        var: InferenceVar,
+        db: &dyn crate::caches::db::TypeDatabase,
+    ) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.contra_candidates
+            .iter()
+            .any(|c| !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_))))
+    }
+
     /// Check if all inference candidates for a variable have `ReturnType` priority.
     /// This indicates the type was inferred from callback return types (Round 2),
     /// not from direct arguments (Round 1).
