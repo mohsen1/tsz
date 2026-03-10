@@ -7,7 +7,9 @@ runs:
     - name: Cache TypeScript submodule
       uses: actions/cache@v4
       with:
-        path: TypeScript
+        path: |
+          TypeScript
+          .git/modules/TypeScript
         key: ts-submodule-${{ hashFiles('.gitmodules') }}
 
     - name: Init TypeScript submodule
