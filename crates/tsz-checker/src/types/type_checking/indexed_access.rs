@@ -987,6 +987,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let object_has_named_shape = tsz_solver::type_queries::get_object_shape(
+            self.ctx.types,
+            object_type,
+        )
+        .and_then(|shape| shape.symbol)
+        .is_some();
+
         if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type)
             || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
             || tsz_solver::is_generic_application(self.ctx.types, object_type)
@@ -1080,6 +1087,7 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::operations::property::PropertyAccessResult::Success { .. }
             ) && self.get_index_key_kind(index_type) == Some((true, false))
                 && !self.is_element_indexable(object_type, true, false)
+                && object_has_named_shape
             {
                 let object_type_str = self.format_type(object_type);
                 let message = format_message(
@@ -1098,6 +1106,9 @@ impl<'a> CheckerState<'a> {
         if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
             && !self.is_element_indexable(object_type, wants_string, wants_number)
         {
+            if !object_has_named_shape {
+                return false;
+            }
             let object_type_str = self.format_type(object_type);
             if wants_string {
                 let message = format_message(
