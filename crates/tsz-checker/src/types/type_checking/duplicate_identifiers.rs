@@ -154,9 +154,11 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
                 &[&list],
             );
-            // Report on the SourceFile node
-            self.error_at_node(
-                tsz_parser::parser::base::NodeIndex(0),
+            // Report at position 0 (start of file) — tsc anchors TS6200 at the
+            // SourceFile node which has pos=0, length=0.
+            self.error_at_position(
+                0,
+                0,
                 &message,
                 diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
             );
