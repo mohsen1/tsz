@@ -349,6 +349,27 @@ fn keyword_followed_by_string_literal_reports_ts1434() {
 }
 
 #[test]
+fn malformed_exported_declaration_reports_ts1128_on_export_and_ts1434_on_identifier() {
+    let (parser, _root) = parse_source(
+        r#"
+declare namespace M {
+    export extension class C {}
+}
+"#,
+    );
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1128),
+        "expected TS1128 for malformed exported declaration, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&1434),
+        "expected TS1434 for identifier after malformed export, got {diags:?}"
+    );
+}
+
+#[test]
 fn invalid_bigint_import_specifiers_recover_cleanly() {
     // After error recovery, named imports should consume `}` and `from "..."` properly
     // without cascading TS1128/TS1434 errors. This matches tsc's parseDelimitedList.

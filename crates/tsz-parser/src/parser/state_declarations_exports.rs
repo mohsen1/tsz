@@ -591,7 +591,12 @@ impl ParserState {
                 self.parse_exported_declaration(start_pos)
             }
             _ => {
-                self.error_statement_expected();
+                self.parse_error_at(
+                    start_pos,
+                    6,
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
                 self.parse_expression_statement()
             }
         }
