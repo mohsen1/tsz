@@ -761,8 +761,8 @@ fn test_ts2322_check_mjs_true_reports_javascript_annotation_mismatch() {
 
 #[test]
 fn test_ts2322_check_js_false_does_not_enforce_annotation_type() {
+    // No @ts-check: JSDoc types should NOT be enforced when checkJs is false.
     let source = r#"
-        // @ts-check
         /** @type {number} */
         const value = "bad";
     "#;
@@ -833,8 +833,8 @@ fn test_ts2322_check_cjs_false_does_not_enforce_annotation_type() {
 
 #[test]
 fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
+    // No @ts-check: JSDoc types should NOT be enforced when checkJs is false.
     let source = r#"
-        // @ts-check
         /** @type {number} */
         const value = "bad";
     "#;
@@ -857,8 +857,8 @@ fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
 
 #[test]
 fn test_ts2322_check_js_false_does_not_enforce_jsdoc_return_type() {
+    // No @ts-check: JSDoc @returns should NOT be enforced when checkJs is false.
     let source = r#"
-        // @ts-check
         /** @returns {number} */
         function id(value) {
             return "string";
@@ -1158,8 +1158,8 @@ fn test_ts2322_check_js_true_reports_annotation_union_mismatch() {
 
 #[test]
 fn test_ts2322_check_js_false_does_not_enforce_nested_annotation_types() {
+    // No @ts-check: nested JSDoc @type should NOT be enforced when checkJs is false.
     let source = r#"
-        // @ts-check
         /** @type {{ a: number, b: string }} */
         const value = { a: "x", b: 1 };
     "#;
