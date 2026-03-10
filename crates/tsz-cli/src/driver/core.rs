@@ -758,12 +758,14 @@ fn compile_inner(
     let config = loaded.config;
     let mut config_diagnostics = loaded.diagnostics;
 
-    // TS5103 (invalid ignoreDeprecations value) is fatal in tsc: it stops compilation
-    // and reports only the config error. Match this behavior to avoid extra diagnostics.
-    if config_diagnostics
-        .iter()
-        .any(|d| d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS)
-    {
+    // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
+    // in tsc: they stop compilation and report only config-level errors.
+    // Match this behavior to avoid extra file-level diagnostics.
+    if config_diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+    }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
