@@ -7654,3 +7654,50 @@ function f4<T extends { [K in keyof T]: string }>(k: keyof T) {
         "Expected widened string literal display for keyof target TS2322.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_indexed_access_type_reports_ts2538_for_any_index() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Shape {
+    name: string;
+    width: number;
+    height: number;
+    visible: boolean;
+}
+
+type T = Shape[any];
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2538 && message.contains("Type 'any' cannot be used as an index type")
+        }),
+        "Expected TS2538 for `Shape[any]`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_indexed_access_type_reports_ts2537_for_array_string_index() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+type T = string[][string];
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2537
+                && message.contains("Type 'string[]' has no matching index signature for type 'string'")
+        }),
+        "Expected TS2537 for `string[][string]`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2536),
+        "Did not expect TS2536 for `string[][string]` once concrete classifier applies.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
