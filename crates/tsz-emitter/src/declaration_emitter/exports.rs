@@ -345,9 +345,13 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write_line();
             } else {
                 // Value expression - synthesize _default variable
+                let var_name = self.unique_default_export_name();
+
                 // First, emit the synthesized variable with inferred type
                 self.write_indent();
-                self.write("declare const _default: ");
+                self.write("declare const ");
+                self.write(&var_name);
+                self.write(": ");
 
                 // Get the type of the expression
                 if let Some(type_id) = self.get_node_type(assign.expression) {
@@ -361,7 +365,9 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // Then, emit export default _default
                 self.write_indent();
-                self.write("export default _default;");
+                self.write("export default ");
+                self.write(&var_name);
+                self.write(";");
                 self.write_line();
             }
         }
@@ -521,9 +527,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // For complex expressions, synthesize a _default variable
+        let var_name = self.unique_default_export_name();
+
         // First, emit: declare const _default: <type>;
         self.write_indent();
-        self.write("declare const _default: ");
+        self.write("declare const ");
+        self.write(&var_name);
+        self.write(": ");
 
         if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             self.write(&type_text);
@@ -538,8 +548,28 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Then, emit: export default _default;
         self.write_indent();
-        self.write("export default _default;");
+        self.write("export default ");
+        self.write(&var_name);
+        self.write(";");
         self.write_line();
+    }
+
+    /// Generate a unique name for the default export synthesized variable.
+    /// If `_default` is already in scope, tries `_default_1`, `_default_2`, etc.
+    fn unique_default_export_name(&mut self) -> String {
+        let base = "_default".to_string();
+        if !self.reserved_names.contains(&base) {
+            self.reserved_names.insert(base.clone());
+            return base;
+        }
+        for i in 1.. {
+            let candidate = format!("_default_{i}");
+            if !self.reserved_names.contains(&candidate) {
+                self.reserved_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        unreachable!()
     }
 
     pub(crate) fn emit_namespace_export_clause(&mut self, clause_idx: NodeIndex) {
