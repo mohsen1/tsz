@@ -1302,12 +1302,11 @@ impl<'a> CheckerState<'a> {
                             if name == "export=" {
                                 continue;
                             }
-                            // Skip type-only exports (same filter as namespace import path)
-                            if self.is_type_only_export_symbol(sym_id) {
-                                continue;
-                            }
-                            // Also skip exports reached through `export type *` wildcards
-                            if self.is_export_from_type_only_wildcard(&module_specifier, name) {
+                            // Skip type-only, wildcard-type-only, and value-less exports
+                            if self.is_type_only_export_symbol(sym_id)
+                                || self.is_export_from_type_only_wildcard(&module_specifier, name)
+                                || self.export_symbol_has_no_value(sym_id)
+                            {
                                 continue;
                             }
                             let mut prop_type = self.get_type_of_symbol(sym_id);
@@ -1473,20 +1472,14 @@ impl<'a> CheckerState<'a> {
                             if name == "export=" {
                                 continue;
                             }
-                            // Skip type-only exports: `export type { A }` marks A as
-                            // type-only. Such exports should not appear as value properties
-                            // on the namespace object — they are only accessible in type
-                            // position (e.g., `let x: ns.A`), which uses symbol-based
-                            // resolution rather than object property lookup.
-                            let is_to = self.is_type_only_export_symbol(export_sym_id);
-                            if is_to {
-                                continue;
-                            }
-                            // Also skip exports reached through `export type *` wildcard
-                            // re-export chains. The symbol itself may not have is_type_only
-                            // set (it's normal in the source module), but the re-export path
-                            // makes it type-only in this module's namespace.
-                            if self.is_export_from_type_only_wildcard(module_name, name) {
+                            // Skip type-only exports (`export type { A }`), exports
+                            // reached through `export type *` wildcards, and exports
+                            // that are intrinsically type-only (type aliases, interfaces
+                            // without merged values).
+                            if self.is_type_only_export_symbol(export_sym_id)
+                                || self.is_export_from_type_only_wildcard(module_name, name)
+                                || self.export_symbol_has_no_value(export_sym_id)
+                            {
                                 continue;
                             }
                             let mut prop_type = self.get_type_of_symbol(export_sym_id);

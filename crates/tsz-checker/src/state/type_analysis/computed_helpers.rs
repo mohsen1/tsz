@@ -1652,6 +1652,67 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Check if an export symbol has no value component.
+    /// Returns `true` for type aliases, interfaces (without merged values), and
+    /// aliases that resolve to type-only targets. These should be excluded from
+    /// the module namespace object type because they have no runtime value.
+    ///
+    /// Uses `get_cross_file_symbol` to correctly handle symbols from other files'
+    /// binders (avoiding SymbolId collision issues).
+    pub(crate) fn export_symbol_has_no_value(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::symbol_flags;
+        let lib_binders = self.get_lib_binders();
+
+        // Use get_cross_file_symbol first (same as is_type_only_export_symbol)
+        // to correctly resolve symbols from other files' binders.
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
+        let Some(symbol) = symbol else {
+            return false;
+        };
+
+        let flags = symbol.flags;
+
+        // Namespaces are values — always include them
+        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+            return false;
+        }
+
+        // If the symbol has VALUE flag, it has a runtime value
+        if (flags & symbol_flags::VALUE) != 0 {
+            return false;
+        }
+
+        // If the symbol has TYPE flag but no VALUE flag, it's type-only
+        // (type alias, interface, etc.)
+        if (flags & symbol_flags::TYPE) != 0 {
+            return true;
+        }
+
+        // For alias-only symbols (ALIAS without TYPE or VALUE), resolve the
+        // target to check its flags
+        if flags & symbol_flags::ALIAS != 0 {
+            let mut visited = Vec::new();
+            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited) {
+                let target_sym = self
+                    .get_cross_file_symbol(target)
+                    .or_else(|| self.ctx.binder.get_symbol_with_libs(target, &lib_binders));
+                if let Some(target_sym) = target_sym {
+                    let target_flags = target_sym.flags;
+                    if (target_flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+                        return false;
+                    }
+                    let has_value = (target_flags & symbol_flags::VALUE) != 0;
+                    let has_type = (target_flags & symbol_flags::TYPE) != 0;
+                    return has_type && !has_value;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if a named export from a module was reached through a `export type *` wildcard
     /// re-export chain. Returns `true` when the export should be excluded from the namespace
     /// object's value properties because any wildcard in the re-export chain was type-only.
@@ -1690,10 +1751,27 @@ impl<'a> CheckerState<'a> {
 
         // Use the binder's re-export resolution which tracks type-only status
         // through wildcard chains
-        matches!(
-            target_binder.resolve_import_with_reexports_type_only(file_name, export_name),
-            Some((_, true))
-        )
+        if let Some((sym_id, true)) =
+            target_binder.resolve_import_with_reexports_type_only(file_name, export_name)
+        {
+            // The binder's type-only flag conflates chain-level type-only
+            // (from `export type *`) with symbol-level type-only (from
+            // `import type { A }` merged with a value declaration).
+            // When the resolved symbol has both ALIAS and VALUE flags, the
+            // is_type_only came from a merged import-type + value declaration,
+            // NOT from the wildcard chain. Don't treat it as type-only here;
+            // the caller's is_type_only_export_symbol already handles that case.
+            use tsz_binder::symbol_flags;
+            if let Some(sym) = target_binder.symbols.get(sym_id)
+                && sym.flags & symbol_flags::ALIAS != 0
+                && sym.flags & symbol_flags::VALUE != 0
+            {
+                return false;
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns true if `sym_id` is a merged symbol that has both an interface declaration
