@@ -16,7 +16,39 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         target_type: TypeId,
     ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        if let Some(node) = self.ctx.arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+        {
+            let mut elaborated = false;
+
+            for branch_idx in [cond.when_true, cond.when_false] {
+                let branch_idx = self.ctx.arena.skip_parenthesized_and_assertions(branch_idx);
+                let branch_type = self.get_type_of_node(branch_idx);
+                if branch_type == TypeId::ERROR
+                    || branch_type == TypeId::ANY
+                    || target_type == TypeId::ERROR
+                    || target_type == TypeId::ANY
+                    || self.is_assignable_to(branch_type, target_type)
+                {
+                    continue;
+                }
+
+                if self.try_elaborate_assignment_source_error(branch_idx, target_type) {
+                    elaborated = true;
+                    continue;
+                }
+
+                self.error_type_not_assignable_at_with_anchor(branch_type, target_type, branch_idx);
+                elaborated = true;
+            }
+
+            return elaborated;
+        }
+
         self.try_elaborate_object_literal_arg_error(expr_idx, target_type)
     }
 
