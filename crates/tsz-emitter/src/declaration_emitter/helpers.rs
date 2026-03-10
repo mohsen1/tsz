@@ -5072,6 +5072,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                // Skip methods with computed names — the solver already produces correct
+                // method signatures (e.g., `"new"(x: number): number`). Overriding them
+                // would emit a wrong property form like `"new": any`.
+                if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    continue;
+                }
                 only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
                 computed_members.push((name_text, member_text));
             } else {
