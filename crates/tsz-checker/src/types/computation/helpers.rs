@@ -945,8 +945,11 @@ impl<'a> CheckerState<'a> {
                 // 2. This `delete` is the direct LHS of `**`: `delete X ** Y` parses as
                 //    `(delete X) ** Y`, which is a grammar error (TS17006). Reporting
                 //    TS2703 on top would be a false positive.
+                let suppress_property_reference_error = self.has_syntax_parse_errors()
+                    && operand_idx.is_some()
+                    && self.node_span_contains_parse_error(operand_idx);
                 if !is_property_reference
-                    && operand_type != TypeId::ERROR
+                    && !suppress_property_reference_error
                     && !self.is_lhs_of_exponentiation(idx)
                 {
                     // tsc's grammarErrorOnNode skips parenthesized wrappers, so

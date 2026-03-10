@@ -568,6 +568,42 @@ undefined + undefined;
 }
 
 #[test]
+fn test_delete_semantic_error_operand_still_reports_ts2703() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+enum E { A, B }
+delete (E[0] + E["B"]);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2703),
+        "Expected TS2703 on delete of a semantic-error operand expression. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_delete_enum_member_element_access_reports_ts2704() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+enum E { A, B }
+delete E["A"];
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 2704),
+        "Expected TS2704 for delete on enum member element access. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
