@@ -371,6 +371,29 @@ var res: string = method("test");
 }
 
 #[test]
+fn test_generic_callback_return_mismatch_reports_ts2322_on_expression_body() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function someGenerics3<T>(producer: () => T) { }
+someGenerics3<number>(() => undefined);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 on the callback return expression. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect outer TS2345 once the callback return is elaborated. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_aliased_base_preserves_instance_members() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
