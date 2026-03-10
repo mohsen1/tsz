@@ -23,6 +23,49 @@ impl<'a> CheckerState<'a> {
     // Section 52: Parameter Type Utilities
     // ============================================================================
 
+    pub(crate) fn resolve_jsdoc_import_member(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) {
+            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(target_file_name) = target_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                && let Some((sym_id, _)) = self
+                    .ctx
+                    .binder
+                    .resolve_import_with_reexports_type_only(target_file_name, member_name)
+            {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+                return Some(sym_id);
+            }
+        }
+
+        if let Some((sym_id, _)) = self
+            .ctx
+            .binder
+            .resolve_import_with_reexports_type_only(module_specifier, member_name)
+        {
+            if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+            } else {
+                self.record_cross_file_symbol_if_needed(sym_id, member_name, module_specifier);
+            }
+            return Some(sym_id);
+        }
+
+        self.resolve_cross_file_export(module_specifier, member_name)
+    }
+
     pub(crate) fn effective_class_property_declared_type(
         &mut self,
         member_idx: NodeIndex,

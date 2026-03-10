@@ -1307,10 +1307,11 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_symbol(sym_id)
                     };
 
-                    // Cross-file fallback: if the structural type is UNKNOWN, the
-                    // declarations may be in a different arena. Delegate to a child
-                    // checker with the symbol's home arena.
-                    if structural_type == TypeId::UNKNOWN
+                    // Cross-file fallback: if the structural type could not be
+                    // computed locally, the declarations may be in a different
+                    // arena/binder. Delegate to a child checker with the symbol's
+                    // home arena instead of silently degrading imported types.
+                    if (structural_type == TypeId::UNKNOWN || structural_type == TypeId::ERROR)
                         && let Some(delegate_type) =
                             self.delegate_cross_arena_interface_type(sym_id)
                     {

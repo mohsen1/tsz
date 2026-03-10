@@ -205,6 +205,23 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
+        let from_file = source_file_idx.unwrap_or(self.ctx.current_file_idx);
+        if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
+            && let Some((sym_id, _)) =
+                source_binder.resolve_import_with_reexports_type_only(module_specifier, export_name)
+        {
+            if let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(from_file, module_specifier)
+            {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+            }
+            return Some(sym_id);
+        }
+
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
@@ -232,6 +249,15 @@ impl<'a> CheckerState<'a> {
                 .insert(sym_id, target_file_idx);
             Some(sym_id)
         };
+
+        // Prefer the binder's type-aware export resolver so interface/type-only
+        // exports reached through `import("./x").T` behave the same way as
+        // regular type-node resolution.
+        if let Some((sym_id, _)) =
+            target_binder.resolve_import_with_reexports_type_only(&target_file_name, export_name)
+        {
+            return record_and_return(sym_id);
+        }
 
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.

@@ -378,6 +378,64 @@ const y = x.get("a");
 }
 
 #[test]
+fn test_check_files_parallel_jsdoc_import_type_on_export_default_preserves_ts2353() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            r#"
+export interface Foo {
+    a: number;
+    b: number;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "b.js".to_string(),
+            r#"
+/** @type {import("./a").Foo} */
+export default { c: false };
+"#
+            .to_string(),
+        ),
+        (
+            "c.js".to_string(),
+            r#"
+import b from "./b";
+b;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let exporter = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "b.js")
+        .expect("expected b.js result");
+
+    assert!(
+        exporter.diagnostics.iter().any(|diag| diag.code == 2353),
+        "Expected TS2353 in b.js. Actual diagnostics: {:#?}",
+        exporter.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
