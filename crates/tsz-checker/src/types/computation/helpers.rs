@@ -14,6 +14,35 @@ use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn union_context_for_array_literal_is_ambiguous(&self, contextual: TypeId) -> bool {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        else {
+            return false;
+        };
+
+        let mut saw_array_applicable = false;
+        for member in members {
+            if tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member).is_some()
+            {
+                saw_array_applicable = true;
+                continue;
+            }
+
+            if member == TypeId::ANY || member == TypeId::UNKNOWN {
+                return true;
+            }
+
+            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member)
+                || tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, member)
+                    .is_some()
+            {
+                return true;
+            }
+        }
+
+        saw_array_applicable
+    }
+
     // =========================================================================
     pub(crate) fn is_identifier_reference_to_global_nan(&self, node_idx: NodeIndex) -> bool {
         let mut current_idx = node_idx;
@@ -339,7 +368,12 @@ impl<'a> CheckerState<'a> {
         // only the array/tuple constituents applicable to an array literal. This ensures
         // `[1]` with contextual type `[number] | string` is typed as `[number]` not `number[]`.
         let mut tuple_context_from_constraint = false;
+        let union_array_context_is_ambiguous = resolved_contextual_type
+            .is_some_and(|resolved| self.union_context_for_array_literal_is_ambiguous(resolved));
         let applicable_contextual_type = resolved_contextual_type.and_then(|resolved| {
+            if union_array_context_is_ambiguous {
+                return None;
+            }
             let evaluated = self.evaluate_application_type(resolved);
             // Try the type directly first
             if let Some(applicable) =
@@ -415,7 +449,9 @@ impl<'a> CheckerState<'a> {
         // types should be inferred independently to preserve literal types during
         // generic inference (e.g., `fx<T extends [string, 'a'|'b']>(x: T)` called
         // with `['x', 'a']` should infer `["x", "a"]`, not `[string, string]`).
-        let effective_contextual = if tuple_context_from_constraint {
+        let effective_contextual = if union_array_context_is_ambiguous {
+            None
+        } else if tuple_context_from_constraint {
             resolved_contextual_type
         } else {
             applicable_contextual_type.or(resolved_contextual_type)

@@ -5023,6 +5023,38 @@ const y = x.get("a");
     );
 }
 
+#[test]
+fn test_array_literal_union_context_with_object_member_does_not_contextually_type_callbacks() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function test(
+  arg: Record<string, (arg: string) => void> | Array<(arg: number) => void>
+): void;
+
+test([
+  (arg) => {
+    arg;
+  },
+]);
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 when array literal contextual type comes from ambiguous union. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Multiple type-only exports should all be filtered from the namespace.
 #[test]
 fn test_multiple_type_only_exports_filtered_from_namespace() {
