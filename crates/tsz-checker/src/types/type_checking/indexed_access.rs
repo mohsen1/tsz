@@ -987,12 +987,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let object_has_named_shape = tsz_solver::type_queries::get_object_shape(
-            self.ctx.types,
-            object_type,
-        )
-        .and_then(|shape| shape.symbol)
-        .is_some();
+        let object_has_named_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, object_type)
+                .and_then(|shape| shape.symbol)
+                .is_some();
 
         if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type)
             || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
