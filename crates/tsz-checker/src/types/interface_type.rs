@@ -527,10 +527,9 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
-                        type_args
-                            .iter()
-                            .copied()
-                            .any(|arg| self.type_requires_structure_of_symbol(arg, current_sym))
+                        type_args.iter().copied().any(|arg| {
+                            self.type_requires_structure_of_symbol_for_base_type(arg, current_sym)
+                        })
                     });
 
                     let substitution =
@@ -538,7 +537,10 @@ impl<'a> CheckerState<'a> {
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
                     let requires_self = current_sym.is_some_and(|current_sym| {
                         has_structural_self_arg
-                            || self.type_requires_structure_of_symbol(base_type, current_sym)
+                            || self.type_requires_structure_of_symbol_for_base_type(
+                                base_type,
+                                current_sym,
+                            )
                     });
 
                     if let Some(current_sym) = current_sym
