@@ -3,3 +3,4 @@
 mod core;
 pub(crate) mod declaration;
 pub(crate) mod equals;
+mod exports;

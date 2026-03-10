@@ -321,6 +321,9 @@ impl<'a> CheckerState<'a> {
             // Check for export assignment with other exports (2309)
             self.check_export_assignment(&sf.statements.nodes);
 
+            // Check for wildcard re-export collisions (2308)
+            self.check_wildcard_reexport_collisions(&sf.statements.nodes);
+
             // Check for circular import aliases (2303)
             self.check_circular_import_aliases();
 
