@@ -172,8 +172,12 @@ impl<'a> CheckerState<'a> {
                 self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                 let required_count = self.count_required_type_params(sym_id);
                 if required_count > 0 {
+                    // Use the resolved symbol's name (already alias-resolved by
+                    // resolve_qualified_symbol_in_type_position).
                     let name = self
-                        .entity_name_text(type_name_idx)
+                        .get_symbol_globally(sym_id)
+                        .map(|s| s.escaped_name.clone())
+                        .or_else(|| self.entity_name_text(type_name_idx))
                         .unwrap_or_else(|| "<unknown>".to_string());
                     // tsc displays type name with param names: Foo<T, U>
                     let type_params = self.get_type_params_for_symbol(sym_id);
@@ -915,9 +919,20 @@ impl<'a> CheckerState<'a> {
                     let type_params = self.get_type_params_for_symbol(sym_id);
                     let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
                     if required_count > 0 {
-                        // tsc displays type name with param names: Foo<T, U>
+                        // tsc uses the original declaration name, not the local alias.
+                        // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
+                        // Resolve through aliases to get the target symbol's name.
+                        let resolved_name = {
+                            let mut visited_aliases = Vec::new();
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                                .and_then(|target| {
+                                    self.get_symbol_globally(target)
+                                        .map(|s| s.escaped_name.clone())
+                                })
+                                .unwrap_or_else(|| name.to_string())
+                        };
                         let display_name = Self::format_generic_display_name_with_interner(
-                            name,
+                            &resolved_name,
                             &type_params,
                             self.ctx.types,
                         );
