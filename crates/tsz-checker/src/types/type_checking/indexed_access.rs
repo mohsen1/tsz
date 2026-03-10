@@ -510,7 +510,6 @@ impl<'a> CheckerState<'a> {
         if object_type == TypeId::ERROR
             || index_type == TypeId::ERROR
             || object_type == TypeId::ANY
-            || index_type == TypeId::ANY
             || index_type == TypeId::NEVER
         {
             return;
@@ -617,6 +616,23 @@ impl<'a> CheckerState<'a> {
             if expanded_object != TypeId::ERROR && expanded_object != TypeId::ANY {
                 object_type_for_check = expanded_object;
             }
+        }
+        if index_type == TypeId::ANY {
+            let supports_string_index = self.is_element_indexable(object_type_for_check, true, false);
+            let supports_number_index = self.is_element_indexable(object_type_for_check, false, true);
+            if !supports_string_index && !supports_number_index {
+                let message_2538 = format_message(
+                    diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &["any"],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message_2538,
+                    diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                );
+                return;
+            }
+            return;
         }
         let keyof_object = if let Some(mapped_id) =
             tsz_solver::mapped_type_id(self.ctx.types, object_type_for_check)
@@ -987,18 +1003,36 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let object_has_named_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, object_type)
-                .and_then(|shape| shape.symbol)
+        let concrete_object_type = if tsz_solver::is_generic_application(self.ctx.types, object_type)
+        {
+            let evaluated = self.evaluate_type_with_env(object_type);
+            if evaluated != TypeId::ERROR
+                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, evaluated)
+            {
+                evaluated
+            } else {
+                object_type
+            }
+        } else {
+            object_type
+        };
+        let object_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, concrete_object_type);
+        let object_has_shape = object_shape.is_some();
+        let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
+        let object_is_array_like =
+            tsz_solver::is_array_type(self.ctx.types, concrete_object_type)
+                || tsz_solver::type_queries::get_tuple_elements(
+                    self.ctx.types,
+                    concrete_object_type,
+                )
                 .is_some();
 
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type)
-            || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
-            || tsz_solver::is_generic_application(self.ctx.types, object_type)
-            || tsz_solver::is_index_access_type(self.ctx.types, object_type)
-            || tsz_solver::is_conditional_type(self.ctx.types, object_type)
-            || (tsz_solver::is_primitive_type(self.ctx.types, object_type)
-                && !tsz_solver::type_queries::is_object_like_type(self.ctx.types, object_type))
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, concrete_object_type)
+            || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, concrete_object_type)
+            || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)
+            || tsz_solver::is_conditional_type(self.ctx.types, concrete_object_type)
+            || (tsz_solver::is_primitive_type(self.ctx.types, concrete_object_type)
+                && !tsz_solver::type_queries::is_object_like_type(self.ctx.types, concrete_object_type))
         {
             return false;
         }
@@ -1009,7 +1043,7 @@ impl<'a> CheckerState<'a> {
             if members.len() == 2
                 && members.contains(&TypeId::STRING)
                 && members.contains(&TypeId::NUMBER)
-                && !self.is_element_indexable(object_type, false, true)
+                && !self.is_element_indexable(concrete_object_type, false, true)
             {
                 let object_type_str = self.format_type(object_type);
                 let message = format_message(
@@ -1042,12 +1076,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 emitted_any |=
-                    self.try_emit_concrete_index_access_error(error_anchor, object_type, member);
+                    self.try_emit_concrete_index_access_error(error_anchor, concrete_object_type, member);
             }
             return emitted_any;
         }
 
         if index_type == TypeId::ANY {
+            if self.is_element_indexable(concrete_object_type, true, false)
+                || self.is_element_indexable(concrete_object_type, false, true)
+            {
+                return false;
+            }
             let message = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 &["any"],
@@ -1081,10 +1120,10 @@ impl<'a> CheckerState<'a> {
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
             if !matches!(
-                self.resolve_property_access_with_env(object_type, &property_name),
+                self.resolve_property_access_with_env(concrete_object_type, &property_name),
                 tsz_solver::operations::property::PropertyAccessResult::Success { .. }
             ) && self.get_index_key_kind(index_type) == Some((true, false))
-                && !self.is_element_indexable(object_type, true, false)
+                && !self.is_element_indexable(concrete_object_type, true, false)
                 && object_has_named_shape
             {
                 let object_type_str = self.format_type(object_type);
@@ -1102,9 +1141,20 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
-            && !self.is_element_indexable(object_type, wants_string, wants_number)
+            && !self.is_element_indexable(concrete_object_type, wants_string, wants_number)
         {
-            if !object_has_named_shape {
+            let is_literal_index =
+                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                    .is_some()
+                    || tsz_solver::type_queries::get_number_literal_value(
+                        self.ctx.types,
+                        index_type,
+                    )
+                    .is_some();
+            if is_literal_index {
+                return false;
+            }
+            if !object_has_shape && !object_is_array_like {
                 return false;
             }
             let object_type_str = self.format_type(object_type);
