@@ -265,6 +265,17 @@ fn test_bct_error_propagation() {
 }
 
 #[test]
+fn test_bct_any_absorbs_all() {
+    let interner = TypeInterner::new();
+    let result = compute_best_common_type::<NoopResolver>(
+        &interner,
+        &[TypeId::STRING, TypeId::ANY, TypeId::NUMBER],
+        None,
+    );
+    assert_eq!(result, TypeId::ANY);
+}
+
+#[test]
 fn test_bct_enum_members_widen_to_parent_enum() {
     let interner = TypeInterner::new();
     let parent_def = DefId(100);
