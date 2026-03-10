@@ -402,8 +402,10 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         target_sym: SymbolId,
     ) -> bool {
-        let mut visited = FxHashSet::default();
-        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, &mut visited, 0)
+        use tsz_solver::recursion::RecursionProfile;
+        let mut guard =
+            tsz_solver::recursion::RecursionGuard::with_profile(RecursionProfile::ShallowTraversal);
+        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, &mut guard)
     }
 
     fn type_requires_structure_of_symbol_inner(
@@ -411,17 +413,31 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         target_sym: SymbolId,
         requires_structure: bool,
-        visited: &mut FxHashSet<(TypeId, bool)>,
-        depth: u32,
+        guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
     ) -> bool {
-        // Depth limit prevents infinite recursion when evaluating recursive
-        // generic types like IObservable<T> { n: IObservable<T[]> } where each
-        // evaluation produces a new unique TypeId (IObservable<Foo[]>,
-        // IObservable<Foo[][]>, etc.) that bypasses the visited set.
-        if depth > 20 || !visited.insert((type_id, requires_structure)) {
+        let key = (type_id, requires_structure);
+        if !guard.enter(key).is_entered() {
             return false;
         }
+        let result = self.type_requires_structure_of_symbol_body(
+            type_id,
+            target_sym,
+            requires_structure,
+            guard,
+        );
+        guard.leave(key);
+        result
+    }
 
+    /// Inner implementation — called only from `type_requires_structure_of_symbol_inner`
+    /// which handles the `RecursionGuard` enter/leave.
+    fn type_requires_structure_of_symbol_body(
+        &mut self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+        requires_structure: bool,
+        guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
+    ) -> bool {
         if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
             && self.ctx.def_to_symbol_id_with_fallback(def_id) == Some(target_sym)
         {
@@ -463,8 +479,7 @@ impl<'a> CheckerState<'a> {
                     resolved_alias,
                     target_sym,
                     requires_structure,
-                    visited,
-                    depth + 1,
+                    guard,
                 )
             {
                 return true;
@@ -483,8 +498,7 @@ impl<'a> CheckerState<'a> {
                 body,
                 target_sym,
                 requires_structure,
-                visited,
-                depth + 1,
+                guard,
             )
         {
             return true;
@@ -506,8 +520,7 @@ impl<'a> CheckerState<'a> {
                 resolved_lazy,
                 target_sym,
                 requires_structure,
-                visited,
-                depth + 1,
+                guard,
             )
         {
             return true;
@@ -526,8 +539,7 @@ impl<'a> CheckerState<'a> {
                 evaluated,
                 target_sym,
                 requires_structure,
-                visited,
-                depth + 1,
+                guard,
             )
         {
             return true;
@@ -546,14 +558,12 @@ impl<'a> CheckerState<'a> {
                             prop.type_id,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         ) || self.type_requires_structure_of_symbol_inner(
                             prop.write_type,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         )
                     })
                     || shape.string_index.as_ref().is_some_and(|sig| {
@@ -561,14 +571,12 @@ impl<'a> CheckerState<'a> {
                             sig.key_type,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         ) || self.type_requires_structure_of_symbol_inner(
                             sig.value_type,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         )
                     })
                     || shape.number_index.as_ref().is_some_and(|sig| {
@@ -576,14 +584,12 @@ impl<'a> CheckerState<'a> {
                             sig.key_type,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         ) || self.type_requires_structure_of_symbol_inner(
                             sig.value_type,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         )
                     })
             }
@@ -592,16 +598,14 @@ impl<'a> CheckerState<'a> {
                     member,
                     target_sym,
                     requires_structure,
-                    visited,
-                    depth + 1,
+                    guard,
                 )
             }),
             TypeTraversalKind::Array(elem) => self.type_requires_structure_of_symbol_inner(
                 elem,
                 target_sym,
                 requires_structure,
-                visited,
-                depth + 1,
+                guard,
             ),
             TypeTraversalKind::Tuple(list_id) => {
                 self.ctx.types.tuple_list(list_id).iter().any(|elem| {
@@ -609,8 +613,7 @@ impl<'a> CheckerState<'a> {
                         elem.type_id,
                         target_sym,
                         requires_structure,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 })
             }
@@ -621,22 +624,16 @@ impl<'a> CheckerState<'a> {
                         param.type_id,
                         target_sym,
                         false,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 }) || self.type_requires_structure_of_symbol_inner(
                     shape.return_type,
                     target_sym,
                     false,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || shape.this_type.is_some_and(|this_type| {
                     self.type_requires_structure_of_symbol_inner(
-                        this_type,
-                        target_sym,
-                        false,
-                        visited,
-                        depth + 1,
+                        this_type, target_sym, false, guard,
                     )
                 })
             }
@@ -648,15 +645,13 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         )
                     }) || self.type_requires_structure_of_symbol_inner(
                         sig.return_type,
                         target_sym,
                         false,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 }) || shape.construct_signatures.iter().any(|sig| {
                     sig.params.iter().any(|param| {
@@ -664,23 +659,20 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             target_sym,
                             false,
-                            visited,
-                            depth + 1,
+                            guard,
                         )
                     }) || self.type_requires_structure_of_symbol_inner(
                         sig.return_type,
                         target_sym,
                         false,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 }) || shape.properties.iter().any(|prop| {
                     self.type_requires_structure_of_symbol_inner(
                         prop.type_id,
                         target_sym,
                         false,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 })
             }
@@ -693,35 +685,22 @@ impl<'a> CheckerState<'a> {
                         constraint,
                         target_sym,
                         requires_structure,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 }) || default.is_some_and(|default| {
                     self.type_requires_structure_of_symbol_inner(
                         default,
                         target_sym,
                         requires_structure,
-                        visited,
-                        depth + 1,
+                        guard,
                     )
                 })
             }
             TypeTraversalKind::Application { base, args, .. } => {
-                self.type_requires_structure_of_symbol_inner(
-                    base,
-                    target_sym,
-                    false,
-                    visited,
-                    depth + 1,
-                ) || args.iter().any(|&arg| {
-                    self.type_requires_structure_of_symbol_inner(
-                        arg,
-                        target_sym,
-                        false,
-                        visited,
-                        depth + 1,
-                    )
-                })
+                self.type_requires_structure_of_symbol_inner(base, target_sym, false, guard)
+                    || args.iter().any(|&arg| {
+                        self.type_requires_structure_of_symbol_inner(arg, target_sym, false, guard)
+                    })
             }
             TypeTraversalKind::Conditional(cond_id) => {
                 let cond = self.ctx.types.conditional_type(cond_id);
@@ -729,111 +708,64 @@ impl<'a> CheckerState<'a> {
                     cond.check_type,
                     target_sym,
                     true,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.extends_type,
                     target_sym,
                     true,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.true_type,
                     target_sym,
                     false,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.false_type,
                     target_sym,
                     false,
-                    visited,
-                    depth + 1,
+                    guard,
                 )
             }
             TypeTraversalKind::Mapped(mapped_id) => {
                 let mapped = self.ctx.types.mapped_type(mapped_id);
                 mapped.type_param.constraint.is_some_and(|constraint| {
                     self.type_requires_structure_of_symbol_inner(
-                        constraint,
-                        target_sym,
-                        true,
-                        visited,
-                        depth + 1,
+                        constraint, target_sym, true, guard,
                     )
                 }) || mapped.type_param.default.is_some_and(|default| {
-                    self.type_requires_structure_of_symbol_inner(
-                        default,
-                        target_sym,
-                        true,
-                        visited,
-                        depth + 1,
-                    )
+                    self.type_requires_structure_of_symbol_inner(default, target_sym, true, guard)
                 }) || self.type_requires_structure_of_symbol_inner(
                     mapped.constraint,
                     target_sym,
                     true,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     mapped.template,
                     target_sym,
                     false,
-                    visited,
-                    depth + 1,
+                    guard,
                 ) || mapped.name_type.is_some_and(|name_type| {
-                    self.type_requires_structure_of_symbol_inner(
-                        name_type,
-                        target_sym,
-                        true,
-                        visited,
-                        depth + 1,
-                    )
+                    self.type_requires_structure_of_symbol_inner(name_type, target_sym, true, guard)
                 })
             }
             TypeTraversalKind::IndexAccess {
                 object: object_type,
                 index: index_type,
             } => {
-                self.type_requires_structure_of_symbol_inner(
-                    object_type,
-                    target_sym,
-                    true,
-                    visited,
-                    depth + 1,
-                ) || self.type_requires_structure_of_symbol_inner(
-                    index_type,
-                    target_sym,
-                    true,
-                    visited,
-                    depth + 1,
-                )
+                self.type_requires_structure_of_symbol_inner(object_type, target_sym, true, guard)
+                    || self.type_requires_structure_of_symbol_inner(
+                        index_type, target_sym, true, guard,
+                    )
             }
             TypeTraversalKind::TemplateLiteral(types) => types.into_iter().any(|type_id| {
-                self.type_requires_structure_of_symbol_inner(
-                    type_id,
-                    target_sym,
-                    false,
-                    visited,
-                    depth + 1,
-                )
+                self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, guard)
             }),
-            TypeTraversalKind::KeyOf(inner) | TypeTraversalKind::Readonly(inner) => self
-                .type_requires_structure_of_symbol_inner(
-                    inner,
-                    target_sym,
-                    true,
-                    visited,
-                    depth + 1,
-                ),
-            TypeTraversalKind::StringIntrinsic(type_arg) => self
-                .type_requires_structure_of_symbol_inner(
-                    type_arg,
-                    target_sym,
-                    false,
-                    visited,
-                    depth + 1,
-                ),
+            TypeTraversalKind::KeyOf(inner) | TypeTraversalKind::Readonly(inner) => {
+                self.type_requires_structure_of_symbol_inner(inner, target_sym, true, guard)
+            }
+            TypeTraversalKind::StringIntrinsic(type_arg) => {
+                self.type_requires_structure_of_symbol_inner(type_arg, target_sym, false, guard)
+            }
         }
     }
 
@@ -1002,13 +934,15 @@ impl<'a> CheckerState<'a> {
             && !shadowed_params.contains(ident.escaped_text.as_str())
             && let Some(&arg) = bindings.get(ident.escaped_text.as_str())
         {
-            let mut visited = FxHashSet::default();
+            use tsz_solver::recursion::RecursionProfile;
+            let mut guard = tsz_solver::recursion::RecursionGuard::with_profile(
+                RecursionProfile::ShallowTraversal,
+            );
             return self.type_requires_structure_of_symbol_inner(
                 arg,
                 current_sym,
                 true,
-                &mut visited,
-                0,
+                &mut guard,
             );
         }
 
