@@ -489,7 +489,24 @@ impl<'a> BinaryOpEvaluator<'a> {
         {
             return true;
         }
-        self.is_number_like(type_id) || self.is_bigint_like(type_id)
+        if self.is_number_like(type_id) || self.is_bigint_like(type_id) {
+            return true;
+        }
+        // For unions like `bigint | number`, the all-number-like and all-bigint-like
+        // checks both fail because neither is uniform. But each member is individually
+        // a valid arithmetic type. Check if all union members are individually arithmetic.
+        if let Some(members) = crate::visitor::union_list_id(self.interner, type_id) {
+            let member_list = self.interner.type_list(members);
+            return !member_list.is_empty()
+                && member_list.iter().all(|&m| {
+                    m == TypeId::ANY
+                        || m == TypeId::ERROR
+                        || m == TypeId::NEVER
+                        || self.is_number_like(m)
+                        || self.is_bigint_like(m)
+                });
+        }
+        false
     }
 
     /// Evaluate a binary operation on two types.
