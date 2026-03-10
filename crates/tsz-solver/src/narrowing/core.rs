@@ -477,6 +477,29 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
+            // 7. Handle Intersection types containing Lazy members.
+            // When a type alias wraps `UnionAlias & SomeType`, the intersection
+            // members may include Lazy(DefId) references that haven't been resolved
+            // yet. Resolving them and re-interning triggers distribution:
+            // `(A | B) & C` → `(A & C) | (B & C)`, which enables discriminant narrowing.
+            if let Some(TypeData::Intersection(members_id)) = self.db.lookup(type_id) {
+                let members = self.db.type_list(members_id).to_vec();
+                let mut changed = false;
+                let mut resolved_members = Vec::with_capacity(members.len());
+                for &m in &members {
+                    let r = self.resolve_type(m);
+                    if r != m {
+                        changed = true;
+                    }
+                    resolved_members.push(r);
+                }
+                if changed {
+                    // Re-intern triggers distribution if a member resolved to a union
+                    type_id = self.db.intersection(resolved_members);
+                    continue;
+                }
+            }
+
             // It's a structural type (Object, Union, Intersection, Primitive)
             break;
         }
