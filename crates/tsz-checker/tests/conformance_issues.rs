@@ -345,6 +345,32 @@ namespace Intl {
 }
 
 #[test]
+fn test_string_is_assignable_to_iterable_string_under_es2015() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r##"
+function method<T>(iterable: Iterable<T>): T {
+    return;
+}
+
+var res: string = method("test");
+"##,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected the generic return error to remain. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Expected string to satisfy Iterable<string> under ES2015. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_aliased_base_preserves_instance_members() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

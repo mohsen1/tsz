@@ -8,6 +8,7 @@
 
 use crate::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
+use crate::operations::iterators::get_iterator_info;
 use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
@@ -37,6 +38,24 @@ fn make_subtype_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeI
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn extract_iterable_yield_type_from_target(&self, target: TypeId) -> Option<TypeId> {
+        let shape_id = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))?;
+        let shape = self.interner.object_shape(shape_id);
+        let sym_iter_atom = self.interner.intern_string("[Symbol.iterator]");
+        let iter_prop = shape
+            .properties
+            .binary_search_by_key(&sym_iter_atom, |p| p.name)
+            .ok()
+            .map(|idx| &shape.properties[idx])?;
+        let callable_id = callable_shape_id(self.interner, iter_prop.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+        let return_type = callable.call_signatures.first()?.return_type;
+        let app_id = application_id(self.interner, return_type)?;
+        let app = self.interner.type_application(app_id);
+        app.args.first().copied()
+    }
+
     /// Check if an intrinsic type is a subtype of another intrinsic type.
     ///
     /// Intrinsic types have a fixed subtyping hierarchy:
@@ -409,6 +428,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if !boxable {
             return false;
+        }
+
+        if source_kind == IntrinsicKind::String {
+            if let Some(db) = self.query_db
+                && let Some(iter_info) = get_iterator_info(db, target, false)
+                && self
+                    .check_subtype(TypeId::STRING, iter_info.yield_type)
+                    .is_true()
+            {
+                return true;
+            }
+            if let Some(yield_type) = self.extract_iterable_yield_type_from_target(target)
+                && self.check_subtype(TypeId::STRING, yield_type).is_true()
+            {
+                return true;
+            }
         }
 
         // Ask the resolver for the boxed type
