@@ -3075,9 +3075,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         // If the member is referenced by the exported API surface, keep it
         if let Some(idx) = decl_idx
-            && self.is_ns_member_used_by_exports(idx) {
-                return false;
-            }
+            && self.is_ns_member_used_by_exports(idx)
+        {
+            return false;
+        }
         // Non-exported member inside non-ambient namespace: skip
         true
     }
@@ -3107,9 +3108,10 @@ impl<'a> DeclarationEmitter<'a> {
         // may be in a namespace scope
         for scope in &binder.scopes {
             if let Some(sym_id) = scope.table.get(&ident.escaped_text)
-                && used.contains_key(&sym_id) {
-                    return true;
-                }
+                && used.contains_key(&sym_id)
+            {
+                return true;
+            }
         }
         if let Some(sym_id) = binder.file_locals.get(&ident.escaped_text) {
             return used.contains_key(&sym_id);
