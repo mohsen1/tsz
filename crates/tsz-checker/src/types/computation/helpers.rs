@@ -932,16 +932,13 @@ impl<'a> CheckerState<'a> {
                 // TS2703: The operand of a 'delete' operator must be a property reference.
                 // Valid operands: property access (obj.prop), element access (obj["prop"]),
                 // or optional chain (obj?.prop). All other expressions are invalid.
-                let is_property_reference = unary.operand.is_some()
-                    && self
-                        .ctx
-                        .arena
-                        .get(unary.operand)
-                        .is_some_and(|operand_node| {
-                            use tsz_parser::parser::syntax_kind_ext;
-                            operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                || operand_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                        });
+                let operand_idx = self.ctx.arena.skip_parenthesized(unary.operand);
+                let is_property_reference = operand_idx.is_some()
+                    && self.ctx.arena.get(operand_idx).is_some_and(|operand_node| {
+                        use tsz_parser::parser::syntax_kind_ext;
+                        operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || operand_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    });
 
                 // Suppress TS2703 when:
                 // 1. Operand has an error type (inner error already reported).
@@ -965,7 +962,21 @@ impl<'a> CheckerState<'a> {
                 // For `delete v[expr]` where v has a readonly index signature
                 // (e.g., readonly tuples, readonly arrays, objects with readonly index sigs).
                 if is_property_reference {
-                    self.check_readonly_assignment(unary.operand, idx);
+                    self.check_readonly_assignment(operand_idx, idx);
+                }
+
+                // TS18011: The operand of a 'delete' operator cannot be a private identifier.
+                if is_property_reference
+                    && let Some(operand_node) = self.ctx.arena.get(operand_idx)
+                    && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
+                    && self.is_private_identifier_name(access.name_or_argument)
+                {
+                    self.error_at_node(
+                        operand_idx,
+                        crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_CANNOT_BE_A_PRIVATE_IDENTIFIER,
+                        crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_CANNOT_BE_A_PRIVATE_IDENTIFIER,
+                    );
                 }
 
                 // TS2790: In strictNullChecks, delete is only allowed for optional properties.
@@ -973,7 +984,7 @@ impl<'a> CheckerState<'a> {
                 // includes `undefined` are also treated as deletable.
                 // tsc also exempts: any/unknown/never property types, index signature properties.
                 if self.ctx.compiler_options.strict_null_checks
-                    && let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                    && let Some(operand_node) = self.ctx.arena.get(operand_idx)
                     && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
                 {
@@ -1023,7 +1034,7 @@ impl<'a> CheckerState<'a> {
                                         );
                                 if !is_optional && !optional_via_undefined {
                                     self.error_at_node(
-                                        unary.operand,
+                                        operand_idx,
                                         crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                         crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                     );

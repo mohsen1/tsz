@@ -448,6 +448,30 @@ delete b.b;
 }
 
 #[test]
+fn test_delete_private_identifier_reports_ts18011() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class A {
+    #v = 1;
+    constructor() {
+        delete this.#v;
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18011),
+        "Expected TS18011 for delete on a private identifier. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
