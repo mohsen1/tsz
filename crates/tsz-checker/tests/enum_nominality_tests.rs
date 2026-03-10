@@ -138,6 +138,25 @@ const x: E.A = 1;  // ERROR: number to enum member
 }
 
 #[test]
+fn test_number_type_to_numeric_enum_member() {
+    let source = r"
+enum E { A = 0 }
+declare const n: number;
+const x: E.A = n;  // OK
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_matching_number_literal_to_numeric_enum_member() {
+    let source = r"
+enum E { A = 0 }
+const x: E.A = 0;  // OK
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
 fn test_number_to_numeric_enum_type() {
     // bare `number` type SHOULD be assignable to numeric enum type
     // but arbitrary number literals that aren't member values should error
@@ -156,12 +175,12 @@ const x: E = n;  // OK: number type to enum type
 
 #[test]
 fn test_number_literal_to_numeric_enum_type() {
-    // number literal SHOULD be assignable to numeric enum type
+    // Numeric enum types still reject arbitrary numeric literals.
     let source = r"
 enum E { A = 0 }
-const x: E = 0;  // OK: literal to enum type
+const x: E = 1;  // ERROR
 ";
-    test_enum_assignability(source, 0);
+    test_enum_assignability(source, 1);
 }
 
 #[test]

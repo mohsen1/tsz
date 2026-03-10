@@ -297,13 +297,25 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
-            let maybe_evaluated =
+            if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                && let Some(enum_obj) = self.enum_object_type(sym_id)
+                && enum_obj == display_type
+            {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(display_type, def_id);
+            }
+            let display_type =
                 if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
-                    self.evaluate_type_for_assignability(display_type)
+                    let evaluated = self.evaluate_type_for_assignability(display_type);
+                    tsz_solver::widening::widen_type(self.ctx.types, evaluated)
                 } else {
                     display_type
                 };
-            let display_type = tsz_solver::widening::widen_type(self.ctx.types, maybe_evaluated);
             let formatted = self.format_type_for_assignability_message(display_type);
             let resolved_for_access = self.resolve_type_for_property_access(display_type);
             let resolved = self.judge_evaluate(resolved_for_access);
