@@ -285,6 +285,41 @@ impl<'a> CheckerState<'a> {
 
         let module_name = &literal.text;
 
+        // TS2846: Check for .d.ts/.d.mts/.d.cts extensions in dynamic imports.
+        // Dynamic import() calls are always value-level, so a .d.ts import
+        // should always trigger TS2846 (unlike static `import type` which is OK).
+        let dts_ext = if module_name.ends_with(".d.ts") {
+            Some((".d.ts", ".ts", ".js"))
+        } else if module_name.ends_with(".d.mts") {
+            Some((".d.mts", ".mts", ".mjs"))
+        } else if module_name.ends_with(".d.cts") {
+            Some((".d.cts", ".cts", ".cjs"))
+        } else {
+            None
+        };
+        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let base = module_name.trim_end_matches(dts_suffix);
+            let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                ts_ext
+            } else {
+                js_ext
+            };
+            let suggested = format!("{base}{ext}");
+            let message = format_message(
+                diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                &[&suggested],
+            );
+            let arg_start = arg_node.pos;
+            let arg_length = arg_node.end.saturating_sub(arg_node.pos);
+            self.error_at_position(
+                arg_start,
+                arg_length,
+                &message,
+                diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+            );
+        }
+
         // TS5097: Check for .ts/.tsx/.mts/.cts extensions in dynamic imports
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
