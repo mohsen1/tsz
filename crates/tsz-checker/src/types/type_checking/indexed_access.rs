@@ -125,6 +125,128 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Resolve a type parameter's constraint from its AST declaration when the TypeId
+    /// doesn't carry one. This handles cases where type parameters lose their constraints
+    /// during type application argument resolution (e.g., `M[Event]` inside `Id<M[Event]>`).
+    fn resolve_index_constraint_from_declaration(
+        &mut self,
+        index_node_idx: NodeIndex,
+        _object_node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let index_name = self.simple_type_reference_name(index_node_idx)?;
+
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(index_node_idx)
+            .map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            // Extract type_parameters NodeList from any generic declaration kind
+            let type_params: Option<&tsz_parser::parser::base::NodeList> = match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function(parent_node)
+                        .and_then(|f| f.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_signature(parent_node)
+                        .and_then(|s| s.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent_node)
+                    .and_then(|i| i.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_class(parent_node)
+                        .and_then(|c| c.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(parent_node)
+                    .and_then(|ta| ta.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function_type(parent_node)
+                        .and_then(|ft| ft.type_parameters.as_ref())
+                }
+                _ => None,
+            };
+
+            if let Some(tp_list) = type_params {
+                for &tp_idx in &tp_list.nodes {
+                    let Some(tp_node) = self.ctx.arena.get(tp_idx) else {
+                        continue;
+                    };
+                    let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(tp.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == index_name && tp.constraint != NodeIndex::NONE {
+                        let constraint_type = self.get_type_from_type_node(tp.constraint);
+                        if constraint_type != TypeId::ERROR {
+                            return Some(constraint_type);
+                        }
+                    }
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        None
+    }
+
+    /// Check if the index type parameter has a `keyof` constraint targeting the object type,
+    /// resolved from the AST declaration. Returns true if `K extends keyof T` for the current
+    /// object T.
+    fn index_has_keyof_constraint_from_declaration(
+        &mut self,
+        index_node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        if let Some(constraint_type) =
+            self.resolve_index_constraint_from_declaration(index_node_idx, object_node_idx)
+        {
+            // Check if the constraint is `keyof T` for our object
+            if self.is_keyof_for_current_object(constraint_type, object_type, object_type_for_check)
+            {
+                return true;
+            }
+            // Also check if the constraint is directly assignable to keyof of the object
+            // (handles cases like `K extends string` indexing `Record<string, V>`)
+        }
+        false
+    }
+
     /// Check an indexed access type (T[K]).
     pub(crate) fn check_indexed_access_type(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -142,12 +264,22 @@ impl<'a> CheckerState<'a> {
             || index_type == TypeId::ERROR
             || object_type == TypeId::ANY
             || index_type == TypeId::ANY
+            || index_type == TypeId::NEVER
         {
             return;
         }
 
-        let index_constraint =
+        let mut index_constraint =
             tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type);
+        // Fallback: when the index type is a type parameter but its TypeId doesn't carry a
+        // constraint (happens when T[K] appears inside type application arguments like
+        // `Id<T[K]>`), resolve the constraint from the AST declaration.
+        if index_constraint.is_none()
+            && tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type)
+        {
+            index_constraint =
+                self.resolve_index_constraint_from_declaration(data.index_type, data.object_type);
+        }
         let error_anchor =
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type) {
                 node_idx
@@ -452,6 +584,17 @@ impl<'a> CheckerState<'a> {
                     && is_broad_index_type(self.ctx.types, index_type_for_check))
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
             {
+                return;
+            }
+            // Last-resort: check if the index type parameter's AST declaration has a
+            // `keyof` constraint targeting the current object type. This catches cases
+            // where the TypeId lost its constraint during type application lowering.
+            if self.index_has_keyof_constraint_from_declaration(
+                data.index_type,
+                data.object_type,
+                object_type,
+                object_type_for_check,
+            ) {
                 return;
             }
 
