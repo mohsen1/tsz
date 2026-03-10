@@ -1143,8 +1143,38 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             let fwd = self.checker.is_assignable_to(expr_type, jsdoc_type);
                             let rev = self.checker.is_assignable_to(jsdoc_type, expr_type);
                             if !fwd && !rev {
-                                self.checker
-                                    .error_type_assertion_no_overlap(expr_type, jsdoc_type, idx);
+                                // Check union member overlap (same as `as` expressions):
+                                // if expr is a union, check if any member overlaps with target.
+                                let mut have_overlap = false;
+                                if let Some(members) =
+                                    query::union_members(self.checker.ctx.types, expr_type)
+                                {
+                                    for member in members {
+                                        if self.checker.is_assignable_to(member, jsdoc_type)
+                                            || self.checker.is_assignable_to(jsdoc_type, member)
+                                        {
+                                            have_overlap = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Fallback: structural property overlap check
+                                if !have_overlap {
+                                    let evaluated_expr =
+                                        self.checker.evaluate_type_for_assignability(expr_type);
+                                    let evaluated_jsdoc =
+                                        self.checker.evaluate_type_for_assignability(jsdoc_type);
+                                    have_overlap = query::types_are_comparable(
+                                        self.checker.ctx.types,
+                                        evaluated_expr,
+                                        evaluated_jsdoc,
+                                    );
+                                }
+                                if !have_overlap {
+                                    self.checker.error_type_assertion_no_overlap(
+                                        expr_type, jsdoc_type, idx,
+                                    );
+                                }
                             }
                         }
                         jsdoc_type

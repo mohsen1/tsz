@@ -409,16 +409,22 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
 
         match type_expr {
-            "string" => Some(TypeId::STRING),
-            "number" => Some(TypeId::NUMBER),
-            "boolean" => Some(TypeId::BOOLEAN),
+            "string" | "String" => Some(TypeId::STRING),
+            "number" | "Number" => Some(TypeId::NUMBER),
+            "boolean" | "Boolean" => Some(TypeId::BOOLEAN),
+            "bigint" | "BigInt" => Some(TypeId::BIGINT),
             "object" => Some(TypeId::OBJECT),
-            "any" | "*" => Some(TypeId::ANY),
+            "Object" | "any" | "*" => Some(TypeId::ANY),
             "unknown" => Some(TypeId::UNKNOWN),
-            "undefined" => Some(TypeId::UNDEFINED),
-            "null" => Some(TypeId::NULL),
-            "void" => Some(TypeId::VOID),
+            "undefined" | "Undefined" => Some(TypeId::UNDEFINED),
+            "null" | "Null" => Some(TypeId::NULL),
+            "void" | "Void" => Some(TypeId::VOID),
             "never" => Some(TypeId::NEVER),
+            "symbol" | "Symbol" => Some(TypeId::SYMBOL),
+            "Array" | "array" => {
+                // Bare Array/array without type args → any[]
+                Some(factory.array(TypeId::ANY))
+            }
             _ => {
                 if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
                     return Some(*tp);
