@@ -64,6 +64,9 @@ pub const CONTEXT_FLAG_IN_BLOCK: u32 = 8192;
 /// Context flag: parsing inside a parenthesized expression.
 /// Used to keep arrow-function/parenthesized recovery behavior consistent.
 pub const CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION: u32 = 16384;
+/// Context flag: parsing a class field initializer.
+/// Newline-separated postfix continuations like `\n[` do not attach across fields.
+pub const CONTEXT_FLAG_CLASS_FIELD_INITIALIZER: u32 = 32768;
 
 // =============================================================================
 // Parse Diagnostic

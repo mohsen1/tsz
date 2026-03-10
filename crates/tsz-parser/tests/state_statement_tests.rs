@@ -1,5 +1,6 @@
 //! Tests for statement parsing in the parser.
 use crate::parser::{NodeIndex, ParserState};
+use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_source(source: &str) -> (ParserState, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -131,5 +132,20 @@ fn parse_contextual_keyword_as_var_name_no_ts1389() {
     assert!(
         !codes.contains(&1359),
         "Contextual keyword 'type' should NOT trigger TS1359, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn class_field_initializer_does_not_asi_before_computed_member() {
+    let (parser, _root) = parse_source("class C {\n    [e]: number = 0\n    [e2]: number\n}");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 for missing semicolon before computed member, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&1068),
+        "should recover as a semicolon error, not TS1068, got {diags:?}"
     );
 }

@@ -1309,6 +1309,22 @@ impl ParserState {
         let mut expr = self.parse_primary_expression();
 
         loop {
+            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER)
+                != 0
+                && self.scanner.has_preceding_line_break()
+                && matches!(
+                    self.token(),
+                    SyntaxKind::OpenBracketToken
+                        | SyntaxKind::OpenParenToken
+                        | SyntaxKind::DotToken
+                        | SyntaxKind::QuestionDotToken
+                        | SyntaxKind::NoSubstitutionTemplateLiteral
+                        | SyntaxKind::TemplateHead
+                )
+            {
+                break;
+            }
+
             match self.token() {
                 SyntaxKind::DotToken => {
                     if let Some(node) = self.arena.get(expr)
