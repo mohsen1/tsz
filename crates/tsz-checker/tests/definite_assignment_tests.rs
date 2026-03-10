@@ -779,10 +779,11 @@ fn test_ts2454_emitted_for_source_file_global_inside_iife() {
 }
 
 #[test]
-fn test_ts2454_suppressed_for_source_file_global_inside_module_function() {
-    // tsc suppresses TS2454 when a variable is used inside a deferred (non-IIFE)
-    // nested function, even in external modules. The function could be called
-    // after the variable is assigned.
+fn test_ts2454_emitted_for_module_global_never_assigned_inside_deferred_function() {
+    // In external modules, module-scope variables can only be assigned within
+    // the module. If the variable has NO initializer and NO assignments anywhere
+    // in the file, tsc emits TS2454 even inside deferred nested functions —
+    // there is no code path that could ever assign the variable.
     let source = r"
         export {};
         let cond: boolean;
@@ -802,8 +803,38 @@ fn test_ts2454_suppressed_for_source_file_global_inside_module_function() {
             &diags,
             diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
         ),
+        1,
+        "Module-scoped globals with no assignment should emit TS2454, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_suppressed_for_module_global_assigned_later_inside_deferred_function() {
+    // In external modules, if the variable IS assigned somewhere in the file,
+    // suppress TS2454 for reads in deferred nested functions — the function
+    // could be called after the assignment.
+    let source = r"
+        export {};
+        let cond: boolean;
+        function f() {
+            while (cond) {}
+        }
+        cond = true;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
         0,
-        "Module-scoped globals should NOT emit TS2454 inside deferred nested functions, got: {diags:?}"
+        "Module-scoped globals with later assignment should suppress TS2454 in deferred functions, got: {diags:?}"
     );
 }
 
