@@ -89,16 +89,35 @@ impl<'a> CheckerState<'a> {
                 let Some(constraint_node) = self.ctx.arena.get(tp.constraint) else {
                     return false;
                 };
-                let Some(type_operator) = self.ctx.arena.get_type_operator(constraint_node) else {
-                    return false;
-                };
-                if type_operator.operator != SyntaxKind::KeyOfKeyword as u16 {
-                    return false;
+                // Check if the constraint is `keyof T` directly
+                if let Some(type_operator) = self.ctx.arena.get_type_operator(constraint_node)
+                    && type_operator.operator == SyntaxKind::KeyOfKeyword as u16
+                {
+                    return self
+                        .simple_type_reference_name(type_operator.type_node)
+                        .as_deref()
+                        .is_some_and(|name| name == object_name);
                 }
-                return self
-                    .simple_type_reference_name(type_operator.type_node)
-                    .as_deref()
-                    .is_some_and(|name| name == object_name);
+                // Check if the constraint is an intersection containing `keyof T`
+                // (e.g., `[K in keyof T & keyof U]`)
+                if constraint_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+                    && let Some(composite) = self.ctx.arena.get_composite_type(constraint_node)
+                {
+                    return composite.types.nodes.iter().any(|&member_idx| {
+                        self.ctx
+                            .arena
+                            .get(member_idx)
+                            .and_then(|n| self.ctx.arena.get_type_operator(n))
+                            .is_some_and(|op| {
+                                op.operator == SyntaxKind::KeyOfKeyword as u16
+                                    && self
+                                        .simple_type_reference_name(op.type_node)
+                                        .as_deref()
+                                        .is_some_and(|name| name == object_name)
+                            })
+                    });
+                }
+                return false;
             }
             current = self
                 .ctx
