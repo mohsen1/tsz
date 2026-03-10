@@ -779,7 +779,10 @@ fn test_ts2454_emitted_for_source_file_global_inside_iife() {
 }
 
 #[test]
-fn test_ts2454_emitted_for_source_file_global_inside_module_function() {
+fn test_ts2454_suppressed_for_source_file_global_inside_module_function() {
+    // tsc suppresses TS2454 when a variable is used inside a deferred (non-IIFE)
+    // nested function, even in external modules. The function could be called
+    // after the variable is assigned.
     let source = r"
         export {};
         let cond: boolean;
@@ -794,12 +797,13 @@ fn test_ts2454_emitted_for_source_file_global_inside_module_function() {
             ..Default::default()
         },
     );
-    assert!(
+    assert_eq!(
         count_code(
             &diags,
             diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
-        ) >= 1,
-        "Module-scoped globals should still emit TS2454 inside nested functions, got: {diags:?}"
+        ),
+        0,
+        "Module-scoped globals should NOT emit TS2454 inside deferred nested functions, got: {diags:?}"
     );
 }
 
