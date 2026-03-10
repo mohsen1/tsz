@@ -28,7 +28,7 @@ jobs:
       root: ${{ steps.filter.outputs.root }}
       any_rust: ${{ steps.filter.outputs.any_rust }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -70,7 +70,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -127,7 +127,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -168,7 +168,7 @@ jobs:
       needs.changes.outputs.parser == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -211,7 +211,7 @@ jobs:
       needs.changes.outputs.binder == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -249,7 +249,7 @@ jobs:
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -288,12 +288,7 @@ jobs:
       needs.changes.outputs.checker == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch TypeScript lib sources
-        run: |
-          git submodule update --init --depth 1 -- TypeScript
-          test -f TypeScript/src/lib/es5.d.ts || { echo "ERROR: TypeScript lib files missing after submodule init"; exit 1; }
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -334,7 +329,7 @@ jobs:
       needs.changes.outputs.common == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -372,12 +367,7 @@ jobs:
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch TypeScript lib sources
-        run: |
-          git submodule update --init --depth 1 -- TypeScript
-          test -f TypeScript/src/lib/es5.d.ts || { echo "ERROR: TypeScript lib files missing after submodule init"; exit 1; }
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -409,15 +399,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: ./.github/actions/checkout
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Fetch TypeScript lib sources
-        run: git submodule update --init --depth 1 -- TypeScript
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -445,12 +432,8 @@ jobs:
 
       - name: Copy TypeScript lib files into pkg
         run: |
-          if [ -d "TypeScript/src/lib" ]; then
-            mkdir -p pkg/lib
-            cp -R TypeScript/src/lib/. pkg/lib/
-          else
-            echo "TypeScript lib sources missing; skipping lib copy"
-          fi
+          mkdir -p pkg/lib
+          cp -R TypeScript/src/lib/. pkg/lib/
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
@@ -479,12 +462,7 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.emitter == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch TypeScript conformance tests
-        run: |
-          git submodule update --init --depth 1 -- TypeScript
-          test -d TypeScript/tests/cases/conformance || { echo "ERROR: TypeScript test files missing"; exit 1; }
+      - uses: ./.github/actions/checkout
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -620,12 +598,7 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.emitter == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch TypeScript baselines
-        run: |
-          git submodule update --init --depth 1 -- TypeScript
-          test -d TypeScript/tests/baselines/reference || { echo "ERROR: TypeScript baseline files missing"; exit 1; }
+      - uses: ./.github/actions/checkout
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -794,12 +767,7 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.lsp == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch TypeScript fourslash tests
-        run: |
-          git submodule update --init --depth 1 -- TypeScript
-          test -d TypeScript/tests/cases/fourslash || { echo "ERROR: TypeScript fourslash tests missing"; exit 1; }
+      - uses: ./.github/actions/checkout
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
