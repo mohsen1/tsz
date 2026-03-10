@@ -359,7 +359,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // `x!` is an assertion site, not a TS2454 read site.
+        // `x!` is an assertion site — tsc treats this as an explicit developer
+        // assertion that the variable has a value, so TS2454 does not fire.
         if self.is_non_null_assertion_operand(idx) {
             return false;
         }
@@ -372,10 +373,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Computed property name expressions don't participate in TS2454-style
-        // definite-assignment checks. TDZ diagnostics for block-scoped values in
-        // computed names are handled separately by `check_tdz_violation`.
-        if self.find_enclosing_computed_property(idx).is_some() {
+        // Class computed property names don't trigger TS2454 in tsc.
+        // Object literal computed property names DO trigger TS2454.
+        // Check if we're in a computed property name inside a class body.
+        if let Some(computed_idx) = self.find_enclosing_computed_property(idx)
+            && self.is_class_member_computed_property(computed_idx)
+        {
             return false;
         }
 
@@ -718,6 +721,26 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         false
+    }
+
+    /// Check if a computed property name node is inside a class body
+    /// (as opposed to an object literal). tsc skips TS2454 for class
+    /// computed property names but NOT for object literal ones.
+    fn is_class_member_computed_property(&self, computed_idx: NodeIndex) -> bool {
+        // Walk: ComputedPropertyName -> member (PropertyDeclaration/MethodDecl/etc.) -> ClassDecl/ClassExpr
+        let Some(info) = self.ctx.arena.node_info(computed_idx) else {
+            return false;
+        };
+        let member_idx = info.parent;
+        let Some(member_info) = self.ctx.arena.node_info(member_idx) else {
+            return false;
+        };
+        let class_idx = member_info.parent;
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || class_node.kind == syntax_kind_ext::CLASS_EXPRESSION
     }
 
     fn is_non_null_assertion_operand(&self, idx: NodeIndex) -> bool {
