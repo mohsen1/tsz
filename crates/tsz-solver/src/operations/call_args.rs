@@ -234,7 +234,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
-                    expected: param_type,
+                    expected: effective_param_type,
                     actual: *arg_type,
                     // NOTE: fallback_return is ERROR here; the caller
                     // (resolve_function_call / resolve_union_call) overrides

@@ -50,7 +50,23 @@ impl<'a> CheckerState<'a> {
         self.format_type_for_assignability_message(display_type)
     }
 
-    fn format_call_parameter_type_for_diagnostic(&mut self, param_type: TypeId) -> String {
+    fn format_call_parameter_type_for_diagnostic(
+        &mut self,
+        param_type: TypeId,
+        arg_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> String {
+        if self
+            .ctx
+            .arena
+            .get(arg_idx)
+            .is_some_and(|node| node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT)
+            && tsz_solver::type_queries::get_union_members(self.ctx.types, arg_type)
+                .is_some_and(|members| members.len() > 1)
+        {
+            return self.format_type_for_assignability_message(param_type);
+        }
+
         if !tsz_solver::type_contains_undefined(self.ctx.types, param_type) {
             return self.format_type_for_assignability_message(param_type);
         }
@@ -629,7 +645,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
-        let param_str = self.format_call_parameter_type_for_diagnostic(param_type);
+        let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
             &[&arg_str, &param_str],

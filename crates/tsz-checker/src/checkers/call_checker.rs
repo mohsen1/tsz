@@ -450,7 +450,10 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types,
                                         callable_type,
                                     );
-                                    ctx.is_rest_parameter_position(effective_index, expanded_count)
+                                    ctx.allows_non_tuple_spread_position(
+                                        effective_index,
+                                        expanded_count,
+                                    )
                                 } else {
                                     // No callable type means callee is any/error/unknown.
                                     // Use the probe heuristic: if a large-index probe returns
@@ -506,18 +509,19 @@ impl<'a> CheckerState<'a> {
                         // a rest parameter position (same logic as array spread above).
                         let current_expected = expected_for_index(effective_index, expanded_count);
 
-                        let at_rest_position =
-                            if let Some(callable_type) = self.ctx.current_callable_type {
-                                let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                                    self.ctx.types,
-                                    callable_type,
-                                );
-                                ctx.is_rest_parameter_position(effective_index, expanded_count)
-                            } else {
-                                // No callable type → callee is any/error/unknown; accept spread
+                        let at_rest_position = if let Some(callable_type) =
+                            self.ctx.current_callable_type
+                        {
+                            let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                self.ctx.types,
+                                callable_type,
+                            );
+                            ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
+                        } else {
+                            // No callable type → callee is any/error/unknown; accept spread
 
-                                expected_for_index(usize::MAX / 2, expanded_count).is_some()
-                            };
+                            expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                        };
 
                         if !at_rest_position {
                             if current_expected.is_none() {

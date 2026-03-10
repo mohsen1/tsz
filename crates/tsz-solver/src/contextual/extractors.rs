@@ -799,6 +799,18 @@ pub(crate) fn is_rest_position(params: &[ParamInfo], index: usize) -> bool {
     index >= rest_start
 }
 
+pub(crate) fn is_rest_or_optional_tail_position(params: &[ParamInfo], index: usize) -> bool {
+    if is_rest_position(params, index) {
+        return true;
+    }
+    if index >= params.len() {
+        return false;
+    }
+    params[index..]
+        .iter()
+        .all(|param| param.optional || param.rest)
+}
+
 fn extract_param_type_at_inner(
     db: &dyn TypeDatabase,
     params: &[ParamInfo],
@@ -1502,6 +1514,117 @@ impl<'a> TypeVisitor for RestPositionCheckExtractor<'a> {
         for &m in members.iter() {
             let mut extractor =
                 RestPositionCheckExtractor::new(self.db, self.index, self.arg_count);
+            if let Some(result) = extractor.visit_type(self.db, m) {
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+pub(crate) struct RestOrOptionalTailPositionExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+    arg_count: usize,
+}
+
+impl<'a> RestOrOptionalTailPositionExtractor<'a> {
+    pub(crate) fn new(db: &'a dyn TypeDatabase, index: usize, arg_count: usize) -> Self {
+        Self {
+            db,
+            index,
+            arg_count,
+        }
+    }
+
+    pub(crate) fn extract(&mut self, type_id: TypeId) -> bool {
+        self.visit_type(self.db, type_id).unwrap_or(false)
+    }
+
+    fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
+        let required_count = params.iter().filter(|p| !p.optional).count();
+        let has_rest = params.iter().any(|p| p.rest);
+        if has_rest {
+            arg_count >= required_count
+        } else {
+            arg_count >= required_count && arg_count <= params.len()
+        }
+    }
+}
+
+impl<'a> TypeVisitor for RestOrOptionalTailPositionExtractor<'a> {
+    type Output = Option<bool>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        Some(is_rest_or_optional_tail_position(&shape.params, self.index))
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        let all_sigs: Vec<&[ParamInfo]> = shape
+            .call_signatures
+            .iter()
+            .chain(shape.construct_signatures.iter())
+            .map(|sig| sig.params.as_slice())
+            .collect();
+
+        if all_sigs.is_empty() {
+            return None;
+        }
+
+        let mut any_matched = false;
+        let mut all_allowed = true;
+        for &params in &all_sigs {
+            if self.signature_accepts_arg_count(params, self.arg_count) {
+                any_matched = true;
+                if !is_rest_or_optional_tail_position(params, self.index) {
+                    all_allowed = false;
+                }
+            }
+        }
+
+        if !any_matched {
+            for &params in &all_sigs {
+                if !is_rest_or_optional_tail_position(params, self.index) {
+                    return Some(false);
+                }
+            }
+            return Some(true);
+        }
+
+        Some(all_allowed)
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        for &m in members.iter() {
+            let mut extractor =
+                RestOrOptionalTailPositionExtractor::new(self.db, self.index, self.arg_count);
+            if !extractor.extract(m) {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        for &m in members.iter() {
+            let mut extractor =
+                RestOrOptionalTailPositionExtractor::new(self.db, self.index, self.arg_count);
             if let Some(result) = extractor.visit_type(self.db, m) {
                 return Some(result);
             }

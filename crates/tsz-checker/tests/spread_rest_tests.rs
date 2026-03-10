@@ -303,6 +303,52 @@ add(...args);  // Should emit TS2345
 }
 
 #[test]
+fn test_non_tuple_spread_into_optional_tail_does_not_emit_ts2556() {
+    let source = r#"
+declare function all(a?: number, b?: number): void;
+declare function prefix(s: string, a?: number, b?: number): void;
+declare function rest(s: string, a?: number, b?: number, ...rest: number[]): void;
+
+declare const ns: number[];
+declare const mixed: (number | string)[];
+
+all(...ns);
+all(...mixed);
+prefix("a", ...ns);
+prefix("b", ...mixed);
+rest("d", ...ns);
+rest("e", ...mixed);
+"#;
+
+    let diagnostics = check_source(source);
+
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert_eq!(
+        ts2556_count,
+        0,
+        "Expected no TS2556 when non-tuple spreads only cover optional/rest parameters, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2556)
+            .map(|d| (&d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let optional_tail_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .filter(|msg| msg.contains("string | number"))
+        .collect();
+    assert!(
+        optional_tail_messages
+            .iter()
+            .all(|msg| msg.contains("number | undefined")),
+        "Expected spread mismatches into optional tail params to mention `number | undefined`, got: {optional_tail_messages:?}"
+    );
+}
+
+#[test]
 fn test_spread_tuple_in_function_call() {
     let source = r#"
 function greet(name: string, age: number, active: boolean) {
