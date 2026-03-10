@@ -733,8 +733,29 @@ impl<'a> CheckerState<'a> {
             && member_symbol.flags & symbol_flags::ALIAS != 0
         {
             let mut visited_aliases = Vec::new();
-            self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                .unwrap_or(member_id)
+            let resolved = self
+                .resolve_alias_symbol(member_id, &mut visited_aliases)
+                .unwrap_or(member_id);
+
+            // Check if any intermediate alias in the chain is type-only.
+            // This catches transitive type-only through import chains, e.g.:
+            //   b.ts: import A from './a';  (not explicitly type-only)
+            //   a.ts: export type { A as default };  (type-only export specifier)
+            // The export specifier in a.ts has is_type_only = true, so A
+            // should not be resolvable as a value member of b's namespace.
+            let lib_binders = self.get_lib_binders();
+            for &alias_sym_id in &visited_aliases {
+                if let Some(alias_sym) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(alias_sym_id, &lib_binders)
+                    && alias_sym.is_type_only
+                {
+                    return None;
+                }
+            }
+
+            resolved
         } else {
             member_id
         };

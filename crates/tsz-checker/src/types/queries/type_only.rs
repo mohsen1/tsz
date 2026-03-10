@@ -206,6 +206,57 @@ impl<'a> CheckerState<'a> {
         self.symbol_member_is_type_only(resolved_export_equals, Some("export="))
     }
 
+    /// Check if a namespace member is transitively type-only through import chains.
+    ///
+    /// Resolves the namespace expression's alias chain to find the underlying
+    /// namespace import, then checks if the member is type-only in the target
+    /// module using cross-file type-only resolution.
+    /// This catches cases like:
+    ///   b.ts: `import A from './a'; export { A };`
+    ///   a.ts: `export type { A as default };`
+    /// where `A` is not explicitly type-only in b.ts but is transitively
+    /// type-only through the `export type` in a.ts.
+    pub(crate) fn is_namespace_member_transitively_type_only(
+        &self,
+        ns_expr: NodeIndex,
+        member_name: &str,
+    ) -> bool {
+        let Some(ns_sym_id) = self.resolve_identifier_symbol(ns_expr) else {
+            return false;
+        };
+
+        // Follow the alias chain to find the actual namespace import symbol.
+        // For `import types from './c'` → `export { types as default }` →
+        // `import * as types from './b'`, we need the final namespace import.
+        let mut ns_visited = Vec::new();
+        let resolved_ns = self
+            .resolve_alias_symbol(ns_sym_id, &mut ns_visited)
+            .unwrap_or(ns_sym_id);
+
+        let lib_binders = self.get_lib_binders();
+
+        // Check all symbols in the alias chain (including the resolved one)
+        // to find one with an import_module pointing to the target module.
+        let candidates = ns_visited
+            .iter()
+            .copied()
+            .chain(std::iter::once(resolved_ns));
+        for sym_id in candidates {
+            let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                continue;
+            };
+            let Some(ref import_module) = sym.import_module else {
+                continue;
+            };
+            // Check if the member is type-only in the target module
+            if self.is_export_type_only_across_binders(import_module, member_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if a namespace has a type-only member.
     ///
     /// This function determines if a specific property of a namespace
@@ -620,6 +671,21 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Like `is_export_type_only_across_binders` but resolves the module specifier
+    /// from a specific source file index. This is needed for cross-file namespace
+    /// type construction where the module specifier is relative to the declaring
+    /// file, not the current file being checked.
+    pub(crate) fn is_export_type_only_from_file(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        let source = source_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.is_export_type_only_in_file(source, module_specifier, export_name, &mut visited)
+    }
+
     /// Check if a module has `export = X` where X is a type-only import.
     /// This propagates type-only status through `export =` chains, e.g.:
     ///   `import type * as ns from './a'; export = ns;`
@@ -724,7 +790,15 @@ impl<'a> CheckerState<'a> {
             // rather than the cross-file lookup binder (which has empty symbols).
             if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                 if sym.is_type_only {
-                    return true;
+                    // A merged symbol like `import type { A }` + `const A = 0`
+                    // has both ALIAS and VALUE flags. The value binding overrides
+                    // type-only status. But cloned `export type { A as default }`
+                    // symbols copy the source's value flags (e.g., CLASS) without
+                    // ALIAS, so we only skip when ALIAS+VALUE are both present.
+                    if sym.flags & symbol_flags::ALIAS == 0 || sym.flags & symbol_flags::VALUE == 0
+                    {
+                        return true;
+                    }
                 }
                 // Follow import alias chains transitively, but only if the
                 // symbol doesn't have a concrete runtime value binding.
