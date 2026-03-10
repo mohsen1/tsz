@@ -1004,7 +1004,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        if self.should_skip_ns_internal_member(&func.modifiers) {
+        if self.should_skip_ns_internal_member(&func.modifiers, Some(func_idx)) {
             return;
         }
 
@@ -1172,7 +1172,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        if self.should_skip_ns_internal_member(&class.modifiers) {
+        if self.should_skip_ns_internal_member(&class.modifiers, Some(class_idx)) {
             return;
         }
         let is_abstract = self
@@ -2097,7 +2097,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        if self.should_skip_ns_internal_member(&alias.modifiers) {
+        if self.should_skip_ns_internal_member(&alias.modifiers, Some(alias_idx)) {
             return;
         }
 
@@ -2146,7 +2146,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        if self.should_skip_ns_internal_member(&enum_data.modifiers) {
+        if self.should_skip_ns_internal_member(&enum_data.modifiers, Some(enum_idx)) {
             return;
         }
         let is_const = self
@@ -2590,7 +2590,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return;
             }
         }
-        if self.should_skip_ns_internal_member(&var_stmt.modifiers) {
+        if self.should_skip_ns_internal_member(&var_stmt.modifiers, None) {
             return;
         }
 

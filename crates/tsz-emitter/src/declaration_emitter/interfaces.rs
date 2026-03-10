@@ -27,7 +27,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        if self.should_skip_ns_internal_member(&iface.modifiers) {
+        if self.should_skip_ns_internal_member(&iface.modifiers, Some(iface_idx)) {
             return;
         }
 

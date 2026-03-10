@@ -3054,7 +3054,15 @@ impl<'a> DeclarationEmitter<'a> {
     /// non-exported value/type inside a non-ambient namespace.
     /// Namespace and import-alias declarations are NOT filtered here
     /// (they may be needed for name resolution and are filtered recursively).
-    pub(crate) fn should_skip_ns_internal_member(&self, modifiers: &Option<NodeList>) -> bool {
+    ///
+    /// When `decl_idx` is provided, non-exported members that are referenced
+    /// by the exported API surface (via `used_symbols`) are preserved —
+    /// TSC emits these so that exported declarations can reference them.
+    pub(crate) fn should_skip_ns_internal_member(
+        &self,
+        modifiers: &Option<NodeList>,
+        decl_idx: Option<NodeIndex>,
+    ) -> bool {
         if !self.inside_non_ambient_namespace {
             return false;
         }
@@ -3065,8 +3073,48 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return false;
         }
+        // If the member is referenced by the exported API surface, keep it
+        if let Some(idx) = decl_idx
+            && self.is_ns_member_used_by_exports(idx) {
+                return false;
+            }
         // Non-exported member inside non-ambient namespace: skip
         true
+    }
+
+    /// Check if a non-exported namespace member's symbol appears in `used_symbols`.
+    /// Unlike `should_emit_public_api_dependency`, this does NOT short-circuit
+    /// when `public_api_filter_enabled()` is false — it always checks the usage set.
+    fn is_ns_member_used_by_exports(&self, decl_idx: NodeIndex) -> bool {
+        let Some(used) = &self.used_symbols else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        // Direct node-to-symbol lookup (works when decl_idx is the declaration node)
+        if let Some(&sym_id) = binder.node_symbols.get(&decl_idx.0) {
+            return used.contains_key(&sym_id);
+        }
+        // Fallback: resolve by identifier text via scope tables
+        let Some(name_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        // Check all scope tables (not just file_locals) since the symbol
+        // may be in a namespace scope
+        for scope in &binder.scopes {
+            if let Some(sym_id) = scope.table.get(&ident.escaped_text)
+                && used.contains_key(&sym_id) {
+                    return true;
+                }
+        }
+        if let Some(sym_id) = binder.file_locals.get(&ident.escaped_text) {
+            return used.contains_key(&sym_id);
+        }
+        false
     }
 
     /// Check if a statement node has the `export` keyword modifier.
