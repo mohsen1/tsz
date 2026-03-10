@@ -366,6 +366,21 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // TS2632: Check if this identifier is an import binding BEFORE resolving
+        // through imports. resolve_identifier follows aliases, so the resolved symbol
+        // would be the export target (e.g., `var x`) rather than the import binding.
+        // Import bindings are readonly in ESM — you cannot reassign them.
+        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(local_sym) = self.ctx.binder.get_symbol(local_sym_id)
+                && local_sym.flags & symbol_flags::ALIAS != 0 {
+                    self.error_at_node_msg(
+                        inner,
+                        diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_IMPORT,
+                        &[name],
+                    );
+                    return true;
+                }
+
         // Look up the symbol for this identifier by resolving it through the scope chain
         // Note: We use resolve_identifier instead of node_symbols because node_symbols
         // only contains declaration nodes, not identifier references.
