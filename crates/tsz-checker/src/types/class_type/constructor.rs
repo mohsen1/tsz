@@ -221,6 +221,69 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Pre-compute rough construct signatures for the partial static constructor type.
+        // Static methods need `this` to be constructable so that `return this` from a
+        // static method makes the return type constructable (prevents false TS2351).
+        // We use TypeId::ANY as the instance return type since the real instance type
+        // isn't computed until after static member processing.
+        let rough_construct_signatures = {
+            let mut has_ctor_overloads = false;
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                    && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
+                    && ctor.body.is_none()
+                {
+                    has_ctor_overloads = true;
+                    break;
+                }
+            }
+            let mut sigs = Vec::new();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                    continue;
+                }
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    continue;
+                };
+                if has_ctor_overloads {
+                    if ctor.body.is_none() {
+                        sigs.push(self.call_signature_from_constructor(
+                            ctor,
+                            member_idx,
+                            TypeId::ANY,
+                            &class_type_params,
+                        ));
+                    }
+                } else {
+                    sigs.push(self.call_signature_from_constructor(
+                        ctor,
+                        member_idx,
+                        TypeId::ANY,
+                        &class_type_params,
+                    ));
+                    break;
+                }
+            }
+            if sigs.is_empty() {
+                // Default construct signature (like the default constructor)
+                sigs.push(CallSignature {
+                    type_params: class_type_params.clone(),
+                    params: Vec::new(),
+                    this_type: None,
+                    return_type: TypeId::ANY,
+                    type_predicate: None,
+                    is_method: false,
+                });
+            }
+            sigs
+        };
+
         // Process all static class members
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -302,6 +365,7 @@ impl<'a> CheckerState<'a> {
                                 }),
                                 &inherited_static_props,
                                 &all_static_member_names,
+                                &rough_construct_signatures,
                             );
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                         }
@@ -407,6 +471,7 @@ impl<'a> CheckerState<'a> {
                             None,
                             &inherited_static_props,
                             &all_static_member_names,
+                            &rough_construct_signatures,
                         );
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
@@ -480,6 +545,7 @@ impl<'a> CheckerState<'a> {
                                     None,
                                     &inherited_static_props,
                                     &all_static_member_names,
+                                    &rough_construct_signatures,
                                 );
                                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
                             }
@@ -1340,6 +1406,7 @@ impl<'a> CheckerState<'a> {
         extra_property: Option<PropertyInfo>,
         inherited_static_props: &[PropertyInfo],
         all_static_member_names: &[Atom],
+        construct_signatures: &[CallSignature],
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let mut partial_ctor_props: Vec<PropertyInfo> = properties.values().cloned().collect();
@@ -1438,7 +1505,7 @@ impl<'a> CheckerState<'a> {
 
         factory.callable(CallableShape {
             call_signatures: Vec::new(),
-            construct_signatures: Vec::new(),
+            construct_signatures: construct_signatures.to_vec(),
             properties: partial_ctor_props,
             string_index: static_string_index.clone(),
             number_index: static_number_index.clone(),

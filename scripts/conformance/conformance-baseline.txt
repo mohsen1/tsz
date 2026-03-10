@@ -235,7 +235,7 @@ FAIL TypeScript/tests/cases/compiler/emitMemberAccessExpression.ts | expected:[]
 FAIL TypeScript/tests/cases/compiler/emitSkipsThisWithRestParameter.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[]
+FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/enumAssignmentCompat3.ts | expected:[TS2322] actual:[TS2322]
@@ -642,7 +642,6 @@ FAIL TypeScript/tests/cases/compiler/moduleAndInterfaceWithSameName.ts | expecte
 FAIL TypeScript/tests/cases/compiler/moduleAsBaseType.ts | expected:[TS2708,TS2709] actual:[TS2708,TS2709]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit1.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit2.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule1.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
@@ -1523,7 +1522,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/importDeclarations/circu
 FAIL TypeScript/tests/cases/conformance/internalModules/importDeclarations/invalidImportAliasIdentifiers.ts | expected:[TS2503,TS2564,TS2702] actual:[TS2564]
 FAIL TypeScript/tests/cases/conformance/internalModules/importDeclarations/shadowedInternalModule.ts | expected:[TS2437,TS2438,TS2440,TS2564] actual:[TS2437,TS2438,TS2440,TS2564]
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7027]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag11.ts | expected:[TS1223] actual:[]
@@ -5569,6 +5568,7 @@ PASS TypeScript/tests/cases/compiler/moduleAssignmentCompat3.ts
 PASS TypeScript/tests/cases/compiler/moduleAssignmentCompat4.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationCollidingNamesInAugmentation1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDisallowedExtensions.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDuringSyntheticDefaultCheck.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts
@@ -10404,7 +10404,6 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxReactEmitWhitespace2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution17.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadChildren.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadInvalidType.tsx
-PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments1.tsx
