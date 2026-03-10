@@ -1674,14 +1674,24 @@ impl<'a> CheckerState<'a> {
 
         let flags = symbol.flags;
 
-        // Namespaces are values — always include them
-        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+        // If the symbol has VALUE flag, check for the special case of modules.
+        // Our binder always sets VALUE_MODULE | NAMESPACE_MODULE for all
+        // modules. We need to check if the module is actually instantiated.
+        if (flags & symbol_flags::VALUE) != 0 {
+            // For module/namespace symbols, check if all exports are type-only.
+            // An uninstantiated module has no runtime value even with VALUE_MODULE.
+            if (flags & symbol_flags::VALUE_MODULE) != 0
+                && (flags & symbol_flags::NAMESPACE_MODULE) != 0
+                && self.is_module_uninstantiated(sym_id)
+            {
+                return true;
+            }
             return false;
         }
 
-        // If the symbol has VALUE flag, it has a runtime value
-        if (flags & symbol_flags::VALUE) != 0 {
-            return false;
+        // NAMESPACE_MODULE without VALUE_MODULE
+        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+            return true;
         }
 
         // If the symbol has TYPE flag but no VALUE flag, it's type-only
@@ -1699,18 +1709,66 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(target)
                     .or_else(|| self.ctx.binder.get_symbol_with_libs(target, &lib_binders));
                 if let Some(target_sym) = target_sym {
-                    let target_flags = target_sym.flags;
-                    if (target_flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+                    let tf = target_sym.flags;
+                    if (tf & symbol_flags::VALUE) != 0 {
+                        // Check uninstantiated module in alias target too
+                        if (tf & symbol_flags::VALUE_MODULE) != 0
+                            && (tf & symbol_flags::NAMESPACE_MODULE) != 0
+                            && self.is_module_uninstantiated(target)
+                        {
+                            return true;
+                        }
                         return false;
                     }
-                    let has_value = (target_flags & symbol_flags::VALUE) != 0;
-                    let has_type = (target_flags & symbol_flags::TYPE) != 0;
-                    return has_type && !has_value;
+                    if (tf & symbol_flags::NAMESPACE_MODULE) != 0 {
+                        return true;
+                    }
+                    return (tf & symbol_flags::TYPE) != 0;
                 }
             }
         }
 
         false
+    }
+
+    /// Check if a module/namespace symbol is uninstantiated — i.e., all of its
+    /// exports are type-only (interfaces, type aliases, uninstantiated namespaces).
+    /// Our binder always sets `VALUE_MODULE` | `NAMESPACE_MODULE` for all modules,
+    /// so we check the exports to determine the actual instantiation state.
+    fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::symbol_flags;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        let Some(exports) = &symbol.exports else {
+            // No exports → uninstantiated
+            return true;
+        };
+        for (_, &export_sym_id) in exports.iter() {
+            let export_sym = self.get_cross_file_symbol(export_sym_id).or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(export_sym_id, &lib_binders)
+            });
+            let Some(export_sym) = export_sym else {
+                continue;
+            };
+            let ef = export_sym.flags;
+            // Has a non-module value → instantiated
+            if (ef & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)) != 0 {
+                return false;
+            }
+            // Nested module: recursively check
+            if (ef & symbol_flags::VALUE_MODULE) != 0
+                && !self.is_module_uninstantiated(export_sym_id) {
+                    return false;
+                }
+        }
+        true
     }
 
     /// Check if a named export from a module was reached through a `export type *` wildcard
