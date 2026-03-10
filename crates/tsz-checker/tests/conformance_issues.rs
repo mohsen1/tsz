@@ -96,7 +96,7 @@ const e1: X.Foo | boolean = Z.Foo.A;
         .expect("expected TS2322 for assigning computed enum member into X.Foo | boolean");
 
     assert!(
-        message.contains("boolean | X.Foo"),
+        message.contains("Type 'Foo.A' is not assignable to type 'boolean | Foo'."),
         "Expected enum union display to collapse to the enum name. Actual diagnostics: {diagnostics:#?}"
     );
 }
