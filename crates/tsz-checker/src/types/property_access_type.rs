@@ -113,6 +113,19 @@ impl<'a> CheckerState<'a> {
                 && let Some(exports) = base_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(property_name)
             {
+                // TS1361/TS1362: Check if the base identifier is a type-only import.
+                // resolve_identifier follows aliases, so base_sym_id is the target enum,
+                // not the local import binding. Check the local symbol in file_locals.
+                if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
+                    && self.alias_resolves_to_type_only(local_sym_id)
+                {
+                    if let Some(base_node) = self.ctx.arena.get(access.expression)
+                        && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+                    {
+                        self.error_type_only_value_at(&base_ident.escaped_text, access.expression);
+                    }
+                    return TypeId::ERROR;
+                }
                 // TS2450: Check if enum is used before its declaration (TDZ violation).
                 // Only non-const enums are flagged (const enums are always hoisted).
                 if let Some(base_node) = self.ctx.arena.get(access.expression)
