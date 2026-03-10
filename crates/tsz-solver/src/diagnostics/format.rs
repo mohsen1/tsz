@@ -491,7 +491,20 @@ impl<'a> TypeFormatter<'a> {
     fn format_literal(&mut self, lit: &LiteralValue) -> String {
         match lit {
             LiteralValue::String(s) => format!("\"{}\"", self.atom(*s)),
-            LiteralValue::Number(n) => format!("{}", n.0),
+            LiteralValue::Number(n) => {
+                let v = n.0;
+                if v.is_infinite() {
+                    if v.is_sign_positive() {
+                        "Infinity".to_string()
+                    } else {
+                        "-Infinity".to_string()
+                    }
+                } else if v.is_nan() {
+                    "NaN".to_string()
+                } else {
+                    format!("{v}")
+                }
+            }
             LiteralValue::BigInt(b) => format!("{}n", self.atom(*b)),
             LiteralValue::Boolean(b) => if *b { "true" } else { "false" }.to_string(),
         }
@@ -1428,6 +1441,12 @@ mod tests {
         assert_eq!(fmt.format(db.literal_number(-1.0)), "-1");
         assert_eq!(fmt.format(db.literal_number(3.15)), "3.15");
         assert_eq!(fmt.format(db.literal_number(1e10)), "10000000000");
+        assert_eq!(fmt.format(db.literal_number(f64::INFINITY)), "Infinity");
+        assert_eq!(
+            fmt.format(db.literal_number(f64::NEG_INFINITY)),
+            "-Infinity"
+        );
+        assert_eq!(fmt.format(db.literal_number(f64::NAN)), "NaN");
     }
 
     #[test]
