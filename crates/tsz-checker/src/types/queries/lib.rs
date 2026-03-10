@@ -526,6 +526,64 @@ impl<'a> CheckerState<'a> {
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                     }
+
+                    // Follow named re-exports: `export { A } from './other'`
+                    if let Some(file_reexports) = target_binder.reexports.get(file_name)
+                        && let Some((source_module, original_name)) =
+                            file_reexports.get(export_name)
+                    {
+                        let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
+                        if let Some(reexport_target_idx) = self
+                            .ctx
+                            .resolve_import_target_from_file(target_idx, source_module)
+                            && let Some(reexport_binder) =
+                                self.ctx.get_binder_for_file(reexport_target_idx)
+                        {
+                            let reexport_arena =
+                                self.ctx.get_arena_for_file(reexport_target_idx as u32);
+                            if let Some(reexport_file) =
+                                reexport_arena.source_files.first().map(|f| &f.file_name)
+                                && let Some(re_exports) =
+                                    reexport_binder.module_exports.get(reexport_file)
+                                && let Some(target_sym_id) = re_exports.get(name_to_lookup)
+                            {
+                                self.ctx
+                                    .cross_file_symbol_targets
+                                    .borrow_mut()
+                                    .insert(target_sym_id, reexport_target_idx);
+                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                            }
+                        }
+                    }
+
+                    // Follow wildcard re-exports: `export * from './other'`
+                    // This resolves imports through chains like:
+                    //   g.ts: import { A } from './f'
+                    //   f.ts: export * from './e'  (where e.ts exports A)
+                    if let Some(source_modules) = target_binder.wildcard_reexports.get(file_name) {
+                        let source_modules = source_modules.clone();
+                        for source_module in &source_modules {
+                            if let Some(wc_target_idx) = self
+                                .ctx
+                                .resolve_import_target_from_file(target_idx, source_module)
+                                && let Some(wc_binder) = self.ctx.get_binder_for_file(wc_target_idx)
+                            {
+                                let wc_arena = self.ctx.get_arena_for_file(wc_target_idx as u32);
+                                if let Some(wc_file) =
+                                    wc_arena.source_files.first().map(|f| &f.file_name)
+                                    && let Some(wc_exports) = wc_binder.module_exports.get(wc_file)
+                                    && let Some(target_sym_id) = wc_exports.get(export_name)
+                                {
+                                    self.ctx
+                                        .cross_file_symbol_targets
+                                        .borrow_mut()
+                                        .insert(target_sym_id, wc_target_idx);
+                                    return self
+                                        .resolve_alias_symbol(target_sym_id, visited_aliases);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // For ES6 imports, if we can't find the export, return the alias symbol itself

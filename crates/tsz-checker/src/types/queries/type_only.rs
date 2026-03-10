@@ -380,6 +380,15 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+            // Check if the target module has `export = X` where X is a type-only
+            // import. This propagates type-only status through `export =` chains:
+            //   // b.ts: import type * as ns from './a'; export = ns;
+            //   // d.ts: import types from './b';         → type-only
+            //   // e.ts: import types = require('./b');    → type-only
+            //   // f.ts: import * as types from './b';    → type-only
+            if self.is_module_export_equals_type_only(module_specifier) {
+                return true;
+            }
             // Namespace imports always create a value (the module namespace object),
             // regardless of whether internal exports are type-only. Don't walk the
             // alias chain for namespace bindings — individual type-only members
@@ -609,6 +618,66 @@ impl<'a> CheckerState<'a> {
             export_name,
             &mut visited,
         )
+    }
+
+    /// Check if a module has `export = X` where X is a type-only import.
+    /// This propagates type-only status through `export =` chains, e.g.:
+    ///   `import type * as ns from './a'; export = ns;`
+    /// Any import from such a module inherits the type-only status.
+    pub(crate) fn is_module_export_equals_type_only(&self, module_specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name) else {
+            return false;
+        };
+        let Some(exports) = target_binder.module_exports.get(file_name) else {
+            return false;
+        };
+        let Some(export_eq_sym_id) = exports.get("export=") else {
+            return false;
+        };
+
+        let lib_binders = self.get_lib_binders();
+
+        // Check the export= symbol in the main binder (merged arena)
+        if let Some(eq_sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_eq_sym_id, &lib_binders)
+        {
+            if eq_sym.is_type_only {
+                return true;
+            }
+            // Follow the alias: if export= points to a type-only import, propagate
+            if eq_sym.flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(resolved) = self.resolve_alias_symbol(export_eq_sym_id, &mut visited) {
+                    // Check any intermediate alias in the chain
+                    for &alias_id in &visited {
+                        if let Some(alias_sym) =
+                            self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
+                            && alias_sym.is_type_only
+                        {
+                            return true;
+                        }
+                    }
+                    // Check the final target
+                    if let Some(target_sym) =
+                        self.ctx.binder.get_symbol_with_libs(resolved, &lib_binders)
+                        && target_sym.is_type_only
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Resolve a module specifier from a given source file, then check if

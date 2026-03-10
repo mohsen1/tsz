@@ -1354,9 +1354,13 @@ impl<'a> CheckerState<'a> {
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
+                        let display_module_name = self.resolve_namespace_display_module_name(
+                            &exports_table,
+                            &module_specifier,
+                        );
                         self.ctx
                             .namespace_module_names
-                            .insert(namespace_type, module_specifier.to_string());
+                            .insert(namespace_type, display_module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
                                 return (export_equals_type, Vec::new());

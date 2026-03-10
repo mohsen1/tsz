@@ -290,6 +290,67 @@ impl<'a> CheckerState<'a> {
             return Some(TypeOnlyKind::Export);
         }
 
+        // Check for type-only propagation through `export =` chains.
+        // When a module does `import type * as ns from './a'; export = ns;`,
+        // any import from that module should inherit the type-only status.
+        // This handles: `import X from './b'`, `import X = require('./b')`,
+        // and `import * as X from './b'` where b has `export = type_only_ns`.
+        for &alias_sym_id in &visited {
+            let symbol = match self
+                .ctx
+                .binder
+                .get_symbol_with_libs(alias_sym_id, &lib_binders)
+            {
+                Some(s) => s,
+                None => continue,
+            };
+            if let Some(module_specifier) = symbol.import_module.as_deref()
+                && let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            {
+                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name)
+                    && let Some(exports) = target_binder.module_exports.get(file_name)
+                    && let Some(export_eq_sym) = exports.get("export=")
+                {
+                    // Check if the export= symbol itself is type-only
+                    if let Some(eq_sym) = target_binder.get_symbol(export_eq_sym) {
+                        if eq_sym.is_type_only {
+                            return Some(TypeOnlyKind::Import);
+                        }
+                        // Also check if the export= symbol is an alias that
+                        // resolves to a type-only import
+                        if eq_sym.flags & symbol_flags::ALIAS != 0
+                            && let Some(ref eq_import_module) = eq_sym.import_module
+                        {
+                            let eq_name = eq_sym
+                                .import_name
+                                .as_deref()
+                                .unwrap_or(&eq_sym.escaped_name);
+                            let is_ns = eq_sym.import_name.is_none()
+                                || eq_sym.import_name.as_deref() == Some("*");
+                            // For namespace imports, check the main binder's
+                            // merged symbol for is_type_only
+                            if is_ns {
+                                if let Some(main_sym) = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(export_eq_sym, &lib_binders)
+                                    && main_sym.is_type_only
+                                {
+                                    return Some(TypeOnlyKind::Import);
+                                }
+                            } else if self
+                                .is_export_type_only_across_binders(eq_import_module, eq_name)
+                            {
+                                return Some(TypeOnlyKind::Import);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 

@@ -1873,3 +1873,34 @@ fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId
     // compare against those constants — no type data inspection required.
     literal_type == TypeId::BOOLEAN_TRUE || literal_type == TypeId::BOOLEAN_FALSE
 }
+
+impl<'a> CheckerState<'a> {
+    /// Resolve the display module name for a namespace type's `typeof import("...")`.
+    /// When a module has `export = ns` where `ns` is a namespace import from
+    /// another module, returns that original module's specifier instead of the
+    /// intermediate module.
+    pub(crate) fn resolve_namespace_display_module_name(
+        &self,
+        exports_table: &tsz_binder::SymbolTable,
+        fallback: &str,
+    ) -> String {
+        exports_table
+            .get("export=")
+            .and_then(|export_eq_sym| {
+                let lib_binders = self.get_lib_binders();
+                let sym = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(export_eq_sym, &lib_binders)
+                    .or_else(|| self.get_cross_file_symbol(export_eq_sym))?;
+                let is_ns_import =
+                    sym.import_name.is_none() || sym.import_name.as_deref() == Some("*");
+                if is_ns_import {
+                    sym.import_module.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| fallback.to_string())
+    }
+}
