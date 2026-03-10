@@ -1194,13 +1194,17 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::NAMED_IMPORTS
                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                         | syntax_kind_ext::IMPORT_DECLARATION
+                                        // Type aliases live in the type declaration space
+                                        // and do not conflict with value imports.
+                                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                        // Interface declarations are also type-only and
+                                        // do not conflict with value imports.
+                                        | syntax_kind_ext::INTERFACE_DECLARATION
                                 ) {
                                     return false;
                                 }
-                                // Any non-import local declaration conflicts with a
-                                // value import. tsc emits TS2440 even when the local is
-                                // a type alias or non-instantiated namespace, as long as
-                                // the import itself has value semantics.
+                                // Non-import, non-type local declarations (var, function,
+                                // class, namespace, enum) conflict with value imports.
                                 true
                             } else {
                                 false
@@ -1219,6 +1223,17 @@ impl<'a> CheckerState<'a> {
                                     // Skip if the other symbol is purely an alias (another import)
                                     if (other_sym.flags & symbol_flags::ALIAS) != 0
                                         && (other_sym.flags & !symbol_flags::ALIAS) == 0
+                                    {
+                                        continue;
+                                    }
+                                    // Skip type-only symbols (type aliases, interfaces) — they
+                                    // live in the type declaration space and don't conflict
+                                    // with value imports.
+                                    let type_only_flags = symbol_flags::TYPE_ALIAS
+                                        | symbol_flags::INTERFACE
+                                        | symbol_flags::TYPE_PARAMETER;
+                                    if (other_sym.flags & type_only_flags) != 0
+                                        && (other_sym.flags & symbol_flags::VALUE) == 0
                                     {
                                         continue;
                                     }
