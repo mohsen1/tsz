@@ -319,7 +319,14 @@ impl<'a> CheckerState<'a> {
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
                 if !self.is_valid_in_operator_rhs(right_type) {
-                    let _ = self.check_assignable_or_report(right_type, TypeId::OBJECT, right_idx);
+                    // Route through the check_assignable_or_report(...) gateway family
+                    // so computation-layer mismatches stay on the centralized path.
+                    let _ = self.check_assignable_or_report_at_exact_anchor(
+                        right_type,
+                        TypeId::OBJECT,
+                        right_idx,
+                        right_idx,
+                    );
                 }
 
                 type_stack.push(TypeId::BOOLEAN);

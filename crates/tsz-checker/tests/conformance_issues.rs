@@ -37,6 +37,17 @@ fn compile_and_get_diagnostics_named(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
+    compile_and_get_raw_diagnostics_named(file_name, source, options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+fn compile_and_get_raw_diagnostics_named(
+    file_name: &str,
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<tsz_common::diagnostics::Diagnostic> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -54,12 +65,7 @@ fn compile_and_get_diagnostics_named(
 
     checker.check_source_file(root);
 
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    checker.ctx.diagnostics
 }
 
 /// Helper to check if specific error codes are present
@@ -7534,4 +7540,31 @@ function f55<T, K extends keyof T>(obj: T, key: K) {
         }),
         "Expected `in` RHS keyed generic indexed access to error as object-incompatible.\nGot: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_in_operator_generic_indexed_access_anchors_at_rhs_expression() {
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+function f54<T>(obj: T, key: keyof T) {
+    const b = "foo" in obj[key];
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'T[keyof T]' is not assignable to type 'object'")
+        })
+        .expect("expected TS2322 for generic indexed-access in-operator RHS");
+
+    assert_eq!(ts2322.start, 64, "Expected TS2322 to anchor at `obj[key]`.");
 }
