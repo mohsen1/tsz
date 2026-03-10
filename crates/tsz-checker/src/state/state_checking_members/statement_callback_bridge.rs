@@ -1076,23 +1076,25 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // TS2748: property access on ambient const enum (e.g. `F.A;`)
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(expr_node) {
-                let left_idx = access.expression;
-                if let Some(left_node) = self.ctx.arena.get(left_idx)
-                    && left_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
-                        && self.is_ambient_const_enum_symbol(sym_id) {
-                            let msg = crate::diagnostics::format_message(
+            && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+        {
+            let left_idx = access.expression;
+            if let Some(left_node) = self.ctx.arena.get(left_idx)
+                && left_node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
+                && self.is_ambient_const_enum_symbol(sym_id)
+            {
+                let msg = crate::diagnostics::format_message(
                                 crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
                                 &["verbatimModuleSyntax"],
                             );
-                            self.error_at_node(
+                self.error_at_node(
                                 expr_idx,
                                 &msg,
                                 crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
                             );
-                        }
             }
+        }
     }
 
     fn check_await_expression(&mut self, expr_idx: NodeIndex) {
