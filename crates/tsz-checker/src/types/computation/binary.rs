@@ -1134,7 +1134,9 @@ impl<'a> CheckerState<'a> {
                             // Don't emit errors if either operand is ERROR - prevents cascading errors
                             if left != TypeId::ERROR && right != TypeId::ERROR {
                                 // For relational ops, use widened types in error messages
-                                // (matching tsc). For equality ops, use original types.
+                                // (matching tsc: enum members show as 'number', not 'E').
+                                // For equality/arithmetic ops, use original types so
+                                // widen_type_for_operator_display can preserve enum names.
                                 let (err_left, err_right) =
                                     if matches!(op_str, "<" | ">" | "<=" | ">=") {
                                         (cmp_left, cmp_right)

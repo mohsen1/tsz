@@ -340,16 +340,14 @@ impl<'a> CheckerState<'a> {
                 self.widen_enum_member_type(r),
             )
         } else {
-            // Widen literal types to base types for all other operator errors
+            // Widen literal types to base types for all other operator errors.
+            // Important: try enum member widening BEFORE get_base_type_for_comparison,
+            // because the latter unwraps Enum types to their structural member type
+            // (e.g., Enum → number), losing the enum identity. tsc displays enum
+            // names (e.g., 'E') in operator error messages, not the base type.
             (
-                self.widen_enum_member_type(tsz_solver::get_base_type_for_comparison(
-                    self.ctx.types,
-                    left_type,
-                )),
-                self.widen_enum_member_type(tsz_solver::get_base_type_for_comparison(
-                    self.ctx.types,
-                    right_type,
-                )),
+                self.widen_type_for_operator_display(left_type),
+                self.widen_type_for_operator_display(right_type),
             )
         };
         let mut formatter = self.ctx.create_type_formatter();
@@ -510,5 +508,34 @@ impl<'a> CheckerState<'a> {
                 &[op, &left_str, &right_str],
             );
         }
+    }
+
+    /// Widen a type for display in operator error messages.
+    ///
+    /// tsc displays enum names (e.g., `'E'`) rather than their structural base
+    /// type (`'number'`). We must try enum member widening BEFORE
+    /// `get_base_type_for_comparison`, because the latter unwraps
+    /// `TypeData::Enum` to its member union (losing the enum identity).
+    fn widen_type_for_operator_display(&mut self, type_id: TypeId) -> TypeId {
+        // 1. Try widening enum members to their parent enum.
+        //    Both parent enums (E) and members (E.A) are TypeData::Enum —
+        //    widen_enum_member_type correctly handles both: members widen to
+        //    parent, parent enums return unchanged.
+        let widened = self.widen_enum_member_type(type_id);
+        if widened != type_id {
+            return widened;
+        }
+
+        // 2. If it's a parent Enum type (widen_enum_member_type returned it
+        //    unchanged because it has no parent), keep for display.
+        if matches!(
+            self.ctx.types.lookup(type_id),
+            Some(tsz_solver::TypeData::Enum(_, _))
+        ) {
+            return type_id;
+        }
+
+        // 3. Fall back to standard literal-to-base-type widening
+        tsz_solver::get_base_type_for_comparison(self.ctx.types, type_id)
     }
 }
