@@ -102,12 +102,36 @@ impl TypeSubstitution {
     }
 
     /// Check if this substitution is an identity mapping (every type parameter maps to itself).
+    ///
+    /// **WARNING**: This check only verifies name equality, which is insufficient when
+    /// different type parameters share the same name (e.g., alias `T` vs function
+    /// `T extends object`). Callers that have access to the original `TypeParamInfo`
+    /// (like `instantiate_generic`) should use `is_identity_for` instead.
     pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
         self.map.iter().all(|(&name, &type_id)| {
             matches!(
                 interner.lookup(type_id),
                 Some(TypeData::TypeParameter(info)) if info.name == name
             )
+        })
+    }
+
+    /// Check if this substitution is an identity mapping against specific type parameters.
+    ///
+    /// Unlike `is_identity`, this correctly handles same-name type parameters by
+    /// comparing the interned TypeId of each declared type parameter against the
+    /// substituted value. This is the only correct identity check when the body
+    /// being instantiated may use different type parameters than the substitution source.
+    pub fn is_identity_for(
+        &self,
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+    ) -> bool {
+        type_params.iter().all(|param| {
+            match self.map.get(&param.name) {
+                Some(&type_id) => interner.type_param(param.clone()) == type_id,
+                None => true, // unmapped params don't change anything
+            }
         })
     }
 
@@ -326,6 +350,19 @@ impl<'a> TypeInstantiator<'a> {
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
         // Check if we're already processing this type (cycle detection)
         if let Some(&cached) = self.visiting.get(&type_id) {
+            if cached != type_id
+                || matches!(
+                    self.interner.lookup(type_id),
+                    Some(TypeData::TypeParameter(_))
+                )
+            {
+                tracing::trace!(
+                    type_id = type_id.0,
+                    cached = cached.0,
+                    key = ?self.interner.lookup(type_id),
+                    "instantiate_inner: VISITING CACHE HIT"
+                );
+            }
             return cached;
         }
 
@@ -386,9 +423,19 @@ impl<'a> TypeInstantiator<'a> {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
                 if self.is_shadowed(info.name) {
+                    tracing::trace!(
+                        name = ?self.interner.resolve_atom_ref(info.name),
+                        shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                        "instantiate TypeParameter: SHADOWED"
+                    );
                     return self.interner.intern(key.clone());
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
+                    tracing::trace!(
+                        name = ?self.interner.resolve_atom_ref(info.name),
+                        substituted = substituted.0,
+                        "instantiate TypeParameter: SUBSTITUTED"
+                    );
                     substituted
                 } else {
                     // No direct substitution found. If the type parameter has a constraint
@@ -821,6 +868,14 @@ impl<'a> TypeInstantiator<'a> {
                     }
                 }
 
+                tracing::trace!(
+                    tp_name = ?self.interner.resolve_atom_ref(mapped.type_param.name),
+                    constraint = mapped.constraint.0,
+                    constraint_key = ?self.interner.lookup(mapped.constraint),
+                    shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                    subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
+                    "instantiate Mapped: about to instantiate constraint"
+                );
                 let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
                 let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
@@ -829,6 +884,15 @@ impl<'a> TypeInstantiator<'a> {
                 let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                tracing::trace!(
+                    old_constraint = mapped.constraint.0,
+                    new_constraint = new_constraint.0,
+                    new_constraint_key = ?self.interner.lookup(new_constraint),
+                    old_template = mapped.template.0,
+                    new_template = new_template.0,
+                    "instantiate Mapped: result"
+                );
 
                 // If the mapped type is unchanged after substitution (e.g., because
                 // the mapped type's own type parameter shadowed the outer substitution),
@@ -840,6 +904,7 @@ impl<'a> TypeInstantiator<'a> {
                     && new_param_default == mapped.type_param.default;
 
                 if unchanged {
+                    tracing::trace!("instantiate Mapped: UNCHANGED, returning original");
                     return self.interner.mapped((*mapped).clone());
                 }
 
@@ -936,7 +1001,20 @@ impl<'a> TypeInstantiator<'a> {
             // KeyOf: instantiate the operand and evaluate immediately
             // Task #46: Meta-type reduction for O(1) equality
             TypeData::KeyOf(operand) => {
+                tracing::trace!(
+                    operand = operand.0,
+                    operand_key = ?self.interner.lookup(*operand),
+                    subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
+                    "instantiate KeyOf: about to instantiate operand"
+                );
                 let inst_operand = self.instantiate(*operand);
+                tracing::trace!(
+                    operand = operand.0,
+                    inst_operand = inst_operand.0,
+                    inst_operand_key = ?self.interner.lookup(inst_operand),
+                    has_type_params = crate::visitor::contains_type_parameters(self.interner, inst_operand),
+                    "instantiate KeyOf: result"
+                );
                 // Don't eagerly evaluate if the operand still contains type parameters.
                 // This prevents premature evaluation of `keyof T` where T is an inference
                 // placeholder (e.g. during compute_contextual_types), which would resolve
@@ -1116,6 +1194,10 @@ pub fn instantiate_type_with_infer(
 }
 
 /// Convenience function for instantiating a generic type with type arguments.
+///
+/// Uses `is_identity_for` instead of the name-only `is_identity` check to
+/// correctly handle same-name type parameters from different scopes (e.g.,
+/// alias `T` vs function `T extends object`).
 pub fn instantiate_generic(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1126,7 +1208,16 @@ pub fn instantiate_generic(
         return type_id;
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
-    instantiate_type(interner, type_id, &substitution)
+    if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, &substitution);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
 }
 
 /// Substitute `ThisType` with a concrete type throughout a type.

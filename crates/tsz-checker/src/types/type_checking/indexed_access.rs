@@ -706,6 +706,20 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        // When the constraint was resolved from AST, also check if it represents
+        // a keyof for the current object type (catches deferred keyof patterns that
+        // aren't directly assignable to the computed keyof).
+        if let Some(constraint) = index_constraint {
+            let evaluated_constraint = self.evaluate_type_with_env(constraint);
+            if self.is_keyof_for_current_object(
+                evaluated_constraint,
+                object_type,
+                object_type_for_check,
+            ) || self.is_keyof_for_current_object(constraint, object_type, object_type_for_check)
+            {
+                return;
+            }
+        }
         // Follow the constraint chain transitively (P -> K -> keyof T) so that
         // e.g. T[P] where P extends K extends keyof T doesn't false-positive.
         // At each level, check assignability to keyof or recognize deferred types.
