@@ -1563,6 +1563,7 @@ fn build_program_with_cache(
                     switch_clause_to_switch: Default::default(),
                     is_external_module: false, // Default to false for missing files
                     expando_properties: Default::default(),
+                    alias_partners: Default::default(),
                 }
             }
         };

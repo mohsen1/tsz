@@ -270,6 +270,40 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
+    /// Resolve a member exported by the target module of an ALIAS symbol.
+    ///
+    /// When an ALIAS symbol's `import_module` holds a relative specifier
+    /// (e.g., `"./Something"`), it must be resolved from the ALIAS's source
+    /// file, not the current file.  This helper uses `cross_file_symbol_targets`
+    /// to find the ALIAS's origin file, resolves the specifier from that file's
+    /// perspective, then looks up the member in the target module's exports.
+    pub fn resolve_alias_import_member(
+        &self,
+        alias_id: tsz_binder::SymbolId,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let source_file_idx = self
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&alias_id)
+            .copied()?;
+        let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
+        let target_binder = self.get_binder_for_file(target_idx)?;
+        let target_arena = self.get_arena_for_file(target_idx as u32);
+        let file_name = &target_arena.source_files.first()?.file_name;
+        // Use the target binder's own re-export resolution (handles
+        // direct exports, named re-exports, and wildcard re-exports).
+        target_binder
+            .resolve_import_with_reexports_type_only(file_name, member_name)
+            .map(|(sym_id, _)| {
+                self.cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+                sym_id
+            })
+    }
+
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {

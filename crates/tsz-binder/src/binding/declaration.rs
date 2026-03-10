@@ -731,7 +731,34 @@ impl BinderState {
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
-            self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+            // Check if an ALIAS (namespace re-export) already occupies this name.
+            // When `export * as X from "..."` comes before `export type X = ...`,
+            // the ALIAS symbol is already in scope. We must create a separate
+            // TYPE_ALIAS symbol and record the partnership so the checker can
+            // resolve type references to the type alias body while value references
+            // go through the namespace alias.
+            let existing_alias_id = self.current_scope.get(name).filter(|id| {
+                self.symbols
+                    .get(*id)
+                    .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
+            });
+            if let Some(alias_id) = existing_alias_id {
+                let sym_id = self
+                    .symbols
+                    .alloc(symbol_flags::TYPE_ALIAS, name.to_string());
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.declarations.push(idx);
+                    sym.is_exported = is_exported;
+                }
+                // TYPE_ALIAS takes current_scope so type references resolve to it
+                self.current_scope.set(name.to_string(), sym_id);
+                self.node_symbols.insert(idx.0, sym_id);
+                self.declare_in_persistent_scope(name.to_string(), sym_id);
+                // Record partnership: TYPE_ALIAS → ALIAS
+                self.alias_partners.insert(sym_id, alias_id);
+            } else {
+                self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+            }
         }
     }
 
