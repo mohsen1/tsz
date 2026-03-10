@@ -124,6 +124,73 @@ impl<'a> CheckerState<'a> {
                 };
                 self.try_elaborate_object_literal_arg_error(paren.expression, expected_return_type)
             }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.try_elaborate_function_block_returns(func.body, expected_return_type)
+            }
+            _ => false,
+        }
+    }
+
+    fn try_elaborate_function_block_returns(
+        &mut self,
+        block_idx: NodeIndex,
+        expected_return_type: TypeId,
+    ) -> bool {
+        let Some(block_node) = self.ctx.arena.get(block_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(block_node) else {
+            return false;
+        };
+
+        let mut elaborated = false;
+        for &stmt_idx in &block.statements.nodes {
+            elaborated |=
+                self.try_elaborate_return_statements_in_stmt(stmt_idx, expected_return_type);
+        }
+        elaborated
+    }
+
+    fn try_elaborate_return_statements_in_stmt(
+        &mut self,
+        stmt_idx: NodeIndex,
+        expected_return_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.ctx.arena.get_return_statement(node) else {
+                    return false;
+                };
+                if ret.expression.is_none() {
+                    return false;
+                }
+                self.try_elaborate_assignment_source_error(ret.expression, expected_return_type)
+            }
+            syntax_kind_ext::BLOCK => {
+                self.try_elaborate_function_block_returns(stmt_idx, expected_return_type)
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.ctx.arena.get_if_statement(node) else {
+                    return false;
+                };
+                let mut elaborated = self.try_elaborate_return_statements_in_stmt(
+                    if_stmt.then_statement,
+                    expected_return_type,
+                );
+                if if_stmt.else_statement.is_some() {
+                    elaborated |= self.try_elaborate_return_statements_in_stmt(
+                        if_stmt.else_statement,
+                        expected_return_type,
+                    );
+                }
+                elaborated
+            }
             _ => false,
         }
     }
@@ -246,6 +313,21 @@ impl<'a> CheckerState<'a> {
             // Get the type of the property value in the object literal
             let source_prop_type = self.get_type_of_node(prop_value_idx);
 
+            if self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                )
+            }) && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
+            {
+                elaborated = true;
+                continue;
+            }
+
             // Skip if types are unresolved
             if source_prop_type == TypeId::ERROR
                 || source_prop_type == TypeId::ANY
@@ -334,6 +416,19 @@ impl<'a> CheckerState<'a> {
             };
 
             let elem_type = self.get_type_of_node(elem_idx);
+
+            if matches!(
+                elem_node.kind,
+                syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::CONDITIONAL_EXPRESSION
+            ) && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
+            {
+                elaborated = true;
+                continue;
+            }
 
             // Skip if types are unresolved
             if elem_type == TypeId::ERROR
