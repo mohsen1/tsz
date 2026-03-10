@@ -229,26 +229,7 @@ impl<'a> CheckerContext<'a> {
 
         // Fallback: look up via SymbolId. Multiple DefIds can map to the same symbol
         // when lib interfaces are referenced from different checker contexts.
-        // Also handle the case where DefId was created from a raw SymbolId by
-        // `interner.reference()` — use the raw value as a SymbolId candidate.
-        let sym_id = self
-            .def_to_symbol
-            .borrow()
-            .get(&def_id)
-            .copied()
-            .or_else(|| {
-                let candidate = tsz_binder::SymbolId(def_id.0);
-                if self.binder.symbols.get(candidate).is_some()
-                    || self
-                        .lib_contexts
-                        .iter()
-                        .any(|lib| lib.binder.symbols.get(candidate).is_some())
-                {
-                    Some(candidate)
-                } else {
-                    None
-                }
-            })?;
+        let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
         for (&other_def, other_params) in params.iter() {
             if other_def != def_id
                 && self

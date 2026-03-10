@@ -1376,15 +1376,30 @@ impl<'a> CheckerState<'a> {
         // Register instance type → DefId in the definition store so the TypeFormatter
         // can display the class name (e.g., "A") instead of expanding structurally
         // (e.g., "{ a: string }"), even across file boundaries.
+        //
+        // Guard: Only register when the symbol is actually a CLASS. In cross-arena
+        // scenarios, get_node_symbol(class_idx) can return a wrong symbol when a lib
+        // arena's class NodeIndex collides with the user file's node-to-symbol mapping
+        // (e.g., a TYPE_ALIAS like SequenceFactory at the same NodeIndex). Registering
+        // class type params under a non-class symbol's DefId causes false TS2314.
         if let Some(sym_id) = current_sym {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ctx
-                .definition_store
-                .register_type_to_def(instance_type, def_id);
-            // Register type parameters so the TypeFormatter can display
-            // generic class names (e.g., "B<T>" instead of just "B").
-            if !class_type_params.is_empty() {
-                self.ctx.insert_def_type_params(def_id, class_type_params);
+            let is_class_symbol = self
+                .get_symbol_globally(sym_id)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::CLASS != 0);
+            if is_class_symbol {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(instance_type, def_id);
+                // Use get_type_params_for_symbol to populate the cache with properly
+                // merged params. For merged class+interface declarations (e.g.,
+                // `declare class C<P, S>` + `interface C<P = {}, S = {}>`), the
+                // class AST alone lacks defaults. get_type_params_for_symbol merges
+                // defaults from all declarations and caches the result, preventing
+                // false TS2314 when the merged type has fewer required args.
+                if !class_type_params.is_empty() {
+                    self.get_type_params_for_symbol(sym_id);
+                }
             }
         }
 
