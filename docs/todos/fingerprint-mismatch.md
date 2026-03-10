@@ -110,7 +110,22 @@ tsz:  "missing properties: lastIndexOf, concat, entries, indexOf, toString, and 
 
 **Fix location:** Property enumeration order in the solver's "missing properties" diagnostic helper.
 
-#### Sub-pattern D: `typeof` vs Structural Display (1 fingerprint, but widespread pattern)
+#### Sub-pattern D: Infinity/NaN Display — DONE
+
+```
+tsc:  "Type 'number' is not assignable to type 'Infinity'."
+tsz:  "Type 'number' is not assignable to type 'inf'."
+```
+
+**Affected tests:** `fakeInfinity1` (1 fingerprint)
+
+**Status: FIXED** (commit `3fb298116` — 2026-03-10)
+
+**Fix:** Rust's `f64::INFINITY` formats as `"inf"` but TypeScript uses `"Infinity"`.
+Added special-case handling in `format_literal()` in `diagnostics/format.rs` to
+display `Infinity`, `-Infinity`, and `NaN` using JavaScript conventions.
+
+#### Sub-pattern E: `typeof` vs Structural Display (1 fingerprint, but widespread pattern)
 
 ```
 tsc:  "Type 'typeof A' is not assignable to type 'new () => A'"
