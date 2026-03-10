@@ -1323,6 +1323,23 @@ impl ParserState {
                     | SyntaxKind::UsingKeyword
                     | SyntaxKind::AwaitKeyword => self
                         .parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers)),
+                    SyntaxKind::EqualsToken => {
+                        // `declare export = expr` or `export declare export = expr`
+                        // tsc reports TS1120: An export assignment cannot have modifiers.
+                        // Error span starts from the first modifier (export if present, else declare).
+                        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        let error_start = all_modifiers
+                            .first()
+                            .and_then(|idx| self.arena.get(*idx))
+                            .map_or(start_pos, |node| node.pos);
+                        self.parse_error_at(
+                            error_start,
+                            self.token_pos() - error_start,
+                            diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                            diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                        );
+                        self.parse_export_assignment(error_start)
+                    }
                     _ => {
                         self.error_declaration_expected();
                         self.parse_expression_statement()
