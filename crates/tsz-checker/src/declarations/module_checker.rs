@@ -1201,45 +1201,46 @@ impl<'a> CheckerState<'a> {
                     {
                         let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                         if let Some(sf) = target_arena.source_files.first()
-                            && let Some(exports) = target_binder.module_exports.get(&sf.file_name) {
-                                if let Some(target_sym_id) = exports.get(export_name) {
-                                    current_binder = target_binder;
-                                    current_file_idx = target_idx;
-                                    current_sym_id = target_sym_id;
-                                    found = true;
-                                } else if let Some(target_sym_id) = exports.get("export=") {
-                                    current_binder = target_binder;
-                                    current_file_idx = target_idx;
-                                    current_sym_id = target_sym_id;
-                                    found = true;
-                                }
+                            && let Some(exports) = target_binder.module_exports.get(&sf.file_name)
+                        {
+                            if let Some(target_sym_id) = exports.get(export_name) {
+                                current_binder = target_binder;
+                                current_file_idx = target_idx;
+                                current_sym_id = target_sym_id;
+                                found = true;
+                            } else if let Some(target_sym_id) = exports.get("export=") {
+                                current_binder = target_binder;
+                                current_file_idx = target_idx;
+                                current_sym_id = target_sym_id;
+                                found = true;
                             }
+                        }
                     }
 
                     // Fall back to binder-level resolution (same-file or merged binder)
                     if !found
                         && let Some(resolved_id) =
                             current_binder.resolve_import_symbol(current_sym_id)
-                        {
-                            current_sym_id = resolved_id;
-                            found = true;
-                        }
+                    {
+                        current_sym_id = resolved_id;
+                        found = true;
+                    }
 
                     // Try current binder's module_exports directly
                     if !found
                         && let Some(exports) = current_binder.module_exports.get(module_name)
-                            && let Some(target_sym_id) = exports.get(export_name)
-                        {
-                            current_sym_id = target_sym_id;
-                            found = true;
-                        }
+                        && let Some(target_sym_id) = exports.get(export_name)
+                    {
+                        current_sym_id = target_sym_id;
+                        found = true;
+                    }
                     if !found
                         && let Some(exports) = current_binder.module_exports.get(module_name)
-                            && let Some(target_sym_id) = exports.get("export=")
-                        {
-                            current_sym_id = target_sym_id;
-                            found = true;
-                        }
+                        && let Some(target_sym_id) = exports.get("export=")
+                    {
+                        current_sym_id = target_sym_id;
+                        found = true;
+                    }
 
                     // Fall back to all_binders for cross-file resolution
                     if !found && let Some(binders) = &self.ctx.all_binders {
