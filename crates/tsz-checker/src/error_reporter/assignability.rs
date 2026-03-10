@@ -942,6 +942,26 @@ impl<'a> CheckerState<'a> {
                         code: reason.diagnostic_code(),
                     });
 
+                    if let Some(nested) = nested_reason
+                        && depth < 5
+                    {
+                        let nested_diag = self.render_failure_reason(
+                            nested,
+                            *source_return,
+                            *target_return,
+                            idx,
+                            depth + 1,
+                        );
+                        diag.related_information.push(DiagnosticRelatedInformation {
+                            file: nested_diag.file,
+                            start: nested_diag.start,
+                            length: nested_diag.length,
+                            message_text: nested_diag.message_text,
+                            category: DiagnosticCategory::Message,
+                            code: nested_diag.code,
+                        });
+                    }
+
                     diag
                 } else {
                     let source_str = self.format_type_diagnostic(*source_return);

@@ -251,6 +251,73 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn direct_diagnostic_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        let is_expression_like = matches!(
+            node.kind,
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::ThisKeyword as u16
+                || k == SyntaxKind::SuperKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::BINARY_EXPRESSION
+                || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                || k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                || k == syntax_kind_ext::AWAIT_EXPRESSION
+                || k == syntax_kind_ext::YIELD_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+        );
+        if !is_expression_like {
+            return None;
+        }
+
+        let parent_idx = self.ctx.arena.get_extended(expr_idx)?.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return Some(expr_idx);
+        };
+
+        if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && let Some(prop) = self.ctx.arena.get_property_assignment(parent_node)
+            && prop.name == expr_idx
+        {
+            return None;
+        }
+
+        if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            && let Some(prop) = self.ctx.arena.get_shorthand_property(parent_node)
+            && prop.name == expr_idx
+        {
+            return None;
+        }
+
+        Some(expr_idx)
+    }
+
     fn declared_type_annotation_text_for_expression(&self, expr_idx: NodeIndex) -> Option<String> {
         fn sanitize_type_annotation_text(text: String) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
@@ -317,6 +384,36 @@ impl<'a> CheckerState<'a> {
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
             return display;
+        }
+
+        if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
+            if self.is_literal_sensitive_assignment_target(target)
+                && let Some(display) = self.literal_expression_display(expr_idx)
+            {
+                return display;
+            }
+
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            let expr_type = self.get_type_of_node(expr_idx);
+            if expr_type != TypeId::ERROR {
+                let display_type =
+                    if self.should_widen_enum_member_assignment_source(expr_type, target) {
+                        self.widen_enum_member_type(expr_type)
+                    } else {
+                        expr_type
+                    };
+                let display_type =
+                    if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
+                        let evaluated = self.evaluate_type_for_assignability(display_type);
+                        tsz_solver::widening::widen_type(self.ctx.types, evaluated)
+                    } else {
+                        tsz_solver::widening::widen_type(self.ctx.types, display_type)
+                    };
+                return self.format_type_for_assignability_message(display_type);
+            }
         }
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
