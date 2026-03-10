@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Implementation of `StatementCheckCallbacks` for `CheckerState`.
@@ -820,8 +821,51 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     }
                 }
 
-                // TS1284/TS1285: export default VMS checks
-                if export_decl.is_default_export {
+                // CJS+VMS checks for all exports (TS1287/TS1295)
+                // These take priority over ESM-specific VMS checks.
+                // TSC skips these for .d.ts files.
+                let mut cjs_vms_emitted = false;
+                if self.ctx.compiler_options.verbatim_module_syntax
+                    && !self.ctx.is_declaration_file()
+                    && !export_decl.is_type_only
+                    && !self.is_inside_namespace_declaration(export_idx)
+                {
+                    let clause_kind = self.ctx.arena.get(clause_idx).map(|n| n.kind);
+                    let clause_is_value_decl = clause_kind.is_some_and(|k| {
+                        k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::VARIABLE_STATEMENT
+                            || k == syntax_kind_ext::ENUM_DECLARATION
+                    });
+                    let clause_is_type_decl = clause_kind.is_some_and(|k| {
+                        k == syntax_kind_ext::INTERFACE_DECLARATION
+                            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    });
+                    let clause_is_namespace =
+                        clause_kind.is_some_and(|k| k == syntax_kind_ext::MODULE_DECLARATION);
+                    // Type declarations (interface/type alias) are erased —
+                    // no CJS VMS error needed.
+                    // NamedExports (export { ... }) are handled separately by the
+                    // ESM VMS checks below — skip them here.
+                    if clause_is_value_decl {
+                        cjs_vms_emitted =
+                            self.check_verbatim_module_syntax_cjs_export(export_idx, false, true);
+                    } else if clause_is_namespace {
+                        // Namespace with values → TS1287; type-only namespace → skip
+                        let has_values = self.namespace_has_value_declarations(clause_idx);
+                        if has_values {
+                            cjs_vms_emitted = self
+                                .check_verbatim_module_syntax_cjs_export(export_idx, false, true);
+                        }
+                    } else if export_decl.is_default_export && !clause_is_type_decl {
+                        // export default <expr> in CJS → TS1295
+                        cjs_vms_emitted =
+                            self.check_verbatim_module_syntax_cjs_export(export_idx, false, false);
+                    }
+                }
+
+                // TS1284/TS1285: export default VMS checks (ESM mode only)
+                if export_decl.is_default_export && !cjs_vms_emitted {
                     self.check_verbatim_module_syntax_export_default(clause_idx);
                 }
 
@@ -1000,6 +1044,27 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 {
                     self.check_import_alias_duplicates(&statements.nodes);
                 }
+            }
+        }
+    }
+
+    fn check_expression_statement(&mut self, _stmt_idx: NodeIndex, expr_idx: NodeIndex) {
+        // TS1295: dynamic import() in CJS+VMS
+        if self.ctx.compiler_options.verbatim_module_syntax && !self.ctx.is_declaration_file() {
+            let is_import_call = self
+                .ctx
+                .arena
+                .get(expr_idx)
+                .filter(|n| n.kind == syntax_kind_ext::CALL_EXPRESSION)
+                .and_then(|n| self.ctx.arena.get_call_expr(n))
+                .and_then(|call| self.ctx.arena.get(call.expression))
+                .is_some_and(|callee| callee.kind == SyntaxKind::ImportKeyword as u16);
+            if is_import_call && self.is_current_file_commonjs_for_vms() {
+                self.error_at_node(
+                    expr_idx,
+                    crate::diagnostics::diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    crate::diagnostics::diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                );
             }
         }
     }
@@ -1396,6 +1461,69 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Check if a namespace/module declaration contains any value declarations
+    /// (const, let, var, function, class, enum) as opposed to only types.
+    fn namespace_has_value_declarations(&self, module_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(module_idx) else {
+            return false;
+        };
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return false;
+        };
+        if module.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(module.body) else {
+            return false;
+        };
+        // Namespace bodies are ModuleBlock, not Block
+        let stmts = if let Some(module_block) = self.ctx.arena.get_module_block(body_node) {
+            module_block.statements.as_ref().map(|s| s.nodes.as_slice())
+        } else {
+            self.ctx
+                .arena
+                .get_block(body_node)
+                .map(|block| block.statements.nodes.as_slice())
+        };
+        let Some(stmts) = stmts else {
+            return false;
+        };
+        for &stmt_idx in stmts {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION =>
+                {
+                    return true;
+                }
+                // Handle ExportDeclaration wrapping a value declaration
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
+                        let clause_kind = self
+                            .ctx
+                            .arena
+                            .get(export_decl.export_clause)
+                            .map(|n| n.kind);
+                        if clause_kind.is_some_and(|ck| {
+                            ck == syntax_kind_ext::VARIABLE_STATEMENT
+                                || ck == syntax_kind_ext::FUNCTION_DECLARATION
+                                || ck == syntax_kind_ext::CLASS_DECLARATION
+                                || ck == syntax_kind_ext::ENUM_DECLARATION
+                        }) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// TS18033: Check that computed enum member initializers are assignable to `number`.
     ///
     /// For non-const, non-ambient enums, when a member initializer doesn't evaluate

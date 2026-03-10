@@ -615,6 +615,30 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1484: import X = require("...") where X is a type under VMS.
+        // If the target module only exports a type, the import must use `import type`.
+        if self.ctx.compiler_options.verbatim_module_syntax
+            && !import.is_type_only
+            && !self.ctx.is_declaration_file()
+            && !is_ambient_context
+        {
+            if let Some(ref name) = import_name
+                && let Some(module_spec) = require_module_specifier.as_deref()
+            {
+                if self.is_import_specifier_type_only(module_spec, name) {
+                    let msg = format_message(
+                        crate::diagnostics::diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        stmt_idx,
+                        &msg,
+                        crate::diagnostics::diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                    );
+                }
+            }
+        }
+
         if !self.ctx.report_unresolved_imports {
             return;
         }

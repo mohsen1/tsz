@@ -1401,6 +1401,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a local symbol is purely a type entity.
+    /// Resolves through import chains: if `name` is an imported symbol,
+    /// checks whether the source module's export is type-only.
     fn is_local_symbol_type_only(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -1421,8 +1423,70 @@ impl<'a> CheckerState<'a> {
             if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
                 return true;
             }
+            // If this is an imported symbol, resolve through the import chain
+            // to check if the source export is purely a type.
+            if (sym.flags & symbol_flags::ALIAS) != 0
+                && let Some(ref module_spec) = sym.import_module
+            {
+                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                return self.is_import_specifier_type_only(module_spec, import_name);
+            }
         }
         false
+    }
+
+    /// Determine if the current file is treated as CommonJS.
+    fn is_current_file_commonjs(&self) -> bool {
+        let current_file = &self.ctx.file_name;
+        if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+            return true;
+        }
+        if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+            return false;
+        }
+        if let Some(is_esm) = self.ctx.file_is_esm {
+            return !is_esm;
+        }
+        !self.ctx.compiler_options.module.is_es_module()
+    }
+
+    /// TS1295: ESM exports cannot be written in a CommonJS file under verbatimModuleSyntax.
+    /// TS1287: top-level export on value declarations in CJS.
+    /// Returns true if a CJS-specific diagnostic was emitted.
+    pub(crate) fn check_verbatim_module_syntax_cjs_export(
+        &mut self,
+        export_idx: NodeIndex,
+        is_type_only: bool,
+        is_value_export: bool,
+    ) -> bool {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.ctx.compiler_options.verbatim_module_syntax {
+            return false;
+        }
+        if !self.is_current_file_commonjs() {
+            return false;
+        }
+        // Type-only exports are erased, so they're fine in CJS
+        if is_type_only {
+            return false;
+        }
+        if is_value_export {
+            // TS1287: top-level export modifier on value declaration
+            self.error_at_node(
+                export_idx,
+                diagnostic_messages::A_TOP_LEVEL_EXPORT_MODIFIER_CANNOT_BE_USED_ON_VALUE_DECLARATIONS_IN_A_COMMONJS_M,
+                diagnostic_codes::A_TOP_LEVEL_EXPORT_MODIFIER_CANNOT_BE_USED_ON_VALUE_DECLARATIONS_IN_A_COMMONJS_M,
+            );
+        } else {
+            // TS1295: ESM export syntax in CJS
+            self.error_at_node(
+                export_idx,
+                diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+            );
+        }
+        true
     }
 
     /// TS1284/TS1285: export default checks under verbatimModuleSyntax.

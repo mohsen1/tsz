@@ -89,6 +89,12 @@ pub trait StatementCheckCallbacks {
     /// Report unreachable code directly for single statements
     fn report_unreachable_statement(&mut self, stmt_idx: NodeIndex);
 
+    /// Check an expression statement for CJS+VMS import call diagnostics (TS1295).
+    /// Called before normal expression type checking.
+    fn check_expression_statement(&mut self, _stmt_idx: NodeIndex, _expr_idx: NodeIndex) {
+        // Default: no check
+    }
+
     /// TS2407: Check that the right-hand side of a for-in statement is of type 'any',
     /// an object type, or a type parameter.
     fn check_for_in_expression_type(&mut self, expr_type: TypeId, expression: NodeIndex) {
@@ -304,6 +310,8 @@ impl StatementChecker {
                         .map(|e| e.expression)
                 };
                 if let Some(expression) = expr_idx {
+                    // TS1295: Check for dynamic import() in CJS+VMS
+                    state.check_expression_statement(stmt_idx, expression);
                     // TS1359: Check for await expressions outside async function
                     state.check_await_expression(expression);
                     // Then get the type for normal type checking

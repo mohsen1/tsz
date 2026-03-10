@@ -1097,6 +1097,14 @@ impl<'a> CheckerState<'a> {
                     export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
+                        // TS1282/TS1283: VMS checks for export = <type>
+                        if export_data.is_export_equals
+                            && self.ctx.compiler_options.verbatim_module_syntax
+                            && !is_declaration_file
+                        {
+                            self.check_vms_export_equals(export_data.expression);
+                        }
+
                         // TS2714: In ambient context, export assignment expression must be
                         // an identifier or qualified name
                         let is_ambient =
@@ -1517,6 +1525,55 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS1295: In CJS+VMS mode, ESM import syntax is forbidden entirely.
+        // Emit TS1295 on the import clause and skip ESM-specific checks.
+        // TSC skips this check for .d.ts files.
+        if self.is_current_file_commonjs_for_vms() && !self.ctx.is_declaration_file() {
+            // TSC positions the error at the binding NAME:
+            // - Default import `import X from ...` → at X
+            // - Namespace import `import * as X from ...` → at X
+            // - Named imports `import { X } from ...` → at X (first specifier name)
+            let error_node = if clause.named_bindings.is_some() {
+                if let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) {
+                    if let Some(ns_import) = self.ctx.arena.get_named_imports(bindings_node) {
+                        if ns_import.name.is_some() {
+                            // Namespace import: use the name (esmy2 in `* as esmy2`)
+                            ns_import.name
+                        } else if let Some(&first_spec) = ns_import.elements.nodes.first() {
+                            // Named imports: use first specifier's local name
+                            if let Some(spec_node) = self.ctx.arena.get(first_spec)
+                                && let Some(spec) = self.ctx.arena.get_specifier(spec_node)
+                            {
+                                if spec.name.is_some() {
+                                    spec.name
+                                } else {
+                                    spec.property_name
+                                }
+                            } else {
+                                clause.named_bindings
+                            }
+                        } else {
+                            clause.named_bindings
+                        }
+                    } else {
+                        clause.named_bindings
+                    }
+                } else {
+                    clause.named_bindings
+                }
+            } else if clause.name.is_some() {
+                clause.name
+            } else {
+                import.import_clause
+            };
+            self.error_at_node(
+                error_node,
+                diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+            );
+            return;
+        }
+
         let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
             return;
         };
@@ -1627,5 +1684,81 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// TS1282/TS1283: VMS check for `export = X`.
+    /// TS1282: X only refers to a type (interface/type alias, no value).
+    /// TS1283: X resolves to a type-only declaration (import type).
+    fn check_vms_export_equals(&mut self, expression: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+
+        // Get the name of the exported identifier
+        let Some(expr_node) = self.ctx.arena.get(expression) else {
+            return;
+        };
+        let name = if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+            ident.escaped_text.clone()
+        } else {
+            return;
+        };
+
+        // Look up the symbol in file_locals
+        let Some(sym_id) = self.ctx.binder.file_locals.get(&name) else {
+            return;
+        };
+        let Some(sym) = self.ctx.binder.symbols.get(sym_id) else {
+            return;
+        };
+
+        // Check if this is a type-only import (TS1283)
+        // Only if the symbol doesn't also have VALUE flags — a local `const I = {}`
+        // alongside `import type I = ...` makes `export = I` valid.
+        let value_flags = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::VALUE_MODULE;
+        if sym.is_type_only && (sym.flags & value_flags) == 0 {
+            let msg = format_message(
+                diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                &[&name],
+            );
+            self.error_at_node(
+                expression,
+                &msg,
+                diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+            );
+            return;
+        }
+
+        // Check if this is a pure type (TS1282)
+        let pure_type = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        if (sym.flags & pure_type) != 0 && (sym.flags & value_flags) == 0 {
+            let msg = format_message(
+                diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+                &[&name],
+            );
+            self.error_at_node(
+                expression,
+                &msg,
+                diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+            );
+        }
+    }
+
+    /// Determine if the current file is treated as CommonJS for VMS checks.
+    pub(crate) fn is_current_file_commonjs_for_vms(&self) -> bool {
+        let current_file = &self.ctx.file_name;
+        if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+            return true;
+        }
+        if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+            return false;
+        }
+        if let Some(is_esm) = self.ctx.file_is_esm {
+            return !is_esm;
+        }
+        !self.ctx.compiler_options.module.is_es_module()
     }
 }
