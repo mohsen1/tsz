@@ -102,7 +102,9 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
-        if let Some(display) = self.literal_call_argument_display(arg_idx) {
+        if self.is_literal_sensitive_assignment_target(param_type)
+            && let Some(display) = self.literal_call_argument_display(arg_idx)
+        {
             return display;
         }
 
