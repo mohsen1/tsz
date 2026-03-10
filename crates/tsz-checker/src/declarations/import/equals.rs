@@ -646,18 +646,19 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.is_declaration_file()
             && !is_ambient_context
             && let Some(ref name) = import_name
-                && let Some(module_spec) = require_module_specifier.as_deref()
-                && self.is_import_specifier_type_only(module_spec, name) {
-                    let msg = format_message(
+            && let Some(module_spec) = require_module_specifier.as_deref()
+            && self.is_import_specifier_type_only(module_spec, name)
+        {
+            let msg = format_message(
                         crate::diagnostics::diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
                         &[name],
                     );
-                    self.error_at_node(
+            self.error_at_node(
                         stmt_idx,
                         &msg,
                         crate::diagnostics::diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
                     );
-                }
+        }
 
         if !self.ctx.report_unresolved_imports {
             return;
