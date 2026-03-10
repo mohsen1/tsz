@@ -174,8 +174,8 @@ impl ParserState {
                 let at_token = self.current_token;
                 self.next_token();
                 if self.is_token(SyntaxKind::Unknown) {
-                    self.current_token = at_token;
-                    self.next_token();
+                    // Current token is the Unknown (e.g. \x04) right after @.
+                    // Report TS1127 at this position, not after re-scanning.
                     self.parse_error_at_current_token(
                         tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                         tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,

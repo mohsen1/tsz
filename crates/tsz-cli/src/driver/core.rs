@@ -1131,7 +1131,8 @@ fn compile_inner(
     };
     // For binary files, suppress all diagnostics except TS1490.
     // Parsing UTF-16/corrupted content as UTF-8 produces cascading
-    // TS1127 "Invalid character" false positives; TSC only emits TS1490.
+    // TS1127 "Invalid character" false positives; tsc detects binary files
+    // early and only emits TS1490.
     if !binary_file_names.is_empty() {
         diagnostics.retain(|d| !binary_file_names.contains(&d.file));
     }
