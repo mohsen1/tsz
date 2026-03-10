@@ -1651,6 +1651,19 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
+        // For inferred generic call/new/tagged-template results, tsc widens literal
+        // return types before using them as the declaration type in TS2403 messages.
+        // This keeps call-site diagnostics narrow (`0` vs `""`) while matching the
+        // later redeclaration display (`string` instead of `""`).
+        if matches!(
+            init_node.kind,
+            syntax_kind_ext::CALL_EXPRESSION
+                | syntax_kind_ext::NEW_EXPRESSION
+                | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+        ) {
+            return self.widen_initializer_type_for_mutable_binding(fallback_type);
+        }
+
         // Only applies to bare identifier initializers (not property access, etc.)
         if init_node.kind != SyntaxKind::Identifier as u16 {
             return fallback_type;

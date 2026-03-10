@@ -797,6 +797,10 @@ impl<'a> TypeFormatter<'a> {
             ordered.push(TypeId::UNDEFINED);
         }
 
+        if let Some(normalized) = self.optionalize_object_union_members_for_display(&ordered) {
+            ordered = normalized;
+        }
+
         if ordered.len() > self.max_union_members {
             let first: Vec<String> = ordered
                 .iter()
@@ -810,6 +814,85 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_union_member(m))
             .collect();
         formatted.join(" | ")
+    }
+
+    fn optionalize_object_union_members_for_display(
+        &self,
+        members: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
+        let mut object_members = Vec::new();
+        let mut suffix = Vec::new();
+
+        for &member in members {
+            if member == TypeId::NULL || member == TypeId::UNDEFINED {
+                suffix.push(member);
+                continue;
+            }
+            let shape_id = match self.interner.lookup(member) {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+                _ => return None,
+            };
+            let shape = self.interner.object_shape(shape_id);
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return None;
+            }
+            object_members.push((member, shape_id, shape.as_ref().clone()));
+        }
+
+        if object_members.len() < 2 {
+            return None;
+        }
+
+        let mut all_props: Vec<PropertyInfo> = Vec::new();
+        for (_, _, shape) in &object_members {
+            for prop in &shape.properties {
+                if !all_props.iter().any(|existing| existing.name == prop.name) {
+                    all_props.push(prop.clone());
+                }
+            }
+        }
+
+        let mut changed = false;
+        let mut normalized = Vec::with_capacity(members.len());
+        for (_, _, mut shape) in object_members {
+            let next_order = shape
+                .properties
+                .iter()
+                .map(|p| p.declaration_order)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            let mut append_order = next_order;
+
+            for prop in &all_props {
+                if shape
+                    .properties
+                    .iter()
+                    .any(|existing| existing.name == prop.name)
+                {
+                    continue;
+                }
+                changed = true;
+                let mut synthetic = prop.clone();
+                synthetic.type_id = TypeId::UNDEFINED;
+                synthetic.write_type = TypeId::UNDEFINED;
+                synthetic.optional = true;
+                synthetic.readonly = false;
+                synthetic.is_method = false;
+                synthetic.declaration_order = append_order;
+                append_order += 1;
+                shape.properties.push(synthetic);
+            }
+
+            normalized.push(self.interner.object(shape.properties));
+        }
+
+        if !changed {
+            return None;
+        }
+
+        normalized.extend(suffix);
+        Some(normalized)
     }
 
     /// Format a union member, parenthesizing types that need disambiguation.
