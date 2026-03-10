@@ -145,6 +145,88 @@ fn widen_type_cached(
             }
         }
 
+        // Functions: recursively widen parameter and return types for display contexts.
+        Some(TypeData::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            let mut widened_shape = shape.as_ref().clone();
+            let mut changed = false;
+            widened_shape.params = widened_shape
+                .params
+                .iter()
+                .map(|param| {
+                    let mut widened = param.clone();
+                    widened.type_id = widen_type_cached(db, param.type_id, cache);
+                    if widened.type_id != param.type_id {
+                        changed = true;
+                    }
+                    widened
+                })
+                .collect();
+            widened_shape.this_type = widened_shape.this_type.map(|this_ty| {
+                let widened = widen_type_cached(db, this_ty, cache);
+                if widened != this_ty {
+                    changed = true;
+                }
+                widened
+            });
+            let widened_return = widen_type_cached(db, widened_shape.return_type, cache);
+            if widened_return != widened_shape.return_type {
+                changed = true;
+            }
+            widened_shape.return_type = widened_return;
+
+            if changed {
+                db.function(widened_shape)
+            } else {
+                type_id
+            }
+        }
+
+        // Callable objects: recursively widen all signature parameter/return types.
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            let mut widened_shape = shape.as_ref().clone();
+            let mut changed = false;
+            widened_shape.call_signatures = widened_shape
+                .call_signatures
+                .iter()
+                .map(|sig| {
+                    let mut widened_sig = sig.clone();
+                    widened_sig.params = widened_sig
+                        .params
+                        .iter()
+                        .map(|param| {
+                            let mut widened = param.clone();
+                            widened.type_id = widen_type_cached(db, param.type_id, cache);
+                            if widened.type_id != param.type_id {
+                                changed = true;
+                            }
+                            widened
+                        })
+                        .collect();
+                    widened_sig.this_type = widened_sig.this_type.map(|this_ty| {
+                        let widened = widen_type_cached(db, this_ty, cache);
+                        if widened != this_ty {
+                            changed = true;
+                        }
+                        widened
+                    });
+                    let widened_return = widen_type_cached(db, widened_sig.return_type, cache);
+                    if widened_return != widened_sig.return_type {
+                        changed = true;
+                    }
+                    widened_sig.return_type = widened_return;
+                    widened_sig
+                })
+                .collect();
+
+            if changed {
+                db.callable(widened_shape)
+            } else {
+                type_id
+            }
+        }
+
         // All other types are not widened:
         // - Primitives (already widened)
         // - Type parameters (preserve identity)

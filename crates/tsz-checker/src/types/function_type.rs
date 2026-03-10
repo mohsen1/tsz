@@ -159,6 +159,7 @@ impl<'a> CheckerState<'a> {
         // Collect parameter info using solver's ParamInfo struct
         let mut params = Vec::new();
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
+        let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
 
@@ -349,6 +350,10 @@ impl<'a> CheckerState<'a> {
                 let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
                     if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
                         Some(self.ctx.types.intern_string(&name_data.escaped_text))
+                    } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    {
+                        self.binding_name_for_signature_display(param.name)
                     } else {
                         None
                     }
@@ -480,17 +485,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let binding_context_type = type_id;
                 let type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some() {
                         type_id
-                    } else if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
-                        if self.is_assignable_to(type_id, pattern_type) {
-                            type_id // Keep richer contextual type; pattern_type loses rest properties
-                        } else {
-                            self.ctx.types.factory().union(vec![type_id, pattern_type])
-                        }
                     } else {
-                        type_id
+                        pattern_type
                     }
                 } else {
                     type_id
@@ -501,6 +501,7 @@ impl<'a> CheckerState<'a> {
                         this_type = Some(type_id);
                     }
                     param_types.push(None);
+                    destructuring_context_param_types.push(None);
                     continue;
                 }
 
@@ -578,6 +579,19 @@ impl<'a> CheckerState<'a> {
                 } else {
                     type_id
                 };
+                let effective_binding_context_type = if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && binding_context_type != TypeId::ANY
+                    && binding_context_type != TypeId::ERROR
+                    && binding_context_type != TypeId::UNDEFINED
+                {
+                    self.ctx
+                        .types
+                        .factory()
+                        .union(vec![binding_context_type, TypeId::UNDEFINED])
+                } else {
+                    binding_context_type
+                };
 
                 params.push(ParamInfo {
                     name,
@@ -586,6 +600,7 @@ impl<'a> CheckerState<'a> {
                     rest,
                 });
                 param_types.push(Some(effective_type));
+                destructuring_context_param_types.push(Some(effective_binding_context_type));
                 contextual_index += 1;
             }
         }
@@ -708,11 +723,17 @@ impl<'a> CheckerState<'a> {
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
-            self.record_destructured_parameter_binding_groups(&parameters.nodes, &param_types);
+            self.record_destructured_parameter_binding_groups(
+                &parameters.nodes,
+                &destructuring_context_param_types,
+            );
 
             // Assign contextual types to destructuring parameters (binding patterns)
             // This allows destructuring patterns in callbacks to infer element types from contextual types
-            self.assign_contextual_types_to_destructuring_params(&parameters.nodes, &param_types);
+            self.assign_contextual_types_to_destructuring_params(
+                &parameters.nodes,
+                &destructuring_context_param_types,
+            );
 
             // Check that parameter default values are assignable to declared types (TS2322).
             // Only do this for closures (function expressions, arrow functions) since

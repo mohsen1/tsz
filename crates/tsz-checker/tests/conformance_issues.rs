@@ -3391,6 +3391,30 @@ fn test_exported_var_without_type_or_initializer_emits_ts7005() {
     );
 }
 
+#[test]
+fn test_binding_pattern_callback_does_not_infer_generic_parameter() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function trans<T>(f: (x: T) => string): number;
+trans(({a}) => a);
+trans(([b,c]) => 'foo');
+trans(({d: [e,f]}) => 'foo');
+trans(([{g},{h}]) => 'foo');
+trans(({a, b = 10}) => a);
+        "#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    assert!(
+        ts2345_count >= 1,
+        "Expected TS2345 for binding-pattern callback inference fallback. Actual: {diagnostics:#?}"
+    );
+}
+
 /// Nested destructured aliases should not participate in sibling discriminant correlation.
 /// From: controlFlowAliasedDiscriminants.ts
 #[test]

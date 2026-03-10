@@ -34,6 +34,27 @@ fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) ->
     }
 }
 
+fn sanitize_function_shape_binding_pattern_params(
+    shape: &tsz_solver::FunctionShape,
+    binding_pattern_param_positions: &[usize],
+) -> tsz_solver::FunctionShape {
+    let mut params = shape.params.clone();
+    for &index in binding_pattern_param_positions {
+        if let Some(param) = params.get_mut(index) {
+            param.type_id = TypeId::UNKNOWN;
+        }
+    }
+    tsz_solver::FunctionShape {
+        type_params: shape.type_params.clone(),
+        params,
+        this_type: shape.this_type,
+        return_type: shape.return_type,
+        type_predicate: shape.type_predicate.clone(),
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    }
+}
+
 struct CallResultContext<'a> {
     callee_expr: NodeIndex,
     call_idx: NodeIndex,
@@ -45,6 +66,160 @@ struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn sanitize_generic_inference_arg_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        arg_type: TypeId,
+    ) -> TypeId {
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return arg_type;
+        };
+        if arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return arg_type;
+        }
+
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return arg_type;
+        };
+
+        let mut binding_pattern_param_positions = Vec::new();
+        for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                binding_pattern_param_positions.push(index);
+            }
+        }
+
+        if binding_pattern_param_positions.is_empty() {
+            return arg_type;
+        }
+
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)
+        {
+            let sanitized = sanitize_function_shape_binding_pattern_params(
+                &shape,
+                &binding_pattern_param_positions,
+            );
+            self.ctx.types.factory().function(sanitized)
+        } else if let Some(shape) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, arg_type)
+        {
+            let mut sanitized = shape.as_ref().clone();
+            sanitized.call_signatures = sanitized
+                .call_signatures
+                .iter()
+                .map(|sig| tsz_solver::CallSignature {
+                    type_params: sig.type_params.clone(),
+                    params: sanitize_function_shape_binding_pattern_params(
+                        &tsz_solver::FunctionShape {
+                            type_params: sig.type_params.clone(),
+                            params: sig.params.clone(),
+                            this_type: sig.this_type,
+                            return_type: sig.return_type,
+                            type_predicate: sig.type_predicate.clone(),
+                            is_constructor: false,
+                            is_method: sig.is_method,
+                        },
+                        &binding_pattern_param_positions,
+                    )
+                    .params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate.clone(),
+                    is_method: sig.is_method,
+                })
+                .collect();
+            self.ctx.types.factory().callable(sanitized)
+        } else {
+            arg_type
+        }
+    }
+
+    fn sanitize_generic_inference_arg_types(
+        &mut self,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+    ) -> (Vec<TypeId>, bool) {
+        let mut changed = false;
+        let sanitized = args
+            .iter()
+            .zip(arg_types.iter().copied())
+            .map(|(&arg_idx, arg_type)| {
+                let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
+                if sanitized != arg_type {
+                    changed = true;
+                }
+                sanitized
+            })
+            .collect();
+        (sanitized, changed)
+    }
+
+    fn recheck_generic_call_arguments_with_real_types(
+        &mut self,
+        result: CallResult,
+        instantiated_params: &[tsz_solver::ParamInfo],
+        arg_types: &[TypeId],
+    ) -> CallResult {
+        if !matches!(result, CallResult::Success(_)) {
+            return result;
+        }
+
+        for (index, &actual) in arg_types.iter().enumerate() {
+            let expected = instantiated_params
+                .get(index)
+                .map(|param| {
+                    let evaluated = self.evaluate_type_with_env(param.type_id);
+                    if param.rest {
+                        tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                    } else {
+                        evaluated
+                    }
+                })
+                .or_else(|| {
+                    let last = instantiated_params.last()?;
+                    if !last.rest {
+                        return None;
+                    }
+                    let evaluated = self.evaluate_type_with_env(last.type_id);
+                    Some(tsz_solver::rest_argument_element_type(
+                        self.ctx.types,
+                        evaluated,
+                    ))
+                });
+
+            let Some(expected) = expected else {
+                break;
+            };
+
+            if !assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected) {
+                return CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                    fallback_return: TypeId::ERROR,
+                };
+            }
+        }
+
+        result
+    }
+
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -1283,11 +1458,17 @@ impl<'a> CheckerState<'a> {
 
         // super() calls are constructor calls, not function calls.
         // Use resolve_new() which checks construct signatures instead of call signatures.
+        let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
+            self.sanitize_generic_inference_arg_types(args, &arg_types)
+        } else {
+            (arg_types.clone(), false)
+        };
+
         let (result, instantiated_predicate, generic_instantiated_params) = if is_super_call {
             (
                 self.resolve_new_with_checker_adapter(
                     callee_type_for_call,
-                    &arg_types,
+                    &generic_inference_arg_types,
                     force_bivariant_callbacks,
                     self.ctx.contextual_type,
                 ),
@@ -1297,7 +1478,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.resolve_call_with_checker_adapter(
                 callee_type_for_call,
-                &arg_types,
+                &generic_inference_arg_types,
                 force_bivariant_callbacks,
                 self.ctx.contextual_type,
                 actual_this_type,
@@ -1324,6 +1505,15 @@ impl<'a> CheckerState<'a> {
         let (result, did_post_epc) = if let Some(ref instantiated_params) =
             generic_instantiated_params
         {
+            let result = if sanitized_generic_inference {
+                self.recheck_generic_call_arguments_with_real_types(
+                    result,
+                    instantiated_params,
+                    &arg_types,
+                )
+            } else {
+                result
+            };
             let should_epc = match &result {
                 CallResult::Success(_) => true,
                 CallResult::ArgumentTypeMismatch { index, .. } => {
