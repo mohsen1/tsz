@@ -506,8 +506,11 @@ impl<'a> CheckerState<'a> {
 
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
-        // TS1039/TS1254: Check initializers in ambient contexts
-        if var_decl.initializer.is_some() && self.is_ambient_declaration(decl_idx) {
+        // TS1039/TS1254: Check initializers in ambient contexts.
+        // Use is_in_ambient_context (checks for explicit `declare` keyword ancestors)
+        // rather than is_ambient_declaration (which also returns true for all .d.ts files).
+        // TSC does not emit TS1039 for variable initializers in .d.ts files.
+        if var_decl.initializer.is_some() && self.ctx.arena.is_in_ambient_context(decl_idx) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let is_const = self.is_const_variable_declaration(decl_idx);
             if is_const && var_decl.type_annotation.is_none() {
