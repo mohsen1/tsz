@@ -88,7 +88,10 @@ tsz:  "Operator '+' cannot be applied to types 'I' and 'number'"
 
 **Root cause:** Multiple related issues:
 - Switch-case return types widened from literal union to `string`
-- Enum types displayed as `number` instead of the enum name
+- ~~Enum types displayed as `number` instead of the enum name~~ **FIXED** (commit `6f44652f3` — 2026-03-10)
+  Fix: `widen_type_for_operator_display` in `operator_errors.rs` tries enum member→parent
+  widening before `get_base_type_for_comparison` (which destroys enum identity).
+  Also fixed enum member `E.A` → parent `E` widening (reordered TypeData::Enum check).
 - `undefined` displayed as `void` in return type contexts
 - Return type inference not preserving literal types from branches
 
