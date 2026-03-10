@@ -17,6 +17,34 @@ use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextu
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
+        // For union types, evaluate each member individually but reconstruct the
+        // union WITHOUT subtype reduction. The full evaluate_type_with_env path
+        // performs subtype-based reduction (e.g., `string | 'done'` → `string`)
+        // which destroys literal type information needed for contextual literal
+        // preservation. By evaluating members individually and using
+        // union_preserve_members, deferred types (conditionals, mapped, etc.)
+        // within the union get resolved, but literal members are kept intact.
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            let mut evaluated_members = Vec::with_capacity(members.len());
+            let mut any_changed = false;
+            for &member in &members {
+                let evaluated = self.contextual_type_for_expression(member);
+                if evaluated != member {
+                    any_changed = true;
+                }
+                evaluated_members.push(evaluated);
+            }
+            if any_changed {
+                return self
+                    .ctx
+                    .types
+                    .factory()
+                    .union_preserve_members(evaluated_members);
+            }
+            return type_id;
+        }
+
         if crate::query_boundaries::state::should_evaluate_contextual_declared_type(
             self.ctx.types,
             type_id,
