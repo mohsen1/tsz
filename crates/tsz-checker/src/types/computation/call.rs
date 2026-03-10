@@ -1771,6 +1771,7 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
+                    self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                     {
                         // Try to elaborate: for object literal arguments, report TS2322
@@ -1797,6 +1798,13 @@ impl<'a> CheckerState<'a> {
 
                 if fallback_return != TypeId::ERROR {
                     fallback_return
+                } else if let Some(return_type) =
+                    crate::query_boundaries::assignability::get_function_return_type(
+                        self.ctx.types,
+                        callee_type,
+                    )
+                {
+                    self.apply_this_substitution_to_call_return(return_type, callee_expr)
                 } else {
                     TypeId::ERROR
                 }
@@ -1859,6 +1867,36 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    fn suppress_later_call_excess_property_diagnostics(
+        &mut self,
+        args: &[NodeIndex],
+        primary_arg_idx: NodeIndex,
+    ) {
+        let Some(primary_pos) = args.iter().position(|&arg| arg == primary_arg_idx) else {
+            return;
+        };
+        let later_spans: Vec<(u32, u32)> = args[primary_pos + 1..]
+            .iter()
+            .filter_map(|&arg_idx| {
+                self.get_node_span(arg_idx)
+                    .map(|(start, len)| (start, start.saturating_add(len)))
+            })
+            .collect();
+        if later_spans.is_empty() {
+            return;
+        }
+        self.ctx.diagnostics.retain(|diag| {
+            if diag.code
+                != diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+            {
+                return true;
+            }
+            !later_spans
+                .iter()
+                .any(|&(start, end)| diag.start >= start && diag.start < end)
+        });
     }
 
     /// Check if the callee expression is a function expression (IIFE pattern).
