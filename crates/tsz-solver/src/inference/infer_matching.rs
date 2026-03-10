@@ -279,31 +279,40 @@ impl<'a> InferenceContext<'a> {
         let mapped = self.interner.mapped_type(mapped_id);
         let source = self.interner.object_shape(source_shape);
 
-        if source.properties.is_empty() {
-            return Ok(());
-        }
+        if !source.properties.is_empty() {
+            // Infer the constraint type (K) from the union of source property names
+            // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
+            let name_literals: Vec<TypeId> = source
+                .properties
+                .iter()
+                .map(|p| self.interner.literal_string_atom(p.name))
+                .collect();
+            let names_union = if name_literals.len() == 1 {
+                name_literals[0]
+            } else {
+                self.interner.union(name_literals)
+            };
+            self.infer_from_types(names_union, mapped.constraint, priority)?;
 
-        // Infer the constraint type (K) from the union of source property names
-        // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
-        let name_literals: Vec<TypeId> = source
-            .properties
-            .iter()
-            .map(|p| self.interner.literal_string_atom(p.name))
-            .collect();
-        let names_union = if name_literals.len() == 1 {
-            name_literals[0]
-        } else {
-            self.interner.union(name_literals)
-        };
-        self.infer_from_types(names_union, mapped.constraint, priority)?;
-
-        // Infer the template type (T) from each source property value type
-        for prop in &source.properties {
-            let key_literal = self.interner.literal_string_atom(prop.name);
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_literal);
-            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
-            self.infer_from_types(prop.type_id, instantiated_template, priority)?;
+            // Infer the template type (T) from each source property value type
+            for prop in &source.properties {
+                let key_literal = self.interner.literal_string_atom(prop.name);
+                let mut subst = TypeSubstitution::new();
+                subst.insert(mapped.type_param.name, key_literal);
+                let instantiated_template =
+                    instantiate_type(self.interner, mapped.template, &subst);
+                self.infer_from_types(prop.type_id, instantiated_template, priority)?;
+            }
+        } else if let Some(ref string_index) = source.string_index {
+            // Source has no named properties but has a string index signature
+            // (e.g., `{ [index: string]: number }`). Infer K from `string`
+            // and V from the index signature value type.
+            self.infer_from_types(TypeId::STRING, mapped.constraint, priority)?;
+            self.infer_from_types(string_index.value_type, mapped.template, priority)?;
+        } else if let Some(ref number_index) = source.number_index {
+            // Source has a number index signature (e.g., `{ [index: number]: V }`).
+            self.infer_from_types(TypeId::NUMBER, mapped.constraint, priority)?;
+            self.infer_from_types(number_index.value_type, mapped.template, priority)?;
         }
 
         Ok(())
