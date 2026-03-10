@@ -618,8 +618,10 @@ impl<'a> CheckerState<'a> {
             }
         }
         if index_type == TypeId::ANY {
-            let supports_string_index = self.is_element_indexable(object_type_for_check, true, false);
-            let supports_number_index = self.is_element_indexable(object_type_for_check, false, true);
+            let supports_string_index =
+                self.is_element_indexable(object_type_for_check, true, false);
+            let supports_number_index =
+                self.is_element_indexable(object_type_for_check, false, true);
             if !supports_string_index && !supports_number_index {
                 let message_2538 = format_message(
                     diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1003,36 +1005,43 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let concrete_object_type = if tsz_solver::is_generic_application(self.ctx.types, object_type)
-        {
-            let evaluated = self.evaluate_type_with_env(object_type);
-            if evaluated != TypeId::ERROR
-                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, evaluated)
-            {
-                evaluated
+        let concrete_object_type =
+            if tsz_solver::is_generic_application(self.ctx.types, object_type) {
+                let evaluated = self.evaluate_type_with_env(object_type);
+                if evaluated != TypeId::ERROR
+                    && !tsz_solver::type_queries::contains_type_parameters_db(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                {
+                    evaluated
+                } else {
+                    object_type
+                }
             } else {
                 object_type
-            }
-        } else {
-            object_type
-        };
-        let object_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, concrete_object_type);
+            };
+        let object_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, concrete_object_type);
         let object_has_shape = object_shape.is_some();
         let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
-        let object_is_array_like =
-            tsz_solver::is_array_type(self.ctx.types, concrete_object_type)
-                || tsz_solver::type_queries::get_tuple_elements(
-                    self.ctx.types,
-                    concrete_object_type,
-                )
+        let object_is_array_like = tsz_solver::is_array_type(self.ctx.types, concrete_object_type)
+            || tsz_solver::type_queries::get_tuple_elements(self.ctx.types, concrete_object_type)
                 .is_some();
 
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, concrete_object_type)
-            || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, concrete_object_type)
-            || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)
+        if tsz_solver::type_queries::contains_type_parameters_db(
+            self.ctx.types,
+            concrete_object_type,
+        ) || tsz_solver::type_queries::is_type_parameter_like(
+            self.ctx.types,
+            concrete_object_type,
+        ) || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)
             || tsz_solver::is_conditional_type(self.ctx.types, concrete_object_type)
             || (tsz_solver::is_primitive_type(self.ctx.types, concrete_object_type)
-                && !tsz_solver::type_queries::is_object_like_type(self.ctx.types, concrete_object_type))
+                && !tsz_solver::type_queries::is_object_like_type(
+                    self.ctx.types,
+                    concrete_object_type,
+                ))
         {
             return false;
         }
@@ -1075,8 +1084,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                emitted_any |=
-                    self.try_emit_concrete_index_access_error(error_anchor, concrete_object_type, member);
+                emitted_any |= self.try_emit_concrete_index_access_error(
+                    error_anchor,
+                    concrete_object_type,
+                    member,
+                );
             }
             return emitted_any;
         }

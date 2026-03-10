@@ -616,6 +616,13 @@ impl<'a> CheckerState<'a> {
         } else {
             type_expr
         };
+        // Handle {...Type} rest parameter prefix
+        let is_rest = effective_type_expr.starts_with("...");
+        let effective_type_expr = if is_rest {
+            effective_type_expr[3..].to_string()
+        } else {
+            effective_type_expr
+        };
 
         // Generic JSDoc type references like {C} should emit TS2314 when C
         // requires type arguments and none were provided.
@@ -655,6 +662,11 @@ impl<'a> CheckerState<'a> {
             base_type = built;
         }
 
+        // For rest params ({...Type}), wrap in array
+        if is_rest {
+            base_type = self.ctx.types.factory().array(base_type);
+        }
+
         // Check if parameter is optional via bracket syntax [name] or [name=default]
         let is_optional_name = Self::is_jsdoc_param_optional_by_brackets(jsdoc, param_name);
         if (is_optional_type || is_optional_name)
@@ -671,6 +683,12 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(base_type)
         }
+    }
+
+    /// Check if a JSDoc `@param` tag has a rest type prefix (`{...Type}`).
+    pub(crate) fn jsdoc_param_is_rest(jsdoc: &str, param_name: &str) -> bool {
+        Self::extract_jsdoc_param_type_expr_with_span(jsdoc, param_name)
+            .is_some_and(|(expr, _)| expr.starts_with("..."))
     }
 
     fn required_generic_count_for_jsdoc_type_name(
