@@ -4240,6 +4240,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_node = self.arena.get(var_decl.type_annotation)?;
                 if let Some(type_text) = self.get_source_slice(type_node.pos, type_node.end) {
                     let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
                     let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
                     return Some(trimmed.to_string());
                 }
