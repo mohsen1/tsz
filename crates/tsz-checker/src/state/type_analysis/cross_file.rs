@@ -319,6 +319,23 @@ impl<'a> CheckerState<'a> {
                     checker.ctx.symbol_resolution_set.insert(id);
                 }
             }
+            // Copy DefId ↔ SymbolId mappings so the child can detect circular type
+            // aliases across file boundaries.  Without these, is_direct_circular_reference
+            // cannot map a Lazy(DefId) back to a SymbolId in the resolution chain.
+            {
+                let parent_d2s = self.ctx.def_to_symbol.borrow();
+                let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
+                for (&def_id, &sym_id_val) in parent_d2s.iter() {
+                    child_d2s.entry(def_id).or_insert(sym_id_val);
+                }
+            }
+            {
+                let parent_s2d = self.ctx.symbol_to_def.borrow();
+                let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
+                for (&sym_id_val, &def_id) in parent_s2d.iter() {
+                    child_s2d.entry(sym_id_val).or_insert(def_id);
+                }
+            }
             // Copy class_instance_resolution_set to detect circular class inheritance
             for &id in &self.ctx.class_instance_resolution_set {
                 checker.ctx.class_instance_resolution_set.insert(id);
@@ -391,6 +408,14 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .collect();
 
+            // Collect circular type alias markers so the parent can detect
+            // cross-file cycles.  When the child resolves `type B = A` and
+            // finds A in the resolution set (from the parent), it marks A as
+            // circular.  Propagating this back lets the parent's TS2456 check
+            // for A fire correctly.
+            let child_circular_aliases: Vec<SymbolId> =
+                checker.ctx.circular_type_aliases.iter().copied().collect();
+
             // Drop child checker to release borrow on self.ctx.types.
             drop(checker);
 
@@ -419,6 +444,9 @@ impl<'a> CheckerState<'a> {
                 .extend(child_namespace_names);
             for (name, type_id) in child_lib_delegation_cache {
                 self.ctx.lib_delegation_cache.entry(name).or_insert(type_id);
+            }
+            for sym in child_circular_aliases {
+                self.ctx.circular_type_aliases.insert(sym);
             }
 
             // Cache the result for lib delegations by SymbolId.
@@ -488,6 +516,20 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.symbol_resolution_set.insert(id);
             }
         }
+        {
+            let parent_d2s = self.ctx.def_to_symbol.borrow();
+            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
+            for (&def_id, &sym_id_val) in parent_d2s.iter() {
+                child_d2s.entry(def_id).or_insert(sym_id_val);
+            }
+        }
+        {
+            let parent_s2d = self.ctx.symbol_to_def.borrow();
+            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
+            for (&sym_id_val, &def_id) in parent_s2d.iter() {
+                child_s2d.entry(sym_id_val).or_insert(def_id);
+            }
+        }
         for &id in &self.ctx.class_constructor_resolution_set {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
@@ -548,6 +590,20 @@ impl<'a> CheckerState<'a> {
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+        {
+            let parent_d2s = self.ctx.def_to_symbol.borrow();
+            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
+            for (&def_id, &sym_id_val) in parent_d2s.iter() {
+                child_d2s.entry(def_id).or_insert(sym_id_val);
+            }
+        }
+        {
+            let parent_s2d = self.ctx.symbol_to_def.borrow();
+            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
+            for (&sym_id_val, &def_id) in parent_s2d.iter() {
+                child_s2d.entry(sym_id_val).or_insert(def_id);
             }
         }
 

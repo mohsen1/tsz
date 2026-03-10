@@ -906,12 +906,20 @@ impl<'a> CheckerState<'a> {
                 // Check for invalid circular reference (TS2456)
                 // A type alias circularly references itself if it resolves to itself
                 // without structural wrapping (e.g., `type A = B; type B = A;`)
+                //
+                // Three detection paths:
+                // 1. is_direct_circular_reference: same-file cycles via symbol_resolution_set
+                // 2. circular_type_aliases: marked by a previous cycle member
+                // 3. is_cross_file_circular_alias: cross-file cycles by following
+                //    Lazy → body → Lazy chain through shared DefinitionStore
                 let is_circular = self.is_direct_circular_reference(
                     sym_id,
                     alias_type,
                     type_alias.type_node,
                     false,
-                ) || self.ctx.circular_type_aliases.contains(&sym_id);
+                ) || self.ctx.circular_type_aliases.contains(&sym_id)
+                    || (self.is_simple_type_reference(type_alias.type_node)
+                        && self.is_cross_file_circular_alias(sym_id, alias_type));
                 if is_circular {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,

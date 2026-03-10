@@ -327,6 +327,15 @@ impl<'a> CheckerState<'a> {
             // Check for circular import aliases (2303)
             self.check_circular_import_aliases();
 
+            // Check for cross-file circular type aliases (TS2456).
+            // This runs AFTER all statements have been checked so that
+            // cross-file symbol delegations have populated the DefinitionStore
+            // with type alias bodies.  The inline TS2456 check in
+            // compute_type_of_symbol handles same-file cycles, but cross-file
+            // cycles can only be detected post-hoc because the DefinitionStore
+            // bodies aren't available during the initial build_type_environment pass.
+            self.check_cross_file_circular_type_aliases();
+
             // Check for TS1148: module none errors
             if matches!(
                 self.ctx.compiler_options.module,
