@@ -667,14 +667,34 @@ impl<'a> CheckerState<'a> {
                 && !self.declared_type_has_overlap(right_idx, right_narrow, left_narrow)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // tsc preserves string/bigint literal types in TS2367 messages
-                // (e.g., `"foo"` stays `"foo"`) but widens number/boolean literals
-                // (e.g., `true` → `boolean`, `0` → `number`). For non-literal
-                // operands, the widened type from get_type_of_node is used.
-                // Use format_type_pair for import-qualification when the same name
-                // appears in two different modules (e.g., import("a").F vs import("b").F).
-                let left_display = self.widen_non_string_literal_for_display(left_narrow);
-                let right_display = self.widen_non_string_literal_for_display(right_narrow);
+                // tsc preserves literal types within the same primitive family
+                // (e.g., '0' and '2' for number-to-number) but widens number/boolean
+                // literals across different families (e.g., 'number' and 'symbol').
+                // String and bigint literals are always preserved regardless of family.
+                let left_base = tsz_solver::type_queries::widen_literal_to_primitive(
+                    self.ctx.types,
+                    left_narrow,
+                );
+                let right_base = tsz_solver::type_queries::widen_literal_to_primitive(
+                    self.ctx.types,
+                    right_narrow,
+                );
+                let (left_display, right_display) = if left_base == right_base {
+                    // Same primitive family: preserve all literals
+                    (left_narrow, right_narrow)
+                } else {
+                    // Different families: widen number/boolean but keep string/bigint
+                    (
+                        tsz_solver::operations::widen_non_string_bigint_literal(
+                            self.ctx.types,
+                            left_narrow,
+                        ),
+                        tsz_solver::operations::widen_non_string_bigint_literal(
+                            self.ctx.types,
+                            right_narrow,
+                        ),
+                    )
+                };
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
