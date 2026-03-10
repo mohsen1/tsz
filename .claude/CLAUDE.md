@@ -285,8 +285,29 @@ with open('scripts/conformance/conformance-detail.json') as f:
 - Use `--max N` to limit test count for quick smoke tests.
 
 ### Full suite (use sparingly — only to verify changes)
-- `./scripts/conformance/conformance.sh run` — run all conformance tests (error-code level).
-- `./scripts/conformance/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` — run all conformance tests (error-code level).
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
+
+## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
+- **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
+- This includes: full conformance runs, `cargo test` (full suite), `cargo build --release`, and any multi-worker test runner.
+- The wrapper monitors the process tree's total RSS and kills it if it exceeds the limit (default: 75% of system RAM).
+- Overhead is negligible — one `ps` call every 5 seconds.
+- Quick, filtered runs (`--filter`, `--max`) and `cargo check` generally don't need the wrapper.
+
+```bash
+# Wrap any heavy command
+scripts/safe-run.sh cargo test
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run
+scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+
+# Custom limit (absolute MB or percentage of RAM)
+scripts/safe-run.sh --limit 8192 -- cargo test --release
+scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
+
+# Debug memory usage
+scripts/safe-run.sh --verbose -- cargo build
+```
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
