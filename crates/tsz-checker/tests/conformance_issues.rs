@@ -394,6 +394,28 @@ someGenerics3<number>(() => undefined);
 }
 
 #[test]
+fn test_generic_literal_argument_error_preserves_literal_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function someGenerics9<T>(a: T, b: T, c: T): T {
+    return null as any;
+}
+someGenerics9('', 0, []);
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message
+                    .contains("Argument of type '0' is not assignable to parameter of type '\"\"'")
+        }),
+        "Expected TS2345 to preserve the numeric literal display. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_aliased_base_preserves_instance_members() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

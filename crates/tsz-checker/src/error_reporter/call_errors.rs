@@ -31,13 +31,13 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
-        if param_type == TypeId::NEVER
-            && let Some(display) = self.literal_call_argument_display(arg_idx)
-        {
+        let preserve_literal_arg = param_type == TypeId::NEVER
+            || tsz_solver::visitor::literal_value(self.ctx.types, param_type).is_some();
+        if preserve_literal_arg && let Some(display) = self.literal_call_argument_display(arg_idx) {
             return display;
         }
 
-        let display_type = if param_type == TypeId::NEVER {
+        let display_type = if preserve_literal_arg {
             let direct_arg_type = self.get_type_of_node(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
                 arg_type
