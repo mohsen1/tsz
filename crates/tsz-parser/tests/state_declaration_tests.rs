@@ -288,9 +288,11 @@ fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
         codes.contains(&1003),
         "expected TS1003 for invalid import specifier, got {codes:?}"
     );
+    // Recovery now properly consumes `}` and `from "..."` without cascading
+    // TS1128/TS1434, matching tsc's parseDelimitedList behavior.
     assert!(
-        codes.contains(&1128),
-        "expected TS1128 from brace recovery, got {codes:?}"
+        !codes.contains(&1128),
+        "should not emit cascading TS1128 after named imports recovery, got {codes:?}"
     );
 }
 
@@ -347,7 +349,9 @@ fn keyword_followed_by_string_literal_reports_ts1434() {
 }
 
 #[test]
-fn invalid_bigint_import_specifiers_preserve_followup_from_recovery() {
+fn invalid_bigint_import_specifiers_recover_cleanly() {
+    // After error recovery, named imports should consume `}` and `from "..."` properly
+    // without cascading TS1128/TS1434 errors. This matches tsc's parseDelimitedList.
     for source in [
         r#"import { 0n as foo } from "./foo";"#,
         r#"import { foo as 0n } from "./foo";"#,
@@ -355,12 +359,12 @@ fn invalid_bigint_import_specifiers_preserve_followup_from_recovery() {
         let (parser, _root) = parse_source(source);
         let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
         assert!(
-            codes.contains(&1128),
-            "expected stray-close-brace recovery for {source:?}, got {codes:?}"
+            !codes.contains(&1128),
+            "should not emit cascading TS1128 for {source:?}, got {codes:?}"
         );
         assert!(
-            codes.contains(&1434),
-            "expected TS1434 from trailing `from` recovery for {source:?}, got {codes:?}"
+            !codes.contains(&1434),
+            "should not emit cascading TS1434 for {source:?}, got {codes:?}"
         );
     }
 }

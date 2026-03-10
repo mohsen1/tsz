@@ -1708,10 +1708,11 @@ impl ParserState {
             self.parse_string_literal()
         } else if import_clause_had_errors && self.is_token(SyntaxKind::FromKeyword) {
             // The import clause had errors but we still see `from` — this happens
-            // when errors are inside `{ ... }` (e.g. `import { 0n } from "mod"`).
-            // Don't consume `from` here; let the normal parse path handle it so
-            // that the module specifier is properly parsed.
-            NodeIndex::NONE
+            // when errors are inside `{ ... }` (e.g. `import { 0n } from "mod"`)
+            // or after recovery like `import { type as as as as } from "mod"`.
+            // Consume `from` and the module specifier normally.
+            self.parse_expected(SyntaxKind::FromKeyword);
+            self.parse_string_literal()
         } else if import_clause_had_errors {
             // The import clause had errors AND we're NOT at `from`.  This happens
             // with malformed namespace imports like `import * from Zero from "./0"`
@@ -2016,7 +2017,6 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut elements = Vec::new();
-        let mut emitted_comma_error = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2028,32 +2028,34 @@ impl ParserState {
                 break;
             }
 
+            let element_start = self.token_pos();
             let spec = self.parse_import_specifier();
             elements.push(spec);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    break;
+                }
                 // tsc uses parseDelimitedList which emits `',' expected.` when
                 // a comma-separated list element is not followed by `,` or `}`.
-                if !self.is_token(SyntaxKind::CloseBraceToken) {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        &format!(
-                            "'{}' expected.",
-                            Self::token_to_string(SyntaxKind::CommaToken)
-                        ),
-                        diagnostic_codes::EXPECTED,
-                    );
-                    emitted_comma_error = true;
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    &format!(
+                        "'{}' expected.",
+                        Self::token_to_string(SyntaxKind::CommaToken)
+                    ),
+                    diagnostic_codes::EXPECTED,
+                );
+                // If no progress was made (specifier didn't consume any tokens),
+                // consume one token to avoid infinite loop — matches tsc behavior.
+                if self.token_pos() == element_start {
+                    self.next_token();
                 }
-                break;
+                // Continue parsing (tsc's parseDelimitedList continues after comma error)
             }
         }
 
-        // Skip '}' expected if we already emitted ',' expected at the same position.
-        // tsc's parseDelimitedList emits only the comma error, not a closing brace error.
-        if !emitted_comma_error {
-            self.parse_expected(SyntaxKind::CloseBraceToken);
-        }
+        self.parse_expected(SyntaxKind::CloseBraceToken);
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
