@@ -1121,78 +1121,73 @@ impl<'a> CheckerState<'a> {
                             if !import_has_value
                                 && let Some(target_idx) =
                                     self.ctx.resolve_import_target(module_name)
-                                    && let Some(binders) = &self.ctx.all_binders
-                                    && let Some(target_binder) = binders.get(target_idx)
+                                && let Some(binders) = &self.ctx.all_binders
+                                && let Some(target_binder) = binders.get(target_idx)
+                            {
+                                // Look for an exported symbol with the matching name
+                                // in the target file's file_locals
+                                if let Some(target_sym_id) =
+                                    target_binder.file_locals.get(export_name)
+                                    && let Some(target_sym) =
+                                        target_binder.symbols.get(target_sym_id)
                                 {
-                                    // Look for an exported symbol with the matching name
-                                    // in the target file's file_locals
-                                    if let Some(target_sym_id) =
-                                        target_binder.file_locals.get(export_name)
-                                        && let Some(target_sym) =
-                                            target_binder.symbols.get(target_sym_id)
+                                    if target_sym.is_exported {
+                                        if (target_sym.flags
+                                            & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                            != 0
+                                        {
+                                            import_has_value = true;
+                                        }
+                                        // Non-type-only re-export aliases forward values
+                                        if !import_has_value
+                                            && (target_sym.flags & symbol_flags::ALIAS) != 0
+                                            && !target_sym.is_type_only
+                                        {
+                                            import_has_value = true;
+                                        }
+                                    }
+
+                                    // When a type alias shadows an import alias in the
+                                    // target file (e.g. `import { A } from "./a"; type A = 0;
+                                    // export { A }`), `bind_type_alias_declaration` creates a
+                                    // separate TYPE_ALIAS with `alias_partners[TYPE_ALIAS] = ALIAS`.
+                                    // After binding completes, `file_locals` is replaced by the
+                                    // persistent scope table, so it points to TYPE_ALIAS.
+                                    // Use alias_partners to find the partner ALIAS and follow
+                                    // its import chain to determine value semantics.
+                                    if !import_has_value
+                                        && (target_sym.flags & symbol_flags::TYPE_ALIAS) != 0
+                                        && !target_sym.is_type_only
+                                        && let Some(&partner_id) =
+                                            target_binder.alias_partners.get(&target_sym_id)
+                                        && let Some(partner) = target_binder.symbols.get(partner_id)
+                                        && (partner.flags & symbol_flags::ALIAS) != 0
+                                        && !partner.is_type_only
+                                        && let Some(ref src_module) = partner.import_module
                                     {
-                                        if target_sym.is_exported {
-                                            if (target_sym.flags
+                                        let src_name =
+                                            partner.import_name.as_deref().unwrap_or(export_name);
+                                        // Resolve relative to the TARGET file (b.ts),
+                                        // not the current file (c.ts).
+                                        if let Some(src_idx) = self
+                                            .ctx
+                                            .resolve_import_target_from_file(target_idx, src_module)
+                                            && let Some(src_binder) = binders.get(src_idx)
+                                            && let Some(src_sym_id) =
+                                                src_binder.file_locals.get(src_name)
+                                            && let Some(src_sym) =
+                                                src_binder.symbols.get(src_sym_id)
+                                            && src_sym.is_exported
+                                            && (src_sym.flags
                                                 & (symbol_flags::VALUE
                                                     | symbol_flags::EXPORT_VALUE))
                                                 != 0
-                                            {
-                                                import_has_value = true;
-                                            }
-                                            // Non-type-only re-export aliases forward values
-                                            if !import_has_value
-                                                && (target_sym.flags & symbol_flags::ALIAS) != 0
-                                                && !target_sym.is_type_only
-                                            {
-                                                import_has_value = true;
-                                            }
-                                        }
-
-                                        // When a type alias shadows an import alias in the
-                                        // target file (e.g. `import { A } from "./a"; type A = 0;
-                                        // export { A }`), `bind_type_alias_declaration` creates a
-                                        // separate TYPE_ALIAS with `alias_partners[TYPE_ALIAS] = ALIAS`.
-                                        // After binding completes, `file_locals` is replaced by the
-                                        // persistent scope table, so it points to TYPE_ALIAS.
-                                        // Use alias_partners to find the partner ALIAS and follow
-                                        // its import chain to determine value semantics.
-                                        if !import_has_value
-                                            && (target_sym.flags & symbol_flags::TYPE_ALIAS) != 0
-                                            && !target_sym.is_type_only
-                                            && let Some(&partner_id) =
-                                                target_binder.alias_partners.get(&target_sym_id)
-                                            && let Some(partner) =
-                                                target_binder.symbols.get(partner_id)
-                                            && (partner.flags & symbol_flags::ALIAS) != 0
-                                            && !partner.is_type_only
-                                            && let Some(ref src_module) = partner.import_module
                                         {
-                                            let src_name = partner
-                                                .import_name
-                                                .as_deref()
-                                                .unwrap_or(export_name);
-                                            // Resolve relative to the TARGET file (b.ts),
-                                            // not the current file (c.ts).
-                                            if let Some(src_idx) =
-                                                self.ctx.resolve_import_target_from_file(
-                                                    target_idx, src_module,
-                                                )
-                                                && let Some(src_binder) = binders.get(src_idx)
-                                                && let Some(src_sym_id) =
-                                                    src_binder.file_locals.get(src_name)
-                                                    && let Some(src_sym) =
-                                                        src_binder.symbols.get(src_sym_id)
-                                                    && src_sym.is_exported
-                                                    && (src_sym.flags
-                                                        & (symbol_flags::VALUE
-                                                            | symbol_flags::EXPORT_VALUE))
-                                                        != 0
-                                                {
-                                                    import_has_value = true;
-                                                }
+                                            import_has_value = true;
                                         }
                                     }
                                 }
+                            }
                         }
 
                         if !import_has_value {
