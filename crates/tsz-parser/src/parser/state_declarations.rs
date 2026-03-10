@@ -35,11 +35,7 @@ impl ParserState {
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
         // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
         let name = if self.is_token(SyntaxKind::YieldKeyword) {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Identifier expected. 'yield' is a reserved word in strict mode.",
-                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-            );
+            self.report_yield_reserved_word_error();
             self.parse_identifier_name()
         } else if self.is_identifier_or_keyword() {
             // Type keywords (void, null) are accepted as names by the parser.
@@ -1691,6 +1687,7 @@ impl ParserState {
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ImportKeyword);
 
         // Check for import "module" (no import clause)

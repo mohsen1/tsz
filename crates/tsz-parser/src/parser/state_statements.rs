@@ -1603,18 +1603,7 @@ impl ParserState {
                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 );
             } else if self.is_token(SyntaxKind::YieldKeyword) {
-                let is_class_context = self.in_class_body() || self.in_class_member_name();
-                if is_class_context {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    );
-                }
+                self.report_yield_reserved_word_error();
             }
         }
 
@@ -1835,18 +1824,7 @@ impl ParserState {
                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 );
             } else if self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context() {
-                let is_class_context = self.in_class_body() || self.in_class_member_name();
-                if is_class_context {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    );
-                }
+                self.report_yield_reserved_word_error();
             }
         }
 

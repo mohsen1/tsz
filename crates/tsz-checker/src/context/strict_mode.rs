@@ -27,7 +27,7 @@ impl CheckerContext<'_> {
             return true;
         }
 
-        if self.is_external_module() {
+        if self.is_external_module_file() {
             return true;
         }
 
@@ -89,13 +89,30 @@ impl CheckerContext<'_> {
     ///
     /// Uses the per-file cache from the CLI driver if available,
     /// falling back to the binder's detection for single-file mode.
-    fn is_external_module(&self) -> bool {
+    pub(crate) fn is_external_module_file(&self) -> bool {
         if let Some(ref map) = self.is_external_module_by_file
             && let Some(&is_ext) = map.get(&self.file_name)
         {
             return is_ext;
         }
-        self.binder.is_external_module()
+        if self.binder.is_external_module() {
+            return true;
+        }
+
+        self.arena
+            .source_files
+            .first()
+            .map(|sf| &sf.statements)
+            .is_some_and(|statements| {
+                statements.nodes.iter().any(|&stmt_idx| {
+                    self.arena.get(stmt_idx).is_some_and(|stmt| {
+                        stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                            || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    })
+                })
+            })
     }
 }
 

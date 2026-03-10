@@ -7251,3 +7251,44 @@ var arguments = 1;
         "Expected explicit `@alwaysStrict: true` to restore JS strict-mode binding diagnostics.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_plain_js_binder_errors_use_module_and_cross_function_diagnostics() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "plainJSBinderErrors.js",
+        r#"
+export default 12
+function* g() {
+    const yield = 4
+}
+class C {
+    label() {
+        for(;;) {
+            label: var x = 1
+            break label
+        }
+    }
+}
+const eval = 9
+const arguments = 10
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1214),
+        "Expected generator `yield` in a JS module to use TS1214.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1215),
+        "Expected top-level `eval`/`arguments` bindings in a JS module to use TS1215.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1107),
+        "Expected `break label` after a non-enclosing labeled statement to use TS1107 in the function body.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1116),
+        "Did not expect TS1116 once the cross-function boundary diagnostic is selected.\nGot: {diagnostics:?}"
+    );
+}
