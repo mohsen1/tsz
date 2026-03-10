@@ -3,9 +3,9 @@
 //! This module handles type reification: converting the Solver's internal `TypeId`
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
-use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
+use tsz_binder::{Symbol, SymbolArena, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
@@ -272,7 +272,17 @@ impl<'a> TypePrinter<'a> {
     fn resolve_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
         let arena = self.symbol_arena?;
         let sym = arena.get(sym_id)?;
-        let mut qualified_name = sym.escaped_name.clone();
+
+        // When a symbol is a "default" export alias, resolve the underlying
+        // declaration's actual name (e.g., `export default class MyComponent`
+        // should print "MyComponent", not "default").
+        let mut qualified_name =
+            if sym.escaped_name == "default" && sym.flags & symbol_flags::ALIAS != 0 {
+                self.resolve_default_export_name(sym)
+                    .unwrap_or_else(|| sym.escaped_name.clone())
+            } else {
+                sym.escaped_name.clone()
+            };
         let mut current_parent = sym.parent;
 
         // Build the enclosing symbol's ancestor set for stripping
@@ -311,6 +321,30 @@ impl<'a> TypePrinter<'a> {
         }
 
         Some(qualified_name)
+    }
+
+    /// For a "default" export alias symbol, resolve the underlying declaration's
+    /// actual name (e.g., `export default class MyComponent` → "MyComponent").
+    fn resolve_default_export_name(&self, sym: &Symbol) -> Option<String> {
+        let node_arena = self.node_arena?;
+        let decl_idx = sym.value_declaration;
+        let decl_node = node_arena.get(decl_idx)?;
+
+        // Check if it's a class declaration/expression with a name
+        if let Some(class_data) = node_arena.get_class(decl_node) {
+            if let Some(name) = node_arena.get_identifier_text(class_data.name) {
+                return Some(name.to_string());
+            }
+        }
+
+        // Check if it's a function declaration with a name
+        if let Some(func_data) = node_arena.get_function(decl_node) {
+            if let Some(name) = node_arena.get_identifier_text(func_data.name) {
+                return Some(name.to_string());
+            }
+        }
+
+        None
     }
 
     /// Resolve an atom to its string representation.
