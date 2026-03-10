@@ -414,7 +414,7 @@ impl<'a> CheckerState<'a> {
             "boolean" | "Boolean" => Some(TypeId::BOOLEAN),
             "bigint" | "BigInt" => Some(TypeId::BIGINT),
             "object" => Some(TypeId::OBJECT),
-            "Object" | "any" | "*" => Some(TypeId::ANY),
+            "any" | "*" => Some(TypeId::ANY),
             "unknown" => Some(TypeId::UNKNOWN),
             "undefined" | "Undefined" => Some(TypeId::UNDEFINED),
             "null" | "Null" => Some(TypeId::NULL),
