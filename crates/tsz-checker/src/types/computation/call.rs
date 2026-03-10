@@ -1417,6 +1417,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.current_callable_type = prev_callable_type;
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
+
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 

@@ -742,7 +742,7 @@ impl<'a> CheckerState<'a> {
             diag.related_information.push(related);
         }
 
-        self.ctx.diagnostics.push(diag);
+        self.ctx.push_diagnostic(diag);
     }
 
     /// Build a `DiagnosticRelatedInformation` from a solver failure reason.

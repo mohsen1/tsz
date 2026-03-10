@@ -128,3 +128,48 @@ function f(): number {
         "Annotated return type should still produce TS2322 for type mismatch"
     );
 }
+
+#[test]
+fn test_contextual_optional_parameter_question_token_in_named_function_expression() {
+    let source = r#"
+function acceptNum(num: number) {}
+
+const f1: (a: string, b: number) => void = function self(a, b?) {
+  acceptNum(b);
+  self("");
+  self("", undefined);
+};
+
+const f2: (a: string, b: number) => void = function self(a, b?: number) {
+  acceptNum(b);
+  self("");
+  self("", undefined);
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions::default();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    let diagnostics = checker.ctx.diagnostics.clone();
+    let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+
+    assert_eq!(
+        ts2345_errors.len(),
+        2,
+        "Expected two TS2345 errors for optional contextual parameters, got diagnostics={diagnostics:?}"
+    );
+}

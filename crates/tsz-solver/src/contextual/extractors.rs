@@ -47,6 +47,28 @@ pub(crate) fn collect_single_or_union_no_reduce(
     }
 }
 
+/// Merge contextual candidates gathered from intersection members.
+///
+/// Intersections frequently mix a precise member with a broad index-signature or
+/// `any`-like fallback. In those cases, the broad `any` candidate should not erase
+/// the more precise contextual information.
+pub(crate) fn collect_from_intersection(
+    db: &dyn TypeDatabase,
+    mut types: Vec<TypeId>,
+    combine: impl FnOnce(&dyn TypeDatabase, Vec<TypeId>) -> TypeId,
+) -> Option<TypeId> {
+    if types.len() > 1 && types.contains(&TypeId::ANY) && types.iter().any(|&t| t != TypeId::ANY) {
+        types.retain(|&t| t != TypeId::ANY);
+    }
+
+    match types.len() {
+        0 => None,
+        1 => Some(types[0]),
+        _ if types.windows(2).all(|pair| pair[0] == pair[1]) => Some(types[0]),
+        _ => Some(combine(db, types)),
+    }
+}
+
 /// Extract the element type from a rest element's stored type for contextual typing.
 ///
 /// Rest elements in tuples store the full array/tuple type (e.g., `string[]` for
@@ -682,20 +704,16 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersections, prefer the most specific (non-any) property type.
-        // e.g., `{ a: any } & { a: 1 }` should return `1` for property `a`.
         let members = self.db.type_list(TypeListId(list_id));
-        let mut result: Option<TypeId> = None;
-        for &member in members.iter() {
-            let mut extractor =
-                PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
-            if let Some(ty) = extractor.extract(member)
-                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-            {
-                result = Some(ty);
-            }
-        }
-        result
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor =
+                    PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_from_intersection(self.db, types, |db, tys| db.intersection(tys))
     }
 
     fn default_output() -> Self::Output {
@@ -835,6 +853,18 @@ fn extract_param_type_at_inner(
         let rest_index = index - rest_start;
         if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
             return Some(elem);
+        }
+        if let Some(TypeData::Union(members)) = db.lookup(last_param.type_id) {
+            let members = db.type_list(members);
+            let types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let mut mock_params = params.to_vec();
+                    mock_params.last_mut().unwrap().type_id = member;
+                    extract_param_type_at_inner(db, &mock_params, index, arg_count)
+                })
+                .collect();
+            return collect_single_or_union(db, types);
         }
         if let Some(TypeData::Tuple(elements_id)) = db.lookup(last_param.type_id) {
             let elements = db.tuple_list(elements_id);
@@ -1111,15 +1141,16 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersections, try each member and return the first match.
         let members = self.db.type_list(TypeListId(list_id));
-        for &member in members.iter() {
-            let mut extractor = ParameterExtractor::new(self.db, self.index, self.no_implicit_any);
-            if let Some(ty) = extractor.extract(member) {
-                return Some(ty);
-            }
-        }
-        None
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor =
+                    ParameterExtractor::new(self.db, self.index, self.no_implicit_any);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_from_intersection(self.db, types, |db, tys| db.union(tys))
     }
 
     fn default_output() -> Self::Output {
@@ -1187,13 +1218,14 @@ impl<'a> TypeVisitor for RestParameterExtractor<'a> {
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
-        for &member in members.iter() {
-            let mut extractor = RestParameterExtractor::new(self.db, self.index);
-            if let Some(ty) = extractor.extract(member) {
-                return Some(ty);
-            }
-        }
-        None
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor = RestParameterExtractor::new(self.db, self.index);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_from_intersection(self.db, types, |db, tys| db.union(tys))
     }
 
     fn default_output() -> Self::Output {

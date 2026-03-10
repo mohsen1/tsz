@@ -792,10 +792,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 // Try to get cached type from symbol
                 let Some(sym_id) = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(param.name)
-                    .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
+                    .parameter_symbol_ids(param_idx, param.name)
+                    .into_iter()
+                    .flatten()
+                    .next()
                 else {
                     continue;
                 };

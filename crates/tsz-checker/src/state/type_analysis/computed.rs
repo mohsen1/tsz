@@ -1241,14 +1241,17 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    if let Some(contextual_type) =
+                        self.contextual_parameter_type_from_enclosing_function(resolved_value_decl)
+                    {
+                        return (contextual_type, Vec::new());
+                    }
                     // Fall back to inferring from initializer (default value)
                     if param.initializer.is_some() {
                         return (self.get_type_of_node(param.initializer), Vec::new());
                     }
                 }
             }
-            // Binding element in destructured function parameter with type annotation.
-            // Walk up: Identifier -> BindingElement -> BindingPattern -> Parameter
             if resolved_value_decl.is_some()
                 && let Some(t) = self.resolve_binding_element_from_annotated_param(
                     resolved_value_decl,

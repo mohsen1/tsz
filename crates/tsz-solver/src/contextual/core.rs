@@ -7,7 +7,8 @@ use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
     RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
-    TupleElementExtractor, collect_single_or_union, collect_single_or_union_no_reduce,
+    TupleElementExtractor, collect_from_intersection, collect_single_or_union,
+    collect_single_or_union_no_reduce,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -192,47 +193,22 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type(index);
         }
 
-        // Handle Intersection explicitly - merge parameter types from callable members.
-        // Picking only the first callable member can drop later parameters when
-        // an earlier member has a shorter signature, causing false TS7006 for
-        // assignments like `window[action] = (x, y) => {}` where the contextual
-        // type is an intersection of callable members.
+        // Handle Intersection explicitly - combine member contributions and
+        // ignore broad `any` fallbacks when a more specific contextual type exists.
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
-            let mut param_types: Vec<TypeId> = Vec::new();
-            for &m in members.iter() {
-                let ctx = ContextualTypeContext::with_expected_and_options(
-                    self.interner,
-                    m,
-                    self.no_implicit_any,
-                );
-                if let Some(param_type) = ctx.get_parameter_type(index) {
-                    param_types.push(param_type);
-                }
-            }
-            if param_types.is_empty() {
-                return None;
-            }
-            let first = param_types[0];
-            if param_types.iter().all(|&t| t == first) {
-                return Some(first);
-            }
-            let non_any: Vec<TypeId> = param_types
+            let param_types: Vec<TypeId> = members
                 .iter()
-                .copied()
-                .filter(|&t| t != TypeId::ANY)
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        m,
+                        self.no_implicit_any,
+                    );
+                    ctx.get_parameter_type(index)
+                })
                 .collect();
-            if non_any.is_empty() {
-                return Some(TypeId::ANY);
-            }
-            if non_any.len() == 1 {
-                return Some(non_any[0]);
-            }
-            let first_non_any = non_any[0];
-            if non_any.iter().all(|&t| t == first_non_any) {
-                return Some(first_non_any);
-            }
-            return Some(crate::utils::union_or_single(self.interner, non_any));
+            return collect_from_intersection(self.interner, param_types, |db, tys| db.union(tys));
         }
 
         // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
@@ -360,39 +336,18 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
-        // Handle Intersection explicitly - merge parameter types from callable members.
+        // Handle Intersection explicitly - combine member contributions and
+        // ignore broad `any` fallbacks when a more specific contextual type exists.
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
-            let mut param_types: Vec<TypeId> = Vec::new();
-            for &m in members.iter() {
-                let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                if let Some(param_type) = ctx.get_parameter_type_for_call(index, arg_count) {
-                    param_types.push(param_type);
-                }
-            }
-            if param_types.is_empty() {
-                return None;
-            }
-            let first = param_types[0];
-            if param_types.iter().all(|&t| t == first) {
-                return Some(first);
-            }
-            let non_any: Vec<TypeId> = param_types
+            let param_types: Vec<TypeId> = members
                 .iter()
-                .copied()
-                .filter(|&t| t != TypeId::ANY)
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_parameter_type_for_call(index, arg_count)
+                })
                 .collect();
-            if non_any.is_empty() {
-                return Some(TypeId::ANY);
-            }
-            if non_any.len() == 1 {
-                return Some(non_any[0]);
-            }
-            let first_non_any = non_any[0];
-            if non_any.iter().all(|&t| t == first_non_any) {
-                return Some(first_non_any);
-            }
-            return Some(crate::utils::union_or_single(self.interner, non_any));
+            return collect_from_intersection(self.interner, param_types, |db, tys| db.union(tys));
         }
 
         // Handle TypeParameter - use its constraint for parameter type extraction.
@@ -904,17 +859,19 @@ impl<'a> ContextualTypeContext<'a> {
                 // visitor) so that each member gets the full handling pipeline, including
                 // mapped-type-template extraction for patterns like T & {[P in keyof T]: V}.
                 let members = self.interner.type_list(members);
-                let mut result: Option<TypeId> = None;
-                for &m in members.iter() {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                    if let Some(ty) = ctx.get_property_type(name)
-                        && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-                    {
-                        result = Some(ty);
-                    }
-                }
-                if result.is_some() {
-                    return result;
+                let prop_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_property_type(name)
+                    })
+                    .collect();
+                if let Some(result) =
+                    collect_from_intersection(self.interner, prop_types, |db, tys| {
+                        db.intersection(tys)
+                    })
+                {
+                    return Some(result);
                 }
             }
             Some(TypeData::Mapped(mapped_id)) => {

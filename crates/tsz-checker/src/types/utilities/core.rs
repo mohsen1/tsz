@@ -23,6 +23,20 @@ impl<'a> CheckerState<'a> {
     // Section 52: Parameter Type Utilities
     // ============================================================================
 
+    pub(crate) fn parameter_symbol_ids(
+        &self,
+        param_idx: NodeIndex,
+        param_name: NodeIndex,
+    ) -> [Option<SymbolId>; 2] {
+        let name_sym = self.ctx.binder.get_node_symbol(param_name);
+        let param_sym = self.ctx.binder.get_node_symbol(param_idx);
+        if name_sym.is_some() && name_sym == param_sym {
+            [name_sym, None]
+        } else {
+            [name_sym, param_sym]
+        }
+    }
+
     pub(crate) fn resolve_jsdoc_import_member(
         &self,
         module_specifier: &str,
@@ -118,15 +132,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let Some(sym_id) = self
-                .ctx
-                .binder
-                .get_node_symbol(param.name)
-                .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
-            else {
+            let symbol_ids = self.parameter_symbol_ids(param_idx, param.name);
+            let Some(primary_sym_id) = symbol_ids.into_iter().flatten().next() else {
                 continue;
             };
-            self.push_symbol_dependency(sym_id, true);
+            self.push_symbol_dependency(primary_sym_id, true);
             let type_id = if let Some(types) = param_types {
                 // param_types already have optional undefined applied
                 types.get(i).and_then(|t| *t)
@@ -217,9 +227,179 @@ impl<'a> CheckerState<'a> {
             self.pop_symbol_dependency();
 
             if let Some(type_id) = type_id {
-                self.cache_symbol_type(sym_id, type_id);
+                for sym_id in self
+                    .parameter_symbol_ids(param_idx, param.name)
+                    .into_iter()
+                    .flatten()
+                {
+                    self.cache_symbol_type(sym_id, type_id);
+                }
             }
         }
+    }
+
+    pub(crate) fn contextual_parameter_type_from_enclosing_function(
+        &mut self,
+        param_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let mut param_idx = param_idx;
+        let mut param_node = self.ctx.arena.get(param_idx)?;
+        if self.ctx.arena.get_parameter(param_node).is_none() {
+            let ext = self.ctx.arena.get_extended(param_idx)?;
+            let parent_idx = ext.parent;
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                param_idx = parent_idx;
+                param_node = parent_node;
+            } else if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+                let ext2 = self.ctx.arena.get_extended(parent_idx)?;
+                let pattern_idx = ext2.parent;
+                let pattern_node = self.ctx.arena.get(pattern_idx)?;
+                if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
+                    let ext3 = self.ctx.arena.get_extended(pattern_idx)?;
+                    let maybe_param_idx = ext3.parent;
+                    let maybe_param_node = self.ctx.arena.get(maybe_param_idx)?;
+                    if maybe_param_node.kind == syntax_kind_ext::PARAMETER {
+                        param_idx = maybe_param_idx;
+                        param_node = maybe_param_node;
+                    }
+                }
+            }
+        }
+        let param = self.ctx.arena.get_parameter(param_node)?;
+
+        let mut current = param_idx;
+        let mut function_idx = NodeIndex::NONE;
+        for _ in 0..4 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            current = ext.parent;
+            let parent = self.ctx.arena.get(current)?;
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::GET_ACCESSOR
+            ) {
+                function_idx = current;
+                break;
+            }
+        }
+
+        if function_idx.is_none() {
+            return None;
+        }
+
+        let parameters = if let Some(func) = self
+            .ctx
+            .arena
+            .get_function(self.ctx.arena.get(function_idx)?)
+        {
+            &func.parameters.nodes
+        } else if let Some(method) = self
+            .ctx
+            .arena
+            .get_method_decl(self.ctx.arena.get(function_idx)?)
+        {
+            &method.parameters.nodes
+        } else {
+            return None;
+        };
+
+        let param_position = parameters.iter().position(|&idx| idx == param_idx)?;
+        let this_atom = self.ctx.types.intern_string("this");
+        let contextual_index = parameters[..param_position]
+            .iter()
+            .filter(|&&idx| {
+                self.ctx
+                    .arena
+                    .get(idx)
+                    .and_then(|node| self.ctx.arena.get_parameter(node))
+                    .and_then(|p| self.ctx.arena.get(p.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| {
+                        self.ctx.types.intern_string(&ident.escaped_text) != this_atom
+                    })
+            })
+            .count();
+
+        let contextual_type = self
+            .ctx
+            .contextual_type
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_node_symbol(function_idx)
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .filter(|&ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
+            })
+            .or_else(|| {
+                let function_ext = self.ctx.arena.get_extended(function_idx)?;
+                let parent_idx = function_ext.parent;
+                let parent = self.ctx.arena.get(parent_idx)?;
+                let variable_decl = self.ctx.arena.get_variable_declaration(parent)?;
+                (variable_decl.initializer == function_idx)
+                    .then(|| variable_decl.type_annotation.is_some())
+                    .and_then(|has_annotation| {
+                        if has_annotation {
+                            Some(self.get_type_from_type_node(variable_decl.type_annotation))
+                        } else {
+                            self.jsdoc_type_annotation_for_node(parent_idx)
+                        }
+                    })
+            })
+            .or_else(|| {
+                self.is_js_file()
+                    .then(|| self.jsdoc_type_annotation_for_node(function_idx))
+                    .flatten()
+            })?;
+        let contextual_type = self.evaluate_contextual_type(contextual_type);
+        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            contextual_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+
+        let mut ty = if param.dot_dot_dot_token {
+            helper.get_rest_parameter_type(contextual_index)?
+        } else {
+            helper.get_parameter_type(contextual_index)?
+        };
+
+        let js_optional = if self.is_js_file() {
+            self.get_jsdoc_for_function(function_idx)
+                .is_some_and(|jsdoc| {
+                    let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                    let pname = self.effective_jsdoc_param_name(
+                        param.name,
+                        &jsdoc_param_names,
+                        contextual_index,
+                    );
+                    !Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
+                })
+        } else {
+            false
+        };
+
+        if (param.question_token || js_optional)
+            && self.ctx.strict_null_checks()
+            && ty != TypeId::ANY
+            && ty != TypeId::ERROR
+            && ty != TypeId::UNDEFINED
+            && !tsz_solver::type_contains_undefined(self.ctx.types, ty)
+        {
+            ty = self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED]);
+        }
+
+        Some(ty)
     }
 
     /// Assign contextual types to destructuring parameters (binding patterns).
