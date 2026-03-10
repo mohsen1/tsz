@@ -725,7 +725,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
 
                 // TS2651: check for forward references to later members
-                let later_members: Vec<&str> = member_names[i + 1..].to_vec();
+                // Use .get() to avoid panic when member_names is shorter than
+                // members.nodes (e.g. string-literal enum member names that fail
+                // get_identifier_text are excluded from member_names).
+                let later_members: Vec<&str> = member_names.get(i + 1..).unwrap_or(&[]).to_vec();
                 let has_forward_ref = self.const_enum_has_forward_reference(
                     member_data.initializer,
                     &later_members,
