@@ -1305,10 +1305,13 @@ impl<'a> CheckerState<'a> {
                             if name == "export=" {
                                 continue;
                             }
-                            // Skip type-only, wildcard-type-only, and value-less exports
+                            // Skip type-only, wildcard-type-only, value-less, and
+                            // transitively type-only exports (e.g., re-exported from
+                            // a module that uses `export type { X }`).
                             if self.is_type_only_export_symbol(sym_id)
                                 || self.is_export_from_type_only_wildcard(&module_specifier, name)
                                 || self.export_symbol_has_no_value(sym_id)
+                                || self.is_export_type_only_from_file(&module_specifier, name, None)
                             {
                                 continue;
                             }
@@ -1480,12 +1483,18 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                             // Skip type-only exports (`export type { A }`), exports
-                            // reached through `export type *` wildcards, and exports
+                            // reached through `export type *` wildcards, exports
                             // that are intrinsically type-only (type aliases, interfaces
-                            // without merged values).
+                            // without merged values), and transitively type-only
+                            // exports (re-exported from a `export type` chain).
                             if self.is_type_only_export_symbol(export_sym_id)
                                 || self.is_export_from_type_only_wildcard(module_name, name)
                                 || self.export_symbol_has_no_value(export_sym_id)
+                                || self.is_export_type_only_from_file(
+                                    module_name,
+                                    name,
+                                    declaring_file_idx,
+                                )
                             {
                                 continue;
                             }
@@ -1904,97 +1913,5 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::STRING
         }
-    }
-
-    /// Resolve the type of a binding element inside a destructured function parameter
-    /// that has a type annotation. Walks up the AST:
-    ///   Identifier -> `BindingElement` -> [`SyntaxList` ->] `BindingPattern` -> Parameter
-    /// and extracts the property type from the parameter's annotation.
-    fn resolve_binding_element_from_annotated_param(
-        &mut self,
-        value_decl: NodeIndex,
-        name: &str,
-    ) -> Option<TypeId> {
-        use tsz_scanner::SyntaxKind;
-
-        let node = self.ctx.arena.get(value_decl)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        // Identifier -> BindingElement
-        let ext = self.ctx.arena.get_extended(value_decl)?;
-        let be_idx = ext.parent;
-        if !be_idx.is_some() {
-            return None;
-        }
-        let be_node = self.ctx.arena.get(be_idx)?;
-        if be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
-            return None;
-        }
-        let be_data = self.ctx.arena.get_binding_element(be_node)?;
-
-        // BindingElement -> BindingPattern (direct parent, no intermediate nodes)
-        let ext2 = self.ctx.arena.get_extended(be_idx)?;
-        let pat_idx = ext2.parent;
-        if !pat_idx.is_some() {
-            return None;
-        }
-        let pat_node = self.ctx.arena.get(pat_idx)?;
-        let is_obj = pat_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
-        let is_arr = pat_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
-        if !is_obj && !is_arr {
-            return None;
-        }
-
-        // BindingPattern -> Parameter
-        let ext3 = self.ctx.arena.get_extended(pat_idx)?;
-        let param_idx = ext3.parent;
-        if !param_idx.is_some() {
-            return None;
-        }
-        let param_node = self.ctx.arena.get(param_idx)?;
-        let param = self.ctx.arena.get_parameter(param_node)?;
-        if !param.type_annotation.is_some() {
-            return None;
-        }
-
-        let ann_type = self.get_type_from_type_node(param.type_annotation);
-        if ann_type == TypeId::ANY || ann_type == TypeId::UNKNOWN || ann_type == TypeId::ERROR {
-            return None;
-        }
-
-        // Evaluate to resolve Lazy/Application types
-        let ann_type = self.evaluate_type_for_assignability(ann_type);
-
-        if is_obj {
-            let prop_name_str = if be_data.property_name.is_some() {
-                self.get_identifier_text_from_idx(be_data.property_name)
-            } else {
-                Some(name.to_string())
-            };
-            let prop_name_str = prop_name_str?;
-            let prop_atom = self.ctx.types.intern_string(&prop_name_str);
-
-            // Look up property in object shape
-            use crate::query_boundaries::common::object_shape_for_type;
-            if let Some(shape) = object_shape_for_type(self.ctx.types, ann_type)
-                && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
-            {
-                let mut t = prop.type_id;
-                // Optional property adds undefined under strict null checks
-                if prop.optional && self.ctx.strict_null_checks() {
-                    t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
-                }
-                // Default value strips undefined
-                if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                    t = tsz_solver::remove_undefined(self.ctx.types, t);
-                }
-                return Some(t);
-            }
-        }
-        // Array binding patterns are rare for function params; skip for now
-
-        None
     }
 }

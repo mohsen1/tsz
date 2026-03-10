@@ -533,9 +533,12 @@ impl<'a> CheckerState<'a> {
                 // Skip type-only members (e.g., `export type { A }`, interfaces).
                 // These should not be resolved as values; let the code fall
                 // through to TS2693 "type only" or TS2339 "property doesn't exist" handling.
+                let transitively_type_only = self
+                    .is_namespace_member_transitively_type_only(access.expression, property_name);
                 if !member_symbol.is_type_only
                     && !self.symbol_member_is_type_only(member_sym_id, Some(property_name))
                     && (member_symbol.flags & symbol_flags::VALUE) != 0
+                    && !transitively_type_only
                 {
                     let parent_sym_id = member_symbol.parent;
                     if let Some(parent_symbol) = self
