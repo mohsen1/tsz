@@ -329,6 +329,14 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
                 self.error_type_only_value_at(name, idx);
+                // Return the actual resolved type instead of ERROR so that
+                // downstream checks (e.g., TS2349 for non-callable expressions)
+                // can still fire. TSC emits TS1362 during name resolution but
+                // continues to resolve the type normally.
+                let resolved = self.get_type_of_symbol(sym_id);
+                if resolved != TypeId::UNKNOWN && resolved != TypeId::ERROR {
+                    return resolved;
+                }
                 return TypeId::ERROR;
             }
             // Check symbol flags to detect type-only usage.
