@@ -1112,6 +1112,16 @@ pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
+/// Get the structural member type from an Enum type.
+///
+/// Returns None if the type is not an Enum type.
+pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Enum(_, member_type)) => Some(member_type),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

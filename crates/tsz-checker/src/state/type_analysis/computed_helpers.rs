@@ -1782,19 +1782,8 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if a named export from a module was reached through a `export type *` wildcard
-    /// re-export chain. Returns `true` when the export should be excluded from the namespace
-    /// object's value properties because any wildcard in the re-export chain was type-only.
-    ///
-    /// For example:
-    /// ```typescript
-    /// // ghost.ts
-    /// export class Ghost {}          // Ghost.is_type_only = false
-    /// // intermediate.ts
-    /// export type * from './ghost'   // wildcard_reexports_type_only = true
-    /// ```
-    /// When building the namespace type for `intermediate`, `Ghost` should NOT appear
-    /// as a value property because the wildcard re-export is type-only.
+    /// Returns `true` when a named export was reached through a `export type *` wildcard
+    /// re-export chain and should be excluded from namespace value properties.
     pub(crate) fn is_export_from_type_only_wildcard(
         &self,
         module_name: &str,
