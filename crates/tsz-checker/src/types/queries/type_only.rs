@@ -380,6 +380,13 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+            // Namespace imports always create a value (the module namespace object),
+            // regardless of whether internal exports are type-only. Don't walk the
+            // alias chain for namespace bindings — individual type-only members
+            // should surface as TS2339 at the property access site.
+            if is_namespace_binding {
+                return false;
+            }
         }
 
         let mut visited = Vec::new();
