@@ -1285,9 +1285,12 @@ impl<'a> CheckerState<'a> {
         // - Interface + value (function/class) can coexist
         // - Function overloads (multiple `export default function foo(...)`) are one symbol
         // Only emit TS2528 when there are truly conflicting default exports.
+        // Special case: function + class default exports emit TS2323 + TS2813 + TS2814 instead.
         if export_default_indices.len() > 1 {
             // Classify each default export
             let mut has_interface = false;
+            let mut has_class = false;
+            let mut has_function = false;
             let mut value_count = 0;
             let mut function_name: Option<String> = None;
             let mut all_same_function = true;
@@ -1305,6 +1308,7 @@ impl<'a> CheckerState<'a> {
                         has_interface = true;
                     }
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        has_function = true;
                         // Check if all function defaults share the same name (overloads)
                         let name = self
                             .ctx
@@ -1327,6 +1331,11 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    Some(k) if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        has_class = true;
+                        all_same_function = false;
+                        value_count += 1;
+                    }
                     _ => {
                         all_same_function = false;
                         value_count += 1;
@@ -1338,49 +1347,111 @@ impl<'a> CheckerState<'a> {
             // (interface-only or interface + one value group is OK)
             let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
             if is_conflict {
-                for &export_idx in &export_default_indices {
-                    // tsc points TS2528 at the declaration name for named exports
-                    // (e.g., `Foo` in `export default function Foo()`), or at `default`
-                    // for anonymous exports. Find the best anchor node.
-                    let anchor = self
-                        .ctx
-                        .arena
-                        .get_export_decl_at(export_idx)
-                        .and_then(|ed| {
-                            let clause = self.ctx.arena.get(ed.export_clause)?;
-                            // For function/class declarations, point at the name
-                            if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                self.ctx.arena.get_function(clause).and_then(|f| {
-                                    let n = self.ctx.arena.get(f.name)?;
-                                    if n.kind == SyntaxKind::Identifier as u16 {
-                                        Some(f.name)
-                                    } else {
-                                        None
-                                    }
-                                })
-                            } else if clause.kind == syntax_kind_ext::CLASS_DECLARATION {
-                                self.ctx.arena.get_class(clause).and_then(|c| {
-                                    let n = self.ctx.arena.get(c.name)?;
-                                    if n.kind == SyntaxKind::Identifier as u16 {
-                                        Some(c.name)
-                                    } else {
-                                        None
-                                    }
-                                })
-                            } else if clause.kind == SyntaxKind::Identifier as u16 {
-                                // For `export default Bar`, point at the identifier
-                                Some(ed.export_clause)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(export_idx);
+                // When function + class both export as default, tsc emits
+                // TS2323 + TS2813 + TS2814 (merge conflict diagnostics) instead of TS2528.
+                if has_function && has_class {
+                    self.emit_function_class_default_merge_errors(&export_default_indices);
+                } else {
+                    for &export_idx in &export_default_indices {
+                        let anchor = self.get_default_export_anchor(export_idx);
+                        self.error_at_node(
+                            anchor,
+                            "A module cannot have multiple default exports.",
+                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the best anchor node for a default export diagnostic (declaration name or the
+    /// export statement itself).
+    fn get_default_export_anchor(&self, export_idx: NodeIndex) -> NodeIndex {
+        self.ctx
+            .arena
+            .get_export_decl_at(export_idx)
+            .and_then(|ed| {
+                let clause = self.ctx.arena.get(ed.export_clause)?;
+                if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    self.ctx.arena.get_function(clause).and_then(|f| {
+                        let n = self.ctx.arena.get(f.name)?;
+                        if n.kind == SyntaxKind::Identifier as u16 {
+                            Some(f.name)
+                        } else {
+                            None
+                        }
+                    })
+                } else if clause.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    self.ctx.arena.get_class(clause).and_then(|c| {
+                        let n = self.ctx.arena.get(c.name)?;
+                        if n.kind == SyntaxKind::Identifier as u16 {
+                            Some(c.name)
+                        } else {
+                            None
+                        }
+                    })
+                } else if clause.kind == SyntaxKind::Identifier as u16 {
+                    Some(ed.export_clause)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(export_idx)
+    }
+
+    /// Emit TS2323 + TS2813 + TS2814 for function + class default export merge conflicts.
+    /// tsc treats `export default function` + `export default class` as a declaration merge
+    /// conflict rather than a "multiple default exports" (TS2528) scenario.
+    fn emit_function_class_default_merge_errors(&mut self, export_default_indices: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // TS2323: "Cannot redeclare exported variable 'default'." on every declaration
+        for &export_idx in export_default_indices {
+            let anchor = self.get_default_export_anchor(export_idx);
+            let message = format_message(
+                diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                &["default"],
+            );
+            self.error_at_node(
+                anchor,
+                &message,
+                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+            );
+        }
+
+        // TS2813: "Class declaration cannot implement overload list for 'default'." on class
+        // TS2814: "Function with bodies can only merge with classes that are ambient." on function
+        for &export_idx in export_default_indices {
+            let wrapped_kind = self
+                .ctx
+                .arena
+                .get_export_decl_at(export_idx)
+                .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                .map(|n| n.kind);
+
+            let anchor = self.get_default_export_anchor(export_idx);
+
+            match wrapped_kind {
+                Some(k) if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    let message = format_message(
+                        diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                        &["default"],
+                    );
                     self.error_at_node(
                         anchor,
-                        "A module cannot have multiple default exports.",
-                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                        &message,
+                        diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
                     );
                 }
+                Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.error_at_node(
+                        anchor,
+                        diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                        diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                    );
+                }
+                _ => {}
             }
         }
     }
