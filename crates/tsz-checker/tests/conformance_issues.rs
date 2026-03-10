@@ -164,8 +164,8 @@ let x: typeof W = W.a;
 "#;
 
     let diagnostics = compile_and_get_diagnostics(source);
-    let message =
-        diagnostic_message(&diagnostics, 2322).expect("expected TS2322 for assigning W.a to typeof W");
+    let message = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning W.a to typeof W");
 
     assert!(
         message.contains("Type 'W' is not assignable to type 'typeof W'."),
