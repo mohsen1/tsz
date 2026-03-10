@@ -799,13 +799,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_shape = self.interner().callable_shape(pattern_shape_id);
-        if pattern_shape.call_signatures.len() != 1
-            || !pattern_shape.construct_signatures.is_empty()
-            || !pattern_shape.properties.is_empty()
-        {
+
+        // Determine which signature to use: call or construct.
+        // Pattern `new (...) => infer P` has construct_signatures, not call_signatures.
+        let is_construct_pattern = pattern_shape.call_signatures.is_empty()
+            && pattern_shape.construct_signatures.len() == 1
+            && pattern_shape.properties.is_empty();
+        let is_call_pattern = pattern_shape.construct_signatures.is_empty()
+            && pattern_shape.call_signatures.len() == 1
+            && pattern_shape.properties.is_empty();
+
+        if !is_call_pattern && !is_construct_pattern {
             return checker.is_subtype_of(source, pattern);
         }
-        let pattern_sig = &pattern_shape.call_signatures[0];
+        let pattern_sig = if is_construct_pattern {
+            &pattern_shape.construct_signatures[0]
+        } else {
+            &pattern_shape.call_signatures[0]
+        };
         let has_param_infer = pattern_sig
             .params
             .iter()
@@ -857,13 +868,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.is_empty()
-                        || !source_shape.construct_signatures.is_empty()
+                    let source_sigs = if is_construct_pattern {
+                        &source_shape.construct_signatures
+                    } else {
+                        &source_shape.call_signatures
+                    };
+                    let other_sigs = if is_construct_pattern {
+                        &source_shape.call_signatures
+                    } else {
+                        &source_shape.construct_signatures
+                    };
+                    if source_sigs.is_empty()
+                        || !other_sigs.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                    let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
                     match_params_and_return(
@@ -875,6 +896,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
+                    // For construct patterns, only match constructor Functions
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
+                    }
                     match_params_and_return(
                         source,
                         &source_fn.params,
@@ -890,13 +915,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.is_empty()
-                                    || !source_shape.construct_signatures.is_empty()
+                                let source_sigs = if is_construct_pattern {
+                                    &source_shape.construct_signatures
+                                } else {
+                                    &source_shape.call_signatures
+                                };
+                                let other_sigs = if is_construct_pattern {
+                                    &source_shape.call_signatures
+                                } else {
+                                    &source_shape.construct_signatures
+                                };
+                                if source_sigs.is_empty()
+                                    || !other_sigs.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
                                 if !match_params_and_return(
@@ -910,6 +945,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
                                 if !match_params_and_return(
                                     member,
                                     &source_fn.params,
@@ -963,19 +1001,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.is_empty()
-                        || !source_shape.construct_signatures.is_empty()
+                    let source_sigs = if is_construct_pattern {
+                        &source_shape.construct_signatures
+                    } else {
+                        &source_shape.call_signatures
+                    };
+                    let other_sigs = if is_construct_pattern {
+                        &source_shape.call_signatures
+                    } else {
+                        &source_shape.construct_signatures
+                    };
+                    if source_sigs.is_empty()
+                        || !other_sigs.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                    let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
                     match_params(&source_sig.params, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
+                    }
                     match_params(&source_fn.params, bindings)
                 }
                 Some(TypeData::Union(members)) => {
@@ -986,13 +1037,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.is_empty()
-                                    || !source_shape.construct_signatures.is_empty()
+                                let source_sigs = if is_construct_pattern {
+                                    &source_shape.construct_signatures
+                                } else {
+                                    &source_shape.call_signatures
+                                };
+                                let other_sigs = if is_construct_pattern {
+                                    &source_shape.call_signatures
+                                } else {
+                                    &source_shape.construct_signatures
+                                };
+                                if source_sigs.is_empty()
+                                    || !other_sigs.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
                                 if !match_params(&source_sig.params, &mut member_bindings) {
@@ -1001,6 +1062,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
                                 if !match_params(&source_fn.params, &mut member_bindings) {
                                     return false;
                                 }
@@ -1046,19 +1110,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.is_empty()
-                        || !source_shape.construct_signatures.is_empty()
+                    let source_sigs = if is_construct_pattern {
+                        &source_shape.construct_signatures
+                    } else {
+                        &source_shape.call_signatures
+                    };
+                    let other_sigs = if is_construct_pattern {
+                        &source_shape.call_signatures
+                    } else {
+                        &source_shape.construct_signatures
+                    };
+                    if source_sigs.is_empty()
+                        || !other_sigs.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                    let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
                     match_return(source, source_sig.return_type, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
+                    }
                     match_return(source, source_fn.return_type, bindings)
                 }
                 Some(TypeData::Union(members)) => {
@@ -1069,13 +1146,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.is_empty()
-                                    || !source_shape.construct_signatures.is_empty()
+                                let source_sigs = if is_construct_pattern {
+                                    &source_shape.construct_signatures
+                                } else {
+                                    &source_shape.call_signatures
+                                };
+                                let other_sigs = if is_construct_pattern {
+                                    &source_shape.call_signatures
+                                } else {
+                                    &source_shape.construct_signatures
+                                };
+                                if source_sigs.is_empty()
+                                    || !other_sigs.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
                                 if !match_return(
@@ -1088,6 +1175,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
                                 if !match_return(
                                     member,
                                     source_fn.return_type,
