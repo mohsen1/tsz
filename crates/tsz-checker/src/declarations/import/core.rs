@@ -1642,6 +1642,20 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
                 );
+                continue;
+            }
+
+            // TS2748: Cannot access ambient const enums when VMS is enabled
+            if self.is_import_specifier_ambient_const_enum(module_name, &import_name) {
+                let msg = format_message(
+                    diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    &["verbatimModuleSyntax"],
+                );
+                self.error_at_node(
+                    local_name_idx,
+                    &msg,
+                    diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                );
             }
         }
     }
@@ -1680,6 +1694,59 @@ impl<'a> CheckerState<'a> {
             {
                 let flags = sym.flags;
                 return (flags & PURE_TYPE) != 0 && (flags & VALUE) == 0;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a named import refers to an ambient const enum in the target module.
+    /// Returns true if the target symbol has `CONST_ENUM` flag and the source file is a .d.ts.
+    pub(crate) fn is_import_specifier_ambient_const_enum(
+        &self,
+        module_name: &str,
+        import_name: &str,
+    ) -> bool {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+
+        // Try resolve_import_target first (multi-file mode)
+        if let Some(target_idx) = self.ctx.resolve_import_target(normalized) {
+            // Check if the target file is a .d.ts
+            let is_ambient_file = {
+                let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                arena
+                    .source_files
+                    .first()
+                    .is_some_and(|sf| sf.is_declaration_file)
+            };
+            if is_ambient_file
+                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+                && let Some(sym_id) = target_binder.file_locals.get(import_name)
+                && let Some(sym) = target_binder.get_symbol(sym_id)
+            {
+                return (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0;
+            }
+        }
+
+        // Fallback: check module_exports (single-pass mode)
+        for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
+            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+                && let Some(sym_id) = exports.get(import_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // In module_exports mode, check if any declaration is in a .d.ts
+                // We check symbol flags: if it's CONST_ENUM and declared in the current
+                // binder's d.ts file context
+                if (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0 {
+                    // Check declarations to see if they come from ambient context
+                    let all_ambient = sym.declarations.iter().all(|&decl_idx| {
+                        self.ctx.arena.is_in_ambient_context(decl_idx)
+                            || self.ctx.is_declaration_file()
+                    });
+                    if all_ambient {
+                        return true;
+                    }
+                }
             }
         }
 

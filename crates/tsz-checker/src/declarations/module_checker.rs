@@ -1397,6 +1397,23 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
                 );
+                continue;
+            }
+
+            // TS2748: Cannot access ambient const enums when VMS is enabled.
+            // For re-exports like `export { E } from "pkg"` where E is an ambient const enum.
+            if let Some(ref module_spec) = module_specifier_text
+                && self.is_import_specifier_ambient_const_enum(module_spec, &source_name)
+            {
+                let msg = format_message(
+                    diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    &["verbatimModuleSyntax"],
+                );
+                self.error_at_node(
+                    source_name_idx,
+                    &msg,
+                    diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                );
             }
         }
     }
