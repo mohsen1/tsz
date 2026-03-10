@@ -683,11 +683,16 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            // tsc displays optional params as `name?: T` without `| undefined`,
-            // even though the type system internally may store the type as `T | undefined`.
-            // When the `?` is present, strip `undefined` from the displayed type.
+            // tsc displays optional params WITH `| undefined` in error messages:
+            // `(x?: string | undefined) => void`. If the stored type doesn't
+            // already contain undefined, we append it to match tsc's output.
             let type_str: String = if p.optional {
-                self.format_stripping_undefined(p.type_id)
+                let formatted = self.format(p.type_id).into_owned();
+                if !self.type_contains_undefined(p.type_id) {
+                    format!("{formatted} | undefined")
+                } else {
+                    formatted
+                }
             } else {
                 self.format(p.type_id).into_owned()
             };
@@ -2825,8 +2830,9 @@ mod tests {
     // =================================================================
 
     #[test]
-    fn optional_param_no_undefined_suffix() {
-        // tsc: `(a?: string) => any` — NOT `(a?: string | undefined) => any`
+    fn optional_param_shows_undefined() {
+        // tsc shows `| undefined` for optional params in error messages:
+        // `(a?: string | undefined) => any`
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -2846,14 +2852,14 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string) => any",
-            "Optional param should not show '| undefined'"
+            result, "(a?: string | undefined) => any",
+            "Optional param should show '| undefined' to match tsc"
         );
     }
 
     #[test]
-    fn optional_param_with_union_undefined_strips_it() {
-        // When the type is internally `string | undefined`, display as `(a?: string)`
+    fn optional_param_with_union_undefined_keeps_it() {
+        // When the type is internally `string | undefined`, display as-is (no duplicate)
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -2874,8 +2880,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string) => any",
-            "Optional param with string | undefined should strip undefined"
+            result, "(a?: string | undefined) => any",
+            "Optional param with string | undefined should keep it as-is"
         );
     }
 
