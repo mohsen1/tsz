@@ -604,6 +604,36 @@ delete E["A"];
 }
 
 #[test]
+fn test_delete_optional_chain_reports_ts2790_across_access_forms() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+declare const o1: undefined | { b: string };
+delete o1?.b;
+delete (o1?.b);
+
+declare const o3: { b: undefined | { c: string } };
+delete o3.b?.c;
+delete (o3.b?.c);
+
+declare const o6: { b?: { c: { d?: { e: string } } } };
+delete o6.b?.["c"].d?.["e"];
+delete (o6.b?.["c"].d?.["e"]);
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2790_count = diagnostics.iter().filter(|(code, _)| *code == 2790).count();
+    assert_eq!(
+        ts2790_count, 6,
+        "Expected TS2790 for each delete optional-chain variant. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

@@ -1027,59 +1027,76 @@ impl<'a> CheckerState<'a> {
                 if !has_readonly_delete_error
                     && self.ctx.compiler_options.strict_null_checks
                     && let Some(operand_node) = self.ctx.arena.get(operand_idx)
-                    && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && (operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || operand_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                     && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
                 {
                     use tsz_solver::operations::property::PropertyAccessResult;
+
                     let prop_name = self
                         .ctx
                         .arena
                         .get_identifier_at(access.name_or_argument)
                         .map(|ident| ident.escaped_text.clone())
-                        .or_else(|| self.get_literal_string_from_node(access.name_or_argument));
+                        .or_else(|| self.get_literal_string_from_node(access.name_or_argument))
+                        .or_else(|| {
+                            self.get_literal_index_from_node(access.name_or_argument)
+                                .map(|idx| idx.to_string())
+                        });
+
                     if let Some(prop_name) = prop_name {
-                        let object_type = self.get_type_of_node(access.expression);
-                        // Use operand_type (computed above via get_type_of_node on the
-                        // full property access expression) for property-type checks.
-                        // resolve_property_access_with_env may return ANY for interface
-                        // properties, but operand_type gives the correctly resolved type.
-                        let prop_type = operand_type;
+                        let mut object_type = self.get_type_of_node(access.expression);
+                        if access.question_dot_token
+                            || crate::computation::access::is_optional_chain(
+                                self.ctx.arena,
+                                access.expression,
+                            )
+                        {
+                            let (non_nullish, _) = self.split_nullish_type(object_type);
+                            if let Some(non_nullish) = non_nullish {
+                                object_type = non_nullish;
+                            }
+                        }
+
                         if object_type != TypeId::ANY
                             && object_type != TypeId::UNKNOWN
                             && object_type != TypeId::ERROR
                             && object_type != TypeId::NEVER
-                            // Property types of any/unknown/never are exempt from TS2790
-                            && prop_type != TypeId::ANY
-                            && prop_type != TypeId::UNKNOWN
-                            && prop_type != TypeId::NEVER
-                            && prop_type != TypeId::ERROR
                         {
-                            // Check if property comes from an index signature or mapped type.
-                            // Mapped types like `{ [P in keyof any]: number }` are effectively
-                            // index-signature-like — all properties are dynamically computed.
-                            let from_idx_sig = matches!(
-                                self.resolve_property_access_with_env(object_type, &prop_name),
+                            let property_result =
+                                self.resolve_property_access_with_env(object_type, &prop_name);
+                            let (prop_type, from_idx_sig) = match property_result {
                                 PropertyAccessResult::Success {
-                                    from_index_signature: true,
+                                    type_id,
+                                    from_index_signature,
                                     ..
-                                }
-                            );
-                            let is_mapped = tsz_solver::is_mapped_type(self.ctx.types, object_type);
-                            if !from_idx_sig && !is_mapped {
-                                let is_optional =
-                                    self.is_property_optional(object_type, &prop_name);
-                                let optional_via_undefined =
-                                    !self.ctx.compiler_options.exact_optional_property_types
-                                        && tsz_solver::type_queries::type_includes_undefined(
-                                            self.ctx.types,
-                                            prop_type,
+                                } => (type_id, from_index_signature),
+                                _ => (operand_type, false),
+                            };
+
+                            if prop_type != TypeId::ANY
+                                && prop_type != TypeId::UNKNOWN
+                                && prop_type != TypeId::NEVER
+                                && prop_type != TypeId::ERROR
+                            {
+                                let is_mapped =
+                                    tsz_solver::is_mapped_type(self.ctx.types, object_type);
+                                if !from_idx_sig && !is_mapped {
+                                    let is_optional =
+                                        self.is_property_optional(object_type, &prop_name);
+                                    let optional_via_undefined =
+                                        !self.ctx.compiler_options.exact_optional_property_types
+                                            && tsz_solver::type_queries::type_includes_undefined(
+                                                self.ctx.types,
+                                                prop_type,
+                                            );
+                                    if !is_optional && !optional_via_undefined {
+                                        self.error_at_node(
+                                            operand_idx,
+                                            crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                            crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                         );
-                                if !is_optional && !optional_via_undefined {
-                                    self.error_at_node(
-                                        operand_idx,
-                                        crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
-                                        crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
-                                    );
+                                    }
                                 }
                             }
                         }
