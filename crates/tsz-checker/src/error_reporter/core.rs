@@ -197,6 +197,14 @@ impl<'a> CheckerState<'a> {
                     let decl = self.ctx.arena.get_variable_declaration(node)?;
                     return decl.initializer.is_some().then_some(decl.initializer);
                 }
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(node)?;
+                    return prop.initializer.is_some().then_some(prop.initializer);
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(node)?;
+                    return prop.name.is_some().then_some(prop.name);
+                }
                 k if k == syntax_kind_ext::RETURN_STATEMENT => {
                     let ret = self.ctx.arena.get_return_statement(node)?;
                     return ret.expression.is_some().then_some(ret.expression);
@@ -276,6 +284,12 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if self.is_literal_sensitive_assignment_target(target)
+            && let Some(display) = self.literal_expression_display(anchor_idx)
+        {
+            return display;
+        }
+
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
             if self.is_literal_sensitive_assignment_target(target)
                 && let Some(display) = self.literal_expression_display(expr_idx)

@@ -173,3 +173,29 @@ const f2: (a: string, b: number) => void = function self(a, b?: number) {
         "Expected two TS2345 errors for optional contextual parameters, got diagnostics={diagnostics:?}"
     );
 }
+
+#[test]
+fn test_literal_source_display_through_object_literal_property_initializer() {
+    let source = r#"
+declare function test(
+  arg: { a: () => "foo" } & {
+    [k: string]: () => any;
+  },
+): unknown;
+
+test({
+  a: () => "bar",
+});
+"#;
+
+    let diagnostics = check_default(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got diagnostics={diagnostics:?}"));
+
+    assert!(
+        ts2322.message_text.contains(r#""bar""#),
+        "Expected literal source display in diagnostic, got {ts2322:?}"
+    );
+}
