@@ -199,6 +199,35 @@ impl ParserState {
             let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
+                if self.is_token(SyntaxKind::GreaterThanToken) {
+                    let snapshot = self.scanner.save_state();
+                    let current_token = self.current_token;
+                    self.next_token();
+                    let followed_by_expression = self.is_expression_start();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current_token;
+                    if followed_by_expression {
+                        self.next_token();
+                        continue;
+                    }
+                }
+
+                if self.is_token(SyntaxKind::CloseParenToken) {
+                    let source = self.scanner.source_text().as_bytes();
+                    let mut i = self.token_pos() as usize;
+                    while i > 0 && source[i - 1].is_ascii_whitespace() {
+                        i -= 1;
+                    }
+                    if i > 0 && source[i - 1] == b')' {
+                        self.parse_error_at_current_token(
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token();
+                        continue;
+                    }
+                }
+
                 // Statement parsing failed, resync to recover
                 // Suppress cascading errors when:
                 // 1. A recent error was within 3 chars, OR
@@ -206,6 +235,7 @@ impl ParserState {
                 //    stray artifact from earlier bracket-mismatch errors.
                 let current = self.token_pos();
                 let is_stray_close = self.last_error_pos != 0
+                    && current.abs_diff(self.last_error_pos) <= 3
                     && matches!(
                         self.token(),
                         SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken

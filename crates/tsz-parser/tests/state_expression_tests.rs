@@ -1,5 +1,6 @@
 //! Tests for expression parsing in the parser.
 use crate::parser::{NodeIndex, ParserState};
+use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_diagnostics(source: &str) -> usize {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -83,4 +84,33 @@ fn expression_parsing_handles_regex_and_division_tokens() {
 fn expression_parsing_supports_compound_shift_assignment() {
     let diag_count = parse_diagnostics("let n = 8;\nn >>>= 2;\nn = n >> 1;");
     assert_eq!(diag_count, 0, "unexpected parser diagnostics: {diag_count}");
+}
+
+#[test]
+fn type_predicate_assertions_report_syntax_errors_instead_of_parsing_as_types() {
+    let (parser, _root) = parse_source(
+        r#"
+declare var numOrStr: number | string;
+
+if (<numOrStr is string>(numOrStr === undefined)) {
+}
+
+if ((numOrStr === undefined) as numOrStr is string) {
+}
+"#,
+    );
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    let diags = parser.get_diagnostics();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 recovery for invalid type-predicate assertion, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 after invalid `as` assertion recovery, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "expected TS1434 after invalid `as` assertion recovery, got {diags:?}"
+    );
 }
