@@ -890,25 +890,32 @@ impl<'a> CheckerState<'a> {
     /// Check if a JSDoc `@param` uses bracket syntax indicating optionality.
     ///
     /// Returns `true` for `@param {Type} [name]` or `@param {Type} [name=default]`.
-    fn is_jsdoc_param_optional_by_brackets(jsdoc: &str, param_name: &str) -> bool {
+    pub(crate) fn is_jsdoc_param_optional_by_brackets(jsdoc: &str, param_name: &str) -> bool {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let effective = Self::skip_backtick_quoted(trimmed);
             if let Some(rest) = effective.strip_prefix("@param") {
                 let rest = rest.trim();
-                // Standard: @param {type} [name] or @param {type} [name=default]
-                if rest.starts_with('{')
-                    && let Some((_type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest)
-                {
-                    let name_part = after_type.split_whitespace().next().unwrap_or("");
-                    if name_part.starts_with('[') {
-                        // Extract the bare name from [name] or [name=default]
-                        let inner = name_part.trim_start_matches('[');
-                        let bare = inner.split('=').next().unwrap_or(inner);
-                        let bare = bare.trim_end_matches(']');
-                        if bare == param_name {
-                            return true;
-                        }
+                // Check the name part after optional {type}
+                let name_part_str = if rest.starts_with('{') {
+                    // @param {type} [name] or @param {type} [name=default]
+                    if let Some((_type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest)
+                    {
+                        after_type.split_whitespace().next().unwrap_or("")
+                    } else {
+                        continue;
+                    }
+                } else {
+                    // @param [name] — no type, just bracket-optional name
+                    rest.split_whitespace().next().unwrap_or("")
+                };
+                if name_part_str.starts_with('[') {
+                    // Extract the bare name from [name] or [name=default]
+                    let inner = name_part_str.trim_start_matches('[');
+                    let bare = inner.split('=').next().unwrap_or(inner);
+                    let bare = bare.trim_end_matches(']');
+                    if bare == param_name {
+                        return true;
                     }
                 }
             }

@@ -1155,6 +1155,44 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(func.body);
                 }
             }
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.clear_type_cache_recursive(stmt_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+                    self.clear_type_cache_recursive(expr_stmt.expression);
+                }
+            }
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node) {
+                    self.clear_type_cache_recursive(ret.expression);
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
+            {
+                if let Some(var) = self.ctx.arena.get_variable(node) {
+                    for &decl_idx in &var.declarations.nodes {
+                        self.clear_type_cache_recursive(decl_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(decl) = self.ctx.arena.get_variable_declaration(node) {
+                    self.clear_type_cache_recursive(decl.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+                    self.clear_type_cache_recursive(if_stmt.expression);
+                    self.clear_type_cache_recursive(if_stmt.then_statement);
+                    self.clear_type_cache_recursive(if_stmt.else_statement);
+                }
+            }
             _ => {}
         }
     }
