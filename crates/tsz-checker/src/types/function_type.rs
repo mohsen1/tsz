@@ -110,8 +110,6 @@ impl<'a> CheckerState<'a> {
         let is_arrow_function = node.kind == syntax_kind_ext::ARROW_FUNCTION;
 
         // Check for duplicate parameter names in function expressions and arrow functions (TS2300)
-        // Note: Methods and constructors are checked in check_method_declaration and check_constructor_declaration
-        // Function declarations are checked in check_statement
         if !is_function_declaration && !is_method_or_constructor {
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters, Some(idx));
@@ -568,7 +566,16 @@ impl<'a> CheckerState<'a> {
                     };
                 let optional =
                     param.question_token || param.initializer.is_some() || js_implicit_optional;
-                let rest = param.dot_dot_dot_token;
+                let rest = param.dot_dot_dot_token
+                    || (self.is_js_file()
+                        && func_jsdoc.as_ref().is_some_and(|jsdoc| {
+                            let pname = self.effective_jsdoc_param_name(
+                                param.name,
+                                &jsdoc_param_names,
+                                contextual_index,
+                            );
+                            Self::jsdoc_param_is_rest(jsdoc, &pname)
+                        }));
 
                 // Under strictNullChecks, optional parameters (with `?`) get
                 // `undefined` added to their type.  Parameters with a default
