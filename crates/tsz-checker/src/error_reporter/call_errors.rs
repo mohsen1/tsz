@@ -6,9 +6,67 @@ use crate::diagnostics::{
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn literal_call_argument_display(&self, arg_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        let lit = self.ctx.arena.get_literal(node)?;
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some(format!("\"{}\"", lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some(lit.text.clone()),
+            _ => None,
+        }
+    }
+
+    fn format_call_argument_type_for_diagnostic(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> String {
+        if param_type == TypeId::NEVER
+            && let Some(display) = self.literal_call_argument_display(arg_idx)
+        {
+            return display;
+        }
+
+        let display_type = if param_type == TypeId::NEVER {
+            let direct_arg_type = self.get_type_of_node(arg_idx);
+            if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
+                arg_type
+            } else {
+                direct_arg_type
+            }
+        } else {
+            tsz_solver::widening::widen_type(self.ctx.types, arg_type)
+        };
+        self.format_type_for_assignability_message(display_type)
+    }
+
+    fn format_call_parameter_type_for_diagnostic(&mut self, param_type: TypeId) -> String {
+        if !tsz_solver::type_contains_undefined(self.ctx.types, param_type) {
+            return self.format_type_for_assignability_message(param_type);
+        }
+
+        if param_type == TypeId::UNDEFINED {
+            return self.format_type_for_assignability_message(param_type);
+        }
+
+        let without_undefined = tsz_solver::remove_undefined(self.ctx.types, param_type);
+        if without_undefined != TypeId::NEVER && without_undefined != param_type {
+            return self.format_type_for_assignability_message(without_undefined);
+        }
+
+        self.format_type_for_assignability_message(param_type)
+    }
+
     /// Try to elaborate a generic assignability mismatch when the source expression is
     /// a literal that can be decomposed into more precise element/property errors.
     pub(crate) fn try_elaborate_assignment_source_error(
@@ -570,12 +628,8 @@ impl<'a> CheckerState<'a> {
         }) {
             return;
         }
-        // tsc widens literal types for TS2345 messages so that e.g.
-        // `Argument of type 'number'` is shown instead of `Argument of type '1'`.
-        // This matches tsc's getWidenedLiteralType call in checkTypeRelatedTo.
-        let widened_arg = tsz_solver::widening::widen_type(self.ctx.types, arg_type);
-        let arg_str = self.format_type_for_assignability_message(widened_arg);
-        let param_str = self.format_type_for_assignability_message(param_type);
+        let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
+        let param_str = self.format_call_parameter_type_for_diagnostic(param_type);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
             &[&arg_str, &param_str],
