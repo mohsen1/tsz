@@ -942,7 +942,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             TypeData::Lazy(_)
             | TypeData::IndexAccess(_, _)
             | TypeData::Mapped(_)
-            | TypeData::TemplateLiteral(_) => {
+            | TypeData::TemplateLiteral(_)
+            | TypeData::TypeQuery(_) => {
                 // Resolve meta-types to their actual types before checking callability.
                 // This handles cases like index access types like T["method"],
                 // and mapped types.
@@ -978,17 +979,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             }
                         }
                     }
-                    CallResult::NotCallable { type_id: func_type }
-                }
-            }
-            TypeData::TypeQuery(_) => {
-                // TypeQuery (typeof X) needs the checker's resolver context to look up
-                // the symbol's type, so use checker.evaluate_type() rather than the
-                // standalone evaluate_type which uses a NoopResolver.
-                let resolved = self.checker.evaluate_type(func_type);
-                if resolved != func_type {
-                    self.resolve_call(resolved, arg_types)
-                } else {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
