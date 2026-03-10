@@ -409,11 +409,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                return self.check_object_subtype(&shape, None, &t_shape);
+                let result = self.check_object_subtype(&shape, None, &t_shape);
+                if result.is_true() {
+                    return result;
+                }
+                // Fallback: the hardcoded apparent shape may lack user-augmented members
+                // (e.g., `interface Number extends ICloneable { }`). Check the registered
+                // boxed type which includes merged heritage from global augmentations.
+                if let Some(s_kind) = intrinsic_kind(self.interner, source)
+                    && let Some(kind) = boxable_intrinsic_kind(s_kind)
+                    && self.is_boxed_primitive_subtype(kind, target)
+                {
+                    return SubtypeResult::True;
+                }
+                return result;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                return self.check_object_with_index_subtype(&shape, None, &t_shape);
+                let result = self.check_object_with_index_subtype(&shape, None, &t_shape);
+                if result.is_true() {
+                    return result;
+                }
+                if let Some(s_kind) = intrinsic_kind(self.interner, source)
+                    && let Some(kind) = boxable_intrinsic_kind(s_kind)
+                    && self.is_boxed_primitive_subtype(kind, target)
+                {
+                    return SubtypeResult::True;
+                }
+                return result;
             }
         }
 

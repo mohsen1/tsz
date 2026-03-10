@@ -524,6 +524,24 @@ impl<'a> CheckerState<'a> {
 
                 let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
+                // Fallback for recursive generic constraints (coinductive semantics).
+                //
+                // For self-referential constraints like `T extends AA<T>` in
+                // `interface AA<T extends AA<T>>`, checking if a type arg satisfies
+                // the constraint leads to circular structural checks that the
+                // subtype checker can't resolve (pre-evaluation destroys DefId
+                // identity needed for cycle detection).
+                //
+                // Coinductive fix: if the constraint is an Application of some base
+                // interface, and the type arg's interface extends that same base
+                // interface (via heritage), the constraint is coinductively satisfied.
+                // e.g., for `interface BB extends AA<AA<BB>>`, BB extends AA, so
+                // BB satisfies any AA<...> constraint.
+                if !is_satisfied {
+                    is_satisfied = self
+                        .satisfies_recursive_heritage_constraint(type_arg, instantiated_constraint);
+                }
+
                 // Fallback: if assignability failed but the constraint is the Function
                 // interface and the type argument is callable, accept it. This handles
                 // the case where Function has multiple TypeIds that aren't recognized
@@ -650,6 +668,110 @@ impl<'a> CheckerState<'a> {
 
         let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
         source_elem != TypeId::ERROR && self.is_assignable_to(source_elem, target_elem)
+    }
+
+    /// Check if a type argument coinductively satisfies a recursive constraint
+    /// via its heritage chain.
+    ///
+    /// When an interface extends a generic base (e.g., `interface BB extends AA<AA<BB>>`),
+    /// and the constraint is an Application of that same base (e.g., `AA<BB>`), the
+    /// structural subtype check becomes circular. The subtype checker can't detect the
+    /// cycle because pre-evaluation destroys DefId identity. This method detects the
+    /// pattern and returns true (coinductive assumption).
+    fn satisfies_recursive_heritage_constraint(
+        &self,
+        type_arg: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        use tsz_solver::visitor::{application_id, lazy_def_id};
+        let db = self.ctx.types.as_type_database();
+
+        // Get the Application base DefId from the constraint.
+        // e.g., for AA<BB>, get the DefId of AA.
+        let constraint_base_def = application_id(db, constraint).and_then(|app_id| {
+            let app = db.type_application(app_id);
+            lazy_def_id(db, app.base)
+        });
+        let Some(constraint_base_def) = constraint_base_def else {
+            return false;
+        };
+
+        // Get the type_arg's DefId (it must be an interface/class, i.e., Lazy type).
+        let type_arg_def = lazy_def_id(db, type_arg);
+        let Some(type_arg_def) = type_arg_def else {
+            return false;
+        };
+
+        // Resolve DefIds to SymbolIds
+        let type_arg_sym = self.ctx.def_to_symbol_id(type_arg_def);
+        let constraint_base_sym = self.ctx.def_to_symbol_id(constraint_base_def);
+
+        let (Some(type_arg_sym_id), Some(constraint_base_sym_id)) =
+            (type_arg_sym, constraint_base_sym)
+        else {
+            return false;
+        };
+
+        // Check if type_arg's interface heritage chain includes the constraint's
+        // base interface. Walk the heritage clauses in the binder to find if BB
+        // extends any instantiation of AA.
+        self.interface_extends_symbol(type_arg_sym_id, constraint_base_sym_id)
+    }
+
+    /// Check if an interface symbol extends (directly or transitively) a target symbol.
+    fn interface_extends_symbol(
+        &self,
+        interface_sym_id: tsz_binder::SymbolId,
+        target_sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if interface_sym_id == target_sym_id {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(interface_sym_id) else {
+            return false;
+        };
+
+        // Check each declaration's heritage clauses
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            let Some(ref heritage_clauses) = interface.heritage_clauses else {
+                continue;
+            };
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    // Extract the base expression (might be an ExpressionWithTypeArguments)
+                    let expr_idx = if let Some(eta) = self.ctx.arena.get_expr_type_args(type_node) {
+                        eta.expression
+                    } else {
+                        type_idx
+                    };
+                    if let Some(base_sym) = self.resolve_heritage_symbol(expr_idx)
+                        && base_sym == target_sym_id
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn has_structural_array_surface(&self, source: TypeId, target: TypeId) -> bool {

@@ -823,6 +823,96 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Process heritage clauses from global augmentations.
+        // This is in a separate block because lower_with_arena borrows `self`
+        // and we need `&mut self` for resolve_heritage_symbol/get_type_of_symbol.
+        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
+            && !augmentation_decls.is_empty()
+        {
+            let current_arena: &NodeArena = self.ctx.arena;
+            // Process heritage clauses from augmentation declarations that are in
+            // the current file's arena. lower_interface_declarations only merges body
+            // members, not extends clauses. User augmentations like
+            // `interface Number extends ICloneable {}` need their heritage merged.
+            //
+            // Note: in parallel compilation, ALL augmentations get tagged with an
+            // arena (even same-file ones), so we identify current-file augmentations
+            // by checking if the arena pointer matches the current arena.
+            //
+            // We use a lightweight approach here (manual heritage walk + resolve_heritage_symbol)
+            // instead of merge_interface_heritage_types, because that function triggers deep type
+            // evaluation via resolve_type_for_interface_merge which can cause infinite loops
+            // during lib type resolution.
+            let current_arena_ptr = current_arena as *const NodeArena;
+            let same_file_aug_nodes: Vec<NodeIndex> = augmentation_decls
+                .iter()
+                .filter(|aug| {
+                    aug.arena
+                        .as_ref()
+                        .is_none_or(|a| Arc::as_ptr(a) == current_arena_ptr)
+                })
+                .map(|aug| aug.node)
+                .collect();
+
+            for &decl_idx in &same_file_aug_nodes {
+                let Some(node) = current_arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = current_arena.get_interface(node) else {
+                    continue;
+                };
+                let Some(ref heritage_clauses) = interface.heritage_clauses else {
+                    continue;
+                };
+
+                for &clause_idx in &heritage_clauses.nodes {
+                    let Some(clause_node) = current_arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = current_arena.get_heritage_clause(clause_node) else {
+                        continue;
+                    };
+                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+
+                    for &type_idx in &heritage.types.nodes {
+                        let Some(type_node) = current_arena.get(type_idx) else {
+                            continue;
+                        };
+                        let expr_idx =
+                            if let Some(eta) = current_arena.get_expr_type_args(type_node) {
+                                eta.expression
+                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                if let Some(tr) = current_arena.get_type_ref(type_node) {
+                                    tr.type_name
+                                } else {
+                                    type_idx
+                                }
+                            } else {
+                                type_idx
+                            };
+
+                        // resolve_heritage_symbol handles simple identifiers, qualified
+                        // names, and property access expressions (e.g., EndGate.ICloneable).
+                        let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                            continue;
+                        };
+                        let base_type = self.get_type_of_symbol(base_sym_id);
+                        if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
+                            continue;
+                        }
+                        if let Some(current_type) = lib_type_id {
+                            let merged = self.merge_interface_types(current_type, base_type);
+                            if merged != current_type {
+                                lib_type_id = Some(merged);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // For generic lib interfaces, we already cached the type params in the
         // interface lowering code above. The type is already correctly lowered
         // and can be returned directly.
