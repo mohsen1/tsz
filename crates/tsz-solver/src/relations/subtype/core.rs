@@ -438,6 +438,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 return result;
             }
+            // Target is not a plain object/indexed-object (e.g., it's a generic
+            // Application like `Iterable<string>`). The hardcoded apparent shape
+            // can't match these. Fall back to the registered boxed type which
+            // includes all heritage (e.g., String implements Iterable<string>).
+            // Guard: skip for `object` type — primitives must NOT be subtypes of
+            // `object` even though their boxed wrappers (Number, String, etc.) are.
+            if target != TypeId::OBJECT
+                && let Some(kind) = self.apparent_primitive_kind(source)
+                && self.is_boxed_primitive_subtype(kind, target)
+            {
+                return SubtypeResult::True;
+            }
         }
 
         if let Some(source_cond_id) = conditional_type_id(self.interner, source) {
