@@ -2124,11 +2124,29 @@ impl ParserState {
         let mut property_name = NodeIndex::NONE;
         let mut can_parse_as_keyword = true;
 
+        // Track whether the name token is a reserved keyword (for TS1003 on import specifiers).
+        // Matches tsc's checkIdentifierIsKeyword/checkIdentifierStart/checkIdentifierEnd.
+        // Reserved words (break..with) cannot be binding identifiers in import specifiers.
+        let mut check_identifier_is_keyword = self.is_reserved_word();
+        let mut check_identifier_start = self.token_pos();
+        let mut check_identifier_end = self.token_end();
+
         // Remember if the first token is `type` keyword BEFORE parsing it
         let first_token_is_type = self.is_token(SyntaxKind::TypeKeyword);
 
         // Parse the first name (could be `type` or any other identifier)
         let mut name = self.parse_specifier_identifier_name();
+
+        // Helper macro: update keyword check state before parsing a name.
+        // Equivalent to tsc's parseNameWithKeywordCheck.
+        macro_rules! parse_name_with_keyword_check {
+            ($self:expr) => {{
+                check_identifier_is_keyword = $self.is_reserved_word();
+                check_identifier_start = $self.token_pos();
+                check_identifier_end = $self.token_end();
+                $self.parse_specifier_identifier_name()
+            }};
+        }
 
         // If the first name was `type`, disambiguate whether it's a modifier or a name
         if first_token_is_type {
@@ -2142,7 +2160,7 @@ impl ParserState {
                         // { type as as something } → type-only, propertyName=as, name=something
                         is_type_only = true;
                         property_name = first_as;
-                        name = self.parse_specifier_identifier_name();
+                        name = parse_name_with_keyword_check!(self);
                         can_parse_as_keyword = false;
                     } else {
                         // { type as as } → NOT type-only, propertyName=type, name=as
@@ -2154,7 +2172,7 @@ impl ParserState {
                     // { type as something } → NOT type-only, propertyName=type, name=something
                     property_name = name;
                     can_parse_as_keyword = false;
-                    name = self.parse_specifier_identifier_name();
+                    name = parse_name_with_keyword_check!(self);
                 } else {
                     // { type as } → type-only, name=as
                     is_type_only = true;
@@ -2163,7 +2181,7 @@ impl ParserState {
             } else if self.can_parse_module_export_name() {
                 // { type something ...? } → type-only, name=something
                 is_type_only = true;
-                name = self.parse_specifier_identifier_name();
+                name = parse_name_with_keyword_check!(self);
             }
             // else: { type } → not type-only, name=type
         }
@@ -2171,7 +2189,19 @@ impl ParserState {
         // Handle trailing `as alias` rename
         if can_parse_as_keyword && self.parse_optional(SyntaxKind::AsKeyword) {
             property_name = name;
-            name = self.parse_specifier_identifier_name();
+            name = parse_name_with_keyword_check!(self);
+        }
+
+        // TS1003: For import specifiers, the binding name must be an identifier,
+        // not a reserved keyword. Matches tsc's check at the end of parseImportOrExportSpecifier.
+        if kind == syntax_kind_ext::IMPORT_SPECIFIER && check_identifier_is_keyword {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                check_identifier_start,
+                check_identifier_end.saturating_sub(check_identifier_start),
+                "Identifier expected.",
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
         }
 
         let end_pos = self.token_end();
