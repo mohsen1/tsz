@@ -237,7 +237,10 @@ tsz:  "'c1' is referenced directly or indirectly in its own type annotation"
 ```
 
 **Root cause:** When resolving names for diagnostic messages, tsz uses the wrong symbol:
-- Import aliases are not resolved to their original namespace paths
+- ~~Import aliases are not resolved to their original namespace paths~~ **FIXED** (2026-03-10)
+  Fix: `get_symbol_qualified_name` in `type_analysis/core.rs` walks the resolved symbol's
+  parent chain to build the fully qualified dotted name (e.g., `foo.bar.baz`) instead of
+  using the source-text alias name (`booz`). Applied to both TS2694 call sites.
 - Circularity detection blames the containing variable instead of the accessor
 - Duplicate identifier checking picks the wrong declaration in the symbol chain
 

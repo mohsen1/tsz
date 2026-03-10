@@ -317,7 +317,8 @@ impl<'a> CheckerState<'a> {
                 != 0
         {
             let namespace_name = self
-                .entity_name_text(qn.left)
+                .get_symbol_qualified_name(left_sym_id)
+                .or_else(|| self.entity_name_text(qn.left))
                 .unwrap_or_else(|| symbol.escaped_name.clone());
             self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
             return TypeId::ERROR;
@@ -369,7 +370,8 @@ impl<'a> CheckerState<'a> {
 
             // Not found - report TS2694
             let namespace_name = self
-                .entity_name_text(qn.left)
+                .get_symbol_qualified_name(fallback_sym)
+                .or_else(|| self.entity_name_text(qn.left))
                 .unwrap_or_else(|| symbol.escaped_name.clone());
             self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
             return TypeId::ERROR;
@@ -388,6 +390,52 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Build a fully qualified name from a symbol by walking its parent chain.
+    ///
+    /// For a symbol `baz` with parent `bar` whose parent is `foo`, this returns
+    /// `"foo.bar.baz"`. This is used in TS2694 diagnostics to match tsc's behavior
+    /// of showing the resolved namespace path rather than the alias name.
+    ///
+    /// Returns `None` if the symbol chain is empty or cannot be resolved.
+    fn get_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
+        let lib_binders = self.get_lib_binders();
+        let mut parts = Vec::new();
+        let mut current = sym_id;
+        // Walk up the parent chain, collecting names.
+        // Stop at SymbolId::NONE (root) or after a safety limit.
+        for _ in 0..64 {
+            if current.is_none() {
+                break;
+            }
+            let symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(current, &lib_binders)?;
+            // Skip symbols that represent source files (their names are file paths
+            // or empty). Only include namespace/class/enum/interface names.
+            if symbol.escaped_name.is_empty()
+                || symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::CLASS
+                        | symbol_flags::REGULAR_ENUM
+                        | symbol_flags::CONST_ENUM
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::TYPE_ALIAS)
+                    == 0
+            {
+                break;
+            }
+            parts.push(symbol.escaped_name.clone());
+            current = symbol.parent;
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+        parts.reverse();
+        Some(parts.join("."))
     }
 
     /// Resolve a member from a symbol's exports, members, or re-exports.
