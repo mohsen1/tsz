@@ -400,7 +400,15 @@ impl ParserState {
         };
 
         self.parse_expected(SyntaxKind::FromKeyword);
-        let module_specifier = self.parse_string_literal();
+        // Module specifier is usually a string literal, but inside `namespace`
+        // declarations it can be an identifier (e.g., `export * from Aaa;`).
+        let module_specifier = if self.is_token(SyntaxKind::StringLiteral)
+            || self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+        {
+            self.parse_string_literal()
+        } else {
+            self.parse_identifier_name()
+        };
 
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = self.parse_import_attributes();
