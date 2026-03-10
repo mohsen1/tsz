@@ -483,7 +483,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(exports) = resolved_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(right_name)
             {
-                return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                let def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                self.ensure_type_alias_resolved(member_sym_id, def_id);
+                return Some(def_id);
             }
 
             // TYPE_ALIAS+ALIAS merge: resolve member through ALIAS partner
@@ -495,7 +497,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(exports) = alias_sym.exports.as_ref()
                     && let Some(member_sym_id) = exports.get(right_name)
                 {
-                    return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                    let def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                    self.ensure_type_alias_resolved(member_sym_id, def_id);
+                    return Some(def_id);
                 }
                 // Follow the ALIAS's import_module, resolving from the
                 // ALIAS's source file perspective (cross-file), then
@@ -511,7 +515,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 .map(|(sym_id, _)| sym_id)
                         });
                     if let Some(member_sym_id) = member {
-                        return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                        let def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                        self.ensure_type_alias_resolved(member_sym_id, def_id);
+                        return Some(def_id);
                     }
                 }
             }
