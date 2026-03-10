@@ -459,6 +459,12 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
 
+        if source != TypeId::NEVER
+            && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
+        {
+            return false;
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -497,6 +503,35 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn is_concrete_source_to_deferred_keyof_index_access(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some((object_type, index_type)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                target,
+            )
+        else {
+            return false;
+        };
+
+        if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type) {
+            return false;
+        }
+
+        let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) else {
+            return false;
+        };
+
+        if keyof_operand != object_type {
+            return false;
+        }
+
+        !crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
     }
 
     /// Like `is_assignable_to`, but forces the strict-function-types relation flag.
