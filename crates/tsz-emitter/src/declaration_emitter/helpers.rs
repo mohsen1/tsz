@@ -3086,7 +3086,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Check if a non-exported namespace member's symbol appears in `used_symbols`.
     /// Unlike `should_emit_public_api_dependency`, this does NOT short-circuit
     /// when `public_api_filter_enabled()` is false — it always checks the usage set.
-    fn is_ns_member_used_by_exports(&self, decl_idx: NodeIndex) -> bool {
+    pub(crate) fn is_ns_member_used_by_exports(&self, decl_idx: NodeIndex) -> bool {
         let Some(used) = &self.used_symbols else {
             return false;
         };
