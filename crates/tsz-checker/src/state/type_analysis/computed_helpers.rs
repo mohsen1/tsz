@@ -146,6 +146,16 @@ impl<'a> CheckerState<'a> {
                 return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
             }
         }
+        // Generic `keyof` contexts preserve literal arguments even when the key space
+        // cannot yet be concretely evaluated (e.g. `K extends keyof this`, `keyof T`).
+        // The constraint is validated later during generic-call inference.
+        if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
+            && (tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, keyof_inner)
+                .is_some()
+                || tsz_solver::type_queries::is_this_type(self.ctx.types, keyof_inner))
+        {
+            return true;
+        }
 
         match classify_for_contextual_literal(self.ctx.types, ctx_type) {
             ContextualLiteralAllowKind::Members(members) => members.iter().any(|&member| {

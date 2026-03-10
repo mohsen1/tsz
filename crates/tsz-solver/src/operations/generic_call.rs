@@ -6,8 +6,9 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
+use crate::TypeDatabase;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
@@ -15,6 +16,27 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
+
+fn instantiate_call_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+    actual_this_type: Option<TypeId>,
+) -> TypeId {
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        if let Some(actual_this_type) = actual_this_type {
+            let mut instantiator = TypeInstantiator::new(interner, substitution);
+            instantiator.this_type = Some(actual_this_type);
+            instantiator.instantiate(type_id)
+        } else {
+            type_id
+        }
+    } else {
+        let mut instantiator = TypeInstantiator::new(interner, substitution);
+        instantiator.this_type = actual_this_type;
+        instantiator.instantiate(type_id)
+    }
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(crate) fn resolve_generic_call(
@@ -33,6 +55,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
     ) -> CallResult {
+        let actual_this_type = self.actual_this_type;
         // Check argument count BEFORE type inference
         // This prevents false positive TS2554 errors for generic functions with optional/rest params
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
@@ -116,7 +139,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // during resolution since T may not be resolved yet. These are validated in the
             // post-resolution constraint check below.
             if let Some(constraint) = tp.constraint {
-                let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
+                let inst_constraint = instantiate_call_type(
+                    self.interner,
+                    constraint,
+                    &substitution,
+                    actual_this_type,
+                );
                 placeholder_visited.clear();
                 if !self.type_contains_placeholder(
                     inst_constraint,
@@ -138,7 +166,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // the calling receiver so parameter types like `keyof T` don't collapse.
         if let Some(expected_this) = func.this_type {
             let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-            let expected_this_inst = instantiate_type(self.interner, expected_this, &substitution);
+            let expected_this_inst = instantiate_call_type(
+                self.interner,
+                expected_this,
+                &substitution,
+                actual_this_type,
+            );
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
@@ -165,7 +198,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) {
                     // (a) Skip if constraint implies literal types
                     if let Some(constraint) = tp.constraint {
-                        let inst = instantiate_type(self.interner, constraint, &substitution);
+                        let inst = instantiate_call_type(
+                            self.interner,
+                            constraint,
+                            &substitution,
+                            actual_this_type,
+                        );
                         if type_implies_literals_deep(self.interner, inst) {
                             return false;
                         }
@@ -178,8 +216,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 return false; // Skip self
                             }
                             if let Some(constraint) = other_tp.constraint {
-                                let inst =
-                                    instantiate_type(self.interner, constraint, &substitution);
+                                let inst = instantiate_call_type(
+                                    self.interner,
+                                    constraint,
+                                    &substitution,
+                                    actual_this_type,
+                                );
                                 type_references_placeholder(self.interner, inst, placeholder_id)
                             } else {
                                 false
@@ -198,7 +240,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .params
             .iter()
             .map(|p| {
-                let instantiated = instantiate_type(self.interner, p.type_id, &substitution);
+                let instantiated = instantiate_call_type(
+                    self.interner,
+                    p.type_id,
+                    &substitution,
+                    actual_this_type,
+                );
                 if let Some(name_atom) = p.name {
                     let param_name = self.interner.resolve_atom(name_atom);
                     debug!(
@@ -242,8 +289,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && ctx_type != TypeId::ANY
             && ctx_type != TypeId::UNKNOWN
         {
-            let return_type_with_placeholders =
-                instantiate_type(self.interner, func.return_type, &substitution);
+            let return_type_with_placeholders = instantiate_call_type(
+                self.interner,
+                func.return_type,
+                &substitution,
+                actual_this_type,
+            );
             // CORRECT: return_type <: ctx_type
             // In assignment `let x: Target = Source`, the relation is `Source <: Target`
             // Therefore, the return value must be assignable to the expected type
@@ -398,8 +449,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
                         && let Some(constraint) = tp.constraint
                     {
-                        let inst_constraint =
-                            instantiate_type(self.interner, constraint, &substitution);
+                        let inst_constraint = instantiate_call_type(
+                            self.interner,
+                            constraint,
+                            &substitution,
+                            actual_this_type,
+                        );
                         placeholder_visited.clear();
                         if !self.type_contains_placeholder(
                             inst_constraint,
@@ -845,9 +900,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     TypeId::ERROR
                                 }
                             } else if let Some(default) = tp.default {
-                                instantiate_type(self.interner, default, &final_subst)
+                                instantiate_call_type(
+                                    self.interner,
+                                    default,
+                                    &final_subst,
+                                    actual_this_type,
+                                )
                             } else if let Some(constraint) = tp.constraint {
-                                instantiate_type(self.interner, constraint, &final_subst)
+                                instantiate_call_type(
+                                    self.interner,
+                                    constraint,
+                                    &final_subst,
+                                    actual_this_type,
+                                )
                             } else {
                                 TypeId::ERROR
                             };
@@ -886,11 +951,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ty
                 }
             } else if let Some(default) = tp.default {
-                let ty = instantiate_type(self.interner, default, &final_subst);
+                let ty =
+                    instantiate_call_type(self.interner, default, &final_subst, actual_this_type);
                 trace!(resolved_type = ?ty, "Using default type");
                 ty
             } else if let Some(constraint) = tp.constraint {
-                let ty = instantiate_type(self.interner, constraint, &final_subst);
+                let ty = instantiate_call_type(
+                    self.interner,
+                    constraint,
+                    &final_subst,
+                    actual_this_type,
+                );
                 trace!(resolved_type = ?ty, "Using constraint as fallback (no constraints collected)");
                 ty
             } else {
@@ -933,7 +1004,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
-                let constraint_ty_raw = instantiate_type(self.interner, constraint, &final_subst);
+                let constraint_ty_raw = instantiate_call_type(
+                    self.interner,
+                    constraint,
+                    &final_subst,
+                    actual_this_type,
+                );
                 // Evaluate the instantiated constraint so concrete conditionals like
                 // `null extends string ? any : never` resolve to their branch (`never`)
                 // instead of remaining as unevaluated Conditional types.
@@ -974,7 +1050,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .params
             .iter()
             .map(|p| {
-                let instantiated = instantiate_type(self.interner, p.type_id, &final_subst);
+                let instantiated =
+                    instantiate_call_type(self.interner, p.type_id, &final_subst, actual_this_type);
                 ParamInfo {
                     name: p.name,
                     type_id: instantiated,
@@ -1004,7 +1081,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Validate `this` after final substitution so generic `this` params are fully
         // instantiated (e.g. `this: T` -> `this: Y`).
         if let Some(expected_this) = func.this_type {
-            let expected_this = instantiate_type(self.interner, expected_this, &final_subst);
+            let expected_this =
+                instantiate_call_type(self.interner, expected_this, &final_subst, actual_this_type);
             let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
             if !self.checker.is_assignable_to(actual_this, expected_this) {
                 return CallResult::ThisTypeMismatch {
@@ -1036,7 +1114,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (name, ty) in placeholder_subst.map().iter() {
             final_arg_subst.insert(*name, *ty);
         }
-        let raw_return_type = instantiate_type(self.interner, func.return_type, &final_subst);
+        let raw_return_type = instantiate_call_type(
+            self.interner,
+            func.return_type,
+            &final_subst,
+            actual_this_type,
+        );
         let return_type =
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let final_args: Vec<TypeId> = if final_arg_subst.is_empty() {
@@ -1093,9 +1176,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let instantiated_predicate = TypePredicate {
                 asserts: predicate.asserts,
                 target: predicate.target.clone(),
-                type_id: predicate
-                    .type_id
-                    .map(|tid| instantiate_type(self.interner, tid, &final_subst)),
+                type_id: predicate.type_id.map(|tid| {
+                    instantiate_call_type(self.interner, tid, &final_subst, actual_this_type)
+                }),
                 parameter_index: predicate.parameter_index,
             };
             let instantiated_params_for_pred: Vec<ParamInfo> = func
@@ -1103,7 +1186,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .iter()
                 .map(|p| ParamInfo {
                     name: p.name,
-                    type_id: instantiate_type(self.interner, p.type_id, &final_subst),
+                    type_id: instantiate_call_type(
+                        self.interner,
+                        p.type_id,
+                        &final_subst,
+                        actual_this_type,
+                    ),
                     optional: p.optional,
                     rest: p.rest,
                 })

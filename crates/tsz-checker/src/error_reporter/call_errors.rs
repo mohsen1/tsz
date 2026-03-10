@@ -11,18 +11,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn literal_call_argument_display(&self, arg_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(arg_idx)?;
-        let lit = self.ctx.arena.get_literal(node)?;
-
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                Some(format!("\"{}\"", lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => Some(lit.text.clone()),
-            _ => None,
-        }
+        self.literal_expression_display(arg_idx)
     }
 
     fn format_call_argument_type_for_diagnostic(
@@ -31,13 +20,11 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
-        let preserve_literal_arg = param_type == TypeId::NEVER
-            || tsz_solver::visitor::literal_value(self.ctx.types, param_type).is_some();
-        if preserve_literal_arg && let Some(display) = self.literal_call_argument_display(arg_idx) {
+        if let Some(display) = self.literal_call_argument_display(arg_idx) {
             return display;
         }
 
-        let display_type = if preserve_literal_arg {
+        let display_type = if param_type == TypeId::NEVER {
             let direct_arg_type = self.get_type_of_node(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
                 arg_type
@@ -56,6 +43,10 @@ impl<'a> CheckerState<'a> {
         arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
+            return display;
+        }
+
         if self
             .ctx
             .arena
@@ -81,6 +72,57 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_type_for_assignability_message(param_type)
+    }
+
+    fn contextual_keyof_parameter_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = arg_idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.ctx.arena.get_call_expr(node)
+                && let Some(args) = &call.arguments
+            {
+                for &candidate_arg in &args.nodes {
+                    if candidate_arg == arg_idx {
+                        continue;
+                    }
+                    let candidate_type = self.get_type_of_node(candidate_arg);
+                    if candidate_type == TypeId::ERROR || candidate_type == TypeId::ANY {
+                        continue;
+                    }
+
+                    let candidate_keyof =
+                        self.evaluate_type_for_assignability(self.ctx.types.keyof(candidate_type));
+                    if candidate_keyof == TypeId::ERROR {
+                        continue;
+                    }
+
+                    let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
+                        && self.is_assignable_to(candidate_keyof, param_type))
+                        || self.format_type_for_assignability_message(param_type)
+                            == self.format_type_for_assignability_message(candidate_keyof);
+                    if same_key_space {
+                        let base = self.format_type_for_assignability_message(candidate_type);
+                        return Some(format!("keyof {base}"));
+                    }
+                }
+                break;
+            }
+
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        None
     }
 
     /// Try to elaborate a generic assignability mismatch when the source expression is

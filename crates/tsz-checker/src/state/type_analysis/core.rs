@@ -1017,11 +1017,10 @@ impl<'a> CheckerState<'a> {
                 match name.as_str() {
                     "undefined" => return TypeId::UNDEFINED,
                     "NaN" | "Infinity" => return TypeId::NUMBER,
-                    // globalThis is a synthetic symbol in tsc whose exports are all globals.
-                    // typeof globalThis should resolve to a type with all global members.
-                    // For now, return ANY to suppress false TS2304/TS2552 errors.
-                    // TODO: Create a proper object type with global members.
-                    "globalThis" => return TypeId::ANY,
+                    // `typeof globalThis` behaves as a top type in intersections:
+                    // `Window & typeof globalThis` should preserve the concrete
+                    // `Window` members instead of collapsing to `any`.
+                    "globalThis" => return TypeId::UNKNOWN,
                     _ => {}
                 }
                 if self.is_known_global_value_name(&name) {

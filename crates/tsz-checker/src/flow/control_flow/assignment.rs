@@ -12,6 +12,7 @@ use crate::query_boundaries::flow_analysis::{
     unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TupleElement, TypeId};
@@ -23,6 +24,33 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    fn is_declared_in_for_in_header(&self, reference: NodeIndex) -> bool {
+        let Some(sym_id) = self.reference_symbol(reference) else {
+            return false;
+        };
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_idx = symbol.value_declaration;
+        let Some(decl_info) = self.arena.node_info(decl_idx) else {
+            return false;
+        };
+        let decl_list_idx = decl_info.parent;
+        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+            return false;
+        };
+        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        let Some(for_info) = self.arena.node_info(decl_list_idx) else {
+            return false;
+        };
+        let Some(for_node) = self.arena.get(for_info.parent) else {
+            return false;
+        };
+        for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+    }
+
     pub(crate) fn get_assigned_type(
         &self,
         assignment_node: NodeIndex,
@@ -38,6 +66,11 @@ impl<'a> FlowAnalyzer<'a> {
             let bin = self.arena.get_binary_expr(node)?;
             // Check if this is an assignment to our target reference
             if self.is_matching_reference(bin.left, target) {
+                if bin.operator_token == SyntaxKind::EqualsToken as u16
+                    && self.is_declared_in_for_in_header(target)
+                {
+                    return None;
+                }
                 // Check if this is a compound assignment operator (not simple =)
                 if bin.operator_token != SyntaxKind::EqualsToken as u16
                     && is_compound_assignment_operator(bin.operator_token)

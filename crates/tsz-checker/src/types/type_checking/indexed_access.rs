@@ -924,8 +924,44 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
+                self.ctx.types,
+                index_type_for_check,
+            ) {
+                let property_name = self.ctx.types.resolve_atom(prop_atom);
+                if matches!(
+                    self.resolve_property_access_with_env(object_type_for_check, &property_name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                ) {
+                    return;
+                }
+            }
+
+            if self.try_emit_concrete_index_access_error(
+                error_anchor,
+                object_type_for_check,
+                index_type_for_check,
+            ) {
+                return;
+            }
+
             let obj_type_str = self.format_type(object_type);
-            let index_type_str = self.format_type(index_type);
+            let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
+            let index_type_str = if evaluated_index_type != TypeId::ERROR
+                && !tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    index_type,
+                ) {
+                self.format_type(evaluated_index_type)
+            } else {
+                let raw = self.format_type(index_type);
+                let evaluated = self.format_type(evaluated_index_type);
+                if raw != evaluated && raw.starts_with("keyof ") && evaluated.contains("keyof ") {
+                    evaluated
+                } else {
+                    raw
+                }
+            };
 
             let message_2536 = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
@@ -937,5 +973,146 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
             );
         }
+    }
+
+    fn try_emit_concrete_index_access_error(
+        &mut self,
+        error_anchor: NodeIndex,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
+            return false;
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+        {
+            if members.len() == 2
+                && members.contains(&TypeId::STRING)
+                && members.contains(&TypeId::NUMBER)
+                && !self.is_element_indexable(object_type, false, true)
+            {
+                let object_type_str = self.format_type(object_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    &[&object_type_str, "number"],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                );
+                return true;
+            }
+            let mut emitted_any = false;
+            for &member in members.iter() {
+                if member == TypeId::BOOLEAN {
+                    for boolean_member in ["false", "true"] {
+                        let message = format_message(
+                            diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[boolean_member],
+                        );
+                        self.error_at_node(
+                            error_anchor,
+                            &message,
+                            diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
+                    }
+                    emitted_any = true;
+                    continue;
+                }
+
+                emitted_any |=
+                    self.try_emit_concrete_index_access_error(error_anchor, object_type, member);
+            }
+            return emitted_any;
+        }
+
+        if index_type == TypeId::ANY {
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &["any"],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return true;
+        }
+
+        if let Some(invalid_member) =
+            tsz_solver::type_queries::get_invalid_index_type_member(self.ctx.types, index_type)
+        {
+            let index_type_str = self.format_type(invalid_member);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return true;
+        }
+
+        if let Some(prop_atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+        {
+            let property_name = self.ctx.types.resolve_atom(prop_atom);
+            if !matches!(
+                self.resolve_property_access_with_env(object_type, &property_name),
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            ) && self.get_index_key_kind(index_type) == Some((true, false))
+                && !self.is_element_indexable(object_type, true, false)
+            {
+                let object_type_str = self.format_type(object_type);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[property_name.as_str(), &object_type_str],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return true;
+            }
+        }
+
+        if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
+            && !self.is_element_indexable(object_type, wants_string, wants_number)
+        {
+            let object_type_str = self.format_type(object_type);
+            if wants_string {
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    &[&object_type_str, "string"],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                );
+            }
+            if wants_number {
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    &[&object_type_str, "number"],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                );
+            }
+            return wants_string || wants_number;
+        }
+
+        false
     }
 }

@@ -530,7 +530,29 @@ impl<'a> CheckerState<'a> {
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)
         {
-            self.ctx.contextual_type = Some(left_type);
+            let contextual_target = if let Some(right_node) = self.ctx.arena.get(right_idx) {
+                if right_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || right_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                {
+                    self.evaluate_contextual_type(left_type)
+                } else {
+                    left_type
+                }
+            } else {
+                left_type
+            };
+            self.ctx.contextual_type = Some(contextual_target);
+            if let Some(right_node) = self.ctx.arena.get(right_idx) {
+                let needs_fresh_contextual_check = right_node.kind
+                    == syntax_kind_ext::ARROW_FUNCTION
+                    || right_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || right_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || right_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION;
+                if needs_fresh_contextual_check {
+                    self.clear_type_cache_recursive(right_idx);
+                }
+            }
         }
 
         let right_raw = self.get_type_of_node(right_idx);

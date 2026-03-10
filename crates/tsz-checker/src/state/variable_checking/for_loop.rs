@@ -10,6 +10,39 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn is_deferred_object_like_for_in(&mut self, expr_type: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if query::is_type_parameter_like(self.ctx.types, expr_type)
+            || query::is_object_like_type(self.ctx.types, expr_type)
+        {
+            return true;
+        }
+
+        if let Some((base, _index)) =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, expr_type)
+        {
+            let evaluated_base = self.evaluate_type_with_env(base);
+            return query::is_type_parameter_like(self.ctx.types, base)
+                || query::is_type_parameter_like(self.ctx.types, evaluated_base)
+                || query::is_object_like_type(self.ctx.types, evaluated_base);
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, expr_type) {
+            return members
+                .iter()
+                .any(|&member| self.is_deferred_object_like_for_in(member));
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, expr_type) {
+            return members
+                .iter()
+                .any(|&member| self.is_deferred_object_like_for_in(member));
+        }
+
+        false
+    }
+
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
     /// The initializer is a `VariableDeclarationList` in the Thin AST.
@@ -174,6 +207,7 @@ impl<'a> CheckerState<'a> {
             || expr_type == TypeId::NEVER
             || query::is_type_parameter_like(self.ctx.types, expr_type)
             || query::is_object_like_type(self.ctx.types, expr_type)
+            || self.is_deferred_object_like_for_in(expr_type)
             // Also allow union types that contain valid types
             || self.for_in_expr_type_is_valid_union(expr_type)
             // Intersection types like `object & T`: valid if ANY member is valid
@@ -199,6 +233,7 @@ impl<'a> CheckerState<'a> {
                     || member == TypeId::UNKNOWN
                     || query::is_type_parameter_like(self.ctx.types, member)
                     || query::is_object_like_type(self.ctx.types, member)
+                    || self.is_deferred_object_like_for_in(member)
                 {
                     return true;
                 }
@@ -223,6 +258,7 @@ impl<'a> CheckerState<'a> {
                     || member == TypeId::OBJECT
                     || query::is_type_parameter_like(self.ctx.types, member)
                     || query::is_object_like_type(self.ctx.types, member)
+                    || self.is_deferred_object_like_for_in(member)
                 {
                     return true;
                 }

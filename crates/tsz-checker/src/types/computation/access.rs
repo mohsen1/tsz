@@ -231,27 +231,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(name) = literal_string.as_deref() {
-            if !self.check_property_accessibility(
-                access.expression,
-                name,
-                access.name_or_argument,
-                object_type,
-            ) {
-                return TypeId::ERROR;
-            }
-        } else if let Some(index) = literal_index {
-            let name = index.to_string();
-            if !self.check_property_accessibility(
-                access.expression,
-                &name,
-                access.name_or_argument,
-                object_type,
-            ) {
-                return TypeId::ERROR;
-            }
-        }
-
         let object_type = self.resolve_type_for_property_access(object_type);
         if object_type == TypeId::ANY {
             return TypeId::ANY;
@@ -856,6 +835,25 @@ impl<'a> CheckerState<'a> {
         });
 
         if use_index_signature_check
+            && self
+                .should_report_union_generic_key_mismatch_ts2536(object_type_for_access, index_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let object_type_str = self.format_type(object_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                access.expression,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return TypeId::ERROR;
+        }
+
+        if use_index_signature_check
             && !is_fresh_object_literal
             && self.should_report_no_index_signature(
                 object_type_for_access,
@@ -1042,6 +1040,7 @@ impl<'a> CheckerState<'a> {
             || visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
             || visitor::is_index_access_type(self.ctx.types, index_type)
             || visitor::is_conditional_type(self.ctx.types, index_type)
+            || tsz_solver::is_generic_application(self.ctx.types, index_type)
             || self.intersection_has_generic_index(index_type)
     }
 
@@ -1065,8 +1064,22 @@ impl<'a> CheckerState<'a> {
     /// Returns true for:
     /// - `keyof T` where T is the target type param (direct keyof)
     /// - `K extends keyof T` where T is the target type param (constrained key)
-    fn is_valid_index_for_type_param(&self, index_type: TypeId, type_param: TypeId) -> bool {
+    fn is_valid_index_for_type_param(&mut self, index_type: TypeId, type_param: TypeId) -> bool {
         use tsz_solver::visitor;
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, index_type)
+        {
+            return members
+                .iter()
+                .copied()
+                .any(|member| self.is_valid_index_for_type_param(member, type_param));
+        }
+        if tsz_solver::is_generic_application(self.ctx.types, index_type) {
+            let evaluated = self.evaluate_type_with_env(index_type);
+            if evaluated != index_type && evaluated != TypeId::ERROR {
+                return self.is_valid_index_for_type_param(evaluated, type_param);
+            }
+        }
         // Direct keyof T
         if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type) {
             return keyof_inner == type_param;
@@ -1107,6 +1120,54 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn should_report_union_generic_key_mismatch_ts2536(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+        if members.len() < 2 || !self.is_generic_key_space(index_type) {
+            return false;
+        }
+
+        members.iter().any(|&member| {
+            let member_keyof = self.ctx.types.evaluate_keyof(member);
+            !self.is_assignable_to(index_type, member_keyof)
+        })
+    }
+
+    fn is_generic_key_space(&self, type_id: TypeId) -> bool {
+        use tsz_solver::visitor;
+
+        if visitor::keyof_inner_type(self.ctx.types, type_id).is_some()
+            || visitor::is_type_parameter(self.ctx.types, type_id)
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .all(|&member| self.is_generic_key_space(member));
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .all(|&member| self.is_generic_key_space(member));
+        }
+
+        false
     }
 
     /// Get the type of the `super` keyword.

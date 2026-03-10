@@ -192,9 +192,14 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type(index);
         }
 
-        // Handle Intersection explicitly - pick the first callable member's parameter type
+        // Handle Intersection explicitly - merge parameter types from callable members.
+        // Picking only the first callable member can drop later parameters when
+        // an earlier member has a shorter signature, causing false TS7006 for
+        // assignments like `window[action] = (x, y) => {}` where the contextual
+        // type is an intersection of callable members.
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
+            let mut param_types: Vec<TypeId> = Vec::new();
             for &m in members.iter() {
                 let ctx = ContextualTypeContext::with_expected_and_options(
                     self.interner,
@@ -202,10 +207,32 @@ impl<'a> ContextualTypeContext<'a> {
                     self.no_implicit_any,
                 );
                 if let Some(param_type) = ctx.get_parameter_type(index) {
-                    return Some(param_type);
+                    param_types.push(param_type);
                 }
             }
-            return None;
+            if param_types.is_empty() {
+                return None;
+            }
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                return Some(first);
+            }
+            let non_any: Vec<TypeId> = param_types
+                .iter()
+                .copied()
+                .filter(|&t| t != TypeId::ANY)
+                .collect();
+            if non_any.is_empty() {
+                return Some(TypeId::ANY);
+            }
+            if non_any.len() == 1 {
+                return Some(non_any[0]);
+            }
+            let first_non_any = non_any[0];
+            if non_any.iter().all(|&t| t == first_non_any) {
+                return Some(first_non_any);
+            }
+            return Some(crate::utils::union_or_single(self.interner, non_any));
         }
 
         // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
@@ -333,16 +360,39 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
-        // Handle Intersection explicitly - pick the first callable member's parameter type
+        // Handle Intersection explicitly - merge parameter types from callable members.
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
+            let mut param_types: Vec<TypeId> = Vec::new();
             for &m in members.iter() {
                 let ctx = ContextualTypeContext::with_expected(self.interner, m);
                 if let Some(param_type) = ctx.get_parameter_type_for_call(index, arg_count) {
-                    return Some(param_type);
+                    param_types.push(param_type);
                 }
             }
-            return None;
+            if param_types.is_empty() {
+                return None;
+            }
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                return Some(first);
+            }
+            let non_any: Vec<TypeId> = param_types
+                .iter()
+                .copied()
+                .filter(|&t| t != TypeId::ANY)
+                .collect();
+            if non_any.is_empty() {
+                return Some(TypeId::ANY);
+            }
+            if non_any.len() == 1 {
+                return Some(non_any[0]);
+            }
+            let first_non_any = non_any[0];
+            if non_any.iter().all(|&t| t == first_non_any) {
+                return Some(first_non_any);
+            }
+            return Some(crate::utils::union_or_single(self.interner, non_any));
         }
 
         // Handle TypeParameter - use its constraint for parameter type extraction.
