@@ -837,9 +837,13 @@ impl<'a> CheckerState<'a> {
                 {
                     use tsz_solver::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    // Evaluate the type to resolve Lazy(DefId) aliases before checking.
+                    // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
+                    // Lazy(DefId) which the visitor can't recurse into.
+                    let resolved_type = self.evaluate_type_with_env(operand_type);
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
-                    let is_valid = evaluator.is_arithmetic_operand(operand_type)
+                    let is_valid = evaluator.is_arithmetic_operand(resolved_type)
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
