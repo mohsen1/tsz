@@ -192,6 +192,37 @@ impl<'a> CheckerState<'a> {
             {
                 self.try_elaborate_object_literal_arg_error(func.body, expected_return_type)
             }
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::UndefinedKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::CONDITIONAL_EXPRESSION =>
+            {
+                let actual_return_type = self.get_type_of_node(func.body);
+                if actual_return_type == TypeId::ERROR
+                    || self.is_assignable_to(actual_return_type, expected_return_type)
+                {
+                    return false;
+                }
+
+                if self.try_elaborate_assignment_source_error(func.body, expected_return_type) {
+                    return true;
+                }
+
+                self.error_type_not_assignable_at_with_anchor(
+                    actual_return_type,
+                    expected_return_type,
+                    func.body,
+                );
+                true
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let Some(paren) = self.ctx.arena.get_parenthesized(body_node) else {
                     return false;
