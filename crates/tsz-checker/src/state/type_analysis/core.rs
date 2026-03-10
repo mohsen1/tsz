@@ -847,6 +847,26 @@ impl<'a> CheckerState<'a> {
                         tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
                             .is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
+                        // typeof on an enum should give the namespace object type
+                        // (e.g., { foo: TestType.foo, bar: TestType.bar }), not the
+                        // nominal Enum type. This enables keyof typeof E = "foo"|"bar".
+                        if tsz_solver::is_enum_type(self.ctx.types, expr_type)
+                            && let Some(sym_id) =
+                                self.resolve_value_symbol_for_lowering(type_query.expr_name)
+                            {
+                                if let Some(&ns_type) = self
+                                    .ctx
+                                    .enum_namespace_types
+                                    .get(&tsz_binder::SymbolId(sym_id))
+                                {
+                                    return ns_type;
+                                }
+                                // Fallback: compute on-demand
+                                return self.merge_namespace_exports_into_object(
+                                    tsz_binder::SymbolId(sym_id),
+                                    expr_type,
+                                );
+                            }
                         return expr_type;
                     }
                 }
@@ -875,12 +895,39 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, flow_resolved)
                         .is_some();
                 if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR && !flow_is_lazy {
+                    // typeof on an enum should give the namespace object type
+                    if tsz_solver::is_enum_type(self.ctx.types, flow_resolved) {
+                        if let Some(&ns_type) = self
+                            .ctx
+                            .enum_namespace_types
+                            .get(&tsz_binder::SymbolId(sym_id))
+                        {
+                            return ns_type;
+                        }
+                        return self.merge_namespace_exports_into_object(
+                            tsz_binder::SymbolId(sym_id),
+                            flow_resolved,
+                        );
+                    }
                     trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
                     return flow_resolved;
                 }
                 let resolved_is_lazy =
                     tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved).is_some();
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR && !resolved_is_lazy {
+                    if tsz_solver::is_enum_type(self.ctx.types, resolved) {
+                        if let Some(&ns_type) = self
+                            .ctx
+                            .enum_namespace_types
+                            .get(&tsz_binder::SymbolId(sym_id))
+                        {
+                            return ns_type;
+                        }
+                        return self.merge_namespace_exports_into_object(
+                            tsz_binder::SymbolId(sym_id),
+                            resolved,
+                        );
+                    }
                     // Fall back to symbol type when flow result is unavailable.
                     trace!("=> returning symbol-resolved type directly");
                     return resolved;

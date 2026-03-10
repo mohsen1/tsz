@@ -150,6 +150,17 @@ pub trait TypeResolver {
         false
     }
 
+    /// Get the namespace object type for an enum (for `typeof Enum` / `keyof typeof Enum`).
+    ///
+    /// In TypeScript, `typeof Enum` returns the "enum object" — an object with member
+    /// names as keys and member types as values (e.g., `{ Up: Direction.Up, Down: Direction.Down }`).
+    /// The solver stores enums as `TypeData::Enum(DefId, union_of_values)` which only has
+    /// member VALUES, not member NAMES. This method bridges that gap by letting the checker
+    /// provide the pre-computed namespace object type.
+    fn get_enum_namespace_type(&self, _def_id: DefId) -> Option<TypeId> {
+        None
+    }
+
     /// Get the parent class `DefId` for a class definition.
     ///
     /// Used by instanceof narrowing to check class hierarchy nominally,
@@ -271,6 +282,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).is_user_enum_def(def_id)
     }
 
+    fn get_enum_namespace_type(&self, def_id: DefId) -> Option<TypeId> {
+        (**self).get_enum_namespace_type(def_id)
+    }
+
     fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
         (**self).get_class_extends(def_id)
     }
@@ -321,6 +336,8 @@ pub struct TypeEnvironment {
     numeric_enums: FxHashSet<u32>,
     /// Maps `DefIds` to their `DefKind` (Task #32: Graph Isomorphism).
     def_kinds: FxHashMap<u32, crate::def::DefKind>,
+    /// Maps enum `DefIds` to their namespace object types (for `typeof Enum`).
+    enum_namespace_types: FxHashMap<u32, TypeId>,
     /// Maps enum member `DefIds` to their parent enum `DefId`.
     enum_parents: FxHashMap<u32, DefId>,
     /// Maps class `DefIds` to their instance types.
@@ -349,6 +366,7 @@ impl TypeEnvironment {
             def_to_symbol: FxHashMap::default(),
             symbol_to_def: FxHashMap::default(),
             numeric_enums: FxHashSet::default(),
+            enum_namespace_types: FxHashMap::default(),
             def_kinds: FxHashMap::default(),
             enum_parents: FxHashMap::default(),
             class_instance_types: FxHashMap::default(),
@@ -560,6 +578,16 @@ impl TypeEnvironment {
         self.numeric_enums.contains(&def_id.0)
     }
 
+    /// Register an enum's namespace object type (for `typeof Enum`).
+    pub fn register_enum_namespace_type(&mut self, def_id: DefId, ns_type: TypeId) {
+        self.enum_namespace_types.insert(def_id.0, ns_type);
+    }
+
+    /// Get an enum's namespace object type.
+    pub fn get_enum_namespace_type(&self, def_id: DefId) -> Option<TypeId> {
+        self.enum_namespace_types.get(&def_id.0).copied()
+    }
+
     // =========================================================================
     // Enum Parent Relationships
     // =========================================================================
@@ -670,6 +698,10 @@ impl TypeResolver for TypeEnvironment {
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
         // TypeEnvironment doesn't have access to binder symbol information
         false
+    }
+
+    fn get_enum_namespace_type(&self, def_id: DefId) -> Option<TypeId> {
+        Self::get_enum_namespace_type(self, def_id)
     }
 
     fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {

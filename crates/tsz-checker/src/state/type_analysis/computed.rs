@@ -507,22 +507,14 @@ impl<'a> CheckerState<'a> {
             //   2. structural_type for assignability to primitives (E1 <: number)
             let enum_type = factory.enum_type(def_id, structural_type);
 
-            // CRITICAL: Merge namespace exports for enum+namespace merging
-            // When an enum and namespace with the same name are merged, the namespace's
-            // exports become accessible as properties on the enum object.
-            //
-            // FIX: We still return the enum_type here (not the merged object type) because:
-            // 1. `Direction` (the enum) should have type `Direction`, not the merged object type
-            // 2. `Direction.isVertical(Direction.Up)` should work because:
-            //    - `Direction` has type `Direction` (the enum type)
-            //    - `Direction.isVertical` is accessed via property access, which resolves to the function
-            //    - `Direction.Up` has type `Direction` (my earlier fix)
-            // The merged object type is only used internally for property access resolution.
-            if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
-                // Create the merged type for internal property access resolution
-                let _merged_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
-                // Store the merged type in a separate cache for property access lookup
-                // But return the enum_type as the type of the enum itself
+            // Compute and cache the enum namespace object type for `typeof Enum` / `keyof typeof Enum`.
+            // This object has member names as properties (e.g., { Up: Direction.Up, Down: Direction.Down }).
+            // Always compute this — both plain enums and enum+namespace merges need it.
+            let ns_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
+            self.ctx.enum_namespace_types.insert(sym_id, ns_type);
+            // Also register in TypeEnvironment so the solver's evaluator can access it
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.register_enum_namespace_type(def_id, ns_type);
             }
             // Register DefId <-> SymbolId mapping for enum type resolution
             self.ctx

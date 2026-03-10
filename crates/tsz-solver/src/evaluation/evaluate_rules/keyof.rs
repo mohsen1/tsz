@@ -289,6 +289,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Then compute keyof of the evaluated result
                     self.recurse_keyof(evaluated)
                 }
+                // Enum types: resolve to the namespace object type for keyof
+                // typeof Enum gives { Up: E.Up, Down: E.Down }, keyof gives "Up" | "Down"
+                TypeData::Enum(def_id, _member_type) => {
+                    if let Some(ns_type) = self.resolver().get_enum_namespace_type(def_id) {
+                        self.recurse_keyof(ns_type)
+                    } else {
+                        self.interner().keyof(operand)
+                    }
+                }
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().keyof(operand),
             }
