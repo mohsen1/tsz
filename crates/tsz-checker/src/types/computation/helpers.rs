@@ -948,18 +948,20 @@ impl<'a> CheckerState<'a> {
                 // Evaluate operand for side effects / flow analysis
                 let operand_type = self.get_type_of_node(unary.operand);
 
+                let operand_idx = self.ctx.arena.skip_parenthesized(unary.operand);
+
                 // TS1102: delete cannot be called on an identifier in strict mode.
-                let is_identifier_operand = unary.operand.is_some()
-                    && self
-                        .ctx
-                        .arena
-                        .get(unary.operand)
-                        .is_some_and(|operand_node| {
-                            operand_node.kind == SyntaxKind::Identifier as u16
-                        });
-                if is_identifier_operand && self.is_strict_mode_for_node(idx) {
+                let is_identifier_operand = operand_idx.is_some()
+                    && self.ctx.arena.get(operand_idx).is_some_and(|operand_node| {
+                        operand_node.kind == SyntaxKind::Identifier as u16
+                    });
+                let suppress_delete_identifier_error = self.has_syntax_parse_errors();
+                if is_identifier_operand
+                    && self.is_strict_mode_for_node(idx)
+                    && !suppress_delete_identifier_error
+                {
                     self.error_at_node(
-                        unary.operand,
+                        operand_idx,
                         crate::diagnostics::diagnostic_messages::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                         crate::diagnostics::diagnostic_codes::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                     );
@@ -968,7 +970,6 @@ impl<'a> CheckerState<'a> {
                 // TS2703: The operand of a 'delete' operator must be a property reference.
                 // Valid operands: property access (obj.prop), element access (obj["prop"]),
                 // or optional chain (obj?.prop). All other expressions are invalid.
-                let operand_idx = self.ctx.arena.skip_parenthesized(unary.operand);
                 let is_property_reference = operand_idx.is_some()
                     && self.ctx.arena.get(operand_idx).is_some_and(|operand_node| {
                         use tsz_parser::parser::syntax_kind_ext;
