@@ -112,54 +112,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is inside a `"use strict"` block by walking up the AST
-    /// to find a source file or function body with a "use strict" directive prologue.
-    fn is_in_use_strict_block(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let mut current = idx;
-        let mut guard = 0;
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            // Check source file level "use strict"
-            if node.kind == syntax_kind_ext::SOURCE_FILE {
-                if let Some(sf) = self.ctx.arena.get_source_file(node) {
-                    for &stmt_idx in &sf.statements.nodes {
-                        let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
-                            continue;
-                        };
-                        if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                            break;
-                        }
-                        if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt)
-                            && let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression)
-                            && expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-                            && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-                            && lit.text == "use strict"
-                        {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-        }
-        false
-    }
-
     /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
     /// Used to determine which symbol meaning to use for spelling suggestions.
     fn is_in_type_context(&self, idx: NodeIndex) -> bool {
@@ -263,11 +215,7 @@ impl<'a> CheckerState<'a> {
                 found
             };
 
-            let is_strict = self.ctx.compiler_options.always_strict
-                || self.ctx.compiler_options.strict
-                || self.ctx.binder.is_external_module()
-                || in_class
-                || self.is_in_use_strict_block(idx);
+            let is_strict = self.ctx.is_strict_mode_for_node(idx);
 
             if is_strict {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

@@ -985,8 +985,11 @@ impl<'a> CheckerState<'a> {
                 let suppress_property_reference_error = self.has_syntax_parse_errors()
                     && operand_idx.is_some()
                     && self.node_span_contains_parse_error(operand_idx);
+                let suppress_js_strict_mode_delete_follow_on =
+                    self.is_js_file() && !self.ctx.js_strict_mode_diagnostics_enabled();
                 if !is_property_reference
                     && !suppress_property_reference_error
+                    && !suppress_js_strict_mode_delete_follow_on
                     && !self.is_lhs_of_exponentiation(idx)
                 {
                     // tsc's grammarErrorOnNode skips parenthesized wrappers, so

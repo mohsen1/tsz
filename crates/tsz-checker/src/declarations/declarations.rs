@@ -1142,12 +1142,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
-            self.ctx.error(
-                pos,
-                end - pos,
-                diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A.to_string(),
-                diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
-            );
+            if !self.ctx.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled() {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A.to_string(),
+                    diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+                );
+            }
 
             if self.is_strict_mode_for_node(stmt_idx) {
                 self.ctx.error(

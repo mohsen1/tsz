@@ -129,9 +129,9 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                tsz_solver::widening::widen_type(self.ctx.types, expr_type)
+                expr_type
             } else {
-                tsz_solver::widening::widen_type(self.ctx.types, source)
+                source
             };
             return self.format_type_for_assignability_message(display_type);
         }

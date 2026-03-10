@@ -748,6 +748,7 @@ impl<'a> CheckerState<'a> {
         // Snapshot current defaults before mutation to avoid aliased borrows.
         let defaults = self.ctx.compiler_options.clone();
         let opts = &mut self.ctx.compiler_options;
+        opts.strict = Self::resolve_bool_option(text, "@strict", false, defaults.strict);
         // Options that fall back to @strict
         opts.no_implicit_any =
             Self::resolve_bool_option(text, "@noimplicitany", true, defaults.no_implicit_any);
@@ -795,7 +796,7 @@ impl<'a> CheckerState<'a> {
             defaults.no_unused_parameters,
         );
         opts.always_strict =
-            Self::resolve_bool_option(text, "@alwaysstrict", false, defaults.always_strict);
+            Self::resolve_bool_option(text, "@alwaysstrict", true, defaults.always_strict);
         opts.no_implicit_use_strict = Self::resolve_bool_option(
             text,
             "@noimplicitusestrict",
