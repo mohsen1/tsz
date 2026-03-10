@@ -3332,6 +3332,65 @@ function f() {
     );
 }
 
+#[test]
+fn test_import_equals_in_namespace_still_emits_ts2307() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let source = r#"
+namespace myModule {
+    import foo = require("test2");
+}
+        "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        has_error(&diagnostics, 1147),
+        "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2307),
+        "Expected TS2307 alongside TS1147 for unresolved module. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_exported_var_without_type_or_initializer_emits_ts7005() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options("export var $;", opts);
+
+    assert!(
+        has_error(&diagnostics, 7005),
+        "Expected TS7005 for exported bare var declaration. Actual: {diagnostics:#?}"
+    );
+}
+
 /// Nested destructured aliases should not participate in sibling discriminant correlation.
 /// From: controlFlowAliasedDiscriminants.ts
 #[test]

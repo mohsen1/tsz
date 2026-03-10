@@ -1035,6 +1035,7 @@ impl<'a> CheckerState<'a> {
             // so we always emit when the type is implicitly `any`.
             let is_ambient = self.is_ambient_declaration(decl_idx);
             let is_const = self.is_const_variable_declaration(decl_idx);
+            let is_exported = self.is_declaration_exported(self.ctx.arena, decl_idx);
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && !sym_already_cached
@@ -1050,8 +1051,8 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    if (is_ambient || is_const) && !self.ctx.is_declaration_file() {
-                        // TS7005: Ambient and const declarations always emit at the declaration site.
+                    if (is_ambient || is_const || is_exported) && !self.ctx.is_declaration_file() {
+                        // TS7005: Ambient, const, and exported declarations emit at the declaration site.
                         // tsc suppresses noImplicitAny diagnostics for .d.ts files since
                         // declaration files inherently have ambient declarations.
                         use crate::diagnostics::diagnostic_codes;
