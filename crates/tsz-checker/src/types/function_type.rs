@@ -140,18 +140,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For nested functions/methods, push enclosing type parameters first so that
-        // type parameter constraints, parameter types, and return types can reference
-        // outer generic scopes.  This is needed because get_type_of_function can be
-        // called lazily (via get_type_of_symbol) outside the enclosing function's
-        // check_function_declaration scope.
+        // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
         let (mut type_params, type_param_updates) = self.push_type_parameters(type_parameters);
 
-        // Check for unused type parameters in function expressions and arrow functions (TS6133)
-        // Function declarations, methods, classes, interfaces, and type aliases are checked
-        // in the checking path (check_statement, check_method_declaration, etc.)
+        // Check for unused type parameters (TS6133) in function expressions and arrows
         if !is_function_declaration && !is_method_or_constructor {
             self.check_unused_type_params(type_parameters, idx);
         }
@@ -163,11 +157,7 @@ impl<'a> CheckerState<'a> {
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
 
-        // Setup contextual typing context if available
-        // IMPORTANT: Evaluate compound types before creating context to resolve:
-        // - Application types: fix TS2571 false positives (see: docs/TS2571_INVESTIGATION.md)
-        // - Lazy types (type aliases): fix TS7006 false positives for contextual parameter typing
-        // - IndexedAccess/KeyOf types: fix TS7006 when parameter type is e.g. Type["a"]
+        // Setup contextual typing context, evaluating compound types first
         let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             tracing::debug!(
@@ -179,37 +169,26 @@ impl<'a> CheckerState<'a> {
                 EvaluationNeeded, classify_for_evaluation, get_lazy_def_id, get_type_application,
             };
 
-            // Evaluate the contextual type to resolve type aliases and generic applications
             let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
                 self.evaluate_application_type(ctx_type)
-            } else if get_lazy_def_id(self.ctx.types, ctx_type).is_some() {
-                self.judge_evaluate(ctx_type)
-            } else if matches!(
-                classify_for_evaluation(self.ctx.types, ctx_type),
-                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
-            ) {
-                // Evaluate IndexedAccess (e.g., Type["a"]) and KeyOf types so they
-                // resolve to concrete function types usable for parameter typing.
+            } else if get_lazy_def_id(self.ctx.types, ctx_type).is_some()
+                || matches!(
+                    classify_for_evaluation(self.ctx.types, ctx_type),
+                    EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
+                )
+            {
                 self.judge_evaluate(ctx_type)
             } else {
-                // For unions/intersections, evaluate to resolve lazy members
-                // so contextual parameter typing can extract callable signatures.
                 self.evaluate_contextual_type(ctx_type)
             };
-            // Preserve the original contextual type when evaluation degrades to
-            // UNKNOWN. This keeps unresolved conditional/generic parameter types
-            // (e.g. Exclude<T, E>) available for TS7006 suppression.
+            // Preserve original when evaluation degrades to UNKNOWN (unresolved conditionals)
             let evaluated_type = if evaluated_type == TypeId::UNKNOWN {
                 ctx_type
             } else {
                 evaluated_type
             };
 
-            // Evaluate Application types in rest parameters of contextual function types.
-            // When a generic function is instantiated (e.g., f<T>(..., cb: (...values: MappedType<T>) => void)),
-            // the rest param type may be an unevaluated Application (e.g., UnwrapContainers<[A, B]>).
-            // The solver's parameter extractor uses NoopResolver and cannot evaluate these.
-            // Resolve them here with the checker's TypeEnvironment which can resolve Lazy(DefId).
+            // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
             let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
 
             contextual_signature_type_params =
@@ -458,6 +437,32 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(TypeId::ANY)
                     } else {
                         contextual_type.or(iife_arg_type).unwrap_or(TypeId::ANY)
+                    };
+
+                    // JSDoc @param [name] bracket-optional without explicit type → T | undefined
+                    let inferred_type = if is_js_file
+                        && jsdoc_param_type.is_none()
+                        && self.ctx.strict_null_checks()
+                        && inferred_type != TypeId::ANY
+                        && inferred_type != TypeId::UNDEFINED
+                    {
+                        let pname = self.effective_jsdoc_param_name(
+                            param.name,
+                            &jsdoc_param_names,
+                            contextual_index,
+                        );
+                        if let Some(ref jsdoc) = func_jsdoc
+                            && Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname)
+                        {
+                            self.ctx
+                                .types
+                                .factory()
+                                .union(vec![inferred_type, TypeId::UNDEFINED])
+                        } else {
+                            inferred_type
+                        }
+                    } else {
+                        inferred_type
                     };
 
                     if inferred_type == TypeId::ANY && param.initializer.is_some() {
