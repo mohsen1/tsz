@@ -600,8 +600,28 @@ impl<'a> NarrowingContext<'a> {
 
             // Check for property match
             let has_property_match = if let Some(ref intersection) = intersection_members {
-                // For Intersection: at least one member must have the property
-                intersection.iter().any(|&m| check_member_for_property(m))
+                // For Intersection: compute the effective property type by intersecting
+                // property types from all members that have the property.
+                // Example: X & { a: object } where X has a?: { aProp: string }
+                //   X's `a` type = { aProp: string } | undefined
+                //   { a: object }'s `a` type = object
+                //   effective = ({ aProp: string } | undefined) & object = { aProp: string }
+                //   So `a === undefined` does NOT match (correct).
+                let prop_types: Vec<TypeId> = intersection
+                    .iter()
+                    .filter_map(|&m| {
+                        self.get_type_at_path(m, property_path, &property_evaluator)
+                            .map(|t| self.resolve_type(t))
+                    })
+                    .collect();
+                if prop_types.is_empty() {
+                    false
+                } else if prop_types.len() == 1 {
+                    is_subtype_of(self.db, literal_value, prop_types[0])
+                } else {
+                    let effective_type = self.db.intersection(prop_types);
+                    is_subtype_of(self.db, literal_value, effective_type)
+                }
             } else {
                 // For non-Intersection: check the single member
                 check_member_for_property(resolved_member)
@@ -750,12 +770,29 @@ impl<'a> NarrowingContext<'a> {
 
             // Check if member should be kept
             let keep_member = if let Some(ref intersection) = intersection_members {
-                // CRITICAL: For Intersection exclusion, use ALL not ANY
-                // If ANY intersection member has the excluded property value,
-                // the ENTIRE intersection must be excluded.
-                // Example: { kind: "A" } & { data: string } with x.kind !== "A"
-                //   -> { kind: "A" } has "A" (excluded) -> exclude entire intersection
-                intersection.iter().all(|&m| should_keep_member(m))
+                // For Intersection: compute the effective property type by intersecting
+                // property types from all members that have the property.
+                // Then exclude only if the effective type is a subtype of the excluded value.
+                // Example: X & { a: undefined } where X has a?: { aProp: string }
+                //   X's `a` type = { aProp: string } | undefined
+                //   { a: undefined }'s `a` type = undefined
+                //   effective = ({ aProp: string } | undefined) & undefined = undefined
+                //   undefined <: undefined → exclude (correct)
+                let prop_types: Vec<TypeId> = intersection
+                    .iter()
+                    .filter_map(|&m| {
+                        self.get_type_at_path(m, property_path, &property_evaluator)
+                            .map(|t| self.resolve_type(t))
+                    })
+                    .collect();
+                if prop_types.is_empty() {
+                    true // no member has the property, keep
+                } else if prop_types.len() == 1 {
+                    !is_subtype_of(self.db, prop_types[0], excluded_value)
+                } else {
+                    let effective_type = self.db.intersection(prop_types);
+                    !is_subtype_of(self.db, effective_type, excluded_value)
+                }
             } else {
                 // For non-Intersection: check the single member
                 should_keep_member(resolved_member)

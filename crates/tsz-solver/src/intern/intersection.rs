@@ -382,10 +382,26 @@ impl TypeInterner {
                     let existing = &mut merged_props[idx];
                     // Property exists - intersect the types for stricter checking
                     // In TypeScript, if same property has different types, use intersection
-                    // Use raw intersection to avoid infinite recursion
+                    // Use raw intersection to avoid infinite recursion.
+                    //
+                    // CRITICAL: When one property is optional and the other is required,
+                    // the optional property's type implicitly includes `undefined`.
+                    // We must include this before intersecting, otherwise:
+                    //   `a?: { aProp: string }` & `a: undefined`
+                    //   incorrectly computes `{ aProp: string } & undefined = never`
+                    //   instead of `({ aProp: string } | undefined) & undefined = undefined`
                     if existing.type_id != prop.type_id {
-                        existing.type_id =
-                            self.intersect_types_raw2(existing.type_id, prop.type_id);
+                        let lhs = if existing.optional && !prop.optional {
+                            self.union2(existing.type_id, TypeId::UNDEFINED)
+                        } else {
+                            existing.type_id
+                        };
+                        let rhs = if prop.optional && !existing.optional {
+                            self.union2(prop.type_id, TypeId::UNDEFINED)
+                        } else {
+                            prop.type_id
+                        };
+                        existing.type_id = self.intersect_types_raw2(lhs, rhs);
                     }
                     // Merge flags: required wins over optional, readonly only if ALL readonly
                     // For optional: only optional if ALL are optional (required wins)
