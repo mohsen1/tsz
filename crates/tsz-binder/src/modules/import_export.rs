@@ -540,13 +540,15 @@ impl BinderState {
                     // Don't overwrite current_scope when a TYPE_ALIAS already exists.
                     // This preserves the TYPE_ALIAS in file_locals (for type reference resolution)
                     // while the ALIAS goes to module_exports (for value/namespace resolution).
-                    // parallel.rs links them via alias_partners.
-                    let existing_is_type_alias = self
-                        .current_scope
-                        .get(name)
-                        .and_then(|id| self.symbols.get(id))
-                        .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
-                    if !existing_is_type_alias {
+                    // Record the partnership in alias_partners for the checker.
+                    let existing_type_alias_id = self.current_scope.get(name).filter(|id| {
+                        self.symbols
+                            .get(*id)
+                            .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+                    });
+                    if let Some(type_alias_id) = existing_type_alias_id {
+                        self.alias_partners.insert(type_alias_id, sym_id);
+                    } else {
                         self.current_scope.set(name.to_string(), sym_id);
                     }
                     self.node_symbols.insert(export.export_clause.0, sym_id);

@@ -113,11 +113,21 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::ENUM_MEMBER;
 
                         // Skip TS2713 for ALIAS symbols (imports) - they may target
-                        // namespaces in other files. Also skip when parse errors exist,
-                        // as the qualified name may be incomplete/malformed.
+                        // namespaces in other files. Also skip when the resolved
+                        // export has an alias_partner (TYPE_ALIAS+ALIAS merge), as
+                        // the partner provides namespace access. Skip when parse
+                        // errors exist, as the qualified name may be malformed.
                         let is_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
+                        let has_alias_partner =
+                            self.ctx.binder.alias_partners.contains_key(&sym_id)
+                                || self.ctx.binder.resolve_import_symbol(sym_id).is_some_and(
+                                    |resolved| {
+                                        self.ctx.binder.alias_partners.contains_key(&resolved)
+                                    },
+                                );
                         if (symbol.flags & valid_namespace_flags) == 0
                             && !is_alias
+                            && !has_alias_partner
                             && !self.ctx.has_parse_errors
                         {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
@@ -223,7 +233,47 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     left_sym_for_missing = Some(sym_id);
                     left_module_specifier = symbol.import_module.clone();
-                    self.resolve_symbol_export(symbol, &right_name, &lib_binders)
+                    let mut result = self.resolve_symbol_export(symbol, &right_name, &lib_binders);
+                    // TYPE_ALIAS+ALIAS merge: look up alias_partner and
+                    // resolve the member through the ALIAS symbol's namespace
+                    if result.is_none() {
+                        let alias_id = self
+                            .ctx
+                            .binder
+                            .alias_partners
+                            .get(&sym_id)
+                            .copied()
+                            .or_else(|| {
+                                let resolved = self.ctx.binder.resolve_import_symbol(sym_id)?;
+                                self.ctx.binder.alias_partners.get(&resolved).copied()
+                            });
+                        if let Some(alias_id) = alias_id
+                            && let Some(alias_sym) =
+                                self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
+                            {
+                                result = alias_sym
+                                    .exports
+                                    .as_ref()
+                                    .and_then(|exports| exports.get(&right_name));
+                                if result.is_none()
+                                    && let Some(module) = alias_sym.import_module.as_ref() {
+                                        // Resolve from ALIAS's source file, then
+                                        // fall back to current-file resolution.
+                                        result = self
+                                            .ctx
+                                            .resolve_alias_import_member(
+                                                alias_id,
+                                                module,
+                                                &right_name,
+                                            )
+                                            .or_else(|| {
+                                                self.resolve_effective_module_exports(module)
+                                                    .and_then(|e| e.get(&right_name))
+                                            });
+                                    }
+                            }
+                    }
+                    result
                 } else {
                     None
                 }

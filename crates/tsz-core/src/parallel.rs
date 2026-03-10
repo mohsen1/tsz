@@ -29,7 +29,6 @@
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
-use crate::binder::symbol_flags;
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -254,6 +253,8 @@ pub struct BindResult {
     pub is_external_module: bool,
     /// Expando property assignments detected during binding
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    /// Per-file alias partners from binder (TYPE_ALIAS → ALIAS mapping, pre-remap)
+    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -312,6 +313,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     switch_clause_to_switch: binder.switch_clause_to_switch,
                     is_external_module: false,
                     expando_properties: FxHashMap::default(),
+                    alias_partners: FxHashMap::default(),
                 };
             }
 
@@ -355,6 +357,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
                 is_external_module: binder.is_external_module,
                 expando_properties: std::mem::take(&mut binder.expando_properties),
+                alias_partners: binder.alias_partners,
             }
         })
         .collect()
@@ -400,6 +403,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
         is_external_module: binder.is_external_module,
         expando_properties: std::mem::take(&mut binder.expando_properties),
+        alias_partners: binder.alias_partners,
     }
 }
 
@@ -641,6 +645,7 @@ fn bind_file_with_libs(
             switch_clause_to_switch: binder.switch_clause_to_switch,
             is_external_module: false,
             expando_properties: FxHashMap::default(),
+            alias_partners: FxHashMap::default(),
         };
     }
 
@@ -696,6 +701,7 @@ fn bind_file_with_libs(
         switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
         is_external_module: binder.is_external_module,
         expando_properties: std::mem::take(&mut binder.expando_properties),
+        alias_partners: binder.alias_partners,
     }
 }
 
@@ -1678,35 +1684,22 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         for (module_key, exports_table) in &result.module_exports {
             if module_key == &result.file_name {
-                // Same-file module_exports: detect TYPE_ALIAS/ALIAS partnerships.
-                // When `export type X = ...` and `export * as X from "..."` coexist,
-                // file_locals-derived exports have TYPE_ALIAS and module_exports has ALIAS.
-                // Link them via alias_partners so the checker can use both meanings.
-                let remapped = remap_symbol_table(exports_table, &id_remap);
-                if let Some(existing_exports) = module_exports.get(module_key) {
-                    for (name, alias_sym_id) in remapped.iter() {
-                        if let Some(existing_sym_id) = existing_exports.get(name) {
-                            let existing_flags = global_symbols
-                                .get(existing_sym_id)
-                                .map(|s| s.flags)
-                                .unwrap_or(0);
-                            let alias_flags = global_symbols
-                                .get(*alias_sym_id)
-                                .map(|s| s.flags)
-                                .unwrap_or(0);
-                            if (existing_flags & symbol_flags::TYPE_ALIAS != 0)
-                                && (alias_flags & symbol_flags::ALIAS != 0)
-                            {
-                                alias_partners.insert(existing_sym_id, *alias_sym_id);
-                            }
-                        }
-                    }
-                }
+                // Same-file module_exports are already handled by the file_locals
+                // remap above. Skip to avoid clobbering the remapped file_locals.
                 continue;
             }
             let remapped = remap_symbol_table(exports_table, &id_remap);
             if !remapped.is_empty() {
                 module_exports.insert(module_key.clone(), remapped);
+            }
+        }
+
+        // Remap binder's per-file alias_partners to global SymbolIds
+        for (&type_alias_id, &alias_id) in &result.alias_partners {
+            if let (Some(&new_ta), Some(&new_alias)) =
+                (id_remap.get(&type_alias_id), id_remap.get(&alias_id))
+            {
+                alias_partners.insert(new_ta, new_alias);
             }
         }
 
