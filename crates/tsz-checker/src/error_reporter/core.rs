@@ -129,7 +129,11 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                expr_type
+                if self.should_widen_enum_member_assignment_source(expr_type, target) {
+                    self.widen_enum_member_type(expr_type)
+                } else {
+                    expr_type
+                }
             } else {
                 source
             };
@@ -168,6 +172,24 @@ impl<'a> CheckerState<'a> {
                 .any(|member| self.is_literal_sensitive_assignment_target_inner(member));
         }
         target == TypeId::NEVER
+    }
+
+    fn should_widen_enum_member_assignment_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let widened_source = self.widen_enum_member_type(source);
+        if widened_source == source {
+            return false;
+        }
+
+        !matches!(
+            self.ctx.types.lookup(self.evaluate_type_for_assignability(target)),
+            Some(tsz_solver::TypeData::Enum(_, _))
+                | Some(tsz_solver::TypeData::Union(_))
+                | Some(tsz_solver::TypeData::Intersection(_))
+        )
     }
 
     pub(super) fn unresolved_unused_renaming_property_in_type_query(

@@ -150,6 +150,30 @@ abc = secondAbcd;
 }
 
 #[test]
+fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
+    let source = r#"
+namespace W {
+    export class D { }
+}
+
+enum W {
+    a, b, c,
+}
+
+let x: typeof W = W.a;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message =
+        diagnostic_message(&diagnostics, 2322).expect("expected TS2322 for assigning W.a to typeof W");
+
+    assert!(
+        message.contains("Type 'W' is not assignable to type 'typeof W'."),
+        "Expected enum member source to widen to the enum name for enum object targets. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_declaration_emit_inferred_function_return_with_cyclic_structure_emits_ts5088() {
     let source = r#"
 // @target: es2015
