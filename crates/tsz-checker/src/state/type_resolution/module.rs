@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
     /// Follow re-export chains across binder boundaries to find an exported symbol.
     /// Returns `(SymbolId, file_idx)` where `file_idx` is the actual file that owns
     /// the symbol, so callers can record the correct cross-file origin.
-    fn resolve_export_in_file(
+    pub(crate) fn resolve_export_in_file(
         &self,
         file_idx: usize,
         export_name: &str,
