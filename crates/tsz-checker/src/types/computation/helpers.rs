@@ -1046,12 +1046,12 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(prop_name) = prop_name {
                         let mut object_type = self.get_type_of_node(access.expression);
-                        if access.question_dot_token
+                        let uses_optional_chain_base = access.question_dot_token
                             || crate::computation::access::is_optional_chain(
                                 self.ctx.arena,
                                 access.expression,
-                            )
-                        {
+                            );
+                        if uses_optional_chain_base {
                             let (non_nullish, _) = self.split_nullish_type(object_type);
                             if let Some(non_nullish) = non_nullish {
                                 object_type = non_nullish;
@@ -1070,7 +1070,17 @@ impl<'a> CheckerState<'a> {
                                     type_id,
                                     from_index_signature,
                                     ..
-                                } => (type_id, from_index_signature),
+                                } => {
+                                    let prop_type = if uses_optional_chain_base
+                                        || operand_node.kind
+                                            == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                                    {
+                                        type_id
+                                    } else {
+                                        operand_type
+                                    };
+                                    (prop_type, from_index_signature)
+                                }
                                 _ => (operand_type, false),
                             };
 

@@ -634,6 +634,60 @@ delete (o6.b?.["c"].d?.["e"]);
 }
 
 #[test]
+fn test_delete_plain_properties_respects_exact_optional_property_types() {
+    let non_exact = compile_and_get_diagnostics_with_options(
+        r#"
+interface Foo {
+    a: number;
+    b: number | undefined;
+    c: number | null;
+    d?: number;
+}
+declare const f: Foo;
+delete f.a;
+delete f.b;
+delete f.c;
+delete f.d;
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let non_exact_ts2790 = non_exact.iter().filter(|(code, _)| *code == 2790).count();
+    assert_eq!(
+        non_exact_ts2790, 2,
+        "Expected TS2790 only for required non-undefined properties without exactOptionalPropertyTypes. Actual: {non_exact:#?}"
+    );
+
+    let exact = compile_and_get_diagnostics_with_options(
+        r#"
+interface Foo {
+    a: number;
+    b: number | undefined;
+    c: number | null;
+    e: number | undefined | null;
+}
+declare const f: Foo;
+delete f.a;
+delete f.b;
+delete f.c;
+delete f.e;
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let exact_ts2790 = exact.iter().filter(|(code, _)| *code == 2790).count();
+    assert_eq!(
+        exact_ts2790, 4,
+        "Expected TS2790 for all required properties under exactOptionalPropertyTypes. Actual: {exact:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
