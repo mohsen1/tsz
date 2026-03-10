@@ -1053,7 +1053,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
                         // Lazy(DefId) which the visitor can't recurse into.
                         let resolved_type = self.checker.evaluate_type_with_env(operand_type);
-                        let is_valid = evaluator.is_arithmetic_operand(resolved_type);
+                        let is_valid = evaluator.is_arithmetic_operand(resolved_type)
+                            || self.checker.is_enum_like_type(operand_type);
 
                         if !is_valid {
                             arithmetic_ok = false;

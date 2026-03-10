@@ -844,6 +844,7 @@ impl<'a> CheckerState<'a> {
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
                     let is_valid = evaluator.is_arithmetic_operand(resolved_type)
+                        || self.is_enum_like_type(operand_type)
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
