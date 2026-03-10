@@ -54,7 +54,7 @@ A test passes **only if** both levels match. The baseline file only shows the co
 
 This is the single biggest root cause. tsz emits the right error code at the right position, but the type names in the diagnostic message differ from what tsc produces.
 
-#### Sub-pattern A: Numeric Literal Widening (32 fingerprints)
+#### Sub-pattern A: Numeric Literal Widening (32 fingerprints) — DONE
 
 ```
 tsc:  "types '0' and '1' have no overlap"
@@ -63,9 +63,14 @@ tsz:  "types 'number' and 'number' have no overlap"
 
 **Affected tests:** `capturedLetConstInLoop8`, `capturedLetConstInLoop8_ES6` (16 fingerprints each)
 
-**Root cause:** `const` variables initialized with numeric literals in for-loop contexts are not narrowed to their literal types. tsc treats `const x = 0` as type `0` (literal), tsz treats it as `number`.
+**Status: FIXED** (commit `c8510aeba` — 2026-03-10)
 
-**Solver location:** Literal type preservation during const narrowing in the binder/checker handoff.
+**Fix:** Family-aware widening heuristic in TS2367 message generation (`binary.rs`).
+The root cause was not missing literal type preservation in the solver — const variables
+already had correct literal types. The issue was in the TS2367 display path which
+unconditionally widened number/boolean literals via `widen_non_string_bigint_literal`.
+The fix uses a two-tier heuristic: same primitive family → preserve all literals;
+different family → widen only number/boolean (preserving string/bigint).
 
 #### Sub-pattern B: String Literal / Union Widening (34 fingerprints)
 
