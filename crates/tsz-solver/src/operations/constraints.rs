@@ -2446,9 +2446,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.constrain_types(ctx, var_map, target_param, source_param, priority);
             }
         } else {
+            // The target parameter is a complex type containing type variables
+            // (e.g., `{ kind: T }`, not just `T` directly). In tsc, callback
+            // parameter inference in this case goes to `contraCandidates` because
+            // function parameters are contravariant. We set `in_contra_mode` for
+            // the FORWARD direction so that any candidates found during structural
+            // decomposition are routed to `contra_candidates`. The reverse direction
+            // (target→source) adds upper bounds which aren't affected by contra mode.
             let mut placeholder_visited = FxHashSet::default();
             if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, source_param, target_param, priority);
+                ctx.in_contra_mode = was_contra;
             }
             self.constrain_types(ctx, var_map, target_param, source_param, priority);
         }

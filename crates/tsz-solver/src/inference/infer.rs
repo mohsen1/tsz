@@ -235,6 +235,13 @@ pub struct InferenceContext<'a> {
     /// Prevents infinite recursion when inferring through recursive type aliases
     /// like `type Spec<T> = { [P in keyof T]: Spec<T[P]> }`.
     pub(crate) app_expansion_depth: u32,
+    /// When true, candidates are routed to `contra_candidates` instead of
+    /// regular `candidates`. This is set during the forward inference pass
+    /// of callback parameters (contravariant context) so that structural
+    /// decomposition produces contra-candidates matching tsc's behavior:
+    /// contra-candidates are resolved via intersection and are only used
+    /// when no covariant candidates exist.
+    pub(crate) in_contra_mode: bool,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -253,6 +260,7 @@ impl<'a> InferenceContext<'a> {
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
             app_expansion_depth: 0,
+            in_contra_mode: false,
         }
     }
 
@@ -268,6 +276,7 @@ impl<'a> InferenceContext<'a> {
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
             app_expansion_depth: 0,
+            in_contra_mode: false,
         }
     }
 
@@ -1056,13 +1065,26 @@ impl<'a> InferenceContext<'a> {
             object_property_index,
             object_property_name,
         };
-        self.table.union_value(
-            root,
-            InferenceInfo {
-                candidates: vec![candidate],
-                ..InferenceInfo::default()
-            },
-        );
+        if self.in_contra_mode {
+            // In contravariant context (e.g., callback parameter structural
+            // decomposition), route to contra_candidates so they are resolved
+            // via intersection and only used when no covariant candidates exist.
+            self.table.union_value(
+                root,
+                InferenceInfo {
+                    contra_candidates: vec![candidate],
+                    ..InferenceInfo::default()
+                },
+            );
+        } else {
+            self.table.union_value(
+                root,
+                InferenceInfo {
+                    candidates: vec![candidate],
+                    ..InferenceInfo::default()
+                },
+            );
+        }
     }
 
     /// Add an upper bound constraint: var <: ty
