@@ -638,6 +638,15 @@ impl<'a> NarrowingContext<'a> {
             return self.db.array(TypeId::ANY);
         }
 
+        // Resolve Lazy(DefId) type aliases before narrowing.
+        // Type aliases like `type Expression = ['and', ...Expression[]] | 'true' | 'false'`
+        // are stored as Lazy(DefId) references. Without resolving, union_list_id and
+        // is_array_like won't see through them, causing incorrect narrowing to never.
+        let resolved = self.resolve_type(source_type);
+        if resolved != source_type {
+            return self.narrow_to_array(resolved);
+        }
+
         // Handle Union: filter members, keeping only array-like types
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
@@ -708,6 +717,12 @@ impl<'a> NarrowingContext<'a> {
         if source_type == TypeId::UNKNOWN {
             // Unknown doesn't have a "not array" type representation
             return TypeId::UNKNOWN;
+        }
+
+        // Resolve Lazy(DefId) type aliases before narrowing (same as narrow_to_array).
+        let resolved = self.resolve_type(source_type);
+        if resolved != source_type {
+            return self.narrow_excluding_array(resolved);
         }
 
         // Handle Union: filter out array-like members
