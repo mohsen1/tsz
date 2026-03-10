@@ -147,7 +147,11 @@ impl BinderState {
                         .get(module.name)
                         .and_then(|name_node| arena.get_literal(name_node))
                         .map(|lit| lit.text.clone())
-                });
+                })
+                // Parser creates a synthetic empty identifier for anonymous modules
+                // (TS1437: "Namespace must be given a name"). Treat empty name as None
+                // so the anonymous module promotion logic kicks in.
+                .filter(|n| !n.is_empty());
             let mut prior_exports: Option<SymbolTable> = None;
             let mut module_symbol_id = SymbolId::NONE;
             if let Some(name) = name {
@@ -260,16 +264,12 @@ impl BinderState {
             // them to the parent scope afterwards.
             let anon_promoted: Vec<(String, SymbolId)> =
                 if module_symbol_id.is_none() && module.body.is_some() {
+                    // Promote ALL symbols — since the module has no name, there is
+                    // nothing to export FROM. TSC treats the body as if it were
+                    // written directly in the enclosing scope.
                     self.current_scope
                         .iter()
-                        .filter_map(|(name, &sym_id)| {
-                            let sym = self.symbols.get(sym_id)?;
-                            if sym.is_exported || (sym.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                                Some((name.clone(), sym_id))
-                            } else {
-                                None
-                            }
-                        })
+                        .map(|(name, &sym_id)| (name.clone(), sym_id))
                         .collect()
                 } else {
                     Vec::new()
@@ -296,6 +296,12 @@ impl BinderState {
             // as members of the parent namespace.
             for (name, sym_id) in anon_promoted {
                 self.current_scope.set(name, sym_id);
+                // Mark as exported so the parent namespace's exit_scope includes
+                // them in its exports table (they're effectively declared inline
+                // in the parent scope).
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.is_exported = true;
+                }
             }
         }
     }
