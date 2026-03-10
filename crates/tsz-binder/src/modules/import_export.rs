@@ -387,13 +387,17 @@ impl BinderState {
                                         .or_else(|| self.file_locals.get(orig));
 
                                     if let Some(sym_id) = resolved_sym_id {
-                                        // Mark the original symbol as exported so it appears
-                                        // in module_exports for cross-file import resolution
+                                        // Mark the original symbol as exported.
+                                        //
+                                        // For is_type_only: only SET it when this is the
+                                        // first export AND it's type-only. Never CLEAR it,
+                                        // because the flag may come from `import type` and
+                                        // must be preserved for re-export chains.
                                         if let Some(orig_sym) = self.symbols.get_mut(sym_id) {
-                                            orig_sym.is_exported = true;
-                                            if spec_type_only {
+                                            if spec_type_only && !orig_sym.is_exported {
                                                 orig_sym.is_type_only = true;
                                             }
+                                            orig_sym.is_exported = true;
                                         }
 
                                         // Create export symbol (EXPORT_VALUE for value exports)
@@ -427,7 +431,35 @@ impl BinderState {
                                         // findable). When orig == exp, the original symbol is
                                         // already in file_locals and marked exported.
                                         if orig != exp {
-                                            self.file_locals.set(exp.to_string(), sym_id);
+                                            // When a type-only export specifier renames a
+                                            // symbol that is NOT itself type-only, clone
+                                            // the symbol so module_exports gets the correct
+                                            // is_type_only per export name. Example:
+                                            //   export { type };           // value export
+                                            //   export { type type as foo }; // type-only
+                                            // Without cloning, both "type" and "foo" would
+                                            // share the same symbol with is_type_only=false.
+                                            let orig_is_type_only = self
+                                                .symbols
+                                                .get(sym_id)
+                                                .map(|s| s.is_type_only)
+                                                .unwrap_or(false);
+                                            if spec_type_only && !orig_is_type_only {
+                                                let clone_id = {
+                                                    let src =
+                                                        self.symbols.get(sym_id).cloned().unwrap();
+                                                    self.symbols.alloc_from(&src)
+                                                };
+                                                if let Some(clone_sym) =
+                                                    self.symbols.get_mut(clone_id)
+                                                {
+                                                    clone_sym.is_type_only = true;
+                                                    clone_sym.is_exported = true;
+                                                }
+                                                self.file_locals.set(exp.to_string(), clone_id);
+                                            } else {
+                                                self.file_locals.set(exp.to_string(), sym_id);
+                                            }
                                         }
                                     }
                                 }
