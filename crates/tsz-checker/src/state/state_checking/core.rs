@@ -1480,6 +1480,13 @@ impl<'a> CheckerState<'a> {
                     if decl.type_annotation.is_some() || decl.initializer.is_none() {
                         continue;
                     }
+                    // tsc emits TS9010 only when the initializer type genuinely
+                    // can't be inferred. For const + literal, object/array literal,
+                    // arrow/function/class expressions, tsc uses more specific
+                    // TS9xxx errors or infers the type directly.
+                    if self.is_isolated_decl_type_inferrable(decl.initializer) {
+                        continue;
+                    }
                     self.error_at_node(
                         decl.name,
                         diagnostic_messages::VARIABLE_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
@@ -1487,6 +1494,75 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+        }
+    }
+
+    /// Check whether an initializer's type is inferrable for `--isolatedDeclarations`.
+    ///
+    /// tsc suppresses TS9010 for:
+    /// - `const` with literal initializers (type is the literal type)
+    /// - Object/array literals (tsc emits per-property `TS9xxx` diagnostics instead)
+    /// - Arrow/function/class expressions (tsc emits TS9007/TS9011 for signature gaps)
+    /// - `as const` / `satisfies` assertions
+    fn is_isolated_decl_type_inferrable(&self, init: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(init_node) = self.ctx.arena.get(init) else {
+            return false;
+        };
+        match init_node.kind {
+            // Direct literal values
+            k if k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                true
+            }
+            // Prefix unary +/- on numeric or bigint literal
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(init_node)
+                    && (unary.operator == SyntaxKind::MinusToken as u16
+                        || unary.operator == SyntaxKind::PlusToken as u16)
+                    && let Some(operand) = self.ctx.arena.get(unary.operand)
+                {
+                    operand.kind == SyntaxKind::NumericLiteral as u16
+                        || operand.kind == SyntaxKind::BigIntLiteral as u16
+                } else {
+                    false
+                }
+            }
+            // `expr as const` — tsc accepts any as-const assertion
+            k if k == syntax_kind_ext::AS_EXPRESSION => true,
+            // `expr satisfies T` — passthrough, check inner expression
+            k if k == syntax_kind_ext::SATISFIES_EXPRESSION => true,
+            // Parenthesized expression — check inner
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(init_node) {
+                    self.is_isolated_decl_type_inferrable(paren.expression)
+                } else {
+                    false
+                }
+            }
+            // Object/array literal — tsc can infer types from the literal shape
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                true
+            }
+            // Arrow functions and function expressions — types come from the signature,
+            // so tsc emits more specific TS9007/TS9011 instead of TS9010.
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                true
+            }
+            _ => false,
         }
     }
 
