@@ -1735,8 +1735,10 @@ impl ParserState {
                 }
                 self.next_token();
             }
-            // If we reached `from STRING`, consume the module specifier.
+            // If we reached `from STRING`, emit `;` expected at the leftover
+            // `from` position (matching tsc's recovery) then consume the specifier.
             if self.is_token(SyntaxKind::FromKeyword) {
+                self.error_token_expected(";");
                 self.next_token();
             }
             if self.is_token(SyntaxKind::StringLiteral) {
