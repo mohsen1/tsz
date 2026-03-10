@@ -17,13 +17,8 @@ use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextu
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
-        // For union types, evaluate each member individually but reconstruct the
-        // union WITHOUT subtype reduction. The full evaluate_type_with_env path
-        // performs subtype-based reduction (e.g., `string | 'done'` → `string`)
-        // which destroys literal type information needed for contextual literal
-        // preservation. By evaluating members individually and using
-        // union_preserve_members, deferred types (conditionals, mapped, etc.)
-        // within the union get resolved, but literal members are kept intact.
+        // Evaluate union members individually without subtype reduction to
+        // preserve literal types (e.g., avoid `string | 'done'` → `string`).
         if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
         {
             let mut evaluated_members = Vec::with_capacity(members.len());
@@ -96,11 +91,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
-        // In tsc, `boolean` is `true | false` (a union of boolean literal types),
-        // so the union-member path in this function handles it automatically. In
-        // tsz, `BOOLEAN` is an intrinsic (not a union), so we need an explicit
-        // check to ensure that contextual type `boolean` allows boolean literals
-        // like `true`/`false` to be preserved instead of being widened.
+        // tsz's BOOLEAN is intrinsic (not true|false union), so explicit check needed.
         if is_boolean_context_for_boolean_literal(ctx_type, literal_type) {
             return true;
         }
@@ -108,8 +99,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Resolve Lazy(DefId) types before classification. Type aliases like
-        // `type Direction = "north" | "south"` are Lazy until resolved.
+        // Resolve Lazy(DefId) types before classification.
         if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ctx_type) {
             // Try type_env first
             let resolved = {
@@ -135,8 +125,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Evaluate KeyOf and IndexAccess types to their concrete form before
-        // classification. E.g., keyof Person → "name" | "age".
+        // Evaluate KeyOf/IndexAccess to concrete form before classification.
         if tsz_solver::type_queries::is_keyof_type(self.ctx.types, ctx_type)
             || tsz_solver::type_queries::is_index_access_type(self.ctx.types, ctx_type)
             || tsz_solver::type_queries::is_conditional_type(self.ctx.types, ctx_type)
@@ -146,9 +135,7 @@ impl<'a> CheckerState<'a> {
                 return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
             }
         }
-        // Generic `keyof` contexts preserve literal arguments even when the key space
-        // cannot yet be concretely evaluated (e.g. `K extends keyof this`, `keyof T`).
-        // The constraint is validated later during generic-call inference.
+        // Generic `keyof` contexts preserve literal arguments.
         if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
             && (tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, keyof_inner)
                 .is_some()
@@ -161,9 +148,7 @@ impl<'a> CheckerState<'a> {
             ContextualLiteralAllowKind::Members(members) => members.iter().any(|&member| {
                 self.contextual_type_allows_literal_inner(member, literal_type, visited)
             }),
-            // Type parameters always allow literal types. In TypeScript, when the
-            // expected type is a type parameter (e.g., K extends keyof T), the literal
-            // is preserved and the constraint is checked later during generic inference.
+            // Type parameters always allow literal types.
             ContextualLiteralAllowKind::TypeParameter { .. }
             | ContextualLiteralAllowKind::TemplateLiteral => true,
             ContextualLiteralAllowKind::Application => {
@@ -192,10 +177,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a type node is a simple type reference without structural wrapping.
-    ///
-    /// Returns true for bare type references like `type A = B`, false for wrapped
-    /// references like `type A = { x: B }` or `type A = B | null`.
+    /// True for bare type refs (`type A = B`), false for wrapped (`type A = { x: B }`).
     pub(crate) fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_node) else {
             return false;
@@ -208,11 +190,8 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a type alias directly circularly references itself (or transitively
-    /// through other aliases being resolved). Returns true for `type A = B; type B = A`
-    /// but false for structurally wrapped recursion like `type List = { next: List | null }`.
-    /// `in_union_or_intersection` skips `is_simple_type_reference` for union/intersection
-    /// members per TS spec. Detected cycle marks all aliases on the resolution stack.
+    /// True for direct circular aliases (`type A = B; type B = A`), false for
+    /// structurally wrapped recursion. Marks all aliases on the resolution stack.
     #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn is_direct_circular_reference(
         &mut self,
@@ -227,9 +206,7 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
             && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
         {
-            // Check if the target is in the resolution set (currently being computed).
-            // This detects both direct self-references (A = A) and transitive cycles
-            // (A = B; B = C; C = A) — in all cases, the target would be in the set.
+            // Check if the target is in the resolution set (detecting cycles).
             let is_in_resolution_chain = self.ctx.symbol_resolution_set.contains(&target_sym_id);
 
             // Only flag type alias symbols to avoid false positives for
@@ -245,9 +222,7 @@ impl<'a> CheckerState<'a> {
                     in_union_or_intersection || self.is_simple_type_reference(type_node);
 
                 if is_direct {
-                    // Mark all type alias symbols on the resolution stack between
-                    // the cycle target and the current position as circular.
-                    // This ensures every member of the cycle emits TS2456.
+                    // Mark all aliases on stack between target and current as circular.
                     let mut found_target = false;
                     for &stack_sym in &self.ctx.symbol_resolution_stack {
                         if stack_sym == target_sym_id {
@@ -418,9 +393,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Detect cross-file circular type alias cycles by following the Lazy chain
-    /// through `DefinitionStore`. Handles `type A = B` (a.ts) + `type B = A` (b.ts)
-    /// where `is_direct_circular_reference` fails because B is already resolved.
+    /// Detect cross-file circular type alias cycles via `DefinitionStore` Lazy chain.
     pub(crate) fn is_cross_file_circular_alias(
         &self,
         sym_id: SymbolId,
@@ -467,16 +440,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Post-processing: detect cross-file circular type aliases (TS2456).
-    ///
-    /// During `build_type_environment`, type alias bodies are resolved but
-    /// cross-file symbols might not be fully resolved yet (their delegation
-    /// happens later).  By the time this method runs (after all statements
-    /// are checked), the `DefinitionStore` contains bodies for all resolved
-    /// type aliases, including cross-file ones.
-    ///
-    /// For each `TYPE_ALIAS` symbol in the current file whose type was NOT
-    /// already flagged as circular, check if the resolved type chains
-    /// through the `DefinitionStore` back to itself.
     pub(crate) fn check_cross_file_circular_type_aliases(&mut self) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
@@ -578,10 +541,7 @@ impl<'a> CheckerState<'a> {
         checker.error_recursive_base_type_for_symbol(sym_id);
     }
 
-    /// Returns true when resolving `type_id` requires the structure of
-    /// `target_sym`. Plain occurrences like `Base<Target>` are allowed; meta-type
-    /// operations such as `keyof Target`, `Target["x"]`, mapped constraints,
-    /// or alias expansions that reduce to those forms are not.
+    /// True when resolving `type_id` requires `target_sym`'s structure (meta-type ops).
     pub(crate) fn type_requires_structure_of_symbol(
         &mut self,
         type_id: TypeId,
@@ -593,9 +553,7 @@ impl<'a> CheckerState<'a> {
         self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, false, &mut guard)
     }
 
-    /// Like `type_requires_structure_of_symbol` but skips member types (object
-    /// properties, function params/returns). Used for TS2310 base-type cycle
-    /// detection — mirrors tsc's `hasBaseType` which only walks inheritance.
+    /// Like above but skips member types — for TS2310 base-type cycle detection.
     pub(crate) fn type_requires_structure_of_symbol_for_base_type(
         &mut self,
         type_id: TypeId,
@@ -1710,25 +1668,9 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    /// Check if a symbol represents a type-only export that should be excluded
-    /// from the value namespace of a module.
-    ///
-    /// Returns `true` when the symbol was exported via `export type { X }` and
-    /// should not appear as a value property on namespace objects.
-    ///
-    /// Handles a subtle binder quirk: `import type { A }` sets `is_type_only`
-    /// on the alias symbol, and if the same name is later declared as a value
-    /// (`const A = 0`) and re-exported (`export { A }`), the merged symbol
-    /// still has `is_type_only = true` from the import. We detect this by
-    /// checking if the symbol has BOTH `ALIAS` and `VALUE` flags — the `ALIAS`
-    /// came from the import type, and the `VALUE` from the const/function/class.
+    /// Check if a symbol is a type-only export (excludable from namespace value type).
     pub(crate) fn is_type_only_export_symbol(&self, sym_id: SymbolId) -> bool {
-        // Use get_cross_file_symbol to check cross_file_symbol_targets FIRST,
-        // avoiding SymbolId collisions: each binder uses its own SymbolId space
-        // (starting from 0), so a SymbolId from another file may collide with a
-        // different symbol in the local binder. get_symbol_globally checks the
-        // local binder first and can return the wrong symbol, causing the
-        // is_type_only check to silently fail.
+        // Use cross-file lookup first to avoid SymbolId collisions across binders.
         let symbol = self.get_cross_file_symbol(sym_id);
 
         let Some(symbol) = symbol else {
@@ -1750,13 +1692,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if an export symbol has no value component.
-    /// Returns `true` for type aliases, interfaces (without merged values), and
-    /// aliases that resolve to type-only targets. These should be excluded from
-    /// the module namespace object type because they have no runtime value.
-    ///
-    /// Uses `get_cross_file_symbol` to correctly handle symbols from other files'
-    /// binders (avoiding SymbolId collision issues).
+    /// Check if an export symbol has no value component (type-only).
     pub(crate) fn export_symbol_has_no_value(&self, sym_id: SymbolId) -> bool {
         use tsz_binder::symbol_flags;
         let lib_binders = self.get_lib_binders();
@@ -1829,10 +1765,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a module/namespace symbol is uninstantiated — i.e., all of its
-    /// exports are type-only (interfaces, type aliases, uninstantiated namespaces).
-    /// Our binder always sets `VALUE_MODULE` | `NAMESPACE_MODULE` for all modules,
-    /// so we check the exports to determine the actual instantiation state.
+    /// Check if a module/namespace has only type-only exports (uninstantiated).
     fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
         use tsz_binder::symbol_flags;
         let lib_binders = self.get_lib_binders();
@@ -1870,8 +1803,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Returns `true` when a named export was reached through a `export type *` wildcard
-    /// re-export chain and should be excluded from namespace value properties.
+    /// Check if a named export was reached through a `export type *` wildcard chain.
     pub(crate) fn is_export_from_type_only_wildcard(
         &self,
         module_name: &str,
@@ -1920,9 +1852,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Returns true if `sym_id` is a merged symbol that has both an interface declaration
-    /// and a value declaration (variable/function). Used by `typeof` resolution to pick
-    /// the value type instead of the interface type for merged symbols.
+    /// Returns true if `sym_id` is a merged interface+value symbol.
     pub(crate) fn is_merged_interface_value_symbol(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
@@ -1933,19 +1863,8 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-/// Check if the contextual type is `boolean` and the literal is a boolean literal.
-///
-/// In tsc, `boolean` is represented as `true | false` (a union of boolean literal
-/// types), so the union member path in `contextual_type_allows_literal_inner`
-/// handles it automatically via `isLiteralOfContextualType`. In tsz, `BOOLEAN` is
-/// an intrinsic type (not a union), so we need this explicit check to ensure that
-/// contextual type `boolean` allows literal `true`/`false` to be preserved instead
-/// of being widened.
-///
-/// Note: This does NOT apply to other primitives (`string`, `number`, `bigint`)
-/// because in tsc those are primitive types, not unions of literals. tsc's
-/// `isLiteralOfContextualType` only preserves literals when the contextual type is
-/// itself a literal type, a union containing literal types, or a type parameter.
+/// Check if contextual type is `boolean` and the literal is a boolean literal.
+/// tsz needs this because BOOLEAN is intrinsic, not `true | false` union like tsc.
 fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId) -> bool {
     if ctx_type != TypeId::BOOLEAN
         && ctx_type != TypeId::BOOLEAN_TRUE
@@ -1962,10 +1881,7 @@ fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId
 }
 
 impl<'a> CheckerState<'a> {
-    /// Resolve the display module name for a namespace type's `typeof import("...")`.
-    /// When a module has `export = ns` where `ns` is a namespace import from
-    /// another module, returns that original module's specifier instead of the
-    /// intermediate module.
+    /// Resolve the display module name for namespace `typeof import("...")`.
     pub(crate) fn resolve_namespace_display_module_name(
         &self,
         exports_table: &tsz_binder::SymbolTable,
@@ -1991,10 +1907,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| fallback.to_string())
     }
 
-    /// Resolve the type of a binding element inside a destructured function parameter
-    /// that has a type annotation. Walks up the AST:
-    ///   Identifier -> `BindingElement` -> [`SyntaxList` ->] `BindingPattern` -> Parameter
-    /// and extracts the property type from the parameter's annotation.
+    /// Resolve binding element type from annotated destructured function parameter.
     pub(crate) fn resolve_binding_element_from_annotated_param(
         &mut self,
         value_decl: NodeIndex,
