@@ -67,7 +67,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::Conditional(_)
             | TypeData::IndexAccess(_, _)
             | TypeData::Mapped(_)
-            | TypeData::TemplateLiteral(_) => {
+            | TypeData::TemplateLiteral(_)
+            | TypeData::TypeQuery(_) => {
                 // Resolve meta-types to their actual types before checking constructability.
                 // Use checker.evaluate_type() which has a full resolver context,
                 // rather than the standalone evaluate_type() with NoopResolver.
