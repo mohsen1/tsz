@@ -453,7 +453,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if saw_empty || self.function_body_falls_through(body_idx) {
-            return_types.push(TypeId::VOID);
+            // When a function has value-returning paths AND also falls through
+            // (or has empty `return;`), the non-returning paths contribute
+            // `undefined` to the union, not `void`. tsc behaves the same way:
+            // `function f(x) { if (x) return 1; }` → `number | undefined`
+            return_types.push(TypeId::UNDEFINED);
         }
 
         factory.union(return_types)

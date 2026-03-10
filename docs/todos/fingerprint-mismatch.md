@@ -92,7 +92,10 @@ tsz:  "Operator '+' cannot be applied to types 'I' and 'number'"
   Fix: `widen_type_for_operator_display` in `operator_errors.rs` tries enum member→parent
   widening before `get_base_type_for_comparison` (which destroys enum identity).
   Also fixed enum member `E.A` → parent `E` widening (reordered TypeData::Enum check).
-- `undefined` displayed as `void` in return type contexts
+- ~~`undefined` displayed as `void` in return type contexts~~ **FIXED** (2026-03-10)
+  Fix: Changed `infer_return_type_from_body_inner` in `return_type.rs` to push
+  `TypeId::UNDEFINED` instead of `TypeId::VOID` when building return type unions
+  for functions with mixed returning/fall-through paths.
 - Return type inference not preserving literal types from branches
 
 **Solver location:** Return type inference (`evaluate`), enum type display, literal preservation policy.
