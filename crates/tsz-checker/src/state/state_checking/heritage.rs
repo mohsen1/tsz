@@ -484,6 +484,7 @@ impl<'a> CheckerState<'a> {
                     // Heritage expression with explicit type arguments over a call expression
                     // (e.g. `class C extends getBase()<T> {}`) should report TS2315 when
                     // the expression resolves but is not generic.
+                    let mut emitted_ts2315 = false;
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
                         && let Some(type_args) = expr_type_args.type_arguments.as_ref()
                         && !type_args.nodes.is_empty()
@@ -503,18 +504,32 @@ impl<'a> CheckerState<'a> {
                             && expr_type != TypeId::ANY
                             && !type_args.nodes.is_empty()
                         {
-                            let name = self
-                                .heritage_name_text(expr_idx)
-                                .unwrap_or_else(|| "<expression>".to_string());
+                            // For call expressions (e.g. `getSomething()`), the
+                            // expression text can't be used as a type name. Fall
+                            // back to the formatted return type (e.g. "D") which
+                            // matches tsc's `typeToString(type)` behavior.
+                            // Strip `typeof ` prefix since tsc shows the class
+                            // name without the constructor qualifier here.
+                            let name = self.heritage_name_text(expr_idx).unwrap_or_else(|| {
+                                let formatted = self.format_type(expr_type);
+                                formatted
+                                    .strip_prefix("typeof ")
+                                    .map(String::from)
+                                    .unwrap_or(formatted)
+                            });
                             self.error_at_node_msg(
                                 expr_idx,
                                 crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                                 &[name.as_str()],
                             );
+                            emitted_ts2315 = true;
                         }
                     }
 
-                    if is_extends_clause
+                    // Skip TS2508 check when TS2315 was already emitted — the type
+                    // is not generic, so constructor arg count is irrelevant.
+                    if !emitted_ts2315
+                        && is_extends_clause
                         && is_class_declaration
                         && let Some(expr_node) = self.ctx.arena.get(expr_idx)
                         && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
