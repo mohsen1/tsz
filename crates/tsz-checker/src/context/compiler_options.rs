@@ -48,6 +48,31 @@ impl<'a> CheckerContext<'a> {
             || self.file_name.ends_with(".cjs")
     }
 
+    /// Check if JSDoc type annotations should be resolved for the current file.
+    /// Returns `true` for TypeScript files (always) and for JS files when either
+    /// the global `--checkJs` flag is set or the file contains a `// @ts-check` pragma.
+    pub fn should_resolve_jsdoc(&self) -> bool {
+        if !self.is_js_file() {
+            return true;
+        }
+        if self.compiler_options.check_js {
+            return true;
+        }
+        // Check for per-file @ts-check pragma
+        if let Some(sf) = self.arena.source_files.first() {
+            let text = sf.text.as_ref();
+            let ts_check = text.find("@ts-check");
+            let ts_no_check = text.find("@ts-nocheck");
+            match (ts_check, ts_no_check) {
+                (Some(check_idx), Some(no_check_idx)) => check_idx < no_check_idx,
+                (Some(_), None) => true,
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     /// Check if noImplicitAny is enabled for the current file.
     /// For JavaScript files, noImplicitAny only applies when checkJs is also enabled.
     /// This allows TS7006 to fire in .js files with --checkJs --strict.

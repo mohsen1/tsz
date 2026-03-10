@@ -110,7 +110,7 @@ impl<'a> CheckerState<'a> {
     /// Extract and parse a JSDoc `@type` annotation for the given node.
     /// Returns `Some(TypeId)` if a valid type annotation is found.
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
-        if self.is_js_file() && !self.ctx.compiler_options.check_js {
+        if !self.ctx.should_resolve_jsdoc() {
             return None;
         }
 
@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         idx: NodeIndex,
     ) -> Option<TypeId> {
-        if self.is_js_file() && !self.ctx.compiler_options.check_js {
+        if !self.ctx.should_resolve_jsdoc() {
             return None;
         }
 
@@ -215,7 +215,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         idx: NodeIndex,
     ) -> Option<(TypeId, u32)> {
-        if self.is_js_file() && !self.ctx.compiler_options.check_js {
+        if !self.ctx.should_resolve_jsdoc() {
             return None;
         }
 
