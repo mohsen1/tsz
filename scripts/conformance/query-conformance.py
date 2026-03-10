@@ -29,6 +29,12 @@ Usage:
   # Show tests closest to passing (diff <= N)
   python3 scripts/conformance/query-conformance.py --close 2
 
+  # Show fingerprint-only failures (same code set, different fingerprint)
+  python3 scripts/conformance/query-conformance.py --fingerprint-only
+
+  # List fingerprint-only tests touching a specific code
+  python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
+
   # Export test paths for a code to feed into conformance runner
   python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 """
@@ -177,13 +183,17 @@ def basename(path):
 
 
 def area_of(path):
-    marker = "/cases/compiler/"
-    if marker in path:
-        rest = path.split(marker, 1)[1]
-        parts = rest.split("/")
-        if len(parts) >= 2:
-            return "/".join(parts[:-1])
-        return parts[0]
+    markers = [
+        "/cases/compiler/",
+        "/cases/conformance/compiler/",
+    ]
+    for marker in markers:
+        if marker in path:
+            rest = path.split(marker, 1)[1]
+            parts = rest.split("/")
+            if len(parts) >= 2:
+                return "/".join(parts[:-1])
+            return "compiler"
     return ""
 
 
@@ -260,6 +270,7 @@ def show_overview(data):
     print("Failure categories:")
     print(f"  False positives (expected 0, we emit):  {cats['false_positive']}")
     print(f"  All missing (expected errors, we emit 0): {cats['all_missing']}")
+    print(f"  Fingerprint-only (same codes, wrong tuple): {cats.get('fingerprint_only', 0)}")
     print(f"  Wrong codes (both have, codes differ):  {cats['wrong_code']}")
     print(f"  Close to passing (diff <= 2):           {cats['close_to_passing']}")
     print()
@@ -390,6 +401,56 @@ def show_code(data, code, paths_only=False):
             print(f"      {basename}")
 
 
+def is_fingerprint_only(failure):
+    return bool(failure.get("e")) and failure.get("e") == failure.get("a", [])
+
+
+def show_fingerprint_only(data, code=None, paths_only=False, top=40):
+    failures = data["failures"]
+    matches = []
+    code_counts = Counter()
+    area_counts = Counter()
+
+    for path, failure in sorted(failures.items()):
+        if not is_fingerprint_only(failure):
+            continue
+        codes = failure.get("e", [])
+        if code and code not in codes:
+            continue
+        matches.append((path, failure))
+        code_counts.update(codes)
+        area = area_of(path)
+        if area:
+            area_counts[area] += 1
+
+    if paths_only:
+        for path, _ in matches:
+            print(path)
+        return
+
+    scope = f" for {code}" if code else ""
+    print(f"Fingerprint-only failures{scope}: {len(matches)}")
+    if code_counts:
+        print()
+        print("Top codes:")
+        for item_code, count in code_counts.most_common(10):
+            print(f"  {item_code:>8s}: {count:>3d}")
+    if area_counts:
+        print()
+        print("Most affected areas:")
+        for area, count in area_counts.most_common(10):
+            print(f"  {area}: {count}")
+
+    print()
+    print("Representative tests:")
+    for path, failure in matches[:top]:
+        name = basename(path)
+        codes = ",".join(failure.get("e", []))
+        print(f"  {name}  codes=[{codes}]")
+    if len(matches) > top:
+        print(f"  ... and {len(matches) - top} more")
+
+
 def show_extra_code(data, code):
     failures = data["failures"]
     tests = []
@@ -500,6 +561,11 @@ def main():
     parser.add_argument("--code", type=str, help="Show tests involving a specific error code (e.g., TS2454)")
     parser.add_argument("--extra-code", type=str, help="Show tests where a code is emitted as extra")
     parser.add_argument("--close", type=int, help="Show tests within diff <= N of passing")
+    parser.add_argument(
+        "--fingerprint-only",
+        action="store_true",
+        help="Show failures where expected and actual code lists already match",
+    )
     parser.add_argument("--paths-only", action="store_true", help="Output only test paths (for piping)")
     parser.add_argument("--top", type=int, default=20, help="Limit rows shown in detailed views")
     parser.add_argument(
@@ -531,6 +597,8 @@ def main():
         show_one_extra(data)
     elif args.false_positives:
         show_false_positives(data)
+    elif args.fingerprint_only:
+        show_fingerprint_only(data, code=args.code, paths_only=args.paths_only, top=args.top)
     elif args.code:
         show_code(data, args.code, args.paths_only)
     elif args.extra_code:
