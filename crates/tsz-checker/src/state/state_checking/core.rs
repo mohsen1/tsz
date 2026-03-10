@@ -440,9 +440,16 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             // TS8008: Type aliases can only be used in TypeScript files
+            // TSC anchors the error at the type alias name, not the whole statement.
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get_type_alias(node)
+                    .map(|d| d.name)
+                    .unwrap_or(stmt_idx);
                 self.error_at_node(
-                    stmt_idx,
+                    error_node,
                     diagnostic_messages::TYPE_ALIASES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     diagnostic_codes::TYPE_ALIASES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                 );
