@@ -15074,9 +15074,9 @@ fn test_deep_widen_object_candidate_homomorphic_mapped() {
     let t_name = interner.intern_string("T");
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    // Create object { c: false }
+    // Create object { c: false } — a fresh object literal expression
     let false_lit = interner.intern(TypeData::Literal(LiteralValue::Boolean(false)));
-    let obj = interner.object(vec![PropertyInfo {
+    let obj = interner.object_fresh(vec![PropertyInfo {
         name: interner.intern_string("c"),
         type_id: false_lit,
         write_type: false_lit,
@@ -15121,9 +15121,9 @@ fn test_deep_widen_object_candidate_naked_type_variable() {
     let t_name = interner.intern_string("T");
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    // Create object { sum: 3 }
+    // Create object { sum: 3 } — a fresh object literal expression
     let three_lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(3.0))));
-    let obj = interner.object(vec![PropertyInfo {
+    let obj = interner.object_fresh(vec![PropertyInfo {
         name: interner.intern_string("sum"),
         type_id: three_lit,
         write_type: three_lit,

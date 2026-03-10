@@ -14,7 +14,7 @@ use crate::inference::infer::{
 };
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::operations::widening;
-use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
+use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
@@ -360,8 +360,17 @@ impl<'a> InferenceContext<'a> {
         );
         let resolved = if !preserve_literals && !is_contextual_inference {
             match self.interner.lookup(resolved) {
-                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
-                    widening::widen_type(self.interner, resolved)
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                    // Only deep-widen fresh object literals (from object literal
+                    // expressions). Non-fresh objects (from type annotations/aliases)
+                    // should preserve their literal property types, matching tsc's
+                    // RequiresWidening check in getWidenedType().
+                    let shape = self.interner.object_shape(shape_id);
+                    if shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                        widening::widen_type(self.interner, resolved)
+                    } else {
+                        resolved
+                    }
                 }
                 _ => resolved,
             }
