@@ -31,6 +31,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // If the symbol also has non-alias VALUE flags (e.g., from a local
+        // `const I = {}` merged with `import type I = require(...)`), the
+        // identifier has value semantics and should NOT be treated as a
+        // type-only namespace expression.
+        let value_flags = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM;
+        if (symbol.flags & value_flags) != 0 {
+            return false;
+        }
+
         let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
