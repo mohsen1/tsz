@@ -442,7 +442,24 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("typeof {name}").into()
             }
-            TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)).into(),
+            TypeData::KeyOf(operand) => {
+                let operand_str = self.format(*operand);
+                let needs_parens = matches!(
+                    self.interner.lookup(*operand),
+                    Some(
+                        TypeData::Union(_)
+                            | TypeData::Intersection(_)
+                            | TypeData::Function(_)
+                            | TypeData::Callable(_)
+                            | TypeData::Conditional(_)
+                    )
+                );
+                if needs_parens {
+                    format!("keyof ({operand_str})").into()
+                } else {
+                    format!("keyof {operand_str}").into()
+                }
+            }
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
             TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)).into(),
             TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
@@ -2478,6 +2495,29 @@ mod tests {
 
         let keyof = db.keyof(TypeId::STRING);
         assert_eq!(fmt.format(keyof), "keyof string");
+    }
+
+    #[test]
+    fn format_keyof_intersection_operand_parenthesized() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let t = db.type_param(TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let u = db.type_param(TypeParamInfo {
+            name: db.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let intersection = db.intersection(vec![t, u]);
+        let keyof = db.keyof(intersection);
+
+        assert_eq!(fmt.format(keyof), "keyof (T & U)");
     }
 
     #[test]

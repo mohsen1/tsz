@@ -276,6 +276,47 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            if let Some(missing_props) =
+                self.missing_required_properties_from_index_signature_source(source, target)
+                && missing_props.len() > 1
+            {
+                let evaluated_source = self.evaluate_type_for_assignability(source);
+                let src_str = self.format_type(evaluated_source);
+                let tgt_str = self.format_type(target);
+                let prop_list: Vec<String> = missing_props
+                    .iter()
+                    .take(4)
+                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                let (message, code) = if missing_props.len() > 4 {
+                    let more_count = (missing_props.len() - 4).to_string();
+                    (
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            &[&src_str, &tgt_str, &props_joined, &more_count],
+                        ),
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                    )
+                } else {
+                    (
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            &[&src_str, &tgt_str, &props_joined],
+                        ),
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    )
+                };
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    code,
+                ));
+                return;
+            }
+
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
@@ -667,7 +708,18 @@ impl<'a> CheckerState<'a> {
 
                 // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
                 // TS2740: Type 'A' is missing the following properties from type 'B': x, y, z, and N more.
-                let src_str = self.format_type(*source_type);
+                let display_source = if self
+                    .missing_required_properties_from_index_signature_source(
+                        *source_type,
+                        *target_type,
+                    )
+                    .is_some()
+                {
+                    self.evaluate_type_for_assignability(*source_type)
+                } else {
+                    *source_type
+                };
+                let src_str = self.format_type(display_source);
                 let tgt_str = self.format_type(*target_type);
                 let prop_list: Vec<String> = filtered_names
                     .iter()
@@ -1030,7 +1082,8 @@ impl<'a> CheckerState<'a> {
                 // as secondary/related information (not captured in conformance fingerprints).
                 // At depth > 0 (nested reasons), emit the specific detail message.
                 if depth == 0 {
-                    let source_str = self.format_type_for_assignability_message(source);
+                    let source_str =
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
                     let target_str = self.format_type_for_assignability_message(target);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1075,7 +1128,8 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                let source_str = self.format_type_for_assignability_message(source);
+                let source_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
                 let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
                     diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
@@ -1094,7 +1148,8 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                let source_str = self.format_type_for_assignability_message(source);
+                let source_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
                 let target_str = self.format_type_for_assignability_message(target);
 
                 if depth == 0
@@ -1135,6 +1190,40 @@ impl<'a> CheckerState<'a> {
                         message,
                         diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     );
+                }
+
+                if depth == 0
+                    && let Some(missing_props) =
+                        self.missing_required_properties_from_index_signature_source(source, target)
+                    && missing_props.len() > 1
+                {
+                    let evaluated_source = self.evaluate_type_for_assignability(source);
+                    let src_str = self.format_type(evaluated_source);
+                    let tgt_str = self.format_type(target);
+                    let prop_list: Vec<String> = missing_props
+                        .iter()
+                        .take(4)
+                        .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                        .collect();
+                    let props_joined = prop_list.join(", ");
+                    let message = if missing_props.len() > 4 {
+                        let more_count = (missing_props.len() - 4).to_string();
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            &[&src_str, &tgt_str, &props_joined, &more_count],
+                        )
+                    } else {
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            &[&src_str, &tgt_str, &props_joined],
+                        )
+                    };
+                    let code = if missing_props.len() > 4 {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    } else {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    };
+                    return Diagnostic::error(file_name, start, length, message, code);
                 }
 
                 let base = format_message(
@@ -1201,7 +1290,8 @@ impl<'a> CheckerState<'a> {
                 // PropertyNominalMismatch, ParameterTypeMismatch, NoIntersectionMemberMatches,
                 // IntrinsicTypeMismatch, LiteralTypeMismatch, ErrorType,
                 // RecursionLimitExceeded, ParameterCountMismatch.
-                let source_str = self.format_type_for_assignability_message(source);
+                let source_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
                 let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1326,5 +1416,96 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(false)
+    }
+
+    fn missing_required_properties_from_index_signature_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<Vec<tsz_common::interner::Atom>> {
+        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, source) {
+            return None;
+        }
+
+        let source_env_evaluated = self.evaluate_type_with_env(source);
+        let source_evaluated = self.evaluate_type_for_assignability(source);
+        let target_env_evaluated = self.evaluate_type_with_env(target);
+        let target_evaluated = self.evaluate_type_for_assignability(target);
+
+        let resolver = IndexSignatureResolver::new(self.ctx.types);
+        let source_has_index = [source, source_env_evaluated, source_evaluated]
+            .into_iter()
+            .any(|candidate| {
+                resolver.has_index_signature(candidate, IndexKind::String)
+                    || resolver.has_index_signature(candidate, IndexKind::Number)
+            });
+        if !source_has_index {
+            return None;
+        }
+
+        let target_with_shape = {
+            let direct = target;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let judged = self.judge_evaluate(resolved);
+            [
+                direct,
+                resolved,
+                judged,
+                target_env_evaluated,
+                target_evaluated,
+            ]
+            .into_iter()
+            .find(|candidate| {
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+            })?
+        };
+
+        let source_shape = {
+            let direct = source;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let judged = self.judge_evaluate(resolved);
+            [
+                direct,
+                resolved,
+                judged,
+                source_env_evaluated,
+                source_evaluated,
+            ]
+            .into_iter()
+            .find_map(|candidate| {
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            })
+        };
+        let target_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+
+        if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+            return None;
+        }
+
+        let mut missing: Vec<_> = target_shape
+            .properties
+            .iter()
+            .filter(|prop| !prop.optional)
+            .filter(|prop| {
+                !source_shape.as_ref().is_some_and(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .any(|source_prop| source_prop.name == prop.name)
+                })
+            })
+            .map(|prop| prop.name)
+            .collect();
+        missing.sort_by(|left, right| {
+            self.ctx
+                .types
+                .resolve_atom_ref(*left)
+                .cmp(&self.ctx.types.resolve_atom_ref(*right))
+        });
+
+        (!missing.is_empty()).then_some(missing)
     }
 }

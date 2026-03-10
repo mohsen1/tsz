@@ -593,7 +593,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
-        missing_with_order.sort_by_key(|&(_, order)| order);
+        missing_with_order.sort_by(|(left_name, left_order), (right_name, right_order)| {
+            match (*left_order > 0, *right_order > 0) {
+                (true, true) => left_order.cmp(right_order),
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                (false, false) => self
+                    .interner
+                    .resolve_atom_ref(*left_name)
+                    .cmp(&self.interner.resolve_atom_ref(*right_name)),
+            }
+        });
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
             .into_iter()
             .map(|(name, _)| name)

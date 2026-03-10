@@ -8,6 +8,165 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn literal_expression_display(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(format!("\"{}\"", lit.text))
+            }
+            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(lit.text.clone())
+            }
+            k if k == tsz_scanner::SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
+            k if k == tsz_scanner::SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let operand = self.literal_expression_display(unary.operand)?;
+                match unary.operator {
+                    k if k == tsz_scanner::SyntaxKind::MinusToken as u16 => {
+                        Some(format!("-{operand}"))
+                    }
+                    k if k == tsz_scanner::SyntaxKind::PlusToken as u16 => Some(operand),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                let cond = self.ctx.arena.get_conditional_expr(node)?;
+                let left = self.literal_expression_display(cond.when_true)?;
+                let right = self.literal_expression_display(cond.when_false)?;
+                if left == right {
+                    Some(left)
+                } else {
+                    Some(format!("{left} | {right}"))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn assignment_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(anchor_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let stmt = self.ctx.arena.get_expression_statement(node)?;
+                let expr = self.ctx.arena.get(stmt.expression)?;
+                let bin = self.ctx.arena.get_binary_expr(expr)?;
+                Some(bin.right)
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let decl = self.ctx.arena.get_variable_declaration(node)?;
+                decl.initializer.is_some().then_some(decl.initializer)
+            }
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let ret = self.ctx.arena.get_return_statement(node)?;
+                ret.expression.is_some().then_some(ret.expression)
+            }
+            _ => None,
+        }
+    }
+
+    fn declared_type_annotation_text_for_expression(&self, expr_idx: NodeIndex) -> Option<String> {
+        fn sanitize_type_annotation_text(text: String) -> Option<String> {
+            let mut text = text.trim().trim_start_matches(':').trim().to_string();
+            while matches!(text.chars().last(), Some(',') | Some(')') | Some(';')) {
+                text.pop();
+                text = text.trim_end().to_string();
+            }
+            (!text.is_empty()).then_some(text)
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = self.ctx.arena.get(symbol.value_declaration)?;
+
+        if let Some(param) = self.ctx.arena.get_parameter(decl)
+            && param.type_annotation.is_some()
+        {
+            return self
+                .node_text(param.type_annotation)
+                .and_then(sanitize_type_annotation_text);
+        }
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
+            && var_decl.type_annotation.is_some()
+        {
+            return self
+                .node_text(var_decl.type_annotation)
+                .and_then(sanitize_type_annotation_text);
+        }
+
+        None
+    }
+
+    pub(super) fn format_assignment_source_type_for_diagnostic(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> String {
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+            if self.is_literal_sensitive_assignment_target(target)
+                && let Some(display) = self.literal_expression_display(expr_idx)
+            {
+                return display;
+            }
+
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            let expr_type = self.get_type_of_node(expr_idx);
+            let display_type = if expr_type != TypeId::ERROR {
+                tsz_solver::widening::widen_type(self.ctx.types, expr_type)
+            } else {
+                tsz_solver::widening::widen_type(self.ctx.types, source)
+            };
+            return self.format_type_for_assignability_message(display_type);
+        }
+
+        self.format_type_for_assignability_message(source)
+    }
+
+    fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
+        let target = self.evaluate_type_for_assignability(target);
+        self.is_literal_sensitive_assignment_target_inner(target)
+    }
+
+    fn is_literal_sensitive_assignment_target_inner(&self, target: TypeId) -> bool {
+        if tsz_solver::literal_value(self.ctx.types, target).is_some() {
+            return true;
+        }
+        if tsz_solver::type_queries::is_symbol_or_unique_symbol(self.ctx.types, target)
+            && target != TypeId::SYMBOL
+        {
+            return true;
+        }
+        if let Some(list) = tsz_solver::union_list_id(self.ctx.types, target)
+            .or_else(|| tsz_solver::intersection_list_id(self.ctx.types, target))
+        {
+            return self
+                .ctx
+                .types
+                .type_list(list)
+                .iter()
+                .copied()
+                .any(|member| self.is_literal_sensitive_assignment_target_inner(member));
+        }
+        target == TypeId::NEVER
+    }
+
     pub(super) fn unresolved_unused_renaming_property_in_type_query(
         &self,
         name: &str,
