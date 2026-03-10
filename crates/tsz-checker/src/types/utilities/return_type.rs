@@ -544,11 +544,20 @@ impl<'a> CheckerState<'a> {
         }
 
         let prev_context = self.ctx.contextual_type;
+        let prev_preserve = self.ctx.preserve_literal_types;
         if let Some(ctx_type) = return_context {
             self.ctx.contextual_type = Some(ctx_type);
         }
+        // Preserve literal types in return expressions during inference.
+        // tsc's checkExpression always returns literal types for literals
+        // (e.g., "1" not string); widening happens later in getReturnTypeFromBody.
+        // Without this, `return "1"` with contextual type `string` widens to
+        // `string` too early, producing `string | undefined` instead of
+        // `"1" | "2" | ... | undefined` in diagnostics.
+        self.ctx.preserve_literal_types = true;
         let return_type = self.get_type_of_node(expr_idx);
         self.ctx.contextual_type = prev_context;
+        self.ctx.preserve_literal_types = prev_preserve;
         return_type
     }
 
