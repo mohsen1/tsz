@@ -1890,11 +1890,14 @@ impl<'a> DeclarationEmitter<'a> {
                         {
                             continue;
                         }
-                        // In non-ambient namespaces, only namespace declarations
-                        // are visible when non-exported (other declarations like
-                        // classes, interfaces, variables are hidden in .d.ts).
+                        // In non-ambient namespaces, non-exported declarations
+                        // are only emitted in .d.ts if they are referenced by
+                        // exported members (via used_symbols). Namespace
+                        // declarations are always visible.
                         if non_ambient {
-                            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                || self.is_ns_member_used_by_exports(stmt_idx)
+                            {
                                 has_non_exported = true;
                             }
                         } else {
