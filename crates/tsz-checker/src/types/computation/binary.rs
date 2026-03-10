@@ -8,6 +8,37 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if matches!(
+            ty,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::OBJECT
+        ) {
+            return true;
+        }
+
+        if query::is_type_parameter_like(self.ctx.types, ty)
+            || query::is_object_like_type(self.ctx.types, ty)
+        {
+            return true;
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .all(|&member| self.is_valid_in_operator_rhs(member));
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.is_valid_in_operator_rhs(member));
+        }
+
+        false
+    }
+
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -287,10 +318,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
-                if right_type != TypeId::ANY
-                    && right_type != TypeId::ERROR
-                    && !self.is_deferred_object_like_for_in(right_type)
-                {
+                if !self.is_valid_in_operator_rhs(right_type) {
                     let _ = self.check_assignable_or_report(right_type, TypeId::OBJECT, right_idx);
                 }
 
