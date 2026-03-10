@@ -330,6 +330,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.ctx.suppress_definite_assignment_errors = true;
                 return_type = self.infer_return_type_from_body(func_idx, func.body, None);
                 self.ctx.suppress_definite_assignment_errors = prev_suppress;
+
+                self.maybe_report_non_serializable_inferred_declaration_type(
+                    func_idx,
+                    func.name,
+                    self.get_function_name_from_node(func_idx)
+                        .as_deref()
+                        .unwrap_or(""),
+                    return_type,
+                );
             }
 
             // TS7010/TS7011 (implicit any return) for function declarations.
@@ -1484,6 +1493,57 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 "'A label is not allowed here.",
                 crate::diagnostics::diagnostic_codes::A_LABEL_IS_NOT_ALLOWED_HERE,
             );
+        }
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    fn maybe_report_non_serializable_inferred_declaration_type(
+        &mut self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+        name: &str,
+        inferred_type: TypeId,
+    ) {
+        if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
+            return;
+        }
+        if !self.is_declaration_type_emitted_without_annotation(decl_idx) {
+            return;
+        }
+        if !crate::query_boundaries::state::type_environment::declaration_type_references_cyclic_structure(
+            self,
+            inferred_type,
+        ) {
+            return;
+        }
+
+        self.error_at_node(
+            name_idx,
+            &format!(
+                "The inferred type of '{name}' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary."
+            ),
+            5088,
+        );
+    }
+
+    fn is_declaration_type_emitted_without_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let parent_kind = self
+            .ctx
+            .arena
+            .get_extended(decl_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .map(|parent| parent.kind);
+
+        match parent_kind {
+            Some(kind) if kind == syntax_kind_ext::SOURCE_FILE => {
+                !self.ctx.binder.is_external_module()
+                    || self.is_declaration_exported(self.ctx.arena, decl_idx)
+            }
+            Some(kind) if kind == syntax_kind_ext::MODULE_BLOCK => {
+                self.is_declaration_exported(self.ctx.arena, decl_idx)
+            }
+            _ => false,
         }
     }
 }

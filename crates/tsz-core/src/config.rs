@@ -703,12 +703,14 @@ pub fn resolve_compiler_options(
         if composite {
             // composite: true implies declaration: true and incremental: true
             resolved.emit_declarations = true;
+            resolved.checker.emit_declarations = true;
             resolved.incremental = true;
         }
     }
 
     if let Some(declaration) = options.declaration {
         resolved.emit_declarations = declaration;
+        resolved.checker.emit_declarations = declaration;
     }
 
     if let Some(source_map) = options.source_map {

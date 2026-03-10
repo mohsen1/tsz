@@ -892,6 +892,7 @@ impl Server {
             allow_js: false,
             no_resolve: options.no_resolve,
             isolated_declarations: false,
+            emit_declarations: false,
             no_unchecked_side_effect_imports: options.no_unchecked_side_effect_imports,
             no_implicit_override: options.no_implicit_override,
             jsx_factory: "React.createElement".to_string(),

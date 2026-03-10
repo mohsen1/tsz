@@ -29711,6 +29711,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             resolve_json_module: false,
             check_js: false,
             isolated_declarations: false,
+            emit_declarations: false,
             no_resolve: false,
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,

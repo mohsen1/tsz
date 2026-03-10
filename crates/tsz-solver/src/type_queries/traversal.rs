@@ -6,9 +6,10 @@
 //! and diagnostic property name collection — without directly matching on
 //! `TypeData` variants.
 
-use crate::TypeDatabase;
 use crate::type_queries::data::{get_callable_shape, get_object_shape};
 use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
+use crate::{TypeDatabase, TypeResolver};
+use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 // =============================================================================
@@ -216,6 +217,214 @@ pub fn collect_property_name_atoms_for_diagnostics(
     atoms.sort_unstable();
     atoms.dedup();
     atoms
+}
+
+pub trait DeclarationTypeCycleHost: TypeResolver {
+    fn evaluate_application_for_serialization(&mut self, type_id: TypeId) -> TypeId;
+}
+
+/// Check whether a declaration type contains a cyclic structure that cannot be
+/// trivially serialized for `.d.ts` emit.
+pub fn declaration_type_references_cyclic_structure<H>(
+    db: &dyn TypeDatabase,
+    host: &mut H,
+    type_id: TypeId,
+) -> bool
+where
+    H: DeclarationTypeCycleHost,
+{
+    fn visit<H>(
+        db: &dyn TypeDatabase,
+        host: &mut H,
+        type_id: TypeId,
+        active: &mut FxHashSet<TypeId>,
+        finished: &mut FxHashSet<TypeId>,
+    ) -> bool
+    where
+        H: DeclarationTypeCycleHost,
+    {
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY {
+            return false;
+        }
+        if finished.contains(&type_id) {
+            return false;
+        }
+        if !active.insert(type_id) {
+            return true;
+        }
+
+        let result = match db.lookup(type_id) {
+            Some(TypeData::Recursive(_)) => true,
+            Some(TypeData::Lazy(def_id)) => host.resolve_lazy(def_id, db).is_some_and(|resolved| {
+                resolved != type_id && visit(db, host, resolved, active, finished)
+            }),
+            Some(TypeData::Application(app_id)) => {
+                let evaluated = host.evaluate_application_for_serialization(type_id);
+                if evaluated != type_id {
+                    visit(db, host, evaluated, active, finished)
+                } else {
+                    let app = db.type_application(app_id);
+                    visit(db, host, app.base, active, finished)
+                        || app
+                            .args
+                            .iter()
+                            .copied()
+                            .any(|arg| visit(db, host, arg, active, finished))
+                }
+            }
+            Some(TypeData::Array(elem))
+            | Some(TypeData::ReadonlyType(elem))
+            | Some(TypeData::NoInfer(elem))
+            | Some(TypeData::KeyOf(elem)) => visit(db, host, elem, active, finished),
+            Some(TypeData::IndexAccess(object, index)) => {
+                visit(db, host, object, active, finished)
+                    || visit(db, host, index, active, finished)
+            }
+            Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| visit(db, host, member, active, finished)),
+            Some(TypeData::Tuple(list_id)) => db
+                .tuple_list(list_id)
+                .iter()
+                .any(|elem| visit(db, host, elem.type_id, active, finished)),
+            Some(TypeData::Function(shape_id)) => {
+                let shape = db.function_shape(shape_id);
+                shape
+                    .this_type
+                    .is_some_and(|this_type| visit(db, host, this_type, active, finished))
+                    || shape
+                        .params
+                        .iter()
+                        .any(|param| visit(db, host, param.type_id, active, finished))
+                    || shape.type_params.iter().any(|tp| {
+                        tp.constraint
+                            .is_some_and(|constraint| visit(db, host, constraint, active, finished))
+                            || tp
+                                .default
+                                .is_some_and(|default| visit(db, host, default, active, finished))
+                    })
+                    || shape.type_predicate.as_ref().is_some_and(|pred| {
+                        pred.type_id
+                            .is_some_and(|pred_type| visit(db, host, pred_type, active, finished))
+                    })
+                    || visit(db, host, shape.return_type, active, finished)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = db.callable_shape(shape_id);
+                let mut visit_sig = |sig: &crate::CallSignature,
+                                     active: &mut FxHashSet<TypeId>,
+                                     finished: &mut FxHashSet<TypeId>|
+                 -> bool {
+                    sig.this_type
+                        .is_some_and(|this_type| visit(db, host, this_type, active, finished))
+                        || sig
+                            .params
+                            .iter()
+                            .any(|param| visit(db, host, param.type_id, active, finished))
+                        || sig.type_params.iter().any(|tp| {
+                            tp.constraint.is_some_and(|constraint| {
+                                visit(db, host, constraint, active, finished)
+                            }) || tp
+                                .default
+                                .is_some_and(|default| visit(db, host, default, active, finished))
+                        })
+                        || sig.type_predicate.as_ref().is_some_and(|pred| {
+                            pred.type_id.is_some_and(|pred_type| {
+                                visit(db, host, pred_type, active, finished)
+                            })
+                        })
+                        || visit(db, host, sig.return_type, active, finished)
+                };
+
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| visit_sig(sig, active, finished))
+                    || shape
+                        .construct_signatures
+                        .iter()
+                        .any(|sig| visit_sig(sig, active, finished))
+                    || shape.properties.iter().any(|prop| {
+                        visit(db, host, prop.type_id, active, finished)
+                            || visit(db, host, prop.write_type, active, finished)
+                    })
+                    || shape
+                        .string_index
+                        .as_ref()
+                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+                    || shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+            }
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                shape.properties.iter().any(|prop| {
+                    visit(db, host, prop.type_id, active, finished)
+                        || visit(db, host, prop.write_type, active, finished)
+                }) || shape
+                    .string_index
+                    .as_ref()
+                    .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+                    || shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = db.conditional_type(cond_id);
+                visit(db, host, cond.check_type, active, finished)
+                    || visit(db, host, cond.extends_type, active, finished)
+                    || visit(db, host, cond.true_type, active, finished)
+                    || visit(db, host, cond.false_type, active, finished)
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = db.mapped_type(mapped_id);
+                visit(db, host, mapped.constraint, active, finished)
+                    || visit(db, host, mapped.template, active, finished)
+                    || mapped
+                        .name_type
+                        .is_some_and(|name_type| visit(db, host, name_type, active, finished))
+                    || mapped
+                        .type_param
+                        .constraint
+                        .is_some_and(|constraint| visit(db, host, constraint, active, finished))
+                    || mapped
+                        .type_param
+                        .default
+                        .is_some_and(|default| visit(db, host, default, active, finished))
+            }
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+                info.constraint
+                    .is_some_and(|constraint| visit(db, host, constraint, active, finished))
+                    || info
+                        .default
+                        .is_some_and(|default| visit(db, host, default, active, finished))
+            }
+            Some(TypeData::TemplateLiteral(list_id)) => {
+                db.template_list(list_id).iter().any(|span| match span {
+                    TemplateSpan::Type(inner) => visit(db, host, *inner, active, finished),
+                    _ => false,
+                })
+            }
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
+                visit(db, host, type_arg, active, finished)
+            }
+            _ => false,
+        };
+
+        active.remove(&type_id);
+        if !result {
+            finished.insert(type_id);
+        }
+        result
+    }
+
+    let mut active = FxHashSet::default();
+    let mut finished = FxHashSet::default();
+    visit(db, host, type_id, &mut active, &mut finished)
 }
 
 /// Collect property names accessible on a type for spelling suggestions.

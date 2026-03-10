@@ -67,6 +67,78 @@ fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
 }
 
+#[test]
+fn test_declaration_emit_inferred_function_return_with_cyclic_structure_emits_ts5088() {
+    let source = r#"
+// @target: es2015
+// @strict: true
+// @lib: es2020
+// @declaration: true
+type BadFlatArray<Arr, Depth extends number> = {obj: {
+    "done": Arr,
+    "recur": Arr extends ReadonlyArray<infer InnerArr>
+    ? BadFlatArray<InnerArr, [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20][Depth]>
+    : Arr
+}[Depth extends -1 ? "done" : "recur"]}["obj"];
+
+declare function flat<A, D extends number = 1>(
+    arr: A,
+    depth?: D
+): BadFlatArray<A, D>[]
+
+function foo<T>(arr: T[], depth: number) {
+    return flat(arr, depth);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 5088),
+        "Expected TS5088 for inferred declaration return type with cyclic structure. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_explicit_return_annotation_suppresses_ts5088() {
+    let source = r#"
+type BadFlatArray<Arr, Depth extends number> = {obj: {
+    "done": Arr,
+    "recur": Arr extends ReadonlyArray<infer InnerArr>
+    ? BadFlatArray<InnerArr, [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20][Depth]>
+    : Arr
+}[Depth extends -1 ? "done" : "recur"]}["obj"];
+
+declare function flat<A, D extends number = 1>(
+    arr: A,
+    depth?: D
+): BadFlatArray<A, D>[]
+
+function foo<T>(arr: T[], depth: number): BadFlatArray<T, number>[] {
+    return flat(arr, depth);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 5088),
+        "Did not expect TS5088 when the declaration has an explicit return type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [
