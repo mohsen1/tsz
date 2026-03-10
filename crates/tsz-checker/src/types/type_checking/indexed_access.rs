@@ -315,6 +315,21 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Mapped type key parameter: `[K in C]: ...` — extract constraint C
+            if parent_node.kind == syntax_kind_ext::MAPPED_TYPE
+                && let Some(mapped) = self.ctx.arena.get_mapped_type(parent_node)
+                && let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
+                && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == index_name
+                && tp.constraint != NodeIndex::NONE
+            {
+                let constraint_type = self.get_type_from_type_node(tp.constraint);
+                if constraint_type != TypeId::ERROR {
+                    return Some(constraint_type);
+                }
+            }
             current = self
                 .ctx
                 .arena
