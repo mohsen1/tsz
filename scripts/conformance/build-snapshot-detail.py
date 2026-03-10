@@ -96,6 +96,7 @@ def build_aggregates(tests):
     n_false_positive = 0
     n_all_missing = 0
     n_wrong_code = 0
+    n_fingerprint_only = 0
     n_close = 0  # diff <= 2
 
     fail_tests = {}
@@ -126,10 +127,13 @@ def build_aggregates(tests):
             for c in set(expected):
                 all_missing_codes[c] += 1
         elif expected and actual:
-            n_wrong_code += 1
             diff_size = len(missing) + len(extra)
-            if diff_size <= 2:
-                n_close += 1
+            if diff_size == 0:
+                n_fingerprint_only += 1
+            else:
+                n_wrong_code += 1
+                if diff_size <= 2:
+                    n_close += 1
 
         # 1-missing-0-extra
         if len(missing) == 1 and len(extra) == 0:
@@ -165,6 +169,7 @@ def build_aggregates(tests):
             "false_positive": n_false_positive,
             "all_missing": n_all_missing,
             "wrong_code": n_wrong_code,
+            "fingerprint_only": n_fingerprint_only,
             "close_to_passing": n_close,
         },
         "one_missing_zero_extra": [
