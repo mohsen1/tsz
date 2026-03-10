@@ -28,7 +28,8 @@ jobs:
       root: ${{ steps.filter.outputs.root }}
       any_rust: ${{ steps.filter.outputs.any_rust }}
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -70,7 +71,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -127,7 +129,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -168,7 +171,8 @@ jobs:
       needs.changes.outputs.parser == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -211,7 +215,8 @@ jobs:
       needs.changes.outputs.binder == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -249,7 +254,8 @@ jobs:
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -288,7 +294,8 @@ jobs:
       needs.changes.outputs.checker == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -329,7 +336,8 @@ jobs:
       needs.changes.outputs.common == 'true' ||
       needs.changes.outputs.root == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -367,7 +375,8 @@ jobs:
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -399,7 +408,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any_rust == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -462,7 +472,8 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.emitter == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -598,7 +609,8 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.emitter == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -767,7 +779,8 @@ jobs:
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.lsp == 'true'
     steps:
-      - uses: ./.github/actions/checkout
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
