@@ -98,7 +98,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Extract and parse a JSDoc `@type` annotation for the given node.
-    /// Returns `Some(TypeId)` if a valid type annotation is found.
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
         if !self.ctx.should_resolve_jsdoc() {
             return None;
@@ -112,7 +111,7 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
-        self.jsdoc_type_from_expression(type_expr).or_else(|| {
+        self.resolve_jsdoc_type_str(type_expr).or_else(|| {
             self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
                 .or_else(|| {
                     if let Some((module_specifier, member_name)) =
@@ -143,11 +142,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Resolve a direct leading JSDoc `@type` annotation for a node (no parent fallback).
-    ///
-    /// Unlike `jsdoc_type_annotation_for_node`, this only considers comments attached
-    /// to `idx` itself and never climbs ancestors. Use this in sites where parent
-    /// fallback can incorrectly pull unrelated JSDoc.
+    /// Resolve a direct leading JSDoc `@type` annotation (no parent fallback).
     pub(crate) fn jsdoc_type_annotation_for_node_direct(
         &mut self,
         idx: NodeIndex,
@@ -197,10 +192,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Extract `@satisfies` annotation and the source position of the `satisfies` keyword.
-    ///
-    /// Returns `(type_id, keyword_pos)` where `keyword_pos` is the absolute offset
-    /// of `@satisfies` in the source file, used to anchor TS1360 diagnostics.
+    /// Extract `@satisfies` annotation and its keyword position.
     pub(crate) fn jsdoc_satisfies_annotation_with_pos(
         &mut self,
         idx: NodeIndex,
@@ -217,20 +209,15 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
-        // Find `@satisfies` position directly in the raw source text starting
-        // from the comment start.  The processed `jsdoc` string has `/**` and
-        // leading `*` stripped, so character offsets inside it do not map 1:1
-        // to raw source positions.
+        // Find `@satisfies` position in the raw source text.
         let raw_comment = source_text.get(jsdoc_start as usize..)?;
         let tag_offset = raw_comment.find("@satisfies")? as u32;
         // tsc points at `satisfies` (after the `@`), not at `@satisfies`.
         let keyword_pos = jsdoc_start + tag_offset + 1;
 
-        // Use the comprehensive type expression resolver that handles generics,
-        // inline object types, and all fallback strategies.
+        // Use the comprehensive type expression resolver.
         let resolved = self.resolve_jsdoc_type_str(type_expr)?;
-        // Evaluate to expand mapped types, conditionals, etc. so that excess
-        // property checks and assignability see the final structural type.
+        // Evaluate to expand mapped types, conditionals for structural checks.
         Some((self.judge_evaluate(resolved), keyword_pos))
     }
 
@@ -294,15 +281,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Parse a JSDoc-style `@type` expression into a concrete type.
-    ///
-    /// Supports a constrained subset needed for conformance tests:
-    /// primitives, type parameters, `keyof typeof`, type references,
-    /// and fallback symbol resolution.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
 
-        // Handle union types: "A | B | C" → split on top-level | and build union.
-        // Must come before primitive matching so "string | number" is handled.
+        // Handle union types: "A | B | C"
         if let Some(parts) = Self::split_top_level_binary(type_expr, '|') {
             let mut members = Vec::new();
             for part in &parts {
@@ -316,7 +298,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Handle intersection types: "A & B" → split on top-level & and build intersection.
+        // Handle intersection types: "A & B"
         if let Some(parts) = Self::split_top_level_binary(type_expr, '&') {
             let mut members = Vec::new();
             for part in &parts {
@@ -349,8 +331,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle JSDoc postfix type operators: "Type?" → Type | null,
-        // "Type=" → Type | undefined, "Type!" → Type (non-nullable)
+        // Handle JSDoc postfix type operators: Type? → null, Type= → undefined, Type! → strip
         if type_expr.len() > 1 && !type_expr.ends_with("[]") {
             if let Some(inner) = type_expr.strip_suffix('?') {
                 if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
@@ -368,9 +349,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle array suffix: "T[]" → Array<T>, "T[][]" → Array<Array<T>>
-        // Must come after union/intersection split so "string | number[]" parses
-        // as "string | (number[])" not "(string | number)[]".
-        // Must not match tuple types like "[string, number]".
         if type_expr.ends_with("[]") && !type_expr.starts_with('[') {
             let inner = &type_expr[..type_expr.len() - 2];
             // Handle parenthesized inner: "(string | number)[]"
@@ -760,12 +738,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a JSDoc type expression string to a `TypeId`, trying all resolution strategies.
-    ///
-    /// Resolution order:
-    /// 1. `jsdoc_type_from_expression` — handles primitives, type params, generics, special patterns
-    /// 2. File-local symbols — type aliases, classes, interfaces, enums (includes merged lib types)
-    /// 3. `@typedef` resolution — searches JSDoc comments for `@typedef` declarations
+    /// Resolve a JSDoc type expression string to a `TypeId`, trying all strategies.
     pub(crate) fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
 
@@ -789,7 +762,7 @@ impl<'a> CheckerState<'a> {
         self.resolve_jsdoc_type_name(type_expr)
     }
 
-    /// Resolve a simple type name (no generics) from the symbol table or @typedef declarations.
+    /// Resolve a simple type name from the symbol table or @typedef declarations.
     fn resolve_jsdoc_type_name(&mut self, name: &str) -> Option<TypeId> {
         // Check file_locals for type aliases, classes, interfaces, enums
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
@@ -826,12 +799,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Register a DefId for a JSDoc `@typedef` so the type formatter can display
-    /// the alias name in diagnostic messages.
-    ///
-    /// JSDoc typedefs bypass the binder (no SymbolId) and the normal DefId creation
-    /// path. This helper creates a type alias DefId with the resolved body so that
-    /// `find_type_alias_by_body(type_id)` can find the alias name.
+    /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
     fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
         use tsz_solver::def::DefinitionInfo;
 
@@ -850,12 +818,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.definition_store.register(info);
     }
 
-    /// Resolve a generic type reference from JSDoc: `Name<Arg1, Arg2, ...>`.
-    ///
-    /// Uses `type_reference_symbol_type_with_params` to get both the type body and
-    /// its parameters, then directly instantiates with `instantiate_generic`.
-    /// This avoids creating Application types that may not evaluate correctly
-    /// when the base is a structural type (not Lazy(DefId)).
+    /// Resolve a generic JSDoc type reference: `Name<Arg1, Arg2, ...>`.
     fn resolve_jsdoc_generic_type(
         &mut self,
         base_name: &str,
@@ -892,7 +855,7 @@ impl<'a> CheckerState<'a> {
         Some(instantiated)
     }
 
-    /// Find the first occurrence of a character at the top level (not nested inside `<>`, `()`, `{}`).
+    /// Find the first occurrence of a character at the top level.
     fn find_top_level_char(s: &str, target: char) -> Option<usize> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
@@ -916,10 +879,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Split a type expression on a top-level binary operator (`|` or `&`), respecting
-    /// `<>`, `()`, `{}`, and string literal quoting. Returns `None` if the operator does
-    /// not appear at the top level (meaning the expression is not a binary type).
-    /// Returns `Some(parts)` with >= 2 parts if it is.
+    /// Split a type expression on a top-level binary operator (`|` or `&`).
     fn split_top_level_binary(s: &str, op: char) -> Option<Vec<&str>> {
         let mut parts = Vec::new();
         let mut start = 0;
@@ -981,10 +941,7 @@ impl<'a> CheckerState<'a> {
         parts
     }
 
-    /// Parse an inline object literal type expression: `{ propName: Type, ... }`.
-    ///
-    /// Handles both property syntax (`name: Type`) and method signature syntax
-    /// (`name(params): ReturnType`).
+    /// Parse an inline object literal type: `{ propName: Type, ... }`.
     fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
@@ -1002,16 +959,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Check for method signature syntax: `name(params): returnType`
-            // Detect by finding `(` at top level BEFORE the first top-level `:`
+            // Check for call signature or method signature syntax
             if let Some(paren_idx) = Self::find_top_level_char(prop_str, '(') {
                 let colon_idx = Self::find_top_level_char(prop_str, ':');
-                if (colon_idx.is_none() || paren_idx < colon_idx.unwrap())
-                    && let Some(prop) =
+                if colon_idx.is_none() || paren_idx < colon_idx.unwrap() {
+                    // Call signature: starts with `(` — return as function type
+                    if paren_idx == 0 {
+                        if let Some(func_ty) = self.parse_jsdoc_call_signature(prop_str) {
+                            return Some(func_ty);
+                        }
+                    } else if let Some(prop) =
                         self.parse_jsdoc_method_signature(prop_str, paren_idx, &properties)
-                {
-                    properties.push(prop);
-                    continue;
+                    {
+                        properties.push(prop);
+                        continue;
+                    }
                 }
             }
 
@@ -1044,12 +1006,73 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.factory().object(properties))
     }
 
-    /// Parse a method signature from a JSDoc inline object type property string.
-    ///
-    /// Handles patterns like:
-    /// - `move(distance: number): void`
-    /// - `f(x: string, y: number): boolean`
-    /// - `name?(): string` (optional method)
+    /// Parse a named method signature from a JSDoc object property string.
+    /// Parse a call signature `(params): RetType` and return a function TypeId.
+    fn parse_jsdoc_call_signature(&mut self, prop_str: &str) -> Option<TypeId> {
+        use tsz_solver::{FunctionShape, ParamInfo};
+
+        let after_open = &prop_str[1..];
+        let mut depth = 1u32;
+        let mut close_idx = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_idx = close_idx?;
+        let params_inner = after_open[..close_idx].trim();
+        let after_close = after_open[close_idx + 1..].trim();
+        let return_type = if let Some(rest) = after_close.strip_prefix(':') {
+            self.jsdoc_type_from_expression(rest.trim())
+                .unwrap_or(TypeId::VOID)
+        } else {
+            TypeId::VOID
+        };
+        let mut params = Vec::new();
+        if !params_inner.is_empty() {
+            for p in Self::split_top_level_params(params_inner) {
+                let p = p.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                let (name, t_str) = if let Some(colon) = p.find(':') {
+                    (Some(p[..colon].trim()), p[colon + 1..].trim())
+                } else {
+                    (None, p)
+                };
+                let p_type = self
+                    .jsdoc_type_from_expression(t_str)
+                    .unwrap_or(TypeId::ANY);
+                let atom = name.map(|n| self.ctx.types.intern_string(n));
+                params.push(ParamInfo {
+                    name: atom,
+                    type_id: p_type,
+                    optional: false,
+                    rest: false,
+                });
+            }
+        }
+
+        let shape = FunctionShape {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+        Some(self.ctx.types.factory().function(shape))
+    }
+
     fn parse_jsdoc_method_signature(
         &mut self,
         prop_str: &str,
@@ -1152,8 +1175,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Split parameter list by commas at the top level, respecting angle brackets
-    /// and parentheses (for nested generic types like `Map<string, number>`).
+    /// Split parameter list by commas at the top level.
     fn split_top_level_params(s: &str) -> Vec<&str> {
         let mut parts = Vec::new();
         let mut start = 0;
@@ -1206,8 +1228,7 @@ impl<'a> CheckerState<'a> {
         parts
     }
 
-    /// Resolve a typedef referenced by a `JSDoc` type annotation (e.g., `Foo`) from
-    /// preceding `@typedef` declarations in the same file.
+    /// Resolve a `@typedef` referenced by name from preceding JSDoc comments.
     fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
@@ -1575,9 +1596,7 @@ impl<'a> CheckerState<'a> {
         typedefs
     }
 
-    /// Parse a type predicate from a JSDoc type expression string (the contents
-    /// inside `{…}`). Returns `(is_asserts, param_name, type_str)` on success.
-    /// Handles patterns like `x is number` and `asserts x is T`.
+    /// Parse a type predicate from a JSDoc type expression (`x is T`, `asserts x is T`).
     fn jsdoc_returns_type_predicate_from_type_expr(
         type_expr: &str,
     ) -> Option<(bool, String, Option<String>)> {
@@ -1811,10 +1830,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a node has a JSDoc `@readonly` tag.
-    ///
-    /// Returns `true` if the leading JSDoc comment for the given node
-    /// contains `@readonly`. Used for JS files where `readonly` modifier
-    /// is expressed via JSDoc instead of the TypeScript keyword.
     pub(crate) fn jsdoc_has_readonly_tag(&self, idx: NodeIndex) -> bool {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return false;
@@ -1832,11 +1847,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the access level from JSDoc `@private` / `@protected` / `@public` tags.
-    ///
-    /// Returns `Some(MemberAccessLevel::Private)` if `@private` is present,
-    /// `Some(MemberAccessLevel::Protected)` if `@protected` is present,
-    /// or `None` if no accessibility tag is found (including `@public`, which
-    /// is the default and doesn't restrict access).
     pub(crate) fn jsdoc_access_level(
         &self,
         idx: NodeIndex,
@@ -1875,13 +1885,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Scan given statements for `@extends`/`@augments` JSDoc tags
-    /// that are not on class declarations (TS8022).
-    ///
-    /// Returns `(tag_name, error_pos, error_len)` for each non-class statement
-    /// whose leading JSDoc contains `@extends`/`@augments`.
-    /// For function declarations, the error is anchored at the function name.
-    /// Also checks for dangling JSDoc comments not attached to any statement.
+    /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,
         statements: &[NodeIndex],

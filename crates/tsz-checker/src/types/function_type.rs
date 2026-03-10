@@ -158,6 +158,7 @@ impl<'a> CheckerState<'a> {
         let this_atom = self.ctx.types.intern_string("this");
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
+        let mut has_jsdoc_type_function = false;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             tracing::debug!(
                 "function_type: contextual_type = {:?}, is_closure = {}",
@@ -205,6 +206,7 @@ impl<'a> CheckerState<'a> {
                 let evaluated_type = self.evaluate_contextual_type(func_type);
                 contextual_signature_type_params =
                     self.contextual_type_params_from_expected(evaluated_type);
+                has_jsdoc_type_function = true;
                 Some(ContextualTypeContext::with_expected_and_options(
                     self.ctx.types,
                     evaluated_type,
@@ -546,8 +548,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // In JS files, params without type annotations are implicitly optional
-                // unless a JSDoc @param tag exists (making the param required).
+                // unless a JSDoc @param tag or @type function annotation exists.
                 let js_implicit_optional = self.is_js_file()
+                    && !has_jsdoc_type_function
                     && param.type_annotation.is_none()
                     && !{
                         let jsdoc_for_opt = func_jsdoc
