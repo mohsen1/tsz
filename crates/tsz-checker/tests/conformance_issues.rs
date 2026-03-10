@@ -67,6 +67,88 @@ fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
 }
 
+fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> {
+    diagnostics
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, message)| message.as_str())
+}
+
+#[test]
+fn test_enum_union_display_collapses_members_to_enum_name() {
+    let source = r#"
+namespace X {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Z {
+    export enum Foo {
+        A = 1 << 1,
+        B = 1 << 2,
+    }
+}
+const e1: X.Foo | boolean = Z.Foo.A;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning computed enum member into X.Foo | boolean");
+
+    assert!(
+        message.contains("boolean | X.Foo"),
+        "Expected enum union display to collapse to the enum name. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_enum_assignment_preserves_numeric_literal_source_display() {
+    let source = r#"
+enum E {
+    A = 1,
+    B = 2,
+}
+let x: E.A = 4;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message =
+        diagnostic_message(&diagnostics, 2322).expect("expected TS2322 for assigning 4 to E.A");
+
+    assert!(
+        message.contains("Type '4' is not assignable to type 'E.A'."),
+        "Expected numeric literal source display to be preserved. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespaced_enum_assignability_uses_qualified_names() {
+    let source = r#"
+namespace First {
+    export enum E {
+        a, b, c,
+    }
+}
+namespace Abcd {
+    export enum E {
+        a, b, c, d,
+    }
+}
+declare let abc: First.E;
+declare let secondAbcd: Abcd.E;
+abc = secondAbcd;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning Abcd.E to First.E");
+
+    assert!(
+        message.contains("Type 'Abcd.E' is not assignable to type 'First.E'."),
+        "Expected namespaced enum assignability to keep qualified names. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_declaration_emit_inferred_function_return_with_cyclic_structure_emits_ts5088() {
     let source = r#"

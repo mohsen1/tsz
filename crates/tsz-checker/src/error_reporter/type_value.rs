@@ -33,8 +33,8 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        let prev_type_str = self.format_type(prev_type);
-        let current_type_str = self.format_type(current_type);
+        let prev_type_str = self.format_type_diagnostic(prev_type);
+        let current_type_str = self.format_type_diagnostic(current_type);
         let message = format!(
             "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
