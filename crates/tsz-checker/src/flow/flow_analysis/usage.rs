@@ -485,11 +485,12 @@ impl<'a> CheckerState<'a> {
         // so tsz conservatively suppresses TS2454 for captured locals.
         //
         // Source-file globals are more nuanced:
-        // - In scripts, tsc suppresses TS2454 for reads in deferred nested
+        // - tsc suppresses TS2454 for reads in deferred (non-IIFE) nested
         //   functions, but still reports it when every crossed function boundary
         //   is an IIFE that executes immediately.
-        // - In external modules, source-file globals still get TS2454 in nested
-        //   functions because the module body defines the initialization order.
+        // - This applies to both scripts and external modules — in both cases,
+        //   a non-IIFE function body is deferred and could be called after the
+        //   variable is assigned.
         let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
         let usage_scope = self.find_enclosing_function_or_source_file(idx);
         if decl_scope != usage_scope && !decl_scope.is_none() {
@@ -502,9 +503,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            if !self.ctx.binder.is_external_module()
-                && self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope)
-            {
+            if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
                 return false;
             }
         }
