@@ -292,6 +292,9 @@ pub fn compute_best_common_type<R: TypeResolver>(
         if ty == TypeId::ERROR {
             return TypeId::ERROR;
         }
+        if ty == TypeId::ANY {
+            return TypeId::ANY;
+        }
     }
 
     // Single type: return it directly
