@@ -2014,6 +2014,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut elements = Vec::new();
+        let mut emitted_comma_error = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2029,11 +2030,28 @@ impl ParserState {
             elements.push(spec);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                // tsc uses parseDelimitedList which emits `',' expected.` when
+                // a comma-separated list element is not followed by `,` or `}`.
+                if !self.is_token(SyntaxKind::CloseBraceToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        &format!(
+                            "'{}' expected.",
+                            Self::token_to_string(SyntaxKind::CommaToken)
+                        ),
+                        diagnostic_codes::EXPECTED,
+                    );
+                    emitted_comma_error = true;
+                }
                 break;
             }
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        // Skip '}' expected if we already emitted ',' expected at the same position.
+        // tsc's parseDelimitedList emits only the comma error, not a closing brace error.
+        if !emitted_comma_error {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+        }
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
