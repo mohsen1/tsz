@@ -299,6 +299,7 @@ impl ParserState {
         // `yield` is reserved in generator contexts and class bodies.
         if self.is_token(SyntaxKind::YieldKeyword) {
             let start_pos = self.token_pos();
+            let end_pos = self.token_end();
             if self.in_generator_context() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 let is_class_context = self.in_class_body() || self.in_class_member_name();
@@ -319,7 +320,6 @@ impl ParserState {
             let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
             self.next_token();
-            let end_pos = self.token_end();
             return self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 start_pos,
@@ -334,11 +334,11 @@ impl ParserState {
         }
 
         let start_pos = self.token_pos();
+        let end_pos = self.token_end();
         // OPTIMIZATION: Capture atom for O(1) comparison
         let atom = self.scanner.get_token_atom();
         let text = self.scanner.get_token_value_ref().to_string();
         self.next_token();
-        let end_pos = self.token_end();
 
         self.arena.add_identifier(
             SyntaxKind::Identifier as u16,
@@ -473,7 +473,7 @@ impl ParserState {
     pub(crate) fn parse_type_assertion(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::LessThanToken);
-        let type_node = self.parse_type();
+        let type_node = self.parse_non_predicate_type();
         self.parse_expected(SyntaxKind::GreaterThanToken);
 
         // TypeScript doesn't allow bare 'yield' after type assertion

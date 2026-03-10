@@ -38,13 +38,22 @@ impl ParserState {
         }
     }
 
-    /// Parse a type (handles keywords, type references, unions, intersections, conditionals)
+    /// Parse a type (handles keywords, type references, unions, intersections, conditionals).
     pub(crate) fn parse_type(&mut self) -> NodeIndex {
-        if self.is_asserts_type_predicate_start() {
+        self.parse_type_with_predicates(true)
+    }
+
+    /// Parse a type in a context that explicitly disallows type predicates, such as
+    /// `expr as T` and `<T>expr`.
+    pub(crate) fn parse_non_predicate_type(&mut self) -> NodeIndex {
+        self.parse_type_with_predicates(false)
+    }
+
+    fn parse_type_with_predicates(&mut self, allow_type_predicates: bool) -> NodeIndex {
+        if allow_type_predicates && self.is_asserts_type_predicate_start() {
             return self.parse_asserts_type_predicate();
         }
 
-        // Allow type predicate parsing in type positions to avoid cascading errors.
         if self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword) {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
@@ -57,7 +66,7 @@ impl ParserState {
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
-            if is_predicate {
+            if allow_type_predicates && is_predicate {
                 let name = self.parse_type_predicate_parameter_name();
                 let start_pos = if let Some(node) = self.arena.get(name) {
                     node.pos
@@ -121,51 +130,7 @@ impl ParserState {
     }
 
     fn parse_return_type_inner(&mut self) -> NodeIndex {
-        if self.is_asserts_type_predicate_start() {
-            return self.parse_asserts_type_predicate();
-        }
-
-        // Check if this is a type predicate: identifier 'is' Type
-        // We need to look ahead to see if there's an identifier followed by 'is'
-        if self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-
-            self.next_token();
-            // A line break before `is` means ASI applies — the identifier is a type,
-            // not a type predicate parameter. Matches tsc's `!scanner.hasPrecedingLineBreak()`.
-            let is_predicate =
-                self.is_token(SyntaxKind::IsKeyword) && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if is_predicate {
-                let name = self.parse_type_predicate_parameter_name();
-                // This is a type predicate: x is T
-                let start_pos = if let Some(node) = self.arena.get(name) {
-                    node.pos
-                } else {
-                    self.token_pos()
-                };
-
-                self.next_token(); // consume 'is'
-                let type_node = self.parse_type();
-                let end_pos = self.token_end();
-
-                return self.arena.add_type_predicate(
-                    syntax_kind_ext::TYPE_PREDICATE,
-                    start_pos,
-                    end_pos,
-                    crate::parser::node::TypePredicateData {
-                        asserts_modifier: false,
-                        parameter_name: name,
-                        type_node,
-                    },
-                );
-            }
-        }
-
-        self.parse_type()
+        self.parse_type_with_predicates(true)
     }
 
     pub(crate) fn parse_type_predicate_parameter_name(&mut self) -> NodeIndex {

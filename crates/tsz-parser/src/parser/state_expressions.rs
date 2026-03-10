@@ -912,7 +912,7 @@ impl ParserState {
             self.arena
                 .add_token(SyntaxKind::ConstKeyword as u16, const_start, const_end)
         } else {
-            self.parse_type()
+            self.parse_non_predicate_type()
         };
         let end_pos = self.token_end();
 

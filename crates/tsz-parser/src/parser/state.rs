@@ -681,6 +681,10 @@ impl ParserState {
             let force_emit = kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
                     || self.is_token(SyntaxKind::CloseBraceToken)
+                    || ((self.is_identifier_or_keyword()
+                        || self.is_token(SyntaxKind::ThisKeyword))
+                        && self.last_error_pos != 0
+                        && self.token_pos().abs_diff(self.last_error_pos) <= 3)
                     || (self.is_token(SyntaxKind::EndOfFileToken)
                         && !self.last_error_was_unterminated_literal()));
 
@@ -1703,6 +1707,18 @@ impl ParserState {
             .iter()
             .any(|&kw| kw == expression_text)
         {
+            if matches!(
+                self.token(),
+                SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+            ) {
+                self.parse_error_at(
+                    pos,
+                    len,
+                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                return;
+            }
             // Keep the suppression for bare keyword recovery, but allow keyword-like
             // statements followed by a literal (notably `from "./mod"`) to report
             // TS1434 like tsc does.
