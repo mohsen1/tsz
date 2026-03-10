@@ -2676,6 +2676,16 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                // When emitting a non-exported variable statement purely because of
+                // dependency tracking, filter to only the declarations that are actually
+                // referenced. E.g. `const key = Symbol(), value = 12` should only emit
+                // `key` if only `key` is in used_symbols.
+                if !has_export_modifier && !has_js_named_export {
+                    regular_decls.retain(|(_is_exported, _decl_idx, _decl_node, decl)| {
+                        self.should_emit_public_api_dependency(decl.name)
+                    });
+                }
+
                 // Emit regular declarations in contiguous export/non-export groups.
                 let mut group_start = 0;
                 while group_start < regular_decls.len() {
