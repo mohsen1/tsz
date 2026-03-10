@@ -8,6 +8,178 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Check if a delete target is a readonly property.
+    /// Reports TS2704 for readonly named properties and TS2542 for readonly index signatures.
+    /// Returns `true` if a readonly delete diagnostic was emitted.
+    pub(crate) fn check_readonly_delete_operand(&mut self, target_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+
+        match target_node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {}
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
+                    let object_type = self.get_type_of_node(access.expression);
+                    if object_type == TypeId::ANY
+                        || object_type == TypeId::UNKNOWN
+                        || object_type == TypeId::ERROR
+                    {
+                        return false;
+                    }
+
+                    let index_type = self.get_type_of_node(access.name_or_argument);
+                    if let Some(name) = self.get_readonly_element_access_name(
+                        object_type,
+                        access.name_or_argument,
+                        index_type,
+                    ) {
+                        use tsz_solver::operations::property::{
+                            PropertyAccessResult, is_readonly_tuple_fixed_element,
+                        };
+                        let from_idx_sig = if name == "index signature" {
+                            true
+                        } else if is_readonly_tuple_fixed_element(
+                            self.ctx.types,
+                            object_type,
+                            &name,
+                        ) {
+                            false
+                        } else {
+                            matches!(
+                                self.resolve_property_access_with_env(object_type, &name),
+                                PropertyAccessResult::Success {
+                                    from_index_signature: true,
+                                    ..
+                                }
+                            )
+                        };
+                        if from_idx_sig || self.is_readonly_mapped_type(object_type) {
+                            self.error_readonly_index_signature_at(object_type, target_idx);
+                        } else {
+                            self.error_delete_readonly_property_at(target_idx);
+                        }
+                        return true;
+                    }
+
+                    if self.is_readonly_mapped_type(object_type) {
+                        self.error_readonly_index_signature_at(object_type, target_idx);
+                        return true;
+                    }
+
+                    if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
+                        if self.is_function_or_class_name_property(access.expression, &name) {
+                            self.error_delete_readonly_property_at(target_idx);
+                            return true;
+                        }
+                        if let Some(type_name) =
+                            self.get_declared_type_name_from_expression(access.expression)
+                            && self.is_interface_property_readonly(&type_name, &name)
+                        {
+                            self.error_delete_readonly_property_at(target_idx);
+                            return true;
+                        }
+                        if self.is_namespace_const_property(access.expression, &name) {
+                            self.error_delete_readonly_property_at(target_idx);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            _ => return false,
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+
+        if self.is_private_identifier_name(access.name_or_argument) {
+            return false;
+        }
+
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        let prop_name = ident.escaped_text.clone();
+
+        if self.is_function_or_class_name_property(access.expression, &prop_name) {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        if prop_name == "globalThis" && self.is_global_this_expression(access.expression) {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        if self.is_enum_member_property(access.expression, &prop_name) {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        let obj_type = self.get_type_of_node(access.expression);
+        let readonly_check_type = self.evaluate_type_for_assignability(obj_type);
+
+        if self.is_namespace_const_property(access.expression, &prop_name) {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        use tsz_solver::operations::property::PropertyAccessResult;
+        let property_result =
+            self.resolve_property_access_with_env(readonly_check_type, &prop_name);
+        let (property_exists, prop_from_index_sig) = match &property_result {
+            PropertyAccessResult::Success {
+                from_index_signature,
+                ..
+            } => (true, *from_index_signature),
+            _ => (false, false),
+        };
+
+        if !property_exists {
+            return false;
+        }
+
+        if self.is_namespace_import_binding(access.expression) {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        if self.is_property_readonly(readonly_check_type, &prop_name) {
+            if prop_from_index_sig {
+                self.error_readonly_index_signature_at(readonly_check_type, target_idx);
+            } else {
+                self.error_delete_readonly_property_at(target_idx);
+            }
+            return true;
+        }
+
+        if let Some(class_name) = self.get_class_name_from_expression(access.expression)
+            && self.is_class_property_readonly(&class_name, &prop_name)
+        {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        if let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
+            && self.is_interface_property_readonly(&type_name, &prop_name)
+        {
+            self.error_delete_readonly_property_at(target_idx);
+            return true;
+        }
+
+        false
+    }
+
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
     /// Returns `true` if a readonly error was emitted (caller should skip further type checks).
@@ -512,6 +684,26 @@ impl<'a> CheckerState<'a> {
                 .get(ext.parent)
                 .is_some_and(|parent| parent.kind == syntax_kind_ext::NAMESPACE_IMPORT)
         })
+    }
+
+    fn is_function_or_class_name_property(&self, object_expr: NodeIndex, prop_name: &str) -> bool {
+        if prop_name != "name" {
+            return false;
+        }
+
+        let object_expr = self.ctx.arena.skip_parenthesized(object_expr);
+        let Some(sym_id) = self.resolve_identifier_symbol(object_expr) else {
+            return false;
+        };
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
+        let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
+            return false;
+        };
+
+        (symbol.flags & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION))
+            != 0
     }
 
     /// Check if a readonly property assignment is allowed in the current constructor context.
