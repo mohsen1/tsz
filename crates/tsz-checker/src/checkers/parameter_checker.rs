@@ -364,6 +364,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // TS1015: Parameter cannot have question mark and initializer.
+            // This is a grammar check (in tsc it lives in the checker, not the parser).
+            // Suppress when the file has syntax parse errors — tsc skips grammar checks
+            // on subtrees from parser-recovery artifacts (e.g. broken arrow functions).
+            if param.question_token
+                && param.initializer.is_some()
+                && !self.has_syntax_parse_errors()
+            {
+                self.error_at_node(
+                    param.name,
+                    diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                    diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                );
+            }
+
             // Rest parameter ends the check - rest params don't count as optional/required in this context
             if param.dot_dot_dot_token {
                 break;
