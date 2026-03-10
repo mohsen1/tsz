@@ -1753,6 +1753,49 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a resolved symbol is an ambient const enum.
+    /// Returns true if the symbol has `CONST_ENUM` flag and its origin is a .d.ts file.
+    pub(crate) fn is_ambient_const_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let sym = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
+        let Some(sym) = sym else { return false };
+        if (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) == 0 {
+            return false;
+        }
+
+        // Check via symbol_arenas: the binder tracks which arena each symbol came from.
+        // If the symbol's arena is a .d.ts file, it's ambient.
+        if let Some(origin_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+            return origin_arena
+                .source_files
+                .first()
+                .is_some_and(|sf| sf.is_declaration_file);
+        }
+
+        // Fallback: check if the symbol is from any lib context that is a .d.ts
+        for lib_ctx in &self.ctx.lib_contexts {
+            if lib_ctx.binder.symbols.get(sym_id).is_some()
+                && lib_ctx
+                    .arena
+                    .source_files
+                    .first()
+                    .is_some_and(|sf| sf.is_declaration_file)
+            {
+                return true;
+            }
+        }
+
+        // Also check: if the symbol's declarations are all in ambient context
+        for &decl_idx in &sym.declarations {
+            if !self.ctx.arena.is_in_ambient_context(decl_idx) && !self.ctx.is_declaration_file() {
+                return false;
+            }
+        }
+
+        // All declarations are in ambient context
+        !sym.declarations.is_empty()
+    }
+
     /// TS1282/TS1283: VMS check for `export = X`.
     /// TS1282: X only refers to a type (interface/type alias, no value).
     /// TS1283: X resolves to a type-only declaration (import type).
