@@ -680,12 +680,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(sym_id) = self
-                .ctx
-                .binder
-                .get_node_symbol(param.name)
-                .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
-            else {
+            let symbol_ids = self.parameter_symbol_ids(param_idx, param.name);
+            let Some(sym_id) = symbol_ids.into_iter().flatten().next() else {
                 continue;
             };
 
@@ -709,7 +705,13 @@ impl<'a> CheckerState<'a> {
             // Use contextual typing by resolving the parameter's identifier in its function scope.
             let inferred = self.get_type_of_identifier(param.name);
             if inferred != TypeId::UNKNOWN && inferred != TypeId::ERROR {
-                self.cache_symbol_type(sym_id, inferred);
+                for sym_id in self
+                    .parameter_symbol_ids(param_idx, param.name)
+                    .into_iter()
+                    .flatten()
+                {
+                    self.cache_symbol_type(sym_id, inferred);
+                }
             }
         }
     }
@@ -1053,6 +1055,30 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::CASE_BLOCK
+                || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+            {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.clear_type_cache_recursive(stmt_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+                    self.clear_type_cache_recursive(expr_stmt.expression);
+                }
+            }
+            k if k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT =>
+            {
+                if let Some(stmt) = self.ctx.arena.get_return_statement(node)
+                    && stmt.expression.is_some()
+                {
+                    self.clear_type_cache_recursive(stmt.expression);
+                }
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(array) = self.ctx.arena.get_literal_expr(node) {
                     for &elem_idx in &array.elements.nodes {
@@ -1139,11 +1165,10 @@ impl<'a> CheckerState<'a> {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
-                            if let Some(sym_id) = self
-                                .ctx
-                                .binder
-                                .get_node_symbol(param_idx)
-                                .or_else(|| self.ctx.binder.get_node_symbol(param.name))
+                            for sym_id in self
+                                .parameter_symbol_ids(param_idx, param.name)
+                                .into_iter()
+                                .flatten()
                             {
                                 self.ctx.symbol_types.remove(&sym_id);
                             }
