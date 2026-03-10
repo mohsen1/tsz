@@ -1761,26 +1761,30 @@ impl<'a> CheckerState<'a> {
         };
         // Binary expression with assignment operator (e.g., `x = value`)
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(bin) = self.ctx.arena.get_binary_expr(node) {
-                return self.node_resolves_to_symbol(bin.left, target_sym);
-            }
+            && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+        {
+            return self.node_resolves_to_symbol(bin.left, target_sym);
+        }
         // Variable declaration (e.g., `let x = value` — though these have initializers)
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-            && let Some(decl) = self.ctx.arena.get_variable_declaration(node) {
-                return self.node_resolves_to_symbol(decl.name, target_sym);
-            }
+            && let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+        {
+            return self.node_resolves_to_symbol(decl.name, target_sym);
+        }
         // Prefix/postfix unary (e.g., `++x`, `x--`)
         if (node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
-            && let Some(unary) = self.ctx.arena.get_unary_expr(node) {
-                return self.node_resolves_to_symbol(unary.operand, target_sym);
-            }
+            && let Some(unary) = self.ctx.arena.get_unary_expr(node)
+        {
+            return self.node_resolves_to_symbol(unary.operand, target_sym);
+        }
         // For-in/for-of statement initializer
         if (node.kind == syntax_kind_ext::FOR_IN_STATEMENT
             || node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-            && let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
-                return self.node_resolves_to_symbol(for_data.initializer, target_sym);
-            }
+            && let Some(for_data) = self.ctx.arena.get_for_in_of(node)
+        {
+            return self.node_resolves_to_symbol(for_data.initializer, target_sym);
+        }
         false
     }
 
