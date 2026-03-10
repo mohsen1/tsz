@@ -186,8 +186,8 @@ impl<'a> CheckerState<'a> {
                 return;
             };
 
-            let source_type = self.format_type(source);
-            let target_type = self.format_type(target);
+            let source_type = self.format_type_diagnostic(source);
+            let target_type = self.format_type_diagnostic(target);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_type, &target_type],
@@ -211,8 +211,8 @@ impl<'a> CheckerState<'a> {
         let reason = analysis.failure_reason;
 
         if tracing::enabled!(Level::TRACE) {
-            let source_type = self.format_type(source);
-            let target_type = self.format_type(target);
+            let source_type = self.format_type_diagnostic(source);
+            let target_type = self.format_type_diagnostic(target);
             let reason_ref = reason.as_ref();
             trace!(
                 source = %source_type,
@@ -281,8 +281,8 @@ impl<'a> CheckerState<'a> {
                 && missing_props.len() > 1
             {
                 let evaluated_source = self.evaluate_type_for_assignability(source);
-                let src_str = self.format_type(evaluated_source);
-                let tgt_str = self.format_type(target);
+                let src_str = self.format_type_diagnostic(evaluated_source);
+                let tgt_str = self.format_type_diagnostic(target);
                 let prop_list: Vec<String> = missing_props
                     .iter()
                     .take(4)
@@ -317,17 +317,20 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store)
-            .with_namespace_module_names(&self.ctx.namespace_module_names);
-            let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+            let src_str =
+                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+            let tgt_str = self.format_type_for_assignability_message(target);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ));
         }
     }
 
@@ -361,8 +364,8 @@ impl<'a> CheckerState<'a> {
                 if *source_type != tsz_solver::TypeId::OBJECT
                     && tsz_solver::is_primitive_type(self.ctx.types, *source_type)
                 {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -384,10 +387,10 @@ impl<'a> CheckerState<'a> {
                 //          NOT TS2741 "Property 'valueOf' is missing in type '{}'..."
                 // Check both the solver's target_type (inner shape) and the original target
                 // (may be the named interface when solver resolves to anonymous shape).
-                let tgt_str = self.format_type(*target_type);
-                let original_tgt_str = self.format_type(target);
+                let tgt_str = self.format_type_diagnostic(*target_type);
+                let original_tgt_str = self.format_type_diagnostic(target);
                 if is_builtin_wrapper_name(&tgt_str) || is_builtin_wrapper_name(&original_tgt_str) {
-                    let src_str = self.format_type(*source_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
                     let display_tgt = if is_builtin_wrapper_name(&original_tgt_str) {
                         &original_tgt_str
                     } else {
@@ -411,8 +414,8 @@ impl<'a> CheckerState<'a> {
                 // → TS2322 "Type 'A' is not assignable to type 'A & B'"
                 // not TS2741 "Property 'b' is missing in type 'A'..."
                 if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -458,8 +461,8 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::is_intersection_type(self.ctx.types, *target_type)
                     || tsz_solver::is_intersection_type(self.ctx.types, target)
                 {
-                    let src_str = self.format_type(source);
-                    let tgt_str_full = self.format_type(target);
+                    let src_str = self.format_type_diagnostic(source);
+                    let tgt_str_full = self.format_type_diagnostic(target);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str_full],
@@ -479,8 +482,8 @@ impl<'a> CheckerState<'a> {
                 // AST to detect whether the assignment target was declared with an
                 // intersection type annotation.
                 if self.anchor_target_has_intersection_annotation(idx) {
-                    let src_str = self.format_type(source);
-                    let tgt_str_full = self.format_type(target);
+                    let src_str = self.format_type_diagnostic(source);
+                    let tgt_str_full = self.format_type_diagnostic(target);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str_full],
@@ -500,8 +503,8 @@ impl<'a> CheckerState<'a> {
                 // The real failure is type incompatibility (different return types),
                 // not a missing property. Emit TS2322 instead of TS2741.
                 if is_object_prototype_method(&prop_name) {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -523,7 +526,7 @@ impl<'a> CheckerState<'a> {
                 let (src_str, tgt_str_qualified) = if *source_type == TypeId::OBJECT {
                     ("{}".to_string(), tgt_str)
                 } else {
-                    self.format_type_pair(*source_type, target)
+                    self.format_type_pair_diagnostic(*source_type, target)
                 };
                 let message = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -549,8 +552,8 @@ impl<'a> CheckerState<'a> {
                 //          → "Type 'number' is not assignable to type '...'"
                 //          NOT "Type 'number' is missing properties from type '...'"
                 if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -568,7 +571,7 @@ impl<'a> CheckerState<'a> {
                 // special diagnostic instead of TS2739/TS2740/TS2322.
                 // "The 'Object' type is assignable to very few other types."
                 {
-                    let src_str = self.format_type(*source_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
                     if src_str == "Object" {
                         return Diagnostic::error(
                             file_name,
@@ -586,12 +589,12 @@ impl<'a> CheckerState<'a> {
                 // These built-in types inherit properties from Object, and object literals don't
                 // explicitly list inherited properties, so TS2739 would be incorrect.
                 // Check both the solver's target_type and the original target.
-                let tgt_str_check = self.format_type(*target_type);
-                let original_tgt_check = self.format_type(target);
+                let tgt_str_check = self.format_type_diagnostic(*target_type);
+                let original_tgt_check = self.format_type_diagnostic(target);
                 if is_builtin_wrapper_name(&tgt_str_check)
                     || is_builtin_wrapper_name(&original_tgt_check)
                 {
-                    let src_str = self.format_type(*source_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
                     let display_tgt = if is_builtin_wrapper_name(&original_tgt_check) {
                         &original_tgt_check
                     } else {
@@ -615,8 +618,8 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::is_intersection_type(self.ctx.types, *target_type)
                     || tsz_solver::is_intersection_type(self.ctx.types, target)
                 {
-                    let src_str = self.format_type(source);
-                    let tgt_str = self.format_type(target);
+                    let src_str = self.format_type_diagnostic(source);
+                    let tgt_str = self.format_type_diagnostic(target);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -652,8 +655,8 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if all_numeric {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -674,8 +677,8 @@ impl<'a> CheckerState<'a> {
                         is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**name))
                     });
                 if all_object_proto {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -691,8 +694,8 @@ impl<'a> CheckerState<'a> {
 
                 // If all missing properties were private brands, emit TS2322 instead.
                 if filtered_names.is_empty() {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                    let src_str = self.format_type_diagnostic(*source_type);
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -719,8 +722,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *source_type
                 };
-                let src_str = self.format_type(display_source);
-                let tgt_str = self.format_type(*target_type);
+                let src_str = self.format_type_diagnostic(display_source);
+                let tgt_str = self.format_type_diagnostic(*target_type);
                 let prop_list: Vec<String> = filtered_names
                     .iter()
                     .take(4)
@@ -828,8 +831,8 @@ impl<'a> CheckerState<'a> {
                     )
                 } else {
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let source_str = self.format_type(source);
-                    let target_str = self.format_type(target);
+                    let source_str = self.format_type_diagnostic(source);
+                    let target_str = self.format_type_diagnostic(target);
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
@@ -886,7 +889,7 @@ impl<'a> CheckerState<'a> {
                 target_type,
             } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let target_str = self.format_type(*target_type);
+                let target_str = self.format_type_diagnostic(*target_type);
                 let message = format_message(
                     diagnostic_messages::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
                     &[&prop_name, &target_str],
@@ -917,8 +920,8 @@ impl<'a> CheckerState<'a> {
                     );
 
                     // Add "Return type..." as elaboration
-                    let ret_source_str = self.format_type(*source_return);
-                    let ret_target_str = self.format_type(*target_return);
+                    let ret_source_str = self.format_type_diagnostic(*source_return);
+                    let ret_target_str = self.format_type_diagnostic(*target_return);
                     let ret_msg = format!(
                         "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
                     );
@@ -933,8 +936,8 @@ impl<'a> CheckerState<'a> {
 
                     diag
                 } else {
-                    let source_str = self.format_type(*source_return);
-                    let target_str = self.format_type(*target_return);
+                    let source_str = self.format_type_diagnostic(*source_return);
+                    let target_str = self.format_type_diagnostic(*target_return);
                     let message =
                         format!("Return type '{source_str}' is not assignable to '{target_str}'.");
                     let mut diag = Diagnostic::error(
@@ -1033,8 +1036,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
                 } else {
-                    let source_str = self.format_type(*source_element);
-                    let target_str = self.format_type(*target_element);
+                    let source_str = self.format_type_diagnostic(*source_element);
+                    let target_str = self.format_type_diagnostic(*target_element);
                     let message = format!(
                         "Type of element at index {index} is incompatible: '{source_str}' is not assignable to '{target_str}'."
                     );
@@ -1063,8 +1066,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
                 } else {
-                    let source_str = self.format_type(*source_element);
-                    let target_str = self.format_type(*target_element);
+                    let source_str = self.format_type_diagnostic(*source_element);
+                    let target_str = self.format_type_diagnostic(*target_element);
                     let message = format!(
                         "Array element type '{source_str}' is not assignable to '{target_str}'."
                     );
@@ -1097,8 +1100,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 }
-                let source_str = self.format_type(*source_value_type);
-                let target_str = self.format_type(*target_value_type);
+                let source_str = self.format_type_diagnostic(*source_value_type);
+                let target_str = self.format_type_diagnostic(*target_value_type);
                 let message = format!(
                     "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
                 );
@@ -1109,8 +1112,8 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                let source_str = self.format_type(*source_type);
-                let target_str = self.format_type(target);
+                let source_str = self.format_type_diagnostic(*source_type);
+                let target_str = self.format_type_diagnostic(target);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
@@ -1198,8 +1201,8 @@ impl<'a> CheckerState<'a> {
                     && missing_props.len() > 1
                 {
                     let evaluated_source = self.evaluate_type_for_assignability(source);
-                    let src_str = self.format_type(evaluated_source);
-                    let tgt_str = self.format_type(target);
+                    let src_str = self.format_type_diagnostic(evaluated_source);
+                    let tgt_str = self.format_type_diagnostic(target);
                     let prop_list: Vec<String> = missing_props
                         .iter()
                         .take(4)
@@ -1269,8 +1272,8 @@ impl<'a> CheckerState<'a> {
                 // TS4104: "The type 'X' is 'readonly' and cannot be assigned to the mutable type 'Y'."
                 // TSC emits this as the primary error (replacing TS2322) when a readonly
                 // array/tuple is assigned to a mutable target in a variable assignment context.
-                let source_str = self.format_type(*source_type);
-                let target_str = self.format_type(*target_type);
+                let source_str = self.format_type_diagnostic(*source_type);
+                let target_str = self.format_type_diagnostic(*target_type);
                 let message = format_message(
                     diagnostic_messages::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE,
                     &[&source_str, &target_str],
@@ -1339,8 +1342,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let source_type = self.format_type(source);
-        let target_type = self.format_type(target);
+        let source_type = self.format_type_diagnostic(source);
+        let target_type = self.format_type_diagnostic(target);
         let message = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_type, &target_type],

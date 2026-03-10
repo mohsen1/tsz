@@ -148,6 +148,9 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::literal_value(self.ctx.types, target).is_some() {
             return true;
         }
+        if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
+            return true;
+        }
         if tsz_solver::type_queries::is_symbol_or_unique_symbol(self.ctx.types, target)
             && target != TypeId::SYMBOL
         {
@@ -256,7 +259,15 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
-        let mut formatted = self.format_type(ty);
+        if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
+            return collapsed;
+        }
+
+        if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
+            return enum_name;
+        }
+
+        let mut formatted = self.format_type_diagnostic(ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
@@ -304,7 +315,7 @@ impl<'a> CheckerState<'a> {
                     let args: Vec<String> = candidates
                         .iter()
                         .take(type_param_count)
-                        .map(|(_, type_id)| self.format_type(*type_id))
+                        .map(|(_, type_id)| self.format_type_diagnostic(*type_id))
                         .collect();
                     if args.len() == type_param_count {
                         formatted = format!("{}<{}>", symbol_name, args.join(", "));
@@ -322,6 +333,64 @@ impl<'a> CheckerState<'a> {
             return format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
         formatted
+    }
+
+    fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut rendered = Vec::with_capacity(members.len());
+        let mut collapsed_enum = None;
+
+        for member in members {
+            let widened = self.widen_enum_member_type(member);
+            if let Some(name) = self.format_qualified_enum_name_for_message(widened) {
+                match collapsed_enum.as_ref() {
+                    Some(existing) if existing == &name => {}
+                    None => {
+                        collapsed_enum = Some(name.clone());
+                        rendered.push(name);
+                    }
+                    Some(_) => return None,
+                }
+            } else {
+                rendered.push(self.format_type_for_assignability_message(member));
+            }
+        }
+
+        if collapsed_enum.is_some() {
+            Some(rendered.join(" | "))
+        } else {
+            None
+        }
+    }
+
+    fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let mut parts = Vec::new();
+        let mut current = sym_id;
+
+        while current != tsz_binder::SymbolId::NONE {
+            let symbol = self.ctx.binder.get_symbol(current)?;
+            parts.push(symbol.escaped_name.clone());
+            current = symbol.parent;
+            if current != tsz_binder::SymbolId::NONE
+                && let Some(parent) = self.ctx.binder.get_symbol(current)
+                && (parent.flags
+                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE
+                        | tsz_binder::symbol_flags::ENUM))
+                    == 0
+            {
+                break;
+            }
+        }
+
+        parts.reverse();
+        Some(parts.join("."))
     }
 
     fn is_function_like_type(&mut self, ty: TypeId) -> bool {

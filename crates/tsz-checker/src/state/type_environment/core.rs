@@ -1666,9 +1666,26 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for use in diagnostic error messages.
+    /// Unlike `format_type`, this skips union optionalization (synthetic `?: undefined`)
+    /// that tsc only uses in hover/quickinfo, not in error messages.
+    pub fn format_type_diagnostic(&self, type_id: TypeId) -> String {
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a pair of types for diagnostics that display two types side by side.
     pub fn format_type_pair(&self, type_a: TypeId, type_b: TypeId) -> (String, String) {
         let mut formatter = self.ctx.create_type_formatter();
+        (
+            formatter.format(type_a).into_owned(),
+            formatter.format(type_b).into_owned(),
+        )
+    }
+
+    /// Format a pair of types for diagnostic messages (skips union optionalization).
+    pub fn format_type_pair_diagnostic(&self, type_a: TypeId, type_b: TypeId) -> (String, String) {
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
         (
             formatter.format(type_a).into_owned(),
             formatter.format(type_b).into_owned(),

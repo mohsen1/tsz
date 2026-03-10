@@ -727,7 +727,7 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
                     return None;
                 }
-                let tgt_str = self.format_type(*target_type);
+                let tgt_str = self.format_type_diagnostic(*target_type);
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
@@ -738,7 +738,7 @@ impl<'a> CheckerState<'a> {
                 if prop_name.starts_with("__private_brand") {
                     return None;
                 }
-                let src_str = self.format_type(*source_type);
+                let src_str = self.format_type_diagnostic(*source_type);
                 let msg = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop_name, &src_str, &tgt_str],
@@ -760,14 +760,14 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
                     return None;
                 }
-                let tgt_str = self.format_type(*target_type);
+                let tgt_str = self.format_type_diagnostic(*target_type);
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
                 if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
                     return None;
                 }
-                let src_str = self.format_type(*source_type);
+                let src_str = self.format_type_diagnostic(*source_type);
                 let names: Vec<String> = property_names
                     .iter()
                     .map(|a| self.ctx.types.resolve_atom_ref(*a).to_string())

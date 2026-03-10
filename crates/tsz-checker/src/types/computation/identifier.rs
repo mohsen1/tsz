@@ -732,7 +732,21 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let declared_type = self.get_type_of_symbol(sym_id);
+            let declared_type = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & symbol_flags::ENUM) != 0
+                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            {
+                self.enum_object_type(sym_id)
+                    .inspect(|&enum_obj| {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(enum_obj, def_id);
+                    })
+                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else {
+                self.get_type_of_symbol(sym_id)
+            };
             // Check for TDZ violations (variable used before declaration in source order)
             if self.check_tdz_violation(sym_id, idx, name, true) {
                 return TypeId::ERROR;

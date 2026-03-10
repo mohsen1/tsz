@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
             if !self.has_syntax_parse_errors()
                 && let Some(lib_name) = self.get_lib_suggestion_for_property(prop_name, type_id)
             {
-                let type_str = self.format_type(type_id);
+                let type_str = self.format_type_diagnostic(type_id);
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
                 );
@@ -323,7 +323,7 @@ impl<'a> CheckerState<'a> {
             if !self.has_syntax_parse_errors()
                 && let Some(suggestion) = self.find_similar_property(prop_name, target)
             {
-                let type_str = self.format_type(target);
+                let type_str = self.format_type_diagnostic(target);
                 let message = format!(
                     "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
                 );
@@ -371,7 +371,7 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         idx: NodeIndex,
     ) {
-        let type_name = self.format_type(object_type);
+        let type_name = self.format_type_diagnostic(object_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
@@ -394,7 +394,7 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         idx: NodeIndex,
     ) {
-        let type_name = self.format_type(object_type);
+        let type_name = self.format_type_diagnostic(object_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,

@@ -64,6 +64,10 @@ pub struct TypeFormatter<'a> {
     /// Current depth
     current_depth: u32,
     atom_cache: FxHashMap<Atom, Arc<str>>,
+    /// When true, skip adding synthetic `?: undefined` members to object unions.
+    /// This should be set for error-message formatting (tsc doesn't optionalize
+    /// union members in diagnostics, only in quickinfo/hover).
+    skip_union_optionalize: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -79,6 +83,7 @@ impl<'a> TypeFormatter<'a> {
             max_union_members: 10,
             current_depth: 0,
             atom_cache: FxHashMap::default(),
+            skip_union_optionalize: false,
         }
     }
 
@@ -98,6 +103,7 @@ impl<'a> TypeFormatter<'a> {
             max_union_members: 10,
             current_depth: 0,
             atom_cache: FxHashMap::default(),
+            skip_union_optionalize: false,
         }
     }
 
@@ -129,6 +135,13 @@ impl<'a> TypeFormatter<'a> {
     /// Set the `file_id` of the currently-checked file.
     pub const fn with_current_file_id(mut self, file_id: u32) -> Self {
         self.current_file_id = Some(file_id);
+        self
+    }
+
+    /// Skip synthetic `?: undefined` member optionalization in union display.
+    /// Should be set when formatting types for error messages (not hover/quickinfo).
+    pub const fn with_diagnostic_mode(mut self) -> Self {
+        self.skip_union_optionalize = true;
         self
     }
 
@@ -814,8 +827,14 @@ impl<'a> TypeFormatter<'a> {
             ordered.push(TypeId::UNDEFINED);
         }
 
-        if let Some(normalized) = self.optionalize_object_union_members_for_display(&ordered) {
+        if !self.skip_union_optionalize
+            && let Some(normalized) = self.optionalize_object_union_members_for_display(&ordered)
+        {
             ordered = normalized;
+        }
+
+        if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
+            ordered = collapsed;
         }
 
         if ordered.len() > self.max_union_members {
@@ -831,6 +850,40 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_union_member(m))
             .collect();
         formatted.join(" | ")
+    }
+
+    fn collapse_same_enum_members_for_display(&self, members: &[TypeId]) -> Option<Vec<TypeId>> {
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut collapsed = Vec::with_capacity(members.len());
+        let mut shared_enum = None;
+        let mut saw_enum_member = false;
+
+        for &member in members {
+            if member == TypeId::NULL || member == TypeId::UNDEFINED {
+                collapsed.push(member);
+                continue;
+            }
+
+            let Some(def_id) = crate::type_queries::get_enum_def_id(self.interner, member) else {
+                collapsed.push(member);
+                continue;
+            };
+
+            saw_enum_member = true;
+            match shared_enum {
+                Some(existing) if existing == def_id => {}
+                Some(_) => return None,
+                None => {
+                    shared_enum = Some(def_id);
+                    collapsed.push(member);
+                }
+            }
+        }
+
+        saw_enum_member.then_some(collapsed)
     }
 
     fn optionalize_object_union_members_for_display(
@@ -1233,19 +1286,18 @@ impl<'a> TypeFormatter<'a> {
         let mut qualified_name = sym.escaped_name.to_string();
         let mut current_parent = sym.parent;
 
-        // tsc uses the shortest name for diagnostics: it only qualifies
-        // enum members with their parent enum name (e.g. `E.Member`).
-        // Namespace and module parents are NOT prepended — tsc prints
-        // `Foo`, not `Ns.Foo`. When disambiguation is needed (same name
-        // in multiple scopes), tsc resolves that through source-level
-        // qualification which is not available to the type formatter.
         use tsz_binder::symbol_flags;
+        let qualify_through_parents =
+            sym.has_any_flags(symbol_flags::ENUM | symbol_flags::ENUM_MEMBER);
+
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                // Only qualify with parent if it is an enum (enum members need
-                // `EnumName.MemberName`). Stop walking for all other parents
-                // (namespaces, modules, source files, blocks).
-                if parent_sym.has_any_flags(symbol_flags::ENUM) {
+                if parent_sym.has_any_flags(symbol_flags::ENUM)
+                    || (qualify_through_parents
+                        && parent_sym.has_any_flags(
+                            symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                        ))
+                {
                     qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
                     current_parent = parent_sym.parent;
                 } else {

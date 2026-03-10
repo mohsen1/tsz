@@ -76,8 +76,8 @@ impl<'a> CheckerState<'a> {
         // e.g., `42` → `number`, `"hello"` → `string`. This matches
         // tsc's getBaseTypeOfLiteralType applied before typeToString.
         let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
-        let type_str = self.format_type(widened_arg);
-        let constraint_str = self.format_type(constraint);
+        let type_str = self.format_type_diagnostic(widened_arg);
+        let constraint_str = self.format_type_diagnostic(constraint);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
@@ -105,8 +105,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let type_str = self.format_type(type_arg);
-        let constraint_str = self.format_type(constraint);
+        let type_str = self.format_type_diagnostic(type_arg);
+        let constraint_str = self.format_type_diagnostic(constraint);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
@@ -123,8 +123,8 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         idx: NodeIndex,
     ) {
-        let source_str = self.format_type(source_type);
-        let target_str = self.format_type(target_type);
+        let source_str = self.format_type_diagnostic(source_type);
+        let target_str = self.format_type_diagnostic(target_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,

@@ -332,6 +332,13 @@ impl<'a> CheckerContext<'a> {
             .with_namespace_module_names(&self.namespace_module_names)
     }
 
+    /// Create a type formatter configured for diagnostic error messages.
+    /// Skips union optionalization (synthetic `?: undefined` members) that
+    /// tsc only uses in hover/quickinfo, not in error messages.
+    pub fn create_diagnostic_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
+        self.create_type_formatter().with_diagnostic_mode()
+    }
+
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.
     ///
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`

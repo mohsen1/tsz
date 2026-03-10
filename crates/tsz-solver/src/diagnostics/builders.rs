@@ -28,7 +28,7 @@ pub struct DiagnosticBuilder<'a> {
 impl<'a> DiagnosticBuilder<'a> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         DiagnosticBuilder {
-            formatter: TypeFormatter::new(interner),
+            formatter: TypeFormatter::new(interner).with_diagnostic_mode(),
         }
     }
 
@@ -41,7 +41,7 @@ impl<'a> DiagnosticBuilder<'a> {
         symbol_arena: &'a tsz_binder::SymbolArena,
     ) -> Self {
         DiagnosticBuilder {
-            formatter: TypeFormatter::with_symbols(interner, symbol_arena),
+            formatter: TypeFormatter::with_symbols(interner, symbol_arena).with_diagnostic_mode(),
         }
     }
 
