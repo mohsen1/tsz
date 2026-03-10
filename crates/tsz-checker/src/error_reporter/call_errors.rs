@@ -111,35 +111,11 @@ impl<'a> CheckerState<'a> {
     fn format_call_parameter_type_for_diagnostic(
         &mut self,
         param_type: TypeId,
-        arg_type: TypeId,
+        _arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
         if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
             return display;
-        }
-
-        if self
-            .ctx
-            .arena
-            .get(arg_idx)
-            .is_some_and(|node| node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT)
-            && tsz_solver::type_queries::get_union_members(self.ctx.types, arg_type)
-                .is_some_and(|members| members.len() > 1)
-        {
-            return self.format_type_for_assignability_message(param_type);
-        }
-
-        if !tsz_solver::type_contains_undefined(self.ctx.types, param_type) {
-            return self.format_type_for_assignability_message(param_type);
-        }
-
-        if param_type == TypeId::UNDEFINED {
-            return self.format_type_for_assignability_message(param_type);
-        }
-
-        let without_undefined = tsz_solver::remove_undefined(self.ctx.types, param_type);
-        if without_undefined != TypeId::NEVER && without_undefined != param_type {
-            return self.format_type_for_assignability_message(without_undefined);
         }
 
         self.format_type_for_assignability_message(param_type)
