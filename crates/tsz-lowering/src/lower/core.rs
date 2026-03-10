@@ -75,6 +75,10 @@ pub(super) struct InterfaceParts {
     current_pass_base: u32,
     /// Counter within the current declaration pass.
     pass_local_counter: u32,
+    /// Forward declaration order for properties. Populated after reverse iteration
+    /// to give earlier declarations lower order numbers (matching tsc's property
+    /// enumeration for diagnostics like TS2740 "missing properties" lists).
+    pub(super) declaration_orders: rustc_hash::FxHashMap<Atom, u32>,
 }
 
 pub(super) enum PropertyMerge {
@@ -105,6 +109,7 @@ impl InterfaceParts {
             number_index: None,
             current_pass_base: 0,
             pass_local_counter: 0,
+            declaration_orders: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -433,6 +438,9 @@ impl<'a> TypeLowering<'a> {
             // Collect members using the arena-specific lowerer
             lowerer.collect_interface_members(&interface.members, &mut parts);
         }
+
+        // Assign declaration_order in FORWARD declaration order for diagnostics.
+        self.assign_forward_declaration_order_cross_file(&mut parts, declarations);
 
         let result = self.finish_interface_parts(parts, None);
 
@@ -1413,6 +1421,12 @@ impl<'a> TypeLowering<'a> {
             self.collect_interface_members(&interface.members, &mut parts);
         }
 
+        // Assign declaration_order in FORWARD declaration order for diagnostics.
+        // The reverse iteration above is needed for overload resolution priority,
+        // but TS2740 "missing properties" messages should list properties in the
+        // order they first appear across declarations (earliest declaration first).
+        self.assign_forward_declaration_order(&mut parts, declarations.iter().copied());
+
         if type_params.is_some() {
             self.pop_type_param_scope();
         }
@@ -1663,6 +1677,74 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Assign `declaration_order` values by iterating declarations in FORWARD order.
+    /// This gives earlier declarations lower order numbers, matching tsc's property
+    /// enumeration for diagnostics like TS2740 "missing properties: length, pop, ...".
+    fn assign_forward_declaration_order(
+        &self,
+        parts: &mut InterfaceParts,
+        declarations: impl Iterator<Item = NodeIndex>,
+    ) {
+        let mut counter: u32 = 0;
+        for decl_idx in declarations {
+            let Some(node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.arena.get_interface(node) else {
+                continue;
+            };
+            for &idx in &interface.members.nodes {
+                if let Some(name) = self.get_interface_member_name(idx) {
+                    parts.declaration_orders.entry(name).or_insert_with(|| {
+                        counter += 1;
+                        counter
+                    });
+                }
+            }
+        }
+    }
+
+    /// Cross-file variant of `assign_forward_declaration_order`.
+    fn assign_forward_declaration_order_cross_file(
+        &self,
+        parts: &mut InterfaceParts,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) {
+        let mut counter: u32 = 0;
+        for &(decl_idx, decl_arena) in declarations {
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            let lowerer = self.with_arena(decl_arena);
+            for &idx in &interface.members.nodes {
+                if let Some(name) = lowerer.get_interface_member_name(idx) {
+                    parts.declaration_orders.entry(name).or_insert_with(|| {
+                        counter += 1;
+                        counter
+                    });
+                }
+            }
+        }
+    }
+
+    /// Extract the property/method name from an interface member node.
+    fn get_interface_member_name(&self, idx: NodeIndex) -> Option<Atom> {
+        let member = self.arena.get(idx)?;
+        if let Some(sig) = self.arena.get_signature(member) {
+            return self.lower_signature_name(sig.name);
+        }
+        if (member.kind == syntax_kind_ext::GET_ACCESSOR
+            || member.kind == syntax_kind_ext::SET_ACCESSOR)
+            && let Some(accessor) = self.arena.get_accessor(member)
+        {
+            return self.lower_signature_name(accessor.name);
+        }
+        None
+    }
+
     fn finish_interface_parts(
         &self,
         parts: InterfaceParts,
@@ -1670,6 +1752,8 @@ impl<'a> TypeLowering<'a> {
     ) -> TypeId {
         let mut properties = Vec::with_capacity(parts.properties.len());
         for (name, entry) in parts.properties {
+            // Use forward declaration order when available (corrects reverse iteration order)
+            let forward_order = parts.declaration_orders.get(&name).copied();
             if let PropertyMerge::Method(methods) = entry {
                 let type_id = self.interner.callable(CallableShape {
                     call_signatures: methods.signatures,
@@ -1687,11 +1771,17 @@ impl<'a> TypeLowering<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: methods.declaration_order,
+                    declaration_order: forward_order.unwrap_or(methods.declaration_order),
                 });
-            } else if let PropertyMerge::Property(prop) = entry {
+            } else if let PropertyMerge::Property(mut prop) = entry {
+                if let Some(order) = forward_order {
+                    prop.declaration_order = order;
+                }
                 properties.push(prop);
-            } else if let PropertyMerge::Conflict(prop) = entry {
+            } else if let PropertyMerge::Conflict(mut prop) = entry {
+                if let Some(order) = forward_order {
+                    prop.declaration_order = order;
+                }
                 properties.push(prop);
             }
         }

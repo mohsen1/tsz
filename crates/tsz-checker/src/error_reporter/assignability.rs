@@ -671,13 +671,13 @@ impl<'a> CheckerState<'a> {
                 let tgt_str = self.format_type(*target_type);
                 let prop_list: Vec<String> = filtered_names
                     .iter()
-                    .take(5)
+                    .take(4)
                     .map(|name| self.ctx.types.resolve_atom_ref(**name).to_string())
                     .collect();
                 let props_joined = prop_list.join(", ");
-                // Use TS2740 when there are 5+ missing properties (tsc behavior)
-                if filtered_names.len() > 5 {
-                    let more_count = (filtered_names.len() - 5).to_string();
+                // Use TS2740 when there are 5+ missing properties (tsc shows first 4 + "and N more")
+                if filtered_names.len() > 4 {
+                    let more_count = (filtered_names.len() - 4).to_string();
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                         &[&src_str, &tgt_str, &props_joined, &more_count],
