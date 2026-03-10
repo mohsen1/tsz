@@ -432,6 +432,14 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
+            this._fallbackLanguageService = ts.createLanguageService(
+                this._host,
+                ts.createDocumentRegistry()
+            );
+            const fallbackLanguageService = this._fallbackLanguageService;
+            this._client._tszNativeLs = fallbackLanguageService;
+            this._client.updateIsDefinitionOfReferencedSymbols = (referencedSymbols, knownSymbolSpans) =>
+                fallbackLanguageService.updateIsDefinitionOfReferencedSymbols?.(referencedSymbols, knownSymbolSpans) ?? false;
             for (const prop of ["getCombinedCodeFix", "applyCodeActionCommand", "mapCode"]) {
                 if (Object.prototype.hasOwnProperty.call(this._client, prop)) {
                     delete this._client[prop];

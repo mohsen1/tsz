@@ -67,3 +67,31 @@ let a = new Foo<string>();
         "Should not emit TS2558 for correct type arg count, got: {codes:?}"
     );
 }
+
+#[test]
+fn test_type_reference_too_many_type_args() {
+    let codes = get_error_codes(
+        r#"
+interface Foo<T> { x: T; }
+let a: Foo<string, number>;
+"#,
+    );
+    assert!(
+        codes.contains(&2558),
+        "Should emit TS2558 for too many type args in type reference, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_type_reference_too_few_type_args() {
+    let codes = get_error_codes(
+        r#"
+interface Foo<T, U> { x: T; y: U; }
+let a: Foo<string>;
+"#,
+    );
+    assert!(
+        codes.contains(&2558),
+        "Should emit TS2558 for too few type args in type reference, got: {codes:?}"
+    );
+}

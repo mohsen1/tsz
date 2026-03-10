@@ -91,7 +91,9 @@ impl<'a> CheckerState<'a> {
             let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
-                self.resolve_identifier_symbol_in_type_position(qn.left)
+                self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
+                    .map(TypeSymbolResolution::Type)
+                    .unwrap_or_else(|| self.resolve_identifier_symbol_in_type_position(qn.left))
             } else {
                 TypeSymbolResolution::NotFound
             };
@@ -217,9 +219,7 @@ impl<'a> CheckerState<'a> {
         let member_sym_id_from_symbol = if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
         {
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_identifier_symbol_in_type_position(qn.left)
-            {
+            if let Some(sym_id) = self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left) {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     left_sym_for_missing = Some(sym_id);
                     left_module_specifier = symbol.import_module.clone();

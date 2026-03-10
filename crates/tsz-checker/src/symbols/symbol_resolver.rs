@@ -121,6 +121,43 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Check if a symbol is an `import =` alias that can serve as the left-hand
+    /// side of a qualified type name (e.g. `import b = require("m"); b.T`).
+    ///
+    /// These aliases are namespace-like anchors in qualified type positions even
+    /// when the alias itself is not a type. Bare uses (`let x: b`) remain
+    /// invalid; this only matters when the alias is followed by `.Member`.
+    fn is_import_equals_type_anchor(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<tsz_binder::BinderState>],
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders) else {
+            return false;
+        };
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|idx| idx.is_some())
+                .unwrap_or(NodeIndex::NONE)
+        };
+
+        decl_idx.is_some()
+            && self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+    }
+
     /// Resolve an identifier node to its symbol ID.
     ///
     /// This function walks the scope chain from the identifier's location upward,
@@ -338,6 +375,39 @@ impl<'a> CheckerState<'a> {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
         result
+    }
+
+    /// Resolve an identifier when it appears as the left-hand side of a
+    /// qualified type name (e.g. `Alias.Member`).
+    ///
+    /// This is slightly broader than ordinary type-position lookup because
+    /// `import =` aliases act as namespace-like anchors even when the alias
+    /// itself is value-only as a bare type.
+    pub(crate) fn resolve_identifier_symbol_as_qualified_type_anchor(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        match self.resolve_identifier_symbol_in_type_position(idx) {
+            TypeSymbolResolution::Type(sym_id) => {
+                let mut visited_aliases = Vec::new();
+                Some(
+                    self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                        .unwrap_or(sym_id),
+                )
+            }
+            TypeSymbolResolution::ValueOnly(sym_id)
+                if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>
+            {
+                self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                let mut visited_aliases = Vec::new();
+                Some(
+                    self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                        .unwrap_or(sym_id),
+                )
+            }
+            TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => None,
+        }
     }
 
     fn resolve_identifier_symbol_in_type_position_inner(
@@ -696,12 +766,21 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
+            let lib_binders = self.get_lib_binders();
             return match self.resolve_identifier_symbol_in_type_position(idx) {
                 TypeSymbolResolution::Type(sym_id) => {
                     // Preserve unresolved alias symbols in type position.
                     // `import X = require("...")` aliases may not resolve to a concrete
                     // target symbol, but `X` is still a valid namespace-like type query
                     // anchor (e.g., `typeof X.Member`).
+                    let resolved = self
+                        .resolve_alias_symbol(sym_id, visited_aliases)
+                        .unwrap_or(sym_id);
+                    TypeSymbolResolution::Type(resolved)
+                }
+                TypeSymbolResolution::ValueOnly(sym_id)
+                    if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>
+                {
                     let resolved = self
                         .resolve_alias_symbol(sym_id, visited_aliases)
                         .unwrap_or(sym_id);

@@ -444,6 +444,94 @@ fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_impo
 }
 
 #[test]
+fn test_semantic_diagnostics_skip_core_global_type_noise_for_no_lib_files() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "var x;\nexport { x };\nexport { x as y };\n".to_string(),
+    );
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "noLib": true
+            }
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.is_empty(),
+        "did not expect per-file semantic diagnostics for implicit noLib globals, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_keep_explicit_missing_global_type_names_for_no_lib_files() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "let x: Array<number>;\n".to_string(),
+    );
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "noLib": true
+            }
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64)
+                == Some(1)
+                && diag
+                    .get("start")
+                    .and_then(|start| start.get("offset"))
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(8)
+        }),
+        "expected explicit Array reference to remain a file-level error under noLib, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_respect_fourslash_module_none_directive() {
     let mut server = make_server();
     server.open_files.insert(

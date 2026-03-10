@@ -208,8 +208,8 @@ impl<'a> CheckerState<'a> {
                     && let Some(right_ident) = self.ctx.arena.get_identifier(right_node)
                     && let Some(left_node) = self.ctx.arena.get(qn.left)
                     && left_node.kind == SyntaxKind::Identifier as u16
-                    && let TypeSymbolResolution::Type(left_sym_id) =
-                        self.resolve_identifier_symbol_in_type_position(qn.left)
+                    && let Some(left_sym_id) =
+                        self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                 {
                     let lib_binders = self.get_lib_binders();
                     if let Some(left_symbol) = self
