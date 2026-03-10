@@ -1211,6 +1211,45 @@ function foo(v: number) {
     );
 }
 
+#[test]
+fn test_static_block_assignment_target_before_declaration_emits_ts2448() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C {
+    static {
+        getY = () => 1;
+    }
+}
+
+let getY: () => number;
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2448),
+        "Expected TS2448 for assignment target before declaration in static block. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_return_in_static_block_emits_ts18041_even_with_other_grammar_errors() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C {
+    static {
+        await 1;
+        return 1;
+    }
+}
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 18041),
+        "Expected TS18041 for return inside class static block. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Forward-reference class relationships should not trigger TS2506.
 /// Derived extends Base, where Base is declared after Derived.
 /// The `class_instance_resolution_set` recursion guard should not be

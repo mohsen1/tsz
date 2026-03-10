@@ -734,7 +734,7 @@ impl<'a> CheckerState<'a> {
 
             let declared_type = self.get_type_of_symbol(sym_id);
             // Check for TDZ violations (variable used before declaration in source order)
-            if self.check_tdz_violation(sym_id, idx, name) {
+            if self.check_tdz_violation(sym_id, idx, name, true) {
                 return TypeId::ERROR;
             }
             // Use check_flow_usage to integrate both DAA and type narrowing

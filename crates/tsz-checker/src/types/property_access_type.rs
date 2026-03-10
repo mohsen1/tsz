@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
                 {
                     let base_name = &base_ident.escaped_text;
-                    if self.check_tdz_violation(base_sym_id, access.expression, base_name) {
+                    if self.check_tdz_violation(base_sym_id, access.expression, base_name, true) {
                         return TypeId::ERROR;
                     }
                 }

@@ -871,6 +871,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        if self.find_enclosing_static_block(stmt_idx).is_some() {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                stmt_idx,
+                "A 'return' statement cannot be used inside a class static block.",
+                diagnostic_codes::A_RETURN_STATEMENT_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+            );
+            return;
+        }
+
         // TS1108: A 'return' statement can only be used within a function body.
         // In .d.ts files, TS1036 is emitted instead of TS1108.
         // Like TSC's grammarErrorOnFirstToken, suppress grammar errors when parse
