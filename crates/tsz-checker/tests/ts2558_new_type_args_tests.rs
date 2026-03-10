@@ -76,9 +76,10 @@ interface Foo<T> { x: T; }
 let a: Foo<string, number>;
 "#,
     );
+    // TSC emits TS2314 (not TS2558) for type reference arity mismatches
     assert!(
-        codes.contains(&2558),
-        "Should emit TS2558 for too many type args in type reference, got: {codes:?}"
+        codes.contains(&2314),
+        "Should emit TS2314 for too many type args in type reference, got: {codes:?}"
     );
 }
 
@@ -90,8 +91,9 @@ interface Foo<T, U> { x: T; y: U; }
 let a: Foo<string>;
 "#,
     );
+    // TSC emits TS2314 (not TS2558) for type reference arity mismatches
     assert!(
-        codes.contains(&2558),
-        "Should emit TS2558 for too few type args in type reference, got: {codes:?}"
+        codes.contains(&2314),
+        "Should emit TS2314 for too few type args in type reference, got: {codes:?}"
     );
 }

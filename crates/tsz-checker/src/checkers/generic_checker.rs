@@ -211,15 +211,23 @@ impl<'a> CheckerState<'a> {
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
         if got < min_required || got > max_expected {
-            let expected_str = if min_required == max_expected {
-                max_expected.to_string()
-            } else {
-                format!("{min_required}-{max_expected}")
-            };
+            // TS2314: Generic type 'X<T, U>' requires N type argument(s).
+            let lib_binders = self.get_lib_binders();
+            let base_name = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+            let display_name = Self::format_generic_display_name_with_interner(
+                &base_name,
+                &type_params,
+                self.ctx.types,
+            );
+            let count_str = max_expected.to_string();
             self.error_at_node_msg(
                 type_arg_error_anchor,
-                crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                &[&expected_str, &got.to_string()],
+                crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                &[&display_name, &count_str],
             );
             return;
         }
