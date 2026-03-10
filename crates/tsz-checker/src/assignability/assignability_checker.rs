@@ -23,7 +23,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::RelationCacheKey;
-use tsz_solver::TypeData;
 use tsz_solver::TypeId;
 use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
@@ -973,7 +972,6 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
     ) -> Option<bool> {
         use tsz_solver::TypeResolver;
-
         let target = self.evaluate_type_for_assignability(target);
         let target_def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target)?;
         if !self.ctx.is_numeric_enum(target_def_id) {
@@ -982,40 +980,41 @@ impl<'a> CheckerState<'a> {
 
         let source_literal = self.literal_type_from_initializer(source_idx);
         let source_is_number_like = source == TypeId::NUMBER
-            || matches!(
-                source_literal.and_then(|lit| self.ctx.types.lookup(lit)),
-                Some(TypeData::Literal(tsz_solver::LiteralValue::Number(_)))
-            );
+            || source_literal.is_some_and(|lit| {
+                tsz_solver::type_queries::extended::is_number_literal(self.ctx.types, lit)
+            });
         if !source_is_number_like {
             return None;
         }
 
         if self.ctx.is_enum_type(target, self.ctx.types) {
             if let Some(source_literal) = source_literal {
-                let structural_target = match self.ctx.types.lookup(target) {
-                    Some(TypeData::Enum(_, member_type)) => member_type,
-                    _ => target,
-                };
+                let structural_target =
+                    tsz_solver::type_queries::data::get_enum_member_type(self.ctx.types, target)
+                        .unwrap_or(target);
                 return Some(self.is_assignable_to(source_literal, structural_target));
             }
             return None;
         }
 
-        let target_literal = match self.ctx.types.lookup(target) {
-            Some(TypeData::Enum(_, member_type)) => {
-                tsz_solver::literal_value(self.ctx.types, member_type)
-            }
-            _ => return None,
-        };
+        let target_member =
+            tsz_solver::type_queries::data::get_enum_member_type(self.ctx.types, target);
+        let target_literal =
+            target_member.and_then(|member| tsz_solver::literal_value(self.ctx.types, member));
+
+        target_member?;
 
         match source_literal {
-            Some(source_literal) => match (self.ctx.types.lookup(source_literal), target_literal) {
-                (
-                    Some(TypeData::Literal(tsz_solver::LiteralValue::Number(source_num))),
-                    Some(tsz_solver::LiteralValue::Number(target_num)),
-                ) => Some(source_num == target_num),
-                _ => Some(false),
-            },
+            Some(source_literal) => {
+                let source_val = tsz_solver::literal_value(self.ctx.types, source_literal);
+                match (source_val, target_literal) {
+                    (
+                        Some(tsz_solver::LiteralValue::Number(source_num)),
+                        Some(tsz_solver::LiteralValue::Number(target_num)),
+                    ) => Some(source_num == target_num),
+                    _ => Some(false),
+                }
+            }
             None => (source == TypeId::NUMBER).then_some(true),
         }
     }
