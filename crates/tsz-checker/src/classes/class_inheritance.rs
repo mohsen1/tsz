@@ -34,6 +34,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
         // Collect parent symbols from heritage clauses
         let mut parent_symbols = Vec::new();
+        let mut seen_extends = false;
         if let Some(heritage_clauses) = &class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
                 let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
@@ -42,6 +43,10 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                     continue;
                 }
+                if seen_extends {
+                    continue;
+                }
+                seen_extends = true;
                 let Some(&type_idx) = heritage.types.nodes.first() else {
                     continue;
                 };
