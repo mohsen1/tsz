@@ -1411,11 +1411,18 @@ impl<'a> CheckerState<'a> {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
                     if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
-                        self.check_assignable_or_report_at(
-                            TypeId::BOOLEAN_TRUE,
-                            expected_type,
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let target_str = self.format_type(expected_type);
+                        let message = format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &["true", &target_str],
+                        );
+                        self.error_at_node(
                             attr_data.name,
-                            attr_data.name,
+                            &message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         );
                     }
                     continue;
