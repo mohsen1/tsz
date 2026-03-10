@@ -297,13 +297,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
-            let maybe_evaluated = if tsz_solver::keyof_inner_type(self.ctx.types, display_type)
-                .is_some()
-            {
-                self.evaluate_type_for_assignability(display_type)
-            } else {
-                display_type
-            };
+            let maybe_evaluated =
+                if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
+                    self.evaluate_type_for_assignability(display_type)
+                } else {
+                    display_type
+                };
             let display_type = tsz_solver::widening::widen_type(self.ctx.types, maybe_evaluated);
             let formatted = self.format_type_for_assignability_message(display_type);
             let resolved_for_access = self.resolve_type_for_property_access(display_type);
@@ -386,12 +385,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !matches!(
-            self.ctx.types.lookup(self.evaluate_type_for_assignability(target)),
-            Some(tsz_solver::TypeData::Enum(_, _))
-                | Some(tsz_solver::TypeData::Union(_))
-                | Some(tsz_solver::TypeData::Intersection(_))
-        )
+        let target = self.evaluate_type_for_assignability(target);
+        tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_none()
+            && tsz_solver::type_queries::get_union_members(self.ctx.types, target).is_none()
+            && tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, target)
+                .is_none()
     }
 
     pub(super) fn unresolved_unused_renaming_property_in_type_query(
