@@ -1221,17 +1221,17 @@ impl<'a> CheckerState<'a> {
                                             && parent_node.kind == syntax_kind_ext::NAMED_EXPORTS
                                             && let Some(grandparent_ext) =
                                                 self.ctx.arena.get_extended(parent)
+                                        {
+                                            let gp = grandparent_ext.parent;
+                                            if let Some(gp_node) = self.ctx.arena.get(gp)
+                                                && gp_node.kind
+                                                    == syntax_kind_ext::EXPORT_DECLARATION
+                                                && let Some(export_decl) =
+                                                    self.ctx.arena.get_export_decl(gp_node)
                                             {
-                                                let gp = grandparent_ext.parent;
-                                                if let Some(gp_node) = self.ctx.arena.get(gp)
-                                                    && gp_node.kind
-                                                        == syntax_kind_ext::EXPORT_DECLARATION
-                                                    && let Some(export_decl) =
-                                                        self.ctx.arena.get_export_decl(gp_node)
-                                                {
-                                                    return export_decl.module_specifier.is_some();
-                                                }
+                                                return export_decl.module_specifier.is_some();
                                             }
+                                        }
                                     }
                                     false
                                 } else {
