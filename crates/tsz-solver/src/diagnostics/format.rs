@@ -834,7 +834,7 @@ impl<'a> TypeFormatter<'a> {
         }
 
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
-            ordered = collapsed;
+            return collapsed;
         }
 
         if ordered.len() > self.max_union_members {
@@ -852,38 +852,54 @@ impl<'a> TypeFormatter<'a> {
         formatted.join(" | ")
     }
 
-    fn collapse_same_enum_members_for_display(&self, members: &[TypeId]) -> Option<Vec<TypeId>> {
+    fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {
         if members.len() < 2 {
             return None;
         }
 
-        let mut collapsed = Vec::with_capacity(members.len());
-        let mut shared_enum = None;
+        let mut rendered = Vec::with_capacity(members.len());
+        let mut shared_enum_name: Option<String> = None;
         let mut saw_enum_member = false;
+        let mut enum_member_count = 0usize;
 
         for &member in members {
             if member == TypeId::NULL || member == TypeId::UNDEFINED {
-                collapsed.push(member);
+                rendered.push(self.format_union_member(member));
                 continue;
             }
 
-            let Some(def_id) = crate::type_queries::get_enum_def_id(self.interner, member) else {
-                collapsed.push(member);
+            let Some(enum_name) = self.enum_member_parent_name_for_display(member) else {
+                rendered.push(self.format_union_member(member));
                 continue;
             };
 
             saw_enum_member = true;
-            match shared_enum {
-                Some(existing) if existing == def_id => {}
+            enum_member_count += 1;
+            match shared_enum_name.as_ref() {
+                Some(existing) if existing == &enum_name => {}
                 Some(_) => return None,
                 None => {
-                    shared_enum = Some(def_id);
-                    collapsed.push(member);
+                    shared_enum_name = Some(enum_name.clone());
+                    rendered.push(enum_name);
                 }
             }
         }
 
-        saw_enum_member.then_some(collapsed)
+        (saw_enum_member && enum_member_count > 1).then_some(rendered.join(" | "))
+    }
+
+    fn enum_member_parent_name_for_display(&mut self, type_id: TypeId) -> Option<String> {
+        let def_id = crate::type_queries::get_enum_def_id(self.interner, type_id)?;
+        let def_store = self.def_store?;
+        let sym_id = def_store.get(def_id)?.symbol_id?;
+        let arena = self.symbol_arena?;
+        let symbol = arena.get(SymbolId(sym_id))?;
+        use tsz_binder::symbol_flags;
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+        let parent = arena.get(symbol.parent)?;
+        Some(parent.escaped_name.to_string())
     }
 
     fn optionalize_object_union_members_for_display(
@@ -969,6 +985,10 @@ impl<'a> TypeFormatter<'a> {
     /// TSC parenthesizes intersection types `(A & B) | (C & D)`, function types
     /// `(() => string) | (() => number)`, and constructor types in union positions.
     fn format_union_member(&mut self, id: TypeId) -> String {
+        if let Some(enum_name) = self.short_enum_name_for_union_display(id) {
+            return enum_name;
+        }
+
         let formatted = self.format(id);
         let needs_parens = matches!(
             self.interner.lookup(id),
@@ -979,6 +999,26 @@ impl<'a> TypeFormatter<'a> {
         } else {
             formatted.into_owned()
         }
+    }
+
+    fn short_enum_name_for_union_display(&mut self, type_id: TypeId) -> Option<String> {
+        let def_id = crate::type_queries::get_enum_def_id(self.interner, type_id)?;
+        let def_store = self.def_store?;
+        let sym_id = def_store.get(def_id)?.symbol_id?;
+        let arena = self.symbol_arena?;
+        let symbol = arena.get(SymbolId(sym_id))?;
+        use tsz_binder::symbol_flags;
+
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            let parent = arena.get(symbol.parent)?;
+            return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
+        }
+
+        if symbol.has_any_flags(symbol_flags::ENUM) {
+            return Some(symbol.escaped_name.to_string());
+        }
+
+        None
     }
 
     fn format_intersection(&mut self, members: &[TypeId]) -> String {
@@ -1287,19 +1327,26 @@ impl<'a> TypeFormatter<'a> {
         let mut current_parent = sym.parent;
 
         use tsz_binder::symbol_flags;
-        let qualify_through_parents =
-            sym.has_any_flags(symbol_flags::ENUM | symbol_flags::ENUM_MEMBER);
+        let qualify_namespaces_for_enum_type =
+            sym.has_any_flags(symbol_flags::ENUM) && !sym.has_any_flags(symbol_flags::ENUM_MEMBER);
 
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
                 if parent_sym.has_any_flags(symbol_flags::ENUM)
-                    || (qualify_through_parents
+                    || (qualify_namespaces_for_enum_type
                         && parent_sym.has_any_flags(
                             symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
                         ))
                 {
                     qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
                     current_parent = parent_sym.parent;
+                    if sym.has_any_flags(symbol_flags::ENUM_MEMBER)
+                        && !parent_sym.has_any_flags(
+                            symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                        )
+                    {
+                        break;
+                    }
                 } else {
                     break;
                 }
