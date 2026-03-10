@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
             );
-        } else if self.ctx.binder.is_external_module() {
+        } else if self.ctx.is_external_module_file() {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                 &[escaped_text],
@@ -178,12 +178,34 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let message = format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]);
-        self.error_at_node(
-            name_idx,
-            &message,
-            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-        );
+        let in_class = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|class| !class.is_declared);
+        let (message, code) = if in_class {
+            (
+                format_message(
+                    diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    &[name],
+                ),
+                diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+            )
+        } else if self.ctx.is_external_module_file() {
+            (
+                format_message(
+                    diagnostic_messages::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+                    &[name],
+                ),
+                diagnostic_codes::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+            )
+        } else {
+            (
+                format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]),
+                diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+            )
+        };
+        self.error_at_node(name_idx, &message, code);
     }
 
     // =========================================================================

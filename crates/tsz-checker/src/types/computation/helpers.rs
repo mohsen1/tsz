@@ -955,7 +955,10 @@ impl<'a> CheckerState<'a> {
                     && self.ctx.arena.get(operand_idx).is_some_and(|operand_node| {
                         operand_node.kind == SyntaxKind::Identifier as u16
                     });
-                let suppress_delete_identifier_error = self.has_syntax_parse_errors();
+                let suppress_delete_identifier_error = self.has_syntax_parse_errors()
+                    && (self.node_span_contains_parse_error(idx)
+                        || (operand_idx.is_some()
+                            && self.node_span_contains_parse_error(operand_idx)));
                 if is_identifier_operand
                     && self.is_strict_mode_for_node(idx)
                     && !suppress_delete_identifier_error

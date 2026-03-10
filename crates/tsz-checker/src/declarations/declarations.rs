@@ -163,38 +163,38 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             && crate::state_checking::is_eval_or_arguments(&ident.escaped_text)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            if ident.escaped_text == "arguments"
-                && self
-                    .ctx
-                    .enclosing_class
-                    .as_ref()
-                    .is_some_and(|c| !c.is_declared)
-            {
-                let message = format_message(
-                    diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                    &[&ident.escaped_text],
-                );
-                if let Some((pos, end)) = self.ctx.get_node_span(decl_data.name) {
-                    self.ctx.error(
-                        pos,
-                        end - pos,
-                        message,
-                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                    );
-                }
+            let in_class = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| !c.is_declared);
+            let (message, code) = if in_class {
+                (
+                    format_message(
+                        diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        &[&ident.escaped_text],
+                    ),
+                    diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                )
+            } else if self.is_external_module() {
+                (
+                    format_message(
+                        diagnostic_messages::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    ),
+                    diagnostic_codes::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+                )
             } else {
-                let message = format_message(
-                    diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE,
-                    &[&ident.escaped_text],
-                );
-                if let Some((pos, end)) = self.ctx.get_node_span(decl_data.name) {
-                    self.ctx.error(
-                        pos,
-                        end - pos,
-                        message,
-                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                    );
-                }
+                (
+                    format_message(
+                        diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    ),
+                    diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                )
+            };
+            if let Some((pos, end)) = self.ctx.get_node_span(decl_data.name) {
+                self.ctx.error(pos, end - pos, message, code);
             }
         }
     }
@@ -253,15 +253,35 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let message =
-                    format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]);
-                if let Some((pos, end)) = self.ctx.get_node_span(func.name) {
-                    self.ctx.error(
-                        pos,
-                        end - pos,
-                        message,
+                let in_class = self
+                    .ctx
+                    .enclosing_class
+                    .as_ref()
+                    .is_some_and(|c| !c.is_declared);
+                let (message, code) = if in_class {
+                    (
+                        format_message(
+                            diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                            &[name],
+                        ),
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    )
+                } else if self.is_external_module() {
+                    (
+                        format_message(
+                            diagnostic_messages::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+                            &[name],
+                        ),
+                        diagnostic_codes::INVALID_USE_OF_MODULES_ARE_AUTOMATICALLY_IN_STRICT_MODE,
+                    )
+                } else {
+                    (
+                        format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]),
                         diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                    );
+                    )
+                };
+                if let Some((pos, end)) = self.ctx.get_node_span(func.name) {
+                    self.ctx.error(pos, end - pos, message, code);
                 }
             }
         }

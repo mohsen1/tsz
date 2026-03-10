@@ -264,7 +264,7 @@ impl<'a> CheckerState<'a> {
         // Like TSC's grammarErrorOnNode, suppress all grammar errors (TS1105, TS1107, TS1116)
         // for break/continue when the file has parser-generated syntax errors.
         // TSC checks hasParseDiagnostics(sourceFile) before emitting these grammar errors.
-        if self.has_syntax_parse_errors() {
+        if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(stmt_idx) {
             return;
         }
 
@@ -296,11 +296,19 @@ impl<'a> CheckerState<'a> {
                 // Otherwise, labeled break is valid (can target any label, not just iteration)
             } else {
                 // Label not found - emit TS1116
-                self.error_at_node(
-                    stmt_idx,
-                    "A 'break' statement can only jump to a label of an enclosing statement.",
-                    diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_STATEMENT,
-                );
+                if self.ctx.function_depth > 0 || self.find_enclosing_function(stmt_idx).is_some() {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'break' statement can only jump to a label of an enclosing statement.",
+                        diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_STATEMENT,
+                    );
+                }
             }
         } else {
             // Unlabeled break - must be inside iteration or switch
@@ -338,7 +346,7 @@ impl<'a> CheckerState<'a> {
 
         // Like TSC's grammarErrorOnNode, suppress grammar errors (TS1104, TS1107, TS1115)
         // for continue when the file has parser-generated syntax errors.
-        if self.has_syntax_parse_errors() {
+        if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(stmt_idx) {
             return;
         }
 

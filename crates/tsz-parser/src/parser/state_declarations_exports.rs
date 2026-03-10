@@ -28,6 +28,7 @@ impl ParserState {
     // export class C {}
     pub(crate) fn parse_export_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ExportKeyword);
 
         // Check for type-only export vs export type alias
@@ -123,6 +124,7 @@ impl ParserState {
         start_pos: u32,
         decorators: Option<crate::parser::NodeList>,
     ) -> NodeIndex {
+        self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ExportKeyword);
 
         if self.is_token(SyntaxKind::DefaultKeyword) {

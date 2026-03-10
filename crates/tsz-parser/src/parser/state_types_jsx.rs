@@ -301,19 +301,7 @@ impl ParserState {
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
             if self.in_generator_context() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let is_class_context = self.in_class_body() || self.in_class_member_name();
-                if is_class_context {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        "Identifier expected. 'yield' is a reserved word in strict mode.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    );
-                }
+                self.report_yield_reserved_word_error();
             }
 
             // Advance manually because we are returning early in this branch.

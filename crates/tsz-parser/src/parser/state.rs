@@ -128,6 +128,8 @@ pub struct ParserState {
     /// Stack of label scopes for duplicate label detection (TS1114)
     /// Each scope is a map from label name to the position where it was first defined
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
+    /// Whether a top-level import/export has been seen in the current file.
+    pub(crate) seen_module_indicator: bool,
 }
 
 impl ParserState {
@@ -163,6 +165,7 @@ impl ParserState {
             recursion_depth: 0,
             last_error_pos: 0,
             label_scopes: vec![FxHashMap::default()],
+            seen_module_indicator: false,
         }
     }
 
@@ -178,6 +181,7 @@ impl ParserState {
         self.last_error_pos = 0;
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
+        self.seen_module_indicator = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -482,6 +486,32 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_IN_CLASS) != 0
     }
 
+    #[inline]
+    pub(crate) const fn in_module_context(&self) -> bool {
+        self.seen_module_indicator
+    }
+
+    pub(crate) fn report_yield_reserved_word_error(&mut self) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if self.in_class_body() || self.in_class_member_name() {
+            self.parse_error_at_current_token(
+                "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+        } else if self.in_module_context() {
+            self.parse_error_at_current_token(
+                "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+            );
+        } else {
+            self.parse_error_at_current_token(
+                "Identifier expected. 'yield' is a reserved word in strict mode.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
+        }
+    }
+
     /// Check if we're inside a static block
     #[inline]
     pub(crate) const fn in_static_block_context(&self) -> bool {
@@ -577,18 +607,7 @@ impl ParserState {
                 && self.scanner.get_token_value_ref() == "yield");
 
         if is_yield && self.in_generator_context() {
-            let is_class_context = self.in_class_body() || self.in_class_member_name();
-            if is_class_context {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                );
-            } else {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'yield' is a reserved word in strict mode.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                );
-            }
+            self.report_yield_reserved_word_error();
             return true;
         }
 
@@ -1481,10 +1500,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             let word = self.current_keyword_text();
             if self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context() {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'yield' is a reserved word in strict mode.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                );
+                self.report_yield_reserved_word_error();
                 // Consume the reserved word token to prevent cascading errors
                 self.next_token();
                 return;
