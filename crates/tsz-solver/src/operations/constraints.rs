@@ -1935,13 +1935,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 source_is_fresh,
                             );
                         } else {
-                            self.constrain_types(
-                                ctx,
-                                var_map,
-                                target.write_type,
-                                source.write_type,
-                                priority,
-                            );
+                            // Skip the reverse-direction write_type constraint when
+                            // write_type == type_id for both sides (the common case).
+                            // The type_id constraint above already handles it —
+                            // constrain_types(target.write_type, source.write_type)
+                            // goes in the contravariant direction and creates spurious
+                            // candidates that widen literals incorrectly.
+                            let write_type_differs = source.write_type != source.type_id
+                                || target.write_type != target.type_id;
+                            if write_type_differs {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    target.write_type,
+                                    source.write_type,
+                                    priority,
+                                );
+                            }
                         }
                     }
                     source_idx += 1;
