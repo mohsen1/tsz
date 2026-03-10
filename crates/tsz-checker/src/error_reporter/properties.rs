@@ -340,7 +340,8 @@ impl<'a> CheckerState<'a> {
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             )
-            .with_def_store(&self.ctx.definition_store);
+            .with_def_store(&self.ctx.definition_store)
+            .with_namespace_module_names(&self.ctx.namespace_module_names);
             let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
             // Use push_diagnostic for deduplication
             self.ctx
