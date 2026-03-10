@@ -9,12 +9,81 @@
 //! - Contextual sensitivity analysis (`is_contextually_sensitive`)
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId};
+use crate::operations::iterators::get_iterator_info;
+use crate::types::{
+    IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+};
 use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn is_string_like_type(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Intrinsic(IntrinsicKind::String))
+                | Some(TypeData::TemplateLiteral(_))
+                | Some(TypeData::Literal(LiteralValue::String(_)))
+        )
+    }
+
+    fn extract_iterable_yield_type(&mut self, target: TypeId) -> Option<TypeId> {
+        use crate::visitor::{
+            application_id, callable_shape_id, object_shape_id, object_with_index_shape_id,
+        };
+
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(target) {
+            let app = self.interner.type_application(app_id);
+            if let Some(&first_arg) = app.args.first() {
+                let evaluated = self.checker.evaluate_type(target);
+                if self.is_iterable_like_call_target(evaluated) {
+                    return Some(first_arg);
+                }
+            }
+        }
+
+        if let Some(iter_info) = get_iterator_info(self.interner, target, false) {
+            return Some(iter_info.yield_type);
+        }
+
+        let shape_id = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))?;
+        let shape = self.interner.object_shape(shape_id);
+        let sym_iter_atom = self.interner.intern_string("[Symbol.iterator]");
+        let iter_prop = shape
+            .properties
+            .binary_search_by_key(&sym_iter_atom, |p| p.name)
+            .ok()
+            .map(|idx| &shape.properties[idx])?;
+        let callable_id = callable_shape_id(self.interner, iter_prop.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+        let return_type = callable.call_signatures.first()?.return_type;
+        let app_id = application_id(self.interner, return_type)?;
+        let app = self.interner.type_application(app_id);
+        app.args.first().copied()
+    }
+
+    fn is_iterable_like_call_target(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                shape.properties.iter().any(|prop| {
+                    let name = self.interner.resolve_atom(prop.name);
+                    name == "__@iterator" || name == "[Symbol.iterator]"
+                })
+            }
+            Some(TypeData::Intersection(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.is_iterable_like_call_target(member)),
+            _ => false,
+        }
+    }
+
     fn function_signature_is_contextually_sensitive(&self, params: &[ParamInfo]) -> bool {
         params.iter().any(|param| {
             param.type_id == TypeId::ANY || self.type_uses_inference_placeholders(param.type_id)
@@ -231,6 +300,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.checker
                     .is_assignable_to(expanded_arg_type, effective_param_type)
             };
+            let assignable = assignable
+                || (self.is_string_like_type(expanded_arg_type)
+                    && self
+                        .extract_iterable_yield_type(effective_param_type)
+                        .is_some_and(|yield_type| {
+                            self.checker.is_assignable_to(TypeId::STRING, yield_type)
+                        }));
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
