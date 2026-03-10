@@ -332,17 +332,15 @@ impl<'a> TypePrinter<'a> {
 
         // Check if it's a class declaration/expression with a name
         if let Some(class_data) = node_arena.get_class(decl_node)
-            && let Some(name) = node_arena.get_identifier_text(class_data.name)
-        {
-            return Some(name.to_string());
-        }
+            && let Some(name) = node_arena.get_identifier_text(class_data.name) {
+                return Some(name.to_string());
+            }
 
         // Check if it's a function declaration with a name
         if let Some(func_data) = node_arena.get_function(decl_node)
-            && let Some(name) = node_arena.get_identifier_text(func_data.name)
-        {
-            return Some(name.to_string());
-        }
+            && let Some(name) = node_arena.get_identifier_text(func_data.name) {
+                return Some(name.to_string());
+            }
 
         None
     }

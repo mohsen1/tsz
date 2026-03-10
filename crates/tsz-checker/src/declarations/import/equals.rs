@@ -594,30 +594,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
             self.check_namespace_import(stmt_idx, module_specifier_idx);
-
-            // TS1288: An import alias cannot resolve to a type or type-only declaration
-            // when 'verbatimModuleSyntax' is enabled.
-            // Fires for `import f3 = Foo.T` when T is a pure type (type alias / interface).
-            if self.ctx.compiler_options.verbatim_module_syntax
-                && !import.is_type_only
-                && !self.ctx.is_declaration_file()
-            {
-                let pure_type_flags =
-                    tsz_binder::symbol_flags::TYPE_ALIAS | tsz_binder::symbol_flags::INTERFACE;
-                let value_flags = tsz_binder::symbol_flags::VARIABLE
-                    | tsz_binder::symbol_flags::FUNCTION
-                    | tsz_binder::symbol_flags::CLASS
-                    | tsz_binder::symbol_flags::ENUM
-                    | tsz_binder::symbol_flags::NAMESPACE;
-                if (resolved_flags & pure_type_flags) != 0 && (resolved_flags & value_flags) == 0 {
-                    self.error_at_node(
-                        stmt_idx,
-                        diagnostic_messages::AN_IMPORT_ALIAS_CANNOT_RESOLVE_TO_A_TYPE_OR_TYPE_ONLY_DECLARATION_WHEN_VERBATIMM,
-                        diagnostic_codes::AN_IMPORT_ALIAS_CANNOT_RESOLVE_TO_A_TYPE_OR_TYPE_ONLY_DECLARATION_WHEN_VERBATIMM,
-                    );
-                }
-            }
-
             return;
         }
 
@@ -646,19 +622,18 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.is_declaration_file()
             && !is_ambient_context
             && let Some(ref name) = import_name
-            && let Some(module_spec) = require_module_specifier.as_deref()
-            && self.is_import_specifier_type_only(module_spec, name)
-        {
-            let msg = format_message(
+                && let Some(module_spec) = require_module_specifier.as_deref()
+                && self.is_import_specifier_type_only(module_spec, name) {
+                    let msg = format_message(
                         crate::diagnostics::diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
                         &[name],
                     );
-            self.error_at_node(
+                    self.error_at_node(
                         stmt_idx,
                         &msg,
                         crate::diagnostics::diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
                     );
-        }
+                }
 
         if !self.ctx.report_unresolved_imports {
             return;
