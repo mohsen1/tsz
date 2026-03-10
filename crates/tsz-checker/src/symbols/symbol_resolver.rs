@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
         };
         let should_skip_lib_symbol =
             |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
-        let mut value_only_candidate = None;
+        let value_only_candidate = std::cell::Cell::new(None::<SymbolId>);
 
         // Check if this name exists in a local scope (namespace/module) that would shadow
         // the global lib symbol. If so, we skip the early lib_contexts check and let the
@@ -511,8 +511,8 @@ impl<'a> CheckerState<'a> {
                             || self.symbol_is_value_only(sym_id, None))
                             && !self.symbol_is_type_only(sym_id, None);
                         if is_value_only {
-                            if value_only_candidate.is_none() {
-                                value_only_candidate = Some(sym_id);
+                            if value_only_candidate.get().is_none() {
+                                value_only_candidate.set(Some(sym_id));
                             }
                         } else {
                             // Valid type symbol found in lib
@@ -523,7 +523,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut accept_type_symbol = |sym_id: SymbolId| -> bool {
+        let accept_type_symbol = |sym_id: SymbolId| -> bool {
             // Get symbol flags to check for special cases
             let flags = self
                 .ctx
@@ -563,8 +563,8 @@ impl<'a> CheckerState<'a> {
                 || self.symbol_is_value_only(sym_id, None))
                 && !self.symbol_is_type_only(sym_id, None);
             if is_value_only {
-                if value_only_candidate.is_none() {
-                    value_only_candidate = Some(sym_id);
+                if value_only_candidate.get().is_none() {
+                    value_only_candidate.set(Some(sym_id));
                 }
                 return false;
             }
@@ -656,7 +656,14 @@ impl<'a> CheckerState<'a> {
             },
         );
 
+        // Only search all binders if the local/scope resolution didn't already
+        // find a value-only candidate. When a local import alias resolved to a
+        // value-only symbol, searching other binders could find an unrelated type
+        // with the same name from a different file (e.g., `export type A` from
+        // a module that collided with `export * from` in a barrel file).
+        let has_value_only = value_only_candidate.get().is_some();
         if resolved.is_none()
+            && !has_value_only
             && let Some(sym_id) =
                 self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
                     if should_skip_lib_symbol(sym_id) {
@@ -704,7 +711,7 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(sym_id);
         }
 
-        if let Some(value_only) = value_only_candidate {
+        if let Some(value_only) = value_only_candidate.get() {
             TypeSymbolResolution::ValueOnly(value_only)
         } else {
             TypeSymbolResolution::NotFound

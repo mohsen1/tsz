@@ -1198,7 +1198,14 @@ impl<'a> CheckerState<'a> {
                     .get_identifier_text(import_decl.import_clause)
                     == Some(name)
                 {
-                    return true;
+                    // Check if the target module's export= is type-only
+                    if let Some(module_specifier) = self.get_import_module_specifier(import_decl)
+                        && self.is_module_export_equals_type_only(&module_specifier)
+                    {
+                        // type-only through export= chain — skip
+                    } else {
+                        return true;
+                    }
                 }
                 continue;
             }
@@ -1220,10 +1227,14 @@ impl<'a> CheckerState<'a> {
                 && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
             {
                 // Also check cross-file type-only chain for default imports.
-                if let Some(module_specifier) = self.get_import_module_specifier(import_decl)
-                    && self.is_export_type_only_across_binders(&module_specifier, "default")
-                {
-                    // type-only through export chain — skip
+                if let Some(module_specifier) = self.get_import_module_specifier(import_decl) {
+                    if self.is_export_type_only_across_binders(&module_specifier, "default")
+                        || self.is_module_export_equals_type_only(&module_specifier)
+                    {
+                        // type-only through export chain or export= chain — skip
+                    } else {
+                        return true;
+                    }
                 } else {
                     return true;
                 }
