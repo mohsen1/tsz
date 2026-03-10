@@ -364,3 +364,35 @@ fn invalid_bigint_import_specifiers_preserve_followup_from_recovery() {
         );
     }
 }
+
+#[test]
+fn export_assignment_with_declare_modifier_emits_ts1120() {
+    // `declare export = x` should emit TS1120 at the position of `declare`
+    let source = "var x;\ndeclare export = x;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1120),
+        "Expected TS1120 for `declare export = x`, got: {codes:?}"
+    );
+    let ts1120 = diags.iter().find(|d| d.code == 1120).unwrap();
+    // `declare` starts at column 0 of line 2 (byte offset 7)
+    assert_eq!(ts1120.start, 7, "TS1120 should start at `declare` position");
+}
+
+#[test]
+fn export_assignment_with_export_declare_modifiers_emits_ts1120() {
+    // `export declare export = x` should emit TS1120 at the position of `export`
+    let source = "var x;\nexport declare export = x;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1120),
+        "Expected TS1120 for `export declare export = x`, got: {codes:?}"
+    );
+    let ts1120 = diags.iter().find(|d| d.code == 1120).unwrap();
+    // `export` starts at column 0 of line 2 (byte offset 7)
+    assert_eq!(ts1120.start, 7, "TS1120 should start at `export` position");
+}
