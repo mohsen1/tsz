@@ -147,6 +147,43 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             if evaluated == constraint {
                 return true;
             }
+
+            // When the evaluator lacks a resolver (e.g., during solver-only evaluation),
+            // `keyof Application(Boxified, [T])` can't be expanded to `keyof T`.
+            // Handle this by comparing inner KeyOf operands structurally: if both the
+            // member and constraint are KeyOf types, and their inner operands are
+            // type parameters with the same name, they're semantically equivalent.
+            // This occurs with for-in loops where flow narrowing produces
+            // `keyof Boxified<T> & string` but the mapped type uses `keyof T`.
+            let interner = self.evaluator.interner();
+            if let (Some(TypeData::KeyOf(member_inner)), Some(TypeData::KeyOf(constraint_inner))) =
+                (interner.lookup(member), interner.lookup(constraint))
+            {
+                // Direct inner match
+                if member_inner == constraint_inner {
+                    return true;
+                }
+                // If the member's inner type is an Application whose type argument
+                // is a type parameter matching the constraint's inner type parameter,
+                // they're equivalent: keyof Boxified<T> ≡ keyof T for homomorphic types.
+                if let Some(TypeData::Application(app_id)) = interner.lookup(member_inner) {
+                    let app = interner.type_application(app_id);
+                    if app.args.len() == 1 && app.args[0] == constraint_inner {
+                        return true;
+                    }
+                }
+                // Same-name type parameter match (different TypeIds, same Atom name)
+                if let (
+                    Some(TypeData::TypeParameter(member_tp)),
+                    Some(TypeData::TypeParameter(constraint_tp)),
+                ) = (
+                    interner.lookup(member_inner),
+                    interner.lookup(constraint_inner),
+                ) && member_tp.name == constraint_tp.name
+                {
+                    return true;
+                }
+            }
         }
 
         false
@@ -443,6 +480,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
         // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type
         // over K, without needing to expand the mapped type (which fails for TypeParameter K).
+
+        tracing::trace!(
+            mapped_constraint = mapped.constraint.0,
+            mapped_constraint_key = ?self.evaluator.interner().lookup(mapped.constraint),
+            index_type = self.index_type.0,
+            index_type_key = ?self.evaluator.interner().lookup(self.index_type),
+            "visit_mapped index access"
+        );
 
         // Only apply if no name remapping (as clause)
         if mapped.name_type.is_some() {
