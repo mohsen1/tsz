@@ -1329,6 +1329,17 @@ impl<'a> CheckerState<'a> {
         self.diagnose_assignment_failure(source, target, idx);
     }
 
+    /// Report a type not assignable error with detailed elaboration, preserving
+    /// the provided anchor exactly instead of walking to an assignment anchor.
+    pub fn error_type_not_assignable_with_reason_at_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+    }
+
     /// Report constructor accessibility mismatch error.
     pub(crate) fn error_constructor_accessibility_not_assignable(
         &mut self,

@@ -972,6 +972,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> Option<bool> {
+    ) -> Option<bool> {
         use tsz_solver::TypeResolver;
 
         let target = self.evaluate_type_for_assignability(target);
@@ -1018,6 +1019,34 @@ impl<'a> CheckerState<'a> {
             },
             None => (source == TypeId::NUMBER).then_some(true),
         }
+    }
+
+    /// Check assignability and emit TS2322/TS2345-style diagnostics anchored
+    /// exactly at `diag_idx`, without assignment-anchor rewriting.
+    pub(crate) fn check_assignable_or_report_at_exact_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+        if self.is_assignable_to(source, target)
+            || self.should_skip_weak_union_error(source, target, source_idx)
+        {
+            return true;
+        }
+        if self.try_elaborate_assignment_source_error(source_idx, target) {
+            return false;
+        }
+        self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+        false
     }
 
     /// Check assignability and emit a generic TS2322 diagnostic at `diag_idx`.
