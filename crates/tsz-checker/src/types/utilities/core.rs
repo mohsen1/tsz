@@ -387,13 +387,6 @@ impl<'a> CheckerState<'a> {
         type_id
     }
 
-    /// Widen number and boolean literal types for display in TS2367 messages,
-    /// but preserve string and bigint literals. tsc shows `'boolean'` not `'true'`
-    /// and `'number'` not `'0'`, but keeps `'"foo"'` as-is.
-    pub(crate) fn widen_non_string_literal_for_display(&self, type_id: TypeId) -> TypeId {
-        tsz_solver::widen_non_string_bigint_literal(self.ctx.types, type_id)
-    }
-
     /// Check if a type is an enum member type (not the parent enum type).
     ///
     /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
