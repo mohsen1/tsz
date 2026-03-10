@@ -993,7 +993,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 || k == syntax_kind_ext::EMPTY_STATEMENT
         );
 
-        if is_non_declaration && !*reported_generic_ambient_statement_error {
+        if is_non_declaration
+            && !*reported_generic_ambient_statement_error
+            && !self.ctx.has_syntax_parse_errors
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(

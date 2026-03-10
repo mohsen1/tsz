@@ -300,8 +300,9 @@ impl<'a> CheckerState<'a> {
 
             let prev_unreachable = self.ctx.is_unreachable;
             let prev_reported = self.ctx.has_reported_unreachable;
+            let suppress_grammar = self.has_syntax_parse_errors();
             for &stmt_idx in &sf.statements.nodes {
-                if is_dts {
+                if is_dts && !suppress_grammar {
                     self.check_dts_statement_in_ambient_context(stmt_idx);
                 }
                 self.check_statement(stmt_idx);
