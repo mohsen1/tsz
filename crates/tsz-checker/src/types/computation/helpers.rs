@@ -1247,6 +1247,12 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
+                if let Some(ident) = self.ctx.arena.get_identifier(node)
+                    && self.check_tdz_violation(sym_id, idx, &ident.escaped_text, false)
+                {
+                    return TypeId::ERROR;
+                }
+
                 // Check if this is "arguments" in a function body with a local declaration
                 if let Some(ident) = self.ctx.arena.get_identifier(node) {
                     if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {

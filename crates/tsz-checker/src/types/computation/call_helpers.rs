@@ -17,6 +17,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         idx: NodeIndex,
         name: &str,
+        emit_unassigned_companion: bool,
     ) -> bool {
         // Skip TDZ checks in cross-arena delegation context.
         // TDZ compares node positions, which are meaningless when the usage node
@@ -78,7 +79,8 @@ impl<'a> CheckerState<'a> {
             // - Heritage clauses → NO companion
             // - Class/enum declarations → NO companion (they get TS2449/TS2450)
             // - Variables typed as `any`/`unknown`/`undefined` → NO companion
-            if !is_tdz_in_property_initializer
+            if emit_unassigned_companion
+                && !is_tdz_in_property_initializer
                 && !is_tdz_in_heritage_clause
                 && !self.is_in_static_property_initializer_ast_context(idx)
                 && !self.is_in_binding_element_default_initializer(idx)
