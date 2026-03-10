@@ -1125,6 +1125,21 @@ class C {}
     );
 }
 
+#[test]
+fn test_duplicate_extends_clause_does_not_create_false_base_cycle() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C extends A implements B extends C {
+}
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 from recovery-only duplicate extends clause. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Forward-reference class relationships should not trigger TS2506.
 /// Derived extends Base, where Base is declared after Derived.
 /// The `class_instance_resolution_set` recursion guard should not be
