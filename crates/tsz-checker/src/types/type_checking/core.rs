@@ -975,9 +975,16 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.in_constructor);
 
-        // TSC anchors TS2322 at the return statement node (the `return` keyword),
-        // not at the return value expression.
-        let error_node = stmt_idx;
+        // Use the return expression as the source anchor for failure analysis so
+        // branch/literal elaboration can drill into nested expressions, but keep
+        // the `return` statement as the fallback diagnostic anchor when no
+        // elaboration is available.
+        let source_error_node = if return_data.expression.is_some() {
+            return_data.expression
+        } else {
+            stmt_idx
+        };
+        let fallback_error_node = stmt_idx;
 
         // In constructors, bare `return;` (without expression) is always allowed — TSC
         // doesn't check assignability for void returns in constructors.
@@ -991,14 +998,19 @@ impl<'a> CheckerState<'a> {
             && expected_type != TypeId::ANY
             && !self.type_contains_error(expected_type)
         {
-            let ok = self.check_assignable_or_report(return_type, expected_type, error_node);
+            let ok = self.check_assignable_or_report_at(
+                return_type,
+                expected_type,
+                source_error_node,
+                fallback_error_node,
+            );
             if !ok {
                 // TS2409: In constructors, also emit the constructor-specific diagnostic
                 // alongside the TS2322 already emitted by check_assignable_or_report.
                 if is_in_constructor {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
-                        error_node,
+                        fallback_error_node,
                         diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                         diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                     );
