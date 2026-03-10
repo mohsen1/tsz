@@ -7499,3 +7499,39 @@ function f3<T, K extends Extract<keyof T, string>>(t: T, k: K, tk: T[K]) {
         "Expected generic for-in indexed access to preserve Extract<keyof T, string> in TS2322.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_in_operator_still_requires_object_for_generic_indexed_access() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f54<T>(obj: T, key: keyof T) {
+    const b = "foo" in obj[key];
+}
+
+function f55<T, K extends keyof T>(obj: T, key: K) {
+    const b = "foo" in obj[key];
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'T[keyof T]' is not assignable to type 'object'")
+        }),
+        "Expected `in` RHS generic indexed access to error as object-incompatible.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'T[K]' is not assignable to type 'object'")
+        }),
+        "Expected `in` RHS keyed generic indexed access to error as object-incompatible.\nGot: {diagnostics:?}"
+    );
+}
