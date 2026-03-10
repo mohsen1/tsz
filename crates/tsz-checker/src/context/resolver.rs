@@ -618,4 +618,9 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
         false
     }
+
+    fn get_enum_namespace_type(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.def_to_symbol_id(def_id)?;
+        self.enum_namespace_types.get(&sym_id).copied()
+    }
 }

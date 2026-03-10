@@ -219,6 +219,10 @@ pub struct CheckerContext<'a> {
     /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
     pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
 
+    /// Cached namespace object types for enums (for `typeof Enum` / `keyof typeof Enum`).
+    /// Maps enum `SymbolId` → namespace object `TypeId` with member names as properties.
+    pub enum_namespace_types: FxHashMap<SymbolId, TypeId>,
+
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
 
