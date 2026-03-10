@@ -110,9 +110,9 @@ impl<'a> CheckerState<'a> {
                 .simple_type_reference_name(keyof_operand_idx)
                 .as_deref()
                 == Some(obj_name)
-            {
-                return true;
-            }
+        {
+            return true;
+        }
         // Fallback: compare AST structure for complex types like T["_type"]
         self.type_nodes_structurally_equal(keyof_operand_idx, object_node_idx)
     }
@@ -173,9 +173,10 @@ impl<'a> CheckerState<'a> {
                         let keyof_operand_name =
                             self.simple_type_reference_name(type_operator.type_node);
                         if let Some(keyof_name) = keyof_operand_name.as_deref()
-                            && self.type_param_extends_name(obj_name, keyof_name, node_idx) {
-                                return true;
-                            }
+                            && self.type_param_extends_name(obj_name, keyof_name, node_idx)
+                        {
+                            return true;
+                        }
                     }
                 }
                 // Check if the constraint is an intersection containing `keyof T`
@@ -407,12 +408,14 @@ impl<'a> CheckerState<'a> {
                     let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    if ident.escaped_text == param_name && tp.constraint != NodeIndex::NONE
+                    if ident.escaped_text == param_name
+                        && tp.constraint != NodeIndex::NONE
                         && let Some(constraint_ref_name) =
                             self.simple_type_reference_name(tp.constraint)
-                            && constraint_ref_name == constraint_name {
-                                return true;
-                            }
+                        && constraint_ref_name == constraint_name
+                    {
+                        return true;
+                    }
                 }
             }
             current = self
@@ -456,29 +459,27 @@ impl<'a> CheckerState<'a> {
             };
 
             if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node) {
-                    // Only suppress if we're in the true branch (child_idx came from true_type)
-                    if child_idx == cond.true_type
-                        || self.is_descendant_of(child_idx, cond.true_type)
-                    {
-                        // Check if the extends clause is `IndexName extends keyof ObjectName`
-                        let check_name = self.simple_type_reference_name(cond.check_type);
-                        if check_name.as_deref() == Some(&index_name) {
-                            // extends_type should be `keyof ObjectName`
-                            if let Some(extends_node) = self.ctx.arena.get(cond.extends_type)
-                                && let Some(type_op) =
-                                    self.ctx.arena.get_type_operator(extends_node)
-                                && type_op.operator == SyntaxKind::KeyOfKeyword as u16
-                                && self
-                                    .simple_type_reference_name(type_op.type_node)
-                                    .as_deref()
-                                    == Some(&object_name)
-                                {
-                                    return true;
-                                }
+                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+            {
+                // Only suppress if we're in the true branch (child_idx came from true_type)
+                if child_idx == cond.true_type || self.is_descendant_of(child_idx, cond.true_type) {
+                    // Check if the extends clause is `IndexName extends keyof ObjectName`
+                    let check_name = self.simple_type_reference_name(cond.check_type);
+                    if check_name.as_deref() == Some(&index_name) {
+                        // extends_type should be `keyof ObjectName`
+                        if let Some(extends_node) = self.ctx.arena.get(cond.extends_type)
+                            && let Some(type_op) = self.ctx.arena.get_type_operator(extends_node)
+                            && type_op.operator == SyntaxKind::KeyOfKeyword as u16
+                            && self
+                                .simple_type_reference_name(type_op.type_node)
+                                .as_deref()
+                                == Some(&object_name)
+                        {
+                            return true;
                         }
                     }
                 }
+            }
 
             child_idx = parent_idx;
             current = self
