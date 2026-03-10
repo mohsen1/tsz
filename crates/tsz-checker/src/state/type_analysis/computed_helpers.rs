@@ -208,24 +208,11 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a type alias directly circularly references itself (or
-    /// transitively through other type aliases currently being resolved).
-    ///
-    /// Returns true when a type alias resolves to itself or to another alias
-    /// in the current resolution chain, without structural wrapping.
-    /// Invalid examples: `type A = B; type B = A;`, `type T = T | string`
-    ///
-    /// Returns false for valid recursive types that use structural wrapping:
-    /// `type List = { value: number; next: List | null };`
-    ///
-    /// `in_union_or_intersection` is set when we are recursing into union/intersection
-    /// members. Per the TS spec, "a union type directly depends on each of the
-    /// constituent types", so union/intersection members don't need the
-    /// `is_simple_type_reference` check on the parent node.
-    ///
-    /// When a cycle is detected, all type alias symbols on the resolution stack
-    /// between the target and the current alias are marked in `circular_type_aliases`
-    /// so that each member of the cycle can independently emit TS2456.
+    /// Check if a type alias directly circularly references itself (or transitively
+    /// through other aliases being resolved). Returns true for `type A = B; type B = A`
+    /// but false for structurally wrapped recursion like `type List = { next: List | null }`.
+    /// `in_union_or_intersection` skips `is_simple_type_reference` for union/intersection
+    /// members per TS spec. Detected cycle marks all aliases on the resolution stack.
     #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn is_direct_circular_reference(
         &mut self,
@@ -432,15 +419,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Detect cross-file circular type alias cycles by following the Lazy chain
-    /// through the shared `DefinitionStore`.
-    ///
-    /// For cross-file cycles like `type A = B` (a.ts) + `type B = A` (b.ts),
-    /// `is_direct_circular_reference` fails because by the time we check A's body,
-    /// B has already been fully resolved and removed from `symbol_resolution_set`.
-    /// But B's body was set to `Lazy(DefId_A)` in the shared `DefinitionStore`.
-    ///
-    /// This method follows: `alias_type` → `Lazy(DefId_B)` → body → `Lazy(DefId_A)`
-    /// and checks if any DefId in the chain maps back to `sym_id`.
+    /// through `DefinitionStore`. Handles `type A = B` (a.ts) + `type B = A` (b.ts)
+    /// where `is_direct_circular_reference` fails because B is already resolved.
     pub(crate) fn is_cross_file_circular_alias(
         &self,
         sym_id: SymbolId,
@@ -610,7 +590,21 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::recursion::RecursionProfile;
         let mut guard =
             tsz_solver::recursion::RecursionGuard::with_profile(RecursionProfile::ShallowTraversal);
-        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, &mut guard)
+        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, false, &mut guard)
+    }
+
+    /// Like `type_requires_structure_of_symbol` but skips member types (object
+    /// properties, function params/returns). Used for TS2310 base-type cycle
+    /// detection — mirrors tsc's `hasBaseType` which only walks inheritance.
+    pub(crate) fn type_requires_structure_of_symbol_for_base_type(
+        &mut self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+    ) -> bool {
+        use tsz_solver::recursion::RecursionProfile;
+        let mut guard =
+            tsz_solver::recursion::RecursionGuard::with_profile(RecursionProfile::ShallowTraversal);
+        self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, true, &mut guard)
     }
 
     fn type_requires_structure_of_symbol_inner(
@@ -618,6 +612,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         target_sym: SymbolId,
         requires_structure: bool,
+        skip_members: bool,
         guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
     ) -> bool {
         let key = (type_id, requires_structure);
@@ -628,19 +623,19 @@ impl<'a> CheckerState<'a> {
             type_id,
             target_sym,
             requires_structure,
+            skip_members,
             guard,
         );
         guard.leave(key);
         result
     }
 
-    /// Inner implementation — called only from `type_requires_structure_of_symbol_inner`
-    /// which handles the `RecursionGuard` enter/leave.
     fn type_requires_structure_of_symbol_body(
         &mut self,
         type_id: TypeId,
         target_sym: SymbolId,
         requires_structure: bool,
+        skip_members: bool,
         guard: &mut tsz_solver::recursion::RecursionGuard<(TypeId, bool)>,
     ) -> bool {
         if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
@@ -684,6 +679,7 @@ impl<'a> CheckerState<'a> {
                     resolved_alias,
                     target_sym,
                     requires_structure,
+                    skip_members,
                     guard,
                 )
             {
@@ -703,6 +699,7 @@ impl<'a> CheckerState<'a> {
                 body,
                 target_sym,
                 requires_structure,
+                skip_members,
                 guard,
             )
         {
@@ -725,6 +722,7 @@ impl<'a> CheckerState<'a> {
                 resolved_lazy,
                 target_sym,
                 requires_structure,
+                skip_members,
                 guard,
             )
         {
@@ -744,6 +742,7 @@ impl<'a> CheckerState<'a> {
                 evaluated,
                 target_sym,
                 requires_structure,
+                skip_members,
                 guard,
             )
         {
@@ -757,52 +756,63 @@ impl<'a> CheckerState<'a> {
             | TypeTraversalKind::SymbolRef(_) => false,
             TypeTraversalKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
-                (requires_structure && shape.symbol == Some(target_sym))
-                    || shape.properties.iter().any(|prop| {
-                        self.type_requires_structure_of_symbol_inner(
-                            prop.type_id,
-                            target_sym,
-                            false,
-                            guard,
-                        ) || self.type_requires_structure_of_symbol_inner(
-                            prop.write_type,
-                            target_sym,
-                            false,
-                            guard,
-                        )
-                    })
-                    || shape.string_index.as_ref().is_some_and(|sig| {
-                        self.type_requires_structure_of_symbol_inner(
-                            sig.key_type,
-                            target_sym,
-                            false,
-                            guard,
-                        ) || self.type_requires_structure_of_symbol_inner(
-                            sig.value_type,
-                            target_sym,
-                            false,
-                            guard,
-                        )
-                    })
-                    || shape.number_index.as_ref().is_some_and(|sig| {
-                        self.type_requires_structure_of_symbol_inner(
-                            sig.key_type,
-                            target_sym,
-                            false,
-                            guard,
-                        ) || self.type_requires_structure_of_symbol_inner(
-                            sig.value_type,
-                            target_sym,
-                            false,
-                            guard,
-                        )
-                    })
+                if requires_structure && shape.symbol == Some(target_sym) {
+                    return true;
+                }
+                // skip_members: don't walk into properties (TS2310 base-type check)
+                if skip_members {
+                    return false;
+                }
+                shape.properties.iter().any(|prop| {
+                    self.type_requires_structure_of_symbol_inner(
+                        prop.type_id,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    ) || self.type_requires_structure_of_symbol_inner(
+                        prop.write_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    )
+                }) || shape.string_index.as_ref().is_some_and(|sig| {
+                    self.type_requires_structure_of_symbol_inner(
+                        sig.key_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    ) || self.type_requires_structure_of_symbol_inner(
+                        sig.value_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    )
+                }) || shape.number_index.as_ref().is_some_and(|sig| {
+                    self.type_requires_structure_of_symbol_inner(
+                        sig.key_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    ) || self.type_requires_structure_of_symbol_inner(
+                        sig.value_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    )
+                })
             }
             TypeTraversalKind::Members(members) => members.into_iter().any(|member| {
                 self.type_requires_structure_of_symbol_inner(
                     member,
                     target_sym,
                     requires_structure,
+                    skip_members,
                     guard,
                 )
             }),
@@ -810,6 +820,7 @@ impl<'a> CheckerState<'a> {
                 elem,
                 target_sym,
                 requires_structure,
+                skip_members,
                 guard,
             ),
             TypeTraversalKind::Tuple(list_id) => {
@@ -818,31 +829,44 @@ impl<'a> CheckerState<'a> {
                         elem.type_id,
                         target_sym,
                         requires_structure,
+                        skip_members,
                         guard,
                     )
                 })
             }
             TypeTraversalKind::Function(shape_id) => {
+                if skip_members {
+                    return false;
+                }
                 let shape = self.ctx.types.function_shape(shape_id);
                 shape.params.iter().any(|param| {
                     self.type_requires_structure_of_symbol_inner(
                         param.type_id,
                         target_sym,
                         false,
+                        skip_members,
                         guard,
                     )
                 }) || self.type_requires_structure_of_symbol_inner(
                     shape.return_type,
                     target_sym,
                     false,
+                    skip_members,
                     guard,
                 ) || shape.this_type.is_some_and(|this_type| {
                     self.type_requires_structure_of_symbol_inner(
-                        this_type, target_sym, false, guard,
+                        this_type,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
                     )
                 })
             }
             TypeTraversalKind::Callable(shape_id) => {
+                if skip_members {
+                    return false;
+                }
                 let shape = self.ctx.types.callable_shape(shape_id);
                 shape.call_signatures.iter().any(|sig| {
                     sig.params.iter().any(|param| {
@@ -850,12 +874,14 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             target_sym,
                             false,
+                            skip_members,
                             guard,
                         )
                     }) || self.type_requires_structure_of_symbol_inner(
                         sig.return_type,
                         target_sym,
                         false,
+                        skip_members,
                         guard,
                     )
                 }) || shape.construct_signatures.iter().any(|sig| {
@@ -864,12 +890,14 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             target_sym,
                             false,
+                            skip_members,
                             guard,
                         )
                     }) || self.type_requires_structure_of_symbol_inner(
                         sig.return_type,
                         target_sym,
                         false,
+                        skip_members,
                         guard,
                     )
                 }) || shape.properties.iter().any(|prop| {
@@ -877,6 +905,7 @@ impl<'a> CheckerState<'a> {
                         prop.type_id,
                         target_sym,
                         false,
+                        skip_members,
                         guard,
                     )
                 })
@@ -890,6 +919,7 @@ impl<'a> CheckerState<'a> {
                         constraint,
                         target_sym,
                         requires_structure,
+                        skip_members,
                         guard,
                     )
                 }) || default.is_some_and(|default| {
@@ -897,15 +927,27 @@ impl<'a> CheckerState<'a> {
                         default,
                         target_sym,
                         requires_structure,
+                        skip_members,
                         guard,
                     )
                 })
             }
             TypeTraversalKind::Application { base, args, .. } => {
-                self.type_requires_structure_of_symbol_inner(base, target_sym, false, guard)
-                    || args.iter().any(|&arg| {
-                        self.type_requires_structure_of_symbol_inner(arg, target_sym, false, guard)
-                    })
+                self.type_requires_structure_of_symbol_inner(
+                    base,
+                    target_sym,
+                    false,
+                    skip_members,
+                    guard,
+                ) || args.iter().any(|&arg| {
+                    self.type_requires_structure_of_symbol_inner(
+                        arg,
+                        target_sym,
+                        false,
+                        skip_members,
+                        guard,
+                    )
+                })
             }
             TypeTraversalKind::Conditional(cond_id) => {
                 let cond = self.ctx.types.conditional_type(cond_id);
@@ -913,21 +955,25 @@ impl<'a> CheckerState<'a> {
                     cond.check_type,
                     target_sym,
                     true,
+                    skip_members,
                     guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.extends_type,
                     target_sym,
                     true,
+                    skip_members,
                     guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.true_type,
                     target_sym,
                     false,
+                    skip_members,
                     guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     cond.false_type,
                     target_sym,
                     false,
+                    skip_members,
                     guard,
                 )
             }
@@ -935,48 +981,89 @@ impl<'a> CheckerState<'a> {
                 let mapped = self.ctx.types.mapped_type(mapped_id);
                 mapped.type_param.constraint.is_some_and(|constraint| {
                     self.type_requires_structure_of_symbol_inner(
-                        constraint, target_sym, true, guard,
+                        constraint,
+                        target_sym,
+                        true,
+                        skip_members,
+                        guard,
                     )
                 }) || mapped.type_param.default.is_some_and(|default| {
-                    self.type_requires_structure_of_symbol_inner(default, target_sym, true, guard)
+                    self.type_requires_structure_of_symbol_inner(
+                        default,
+                        target_sym,
+                        true,
+                        skip_members,
+                        guard,
+                    )
                 }) || self.type_requires_structure_of_symbol_inner(
                     mapped.constraint,
                     target_sym,
                     true,
+                    skip_members,
                     guard,
                 ) || self.type_requires_structure_of_symbol_inner(
                     mapped.template,
                     target_sym,
                     false,
+                    skip_members,
                     guard,
                 ) || mapped.name_type.is_some_and(|name_type| {
-                    self.type_requires_structure_of_symbol_inner(name_type, target_sym, true, guard)
+                    self.type_requires_structure_of_symbol_inner(
+                        name_type,
+                        target_sym,
+                        true,
+                        skip_members,
+                        guard,
+                    )
                 })
             }
             TypeTraversalKind::IndexAccess {
                 object: object_type,
                 index: index_type,
             } => {
-                self.type_requires_structure_of_symbol_inner(object_type, target_sym, true, guard)
-                    || self.type_requires_structure_of_symbol_inner(
-                        index_type, target_sym, true, guard,
-                    )
+                self.type_requires_structure_of_symbol_inner(
+                    object_type,
+                    target_sym,
+                    true,
+                    skip_members,
+                    guard,
+                ) || self.type_requires_structure_of_symbol_inner(
+                    index_type,
+                    target_sym,
+                    true,
+                    skip_members,
+                    guard,
+                )
             }
             TypeTraversalKind::TemplateLiteral(types) => types.into_iter().any(|type_id| {
-                self.type_requires_structure_of_symbol_inner(type_id, target_sym, false, guard)
+                self.type_requires_structure_of_symbol_inner(
+                    type_id,
+                    target_sym,
+                    false,
+                    skip_members,
+                    guard,
+                )
             }),
-            TypeTraversalKind::KeyOf(inner) | TypeTraversalKind::Readonly(inner) => {
-                self.type_requires_structure_of_symbol_inner(inner, target_sym, true, guard)
-            }
-            TypeTraversalKind::StringIntrinsic(type_arg) => {
-                self.type_requires_structure_of_symbol_inner(type_arg, target_sym, false, guard)
-            }
+            TypeTraversalKind::KeyOf(inner) | TypeTraversalKind::Readonly(inner) => self
+                .type_requires_structure_of_symbol_inner(
+                    inner,
+                    target_sym,
+                    true,
+                    skip_members,
+                    guard,
+                ),
+            TypeTraversalKind::StringIntrinsic(type_arg) => self
+                .type_requires_structure_of_symbol_inner(
+                    type_arg,
+                    target_sym,
+                    false,
+                    skip_members,
+                    guard,
+                ),
         }
     }
 
-    /// Report TS2313 for mapped constraints inside a type alias once the alias is
-    /// instantiated with concrete type arguments that structurally depend on the
-    /// current base type target.
+    /// Report TS2313 for mapped constraints in instantiated type alias cycles.
     pub(crate) fn report_instantiated_type_alias_mapped_constraint_cycles(
         &mut self,
         alias_sym_id: SymbolId,
@@ -1147,6 +1234,7 @@ impl<'a> CheckerState<'a> {
                 arg,
                 current_sym,
                 true,
+                false,
                 &mut guard,
             );
         }
