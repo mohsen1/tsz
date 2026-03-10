@@ -259,6 +259,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
+    fn tuple_element_contains_void(&self, elem: &TupleElement) -> bool {
+        if elem.rest {
+            return false;
+        }
+        self.param_type_contains_void(elem.type_id)
+    }
+
     pub(crate) fn arg_count_bounds(&self, params: &[ParamInfo]) -> (usize, Option<usize>) {
         // Count required parameters, treating trailing `void`-containing params as optional.
         // In TypeScript, a parameter of type `void` (or union containing void like `number | void`)
@@ -365,18 +372,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn tuple_length_bounds(&self, elements: &[TupleElement]) -> (usize, Option<usize>) {
-        let mut min = 0usize;
         let mut max = 0usize;
         let mut variadic = false;
+        let mut fixed_elements = Vec::new();
 
         for elem in elements {
             if elem.rest {
                 let expansion = self.expand_tuple_rest(elem.type_id);
                 for fixed in expansion.fixed {
                     max += 1;
-                    if !fixed.optional {
-                        min += 1;
-                    }
+                    fixed_elements.push(fixed);
                 }
                 if expansion.variadic.is_some() {
                     variadic = true;
@@ -386,17 +391,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // after a variadic rest. E.g. [...T[], Required] has min=1.
                 for tail_elem in expansion.tail {
                     max += 1;
-                    if !tail_elem.optional {
-                        min += 1;
-                    }
+                    fixed_elements.push(tail_elem);
                 }
                 continue;
             }
             max += 1;
-            if !elem.optional {
-                min += 1;
-            }
+            fixed_elements.push(*elem);
         }
+
+        let min = fixed_elements
+            .iter()
+            .rposition(|elem| !elem.optional && !self.tuple_element_contains_void(elem))
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
 
         (min, if variadic { None } else { Some(max) })
     }
