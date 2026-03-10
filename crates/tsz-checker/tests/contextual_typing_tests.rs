@@ -199,3 +199,39 @@ test({
         "Expected literal source display in diagnostic, got {ts2322:?}"
     );
 }
+
+#[test]
+fn test_optional_function_property_return_elaboration() {
+    let source = r#"
+interface IBookStyle {
+    initialLeftPageTransforms?: (width: number) => NamedTransform[];
+}
+
+interface NamedTransform {
+    [name: string]: Transform3D;
+}
+
+interface Transform3D {
+    cachedCss: string;
+}
+
+var style: IBookStyle = {
+    initialLeftPageTransforms: (width: number) => {
+        return [
+            {'ry': null }
+        ];
+    }
+}
+"#;
+
+    let diagnostics = check_default(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got diagnostics={diagnostics:?}"));
+
+    assert!(
+        ts2322.message_text.contains("NamedTransform[]"),
+        "Expected function-property diagnostic after elaboration, got {ts2322:?}"
+    );
+}

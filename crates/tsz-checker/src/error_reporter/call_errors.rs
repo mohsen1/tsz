@@ -32,6 +32,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(TypeId, TypeId)> {
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let evaluated_target = self.judge_evaluate(resolved_target);
+        let contextual_property_type = [target_type, resolved_target, evaluated_target]
+            .into_iter()
+            .find_map(|candidate| {
+                self.ctx
+                    .types
+                    .contextual_property_type(candidate, prop_name)
+            });
 
         if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
             self.resolve_property_access_with_env(target_type, prop_name)
@@ -50,7 +57,11 @@ impl<'a> CheckerState<'a> {
                         .map(|p| p.type_id)
                 });
 
-            return Some((type_id, declared_optional_type.unwrap_or(type_id)));
+            let effective_type = contextual_property_type.unwrap_or(type_id);
+            return Some((
+                effective_type,
+                declared_optional_type.unwrap_or(contextual_property_type.unwrap_or(type_id)),
+            ));
         }
 
         let prop_node = self.ctx.arena.get(prop_name_idx)?;
@@ -389,10 +400,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn first_callable_return_type(&self, ty: TypeId) -> Option<TypeId> {
+    fn first_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
         use tsz_solver::type_queries::{
             get_callable_shape, get_function_shape, get_type_application,
         };
+
+        if let (Some(non_nullish), Some(_nullish_cause)) = self.split_nullish_type(ty) {
+            return self.first_callable_return_type(non_nullish);
+        }
 
         if let Some(shape) = get_function_shape(self.ctx.types, ty) {
             return Some(shape.return_type);
@@ -484,7 +499,34 @@ impl<'a> CheckerState<'a> {
             };
 
             // Get the type of the property value in the object literal
-            let source_prop_type = self.elaboration_source_expression_type(prop_value_idx);
+            let is_function_value = self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                )
+            });
+            let source_prop_type = if is_function_value {
+                self.get_type_of_node(prop_value_idx)
+            } else {
+                self.elaboration_source_expression_type(prop_value_idx)
+            };
+
+            if is_function_value
+                && target_prop_type != target_prop_type_for_diagnostic
+                && source_prop_type != TypeId::ERROR
+                && source_prop_type != TypeId::ANY
+                && target_prop_type != TypeId::ERROR
+                && target_prop_type != TypeId::ANY
+                && !self.is_assignable_to(source_prop_type, target_prop_type)
+            {
+                self.error_type_not_assignable_at_with_anchor(
+                    source_prop_type,
+                    target_prop_type_for_diagnostic,
+                    prop_name_idx,
+                );
+                elaborated = true;
+                continue;
+            }
 
             if self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
                 matches!(
