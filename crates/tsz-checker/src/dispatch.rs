@@ -1393,20 +1393,39 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         }
                                     }
 
-                                    // Final fallback: check structural property overlap
+                                    // Final fallback: check structural property overlap.
+                                    // Skip the comparable heuristic when both sides are
+                                    // Callable types (constructor/class types) because the
+                                    // property-overlap check is too permissive — shared
+                                    // `prototype` properties mask real mismatches between
+                                    // distinct generic instantiations. tsc uses a full
+                                    // structural relation (isTypeComparableTo) instead.
+                                    // Only skip for Callable; Object types need the check
+                                    // for legitimate assertions like `{a: 1} as {a: number}`.
                                     if !have_overlap {
                                         let evaluated_expr =
                                             self.checker.evaluate_type_for_assignability(expr_type);
                                         let evaluated_asserted = self
                                             .checker
                                             .evaluate_type_for_assignability(effective_asserted);
-                                        have_overlap = query::types_are_comparable(
+                                        let both_callable = tsz_solver::callable_shape_id(
                                             self.checker.ctx.types,
                                             evaluated_expr,
-                                            evaluated_asserted,
-                                        );
+                                        )
+                                        .is_some()
+                                            && tsz_solver::callable_shape_id(
+                                                self.checker.ctx.types,
+                                                evaluated_asserted,
+                                            )
+                                            .is_some();
+                                        if !both_callable {
+                                            have_overlap = query::types_are_comparable(
+                                                self.checker.ctx.types,
+                                                evaluated_expr,
+                                                evaluated_asserted,
+                                            );
+                                        }
                                     }
-
                                     if !have_overlap {
                                         // tsc anchors TS2352 at the full assertion node
                                         // (`<T>expr` / `expr as T`), not just the inner

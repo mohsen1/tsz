@@ -12,6 +12,7 @@ use tsz_solver::MappedTypeId;
 use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
+use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
 // Thread-local counters for `evaluate_application_type` that survive cross-arena
 // delegation. Per-context counters (`instantiation_depth`, `application_eval_set`)
@@ -310,6 +311,18 @@ impl<'a> CheckerState<'a> {
         }
 
         if type_params.is_empty() {
+            // Instantiation expression: Application(TypeQuery(value), [type_args])
+            // For `Err<number>` where `Err: typeof ErrImpl & (<T>() => T)`,
+            // substitute callable type parameters in all signatures with the
+            // provided type arguments. tsc's getTypeOfInstantiationExpression does this
+            // per-signature: each signature with matching type param count gets
+            // its params replaced.
+            if !args.is_empty() && tsz_solver::type_query_symbol(self.ctx.types, base).is_some() {
+                let instantiated = self.instantiate_callable_type_params(body_type, &args);
+                if instantiated != body_type {
+                    return self.evaluate_type_with_env(instantiated);
+                }
+            }
             return body_type;
         }
 
@@ -427,6 +440,107 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
         self.evaluate_type_with_env(result)
+    }
+
+    /// Instantiate callable type parameters for instantiation expressions.
+    ///
+    /// For `Err<number>` where `Err: { new<E>(): ErrImpl<E>; } & (<T>() => T)`,
+    /// this creates new signatures with type parameters replaced:
+    /// - `new<E>(): ErrImpl<E>` with 1 type param, 1 arg → `new(): ErrImpl<number>`
+    /// - `<T>() => T` with 1 type param, 1 arg → `() => number`
+    fn instantiate_callable_type_params(
+        &mut self,
+        body_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, body_type) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            let new_call_sigs = self.instantiate_signatures(&shape.call_signatures, type_args);
+            let new_construct_sigs =
+                self.instantiate_signatures(&shape.construct_signatures, type_args);
+            if new_call_sigs.is_none() && new_construct_sigs.is_none() {
+                return body_type;
+            }
+            let new_shape = CallableShape {
+                call_signatures: new_call_sigs.unwrap_or_else(|| shape.call_signatures.clone()),
+                construct_signatures: new_construct_sigs
+                    .unwrap_or_else(|| shape.construct_signatures.clone()),
+                properties: shape.properties.clone(),
+                string_index: shape.string_index.clone(),
+                number_index: shape.number_index.clone(),
+                symbol: shape.symbol,
+                is_abstract: shape.is_abstract,
+            };
+            self.ctx.types.callable(new_shape)
+        } else if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, body_type)
+        {
+            let mut changed = false;
+            let new_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| {
+                    let inst = self.instantiate_callable_type_params(m, type_args);
+                    if inst != m {
+                        changed = true;
+                    }
+                    inst
+                })
+                .collect();
+            if changed {
+                self.ctx.types.intersection(new_members)
+            } else {
+                body_type
+            }
+        } else {
+            body_type
+        }
+    }
+
+    /// Instantiate call/construct signatures by replacing type parameters with args.
+    /// Returns `None` if no signatures were modified.
+    fn instantiate_signatures(
+        &mut self,
+        signatures: &[CallSignature],
+        type_args: &[TypeId],
+    ) -> Option<Vec<CallSignature>> {
+        use tsz_solver::{TypeSubstitution, instantiate_type};
+
+        let mut changed = false;
+        let new_sigs: Vec<CallSignature> = signatures
+            .iter()
+            .map(|sig| {
+                if sig.type_params.len() == type_args.len() && !sig.type_params.is_empty() {
+                    changed = true;
+                    let subst =
+                        TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
+                    let new_params: Vec<ParamInfo> = sig
+                        .params
+                        .iter()
+                        .map(|p| ParamInfo {
+                            name: p.name,
+                            type_id: instantiate_type(self.ctx.types, p.type_id, &subst),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect();
+                    let new_return = instantiate_type(self.ctx.types, sig.return_type, &subst);
+                    CallSignature {
+                        type_params: vec![], // Remove type params after substitution
+                        params: new_params,
+                        this_type: sig
+                            .this_type
+                            .map(|t| instantiate_type(self.ctx.types, t, &subst)),
+                        return_type: new_return,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_method: sig.is_method,
+                    }
+                } else {
+                    sig.clone()
+                }
+            })
+            .collect();
+
+        if changed { Some(new_sigs) } else { None }
     }
 
     /// Check if a type body is a Conditional type whose `extends_type` contains infer patterns.
