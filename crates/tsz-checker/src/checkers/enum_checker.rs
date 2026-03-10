@@ -20,6 +20,46 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a type is an enum type or a union of enum member literal types.
+    ///
+    /// This handles cases like `type YesNo = Choice.Yes | Choice.No` where the
+    /// type is a union of `Lazy(DefId)` references to enum members. The solver's
+    /// `NumberLikeVisitor` can't resolve these, but the checker can via symbol
+    /// resolution.
+    ///
+    /// Returns true if:
+    /// - The type is a direct enum type (via `is_enum_type`)
+    /// - The type is a union where every member resolves to an ENUM or `ENUM_MEMBER` symbol
+    pub fn is_enum_like_type(&self, type_id: TypeId) -> bool {
+        // Fast path: direct enum type
+        if self.is_enum_type(type_id) {
+            return true;
+        }
+
+        // Check if it's a union where all members are enum/enum-member types
+        let Some(members) = tsz_solver::visitor::union_list_id(self.ctx.types, type_id) else {
+            // Not a union — check if it's a single enum member
+            return self.is_enum_or_enum_member(type_id);
+        };
+
+        let member_list = self.ctx.types.type_list(members);
+        if member_list.is_empty() {
+            return false;
+        }
+
+        member_list.iter().all(|&m| self.is_enum_or_enum_member(m))
+    }
+
+    /// Check if a type resolves to an ENUM or `ENUM_MEMBER` symbol.
+    fn is_enum_or_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return (symbol.flags & (symbol_flags::ENUM | symbol_flags::ENUM_MEMBER)) != 0;
+        }
+        false
+    }
+
     /// Check if a type is a boxed primitive type (Number, String, Boolean, `BigInt`, Symbol).
     ///
     /// TypeScript has two representations for primitives:
