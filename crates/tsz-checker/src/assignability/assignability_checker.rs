@@ -23,6 +23,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::RelationCacheKey;
+use tsz_solver::TypeData;
 use tsz_solver::TypeId;
 use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
@@ -940,6 +941,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(allowed) =
+            self.numeric_enum_assignment_override_from_source(source, target, source_idx)
+        {
+            if allowed {
+                return true;
+            }
+            if self.try_elaborate_assignment_source_error(source_idx, target) {
+                return false;
+            }
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
+        }
+
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, source_idx)
         {
@@ -950,6 +964,60 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn numeric_enum_assignment_override_from_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> Option<bool> {
+        use tsz_solver::TypeResolver;
+
+        let target = self.evaluate_type_for_assignability(target);
+        let target_def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target)?;
+        if !self.ctx.is_numeric_enum(target_def_id) {
+            return None;
+        }
+
+        let source_literal = self.literal_type_from_initializer(source_idx);
+        let source_is_number_like = source == TypeId::NUMBER
+            || matches!(
+                source_literal.and_then(|lit| self.ctx.types.lookup(lit)),
+                Some(TypeData::Literal(tsz_solver::LiteralValue::Number(_)))
+            );
+        if !source_is_number_like {
+            return None;
+        }
+
+        if self.ctx.is_enum_type(target, self.ctx.types) {
+            if let Some(source_literal) = source_literal {
+                let structural_target = match self.ctx.types.lookup(target) {
+                    Some(TypeData::Enum(_, member_type)) => member_type,
+                    _ => target,
+                };
+                return Some(self.is_assignable_to(source_literal, structural_target));
+            }
+            return None;
+        }
+
+        let target_literal = match self.ctx.types.lookup(target) {
+            Some(TypeData::Enum(_, member_type)) => {
+                tsz_solver::literal_value(self.ctx.types, member_type)
+            }
+            _ => return None,
+        };
+
+        match source_literal {
+            Some(source_literal) => match (self.ctx.types.lookup(source_literal), target_literal) {
+                (
+                    Some(TypeData::Literal(tsz_solver::LiteralValue::Number(source_num))),
+                    Some(tsz_solver::LiteralValue::Number(target_num)),
+                ) => Some(source_num == target_num),
+                _ => Some(false),
+            },
+            None => (source == TypeId::NUMBER).then_some(true),
+        }
     }
 
     /// Check assignability and emit a generic TS2322 diagnostic at `diag_idx`.
