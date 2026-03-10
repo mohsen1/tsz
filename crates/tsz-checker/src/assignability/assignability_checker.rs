@@ -972,7 +972,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> Option<bool> {
-    ) -> Option<bool> {
         use tsz_solver::TypeResolver;
 
         let target = self.evaluate_type_for_assignability(target);
