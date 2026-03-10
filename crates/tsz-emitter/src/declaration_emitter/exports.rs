@@ -1567,52 +1567,38 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 // Type
-                let mut wrote_type = false;
                 if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
-                    wrote_type = true;
                     if is_parameter_property && param.question_token {
                         self.write(" | undefined");
                     }
                 } else if let Some(jsdoc_param) = jsdoc_param {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
-                    wrote_type = true;
                 } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
                 {
                     // Inferred type from type cache
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
-                    wrote_type = true;
                 } else if param.initializer.is_some()
                     && let Some(type_text) = self.infer_fallback_type_text(param.initializer)
                 {
                     self.write(": ");
                     self.write(&type_text);
-                    wrote_type = true;
                 } else if param.dot_dot_dot_token {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
-                    wrote_type = true;
                 } else if !self.source_is_declaration_file {
                     // In declaration emit from source, parameters without
                     // explicit type annotations default to `any` (matching tsc)
                     self.write(": any");
-                    wrote_type = true;
                 }
 
-                // When a parameter has an initializer and appears before the last
-                // required parameter, tsc appends `| undefined` to its type (instead
-                // of marking it optional with `?`). This is because the caller cannot
-                // omit the argument but can pass `undefined` to trigger the default.
-                // Skip if the type already includes `undefined` to avoid duplication.
-                if has_initializer_before_required && wrote_type {
-                    let output = self.writer.get_output();
-                    if !output.ends_with("undefined") {
-                        self.write(" | undefined");
-                    }
-                }
+                // TODO: When strictNullChecks is true and a parameter has an
+                // initializer before the last required parameter, tsc appends
+                // `| undefined` to its type. We need the strictNullChecks flag
+                // plumbed into the DTS emitter before we can implement this.
             }
         }
 
