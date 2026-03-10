@@ -536,8 +536,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // The property must be declared in the current class (not inherited)
-        self.is_property_declared_in_class(prop_name, class_idx)
+        // The property must be declared in the current class (not inherited).
+        // In JS files, constructor `this.prop = value` assignments serve as property
+        // declarations, so they are always allowed for readonly properties.
+        self.is_js_file() || self.is_property_declared_in_class(prop_name, class_idx)
     }
 
     /// Check if an expression is `this` (helper to avoid conflict with existing method).
