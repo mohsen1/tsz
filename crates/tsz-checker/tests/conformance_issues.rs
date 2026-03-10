@@ -7129,3 +7129,53 @@ export type TypeGeneric3<T extends keyof DataFetchFns, F extends keyof DataFetch
         "Missing TS2536 for the outer `DataFetchFns[F][F]` access.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_js_strict_false_suppresses_file_level_strict_mode_bind_errors() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+// @strict: false
+// @allowJs: true
+// @checkJs: true
+// @target: es6
+"use strict";
+var a = {
+    a: "hello",
+    a: 10,
+};
+var let = 10;
+delete a;
+with (a) {}
+var x = 009;
+"#,
+        CheckerOptions::default(),
+    );
+
+    for code in [1100, 1101, 1102, 1117, 1212, 1213, 1214, 2410, 2703] {
+        assert!(
+            !has_error(&diagnostics, code),
+            "Did not expect TS{code} under `@strict: false` JS binding checks.\nGot: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_js_always_strict_override_restores_strict_mode_bind_errors() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+// @strict: false
+// @alwaysStrict: true
+// @allowJs: true
+// @checkJs: true
+var arguments = 1;
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected explicit `@alwaysStrict: true` to restore JS strict-mode binding diagnostics.\nGot: {diagnostics:?}"
+    );
+}

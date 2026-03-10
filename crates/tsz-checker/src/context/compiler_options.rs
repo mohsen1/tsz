@@ -48,6 +48,16 @@ impl<'a> CheckerContext<'a> {
             || self.file_name.ends_with(".cjs")
     }
 
+    /// Check whether JS strict-mode diagnostics should be enforced for the current file.
+    ///
+    /// In the conformance harness, `@strict: false` suppresses `alwaysStrict`-driven JS
+    /// strict-mode diagnostics unless `@alwaysStrict` explicitly opts back in.
+    pub fn js_strict_mode_diagnostics_enabled(&self) -> bool {
+        !self.is_js_file()
+            || (self.compiler_options.always_strict
+                && !self.compiler_options.no_implicit_use_strict)
+    }
+
     /// Check if JSDoc type annotations should be resolved for the current file.
     /// Returns `true` for TypeScript files (always) and for JS files when either
     /// the global `--checkJs` flag is set or the file contains a `// @ts-check` pragma.

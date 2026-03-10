@@ -525,6 +525,7 @@ impl<'a> CheckerState<'a> {
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
+                        && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
@@ -607,6 +608,8 @@ impl<'a> CheckerState<'a> {
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
+                                && (!self.is_js_file()
+                                    || self.ctx.js_strict_mode_diagnostics_enabled())
                             {
                                 let name = self.ctx.types.resolve_atom(atom).to_string();
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -784,6 +787,7 @@ impl<'a> CheckerState<'a> {
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
+                        && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
@@ -930,6 +934,7 @@ impl<'a> CheckerState<'a> {
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
+                        && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
@@ -989,6 +994,8 @@ impl<'a> CheckerState<'a> {
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
+                                && (!self.is_js_file()
+                                    || self.ctx.js_strict_mode_diagnostics_enabled())
                             {
                                 let name = self.ctx.types.resolve_atom(atom).to_string();
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1234,6 +1241,7 @@ impl<'a> CheckerState<'a> {
                         && explicit_property_names.contains(&name_atom)
                         && !is_complementary_pair
                         && !self.ctx.has_parse_errors
+                        && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
                         let is_duplicate_accessor = (is_getter
                             && getter_names.contains(&name_atom))
@@ -1346,6 +1354,8 @@ impl<'a> CheckerState<'a> {
                                 && explicit_property_names.contains(&atom)
                                 && !is_complementary_pair
                                 && !self.ctx.has_parse_errors
+                                && (!self.is_js_file()
+                                    || self.ctx.js_strict_mode_diagnostics_enabled())
                             {
                                 let name = self.ctx.types.resolve_atom(atom).to_string();
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

@@ -17,6 +17,10 @@ impl CheckerContext<'_> {
     /// - The node is inside a class body
     /// - An ancestor function/source-file has a `"use strict"` directive prologue
     pub fn is_strict_mode_for_node(&self, idx: NodeIndex) -> bool {
+        if !self.js_strict_mode_diagnostics_enabled() {
+            return false;
+        }
+
         // `noImplicitUseStrict` cancels `alwaysStrict` for checking purposes.
         // When both are set, tsc does not enforce strict-mode rules (e.g. TS1100).
         if self.compiler_options.always_strict && !self.compiler_options.no_implicit_use_strict {

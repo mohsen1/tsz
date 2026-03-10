@@ -186,11 +186,13 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        self.error_at_node(
-            stmt_idx,
-            diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
-            diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
-        );
+        if !self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled() {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+                diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+            );
+        }
 
         if self.ctx.in_async_context() {
             self.error_at_node(
