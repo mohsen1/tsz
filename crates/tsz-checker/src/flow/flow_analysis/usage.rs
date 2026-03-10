@@ -475,7 +475,33 @@ impl<'a> CheckerState<'a> {
                 let Some(var_data) = self.ctx.arena.get_binding_element(decl_node) else {
                     return false;
                 };
-                (var_data.initializer.is_some(), false)
+                // A binding element without its own initializer is still definitely
+                // assigned if the enclosing VariableDeclaration has an initializer.
+                // In `const [a, b = a] = [1]`, `a` has no pattern-level default but
+                // the destructuring `= [1]` assigns all elements left-to-right.
+                // Walk up: BindingElement → BindingPattern → ... → VariableDeclaration.
+                let init = var_data.initializer.is_some() || {
+                    let mut has_parent_init = false;
+                    let mut cur = decl_id_to_check;
+                    for _ in 0..10 {
+                        let Some(info) = self.ctx.arena.node_info(cur) else {
+                            break;
+                        };
+                        let parent = info.parent;
+                        let Some(pnode) = self.ctx.arena.get(parent) else {
+                            break;
+                        };
+                        if pnode.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                            if let Some(vd) = self.ctx.arena.get_variable_declaration(pnode) {
+                                has_parent_init = vd.initializer.is_some();
+                            }
+                            break;
+                        }
+                        cur = parent;
+                    }
+                    has_parent_init
+                };
+                (init, false)
             } else {
                 return false;
             };
