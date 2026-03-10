@@ -714,7 +714,12 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
     false
 }
 
-/// Check if two types share at least one common property name.
+/// Check if two types have common properties with ALL of them having comparable types.
+///
+/// Returns true when the types share at least one property name AND every shared
+/// property has comparable types. This matches tsc's behavior for the comparable
+/// relation on object types — a single incompatible shared property means the
+/// types are NOT comparable, even if other properties match.
 fn types_have_common_properties(
     db: &dyn TypeDatabase,
     source: TypeId,
@@ -761,34 +766,37 @@ fn types_have_common_properties(
         return false;
     }
 
-    // Consider overlap only when a shared property has comparable types.
-    // Name-only matching is too permissive and suppresses valid TS2352 cases
-    // on incompatible generic instantiations.
+    // Build a lookup table for target properties by name.
     use rustc_hash::FxHashMap;
     let mut target_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
     for (name, ty, optional) in target_props {
         target_by_name.entry(name).or_default().push((ty, optional));
     }
 
-    source_props
-        .iter()
-        .any(|(source_name, source_ty, source_optional)| {
-            target_by_name
-                .get(source_name)
-                .is_some_and(|target_entries| {
-                    target_entries.iter().any(|(target_ty, target_optional)| {
-                        // If either property is optional, `undefined` is part of the type.
-                        // E.g., `a?: string` effectively has type `string | undefined`,
-                        // so `undefined` is comparable to it.
-                        if (*source_optional || *target_optional)
-                            && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
-                        {
-                            return true;
-                        }
-                        types_are_comparable_inner(db, *source_ty, *target_ty, depth + 1)
-                    })
-                })
-        })
+    // Require ALL common properties to have comparable types.
+    // A single incompatible shared property means the types don't overlap.
+    // Properties that exist only on one side don't affect comparability.
+    let mut found_common = false;
+    for (source_name, source_ty, source_optional) in &source_props {
+        if let Some(target_entries) = target_by_name.get(source_name) {
+            found_common = true;
+            let any_comparable = target_entries.iter().any(|(target_ty, target_optional)| {
+                // If either property is optional, `undefined` is part of the type.
+                // E.g., `a?: string` effectively has type `string | undefined`,
+                // so `undefined` is comparable to it.
+                if (*source_optional || *target_optional)
+                    && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
+                {
+                    return true;
+                }
+                types_are_comparable_inner(db, *source_ty, *target_ty, depth + 1)
+            });
+            if !any_comparable {
+                return false;
+            }
+        }
+    }
+    found_common
 }
 
 /// Check if a type contains a `TypeQuery` referencing a specific symbol.
