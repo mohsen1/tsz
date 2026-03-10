@@ -48,6 +48,75 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Compare two type nodes for structural equivalence by recursively comparing
+    /// their AST structure. Handles indexed access types (e.g., `T["_type"]`),
+    /// simple type references, and literal types.
+    fn type_nodes_structurally_equal(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        let (Some(na), Some(nb)) = (self.ctx.arena.get(a), self.ctx.arena.get(b)) else {
+            return false;
+        };
+        if na.kind != nb.kind {
+            return false;
+        }
+        // Simple type references: compare names
+        if na.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return self
+                .simple_type_reference_name(a)
+                .zip(self.simple_type_reference_name(b))
+                .is_some_and(|(name_a, name_b)| name_a == name_b);
+        }
+        // Indexed access types: compare object and index recursively
+        if na.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            let (Some(ia), Some(ib)) = (
+                self.ctx.arena.get_indexed_access_type(na),
+                self.ctx.arena.get_indexed_access_type(nb),
+            ) else {
+                return false;
+            };
+            return self.type_nodes_structurally_equal(ia.object_type, ib.object_type)
+                && self.type_nodes_structurally_equal(ia.index_type, ib.index_type);
+        }
+        // Literal type wrapper: compare inner literals
+        if na.kind == syntax_kind_ext::LITERAL_TYPE {
+            let (Some(la), Some(lb)) = (
+                self.ctx.arena.get_literal_type(na),
+                self.ctx.arena.get_literal_type(nb),
+            ) else {
+                return false;
+            };
+            return self.type_nodes_structurally_equal(la.literal, lb.literal);
+        }
+        // String/number literals: compare token text
+        if na.kind == SyntaxKind::StringLiteral as u16
+            || na.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let text_a = self.ctx.arena.get_literal(na).map(|s| &s.text);
+            let text_b = self.ctx.arena.get_literal(nb).map(|s| &s.text);
+            return text_a == text_b;
+        }
+        false
+    }
+
+    /// Check if a `keyof X` type operator's operand matches the given object node,
+    /// either by simple name comparison or by source text span identity.
+    fn keyof_operand_matches_object(
+        &self,
+        keyof_operand_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_name: Option<&str>,
+    ) -> bool {
+        if let Some(obj_name) = object_name
+            && self
+                .simple_type_reference_name(keyof_operand_idx)
+                .as_deref()
+                == Some(obj_name)
+            {
+                return true;
+            }
+        // Fallback: compare AST structure for complex types like T["_type"]
+        self.type_nodes_structurally_equal(keyof_operand_idx, object_node_idx)
+    }
+
     fn is_mapped_key_index_for_current_object(
         &self,
         node_idx: NodeIndex,
@@ -57,9 +126,7 @@ impl<'a> CheckerState<'a> {
         let Some(index_name) = self.simple_type_reference_name(index_node_idx) else {
             return false;
         };
-        let Some(object_name) = self.simple_type_reference_name(object_node_idx) else {
-            return false;
-        };
+        let object_name = self.simple_type_reference_name(object_node_idx);
 
         let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
         while current.is_some() {
@@ -93,10 +160,23 @@ impl<'a> CheckerState<'a> {
                 if let Some(type_operator) = self.ctx.arena.get_type_operator(constraint_node)
                     && type_operator.operator == SyntaxKind::KeyOfKeyword as u16
                 {
-                    return self
-                        .simple_type_reference_name(type_operator.type_node)
-                        .as_deref()
-                        .is_some_and(|name| name == object_name);
+                    if self.keyof_operand_matches_object(
+                        type_operator.type_node,
+                        object_node_idx,
+                        object_name.as_deref(),
+                    ) {
+                        return true;
+                    }
+                    // Also check: `[P in keyof T]: ... U[P]` where `U extends T`
+                    // The object U's constraint matches the keyof operand T
+                    if let Some(obj_name) = object_name.as_deref() {
+                        let keyof_operand_name =
+                            self.simple_type_reference_name(type_operator.type_node);
+                        if let Some(keyof_name) = keyof_operand_name.as_deref()
+                            && self.type_param_extends_name(obj_name, keyof_name, node_idx) {
+                                return true;
+                            }
+                    }
                 }
                 // Check if the constraint is an intersection containing `keyof T`
                 // (e.g., `[K in keyof T & keyof U]`)
@@ -110,10 +190,11 @@ impl<'a> CheckerState<'a> {
                             .and_then(|n| self.ctx.arena.get_type_operator(n))
                             .is_some_and(|op| {
                                 op.operator == SyntaxKind::KeyOfKeyword as u16
-                                    && self
-                                        .simple_type_reference_name(op.type_node)
-                                        .as_deref()
-                                        .is_some_and(|name| name == object_name)
+                                    && self.keyof_operand_matches_object(
+                                        op.type_node,
+                                        object_node_idx,
+                                        object_name.as_deref(),
+                                    )
                             })
                     });
                 }
@@ -262,6 +343,167 @@ impl<'a> CheckerState<'a> {
             }
             // Also check if the constraint is directly assignable to keyof of the object
             // (handles cases like `K extends string` indexing `Record<string, V>`)
+        }
+        false
+    }
+
+    /// Check if a type parameter `param_name` has an `extends` constraint matching
+    /// `constraint_name`. Walks up the AST to find the enclosing generic declaration.
+    /// Example: `U extends T` → `type_param_extends_name("U", "T", node)` returns true.
+    fn type_param_extends_name(
+        &self,
+        param_name: &str,
+        constraint_name: &str,
+        from_node: NodeIndex,
+    ) -> bool {
+        let mut current = self.ctx.arena.get_extended(from_node).map(|ext| ext.parent);
+        for _ in 0..20 {
+            let Some(parent_idx) = current else { break };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            // Extract type_parameters from generic declarations
+            let type_params: Option<&tsz_parser::parser::base::NodeList> = match parent_node.kind {
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(parent_node)
+                    .and_then(|ta| ta.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent_node)
+                    .and_then(|i| i.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function(parent_node)
+                        .and_then(|f| f.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_class(parent_node)
+                        .and_then(|c| c.type_parameters.as_ref())
+                }
+                _ => None,
+            };
+            if let Some(tp_list) = type_params {
+                for &tp_idx in &tp_list.nodes {
+                    let Some(tp_node) = self.ctx.arena.get(tp_idx) else {
+                        continue;
+                    };
+                    let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(tp.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == param_name && tp.constraint != NodeIndex::NONE
+                        && let Some(constraint_ref_name) =
+                            self.simple_type_reference_name(tp.constraint)
+                            && constraint_ref_name == constraint_name {
+                                return true;
+                            }
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        false
+    }
+
+    /// Check if the indexed access is inside the true branch of a conditional type
+    /// whose extends clause narrows the index key to `keyof` of the object type.
+    ///
+    /// Patterns handled:
+    /// - `K extends keyof T ? ... T[K] ... : never` — direct keyof constraint
+    /// - `A<T> extends infer K ? K extends keyof T ? ... T[K] ... : ... : ...` — nested
+    /// - `[k in keyof Shape]: Shape[k]["_output"]` with mapped type key — via keyof iteration
+    fn is_index_narrowed_by_conditional_extends(
+        &self,
+        node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+    ) -> bool {
+        let index_name = match self.simple_type_reference_name(index_node_idx) {
+            Some(name) => name,
+            None => return false,
+        };
+        let object_name = match self.simple_type_reference_name(object_node_idx) {
+            Some(name) => name,
+            None => return false,
+        };
+
+        // Walk up the AST from the indexed access looking for conditional types
+        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let mut child_idx = node_idx;
+        for _ in 0..20 {
+            let Some(parent_idx) = current else { break };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node) {
+                    // Only suppress if we're in the true branch (child_idx came from true_type)
+                    if child_idx == cond.true_type
+                        || self.is_descendant_of(child_idx, cond.true_type)
+                    {
+                        // Check if the extends clause is `IndexName extends keyof ObjectName`
+                        let check_name = self.simple_type_reference_name(cond.check_type);
+                        if check_name.as_deref() == Some(&index_name) {
+                            // extends_type should be `keyof ObjectName`
+                            if let Some(extends_node) = self.ctx.arena.get(cond.extends_type)
+                                && let Some(type_op) =
+                                    self.ctx.arena.get_type_operator(extends_node)
+                                && type_op.operator == SyntaxKind::KeyOfKeyword as u16
+                                && self
+                                    .simple_type_reference_name(type_op.type_node)
+                                    .as_deref()
+                                    == Some(&object_name)
+                                {
+                                    return true;
+                                }
+                        }
+                    }
+                }
+
+            child_idx = parent_idx;
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+
+        false
+    }
+
+    /// Check if `descendant_idx` is a descendant of `ancestor_idx` in the AST.
+    fn is_descendant_of(&self, descendant_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(descendant_idx)
+            .map(|ext| ext.parent);
+        for _ in 0..30 {
+            let Some(idx) = current else { return false };
+            if idx == ancestor_idx {
+                return true;
+            }
+            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
         }
         false
     }
@@ -623,6 +865,17 @@ impl<'a> CheckerState<'a> {
                 data.object_type,
                 object_type,
                 object_type_for_check,
+            ) {
+                return;
+            }
+            // Suppress TS2536 when the indexed access is inside the true branch of a
+            // conditional type whose extends clause narrows the index to `keyof` of the
+            // object type. Example: `K extends keyof T ? T[K] : never` — in the true
+            // branch, K is constrained to keyof T, so T[K] is valid.
+            if self.is_index_narrowed_by_conditional_extends(
+                node_idx,
+                data.index_type,
+                data.object_type,
             ) {
                 return;
             }
