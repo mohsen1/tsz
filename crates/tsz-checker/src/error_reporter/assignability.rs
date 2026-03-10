@@ -1120,8 +1120,21 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                let source_str = self.format_type_diagnostic(*source_type);
-                let target_str = self.format_type_diagnostic(target);
+                let use_assignment_source_display = depth == 0
+                    && self
+                        .assignment_source_expression(idx)
+                        .and_then(|expr_idx| self.literal_expression_display(expr_idx))
+                        .is_some();
+                let source_str = if use_assignment_source_display {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(*source_type)
+                };
+                let target_str = if use_assignment_source_display {
+                    self.format_type_for_assignability_message(target)
+                } else {
+                    self.format_type_diagnostic(target)
+                };
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],

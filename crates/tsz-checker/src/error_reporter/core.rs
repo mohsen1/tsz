@@ -167,7 +167,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn assignment_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn assignment_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = anchor_idx;
         let mut guard = 0;
 
@@ -220,6 +220,35 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn assignment_source_is_return_expression(&self, anchor_idx: NodeIndex) -> bool {
+        let mut current = anchor_idx;
+        let mut guard = 0;
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                return true;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        false
     }
 
     fn declared_type_annotation_text_for_expression(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -291,11 +320,12 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
-            if self.is_literal_sensitive_assignment_target(target)
-                && let Some(display) = self.literal_expression_display(expr_idx)
-            {
-                return display;
-            }
+            if let Some(display) = self.literal_expression_display(expr_idx)
+                && (self.assignment_source_is_return_expression(anchor_idx)
+                    || self.is_literal_sensitive_assignment_target(target))
+                {
+                    return display;
+                }
 
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
                 return display;

@@ -7568,3 +7568,64 @@ function f54<T>(obj: T, key: keyof T) {
 
     assert_eq!(ts2322.start, 64, "Expected TS2322 to anchor at `obj[key]`.");
 }
+
+#[test]
+fn test_assignment_diagnostic_preserves_literal_for_literal_sensitive_element_write() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f(obj: { a: number, b: 0 | 1 }, k: 'a' | 'b') {
+    obj[k] = "x";
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '\"x\"' is not assignable to type '0 | 1'")
+        }),
+        "Expected literal-preserving TS2322 for literal-sensitive element write.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_assignment_diagnostic_widens_literal_for_generic_indexed_write() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Item = { a: string, b: number };
+
+function f<T extends Item, K extends keyof T>(obj: T, k: K) {
+    obj[k] = 123;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type 'T[K]'")
+        }),
+        "Expected widened source display for generic indexed write TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_return_diagnostic_preserves_literal_for_generic_indexed_target() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Type {
+    a: 123;
+    b: "some string";
+}
+
+function get123<K extends keyof Type>(): Type[K] {
+    return 123;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '123' is not assignable to type 'Type[K]'")
+        }),
+        "Expected literal-preserving TS2322 for generic indexed return.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
