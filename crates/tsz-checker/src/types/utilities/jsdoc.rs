@@ -26,17 +26,7 @@ pub(crate) struct JsdocCallbackInfo {
 }
 
 impl<'a> CheckerState<'a> {
-    /// Resolve a typeof type reference to its actual type.
-    ///
-    /// Resolves `typeof X` type queries to the type of symbol X,
-    /// including typeof queries applied to type applications (generics).
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// class C {}
-    /// type T1 = typeof C;  // C (the class type)
-    /// type T2 = typeof<C>;  // Same as above
-    /// ```
+    /// Resolve `typeof X` type queries to the type of symbol X.
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
         use tsz_solver::SymbolRef;
@@ -359,6 +349,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle JSDoc postfix type operators: "Type?" → Type | null,
+        // "Type=" → Type | undefined, "Type!" → Type (non-nullable)
+        if type_expr.len() > 1 && !type_expr.ends_with("[]") {
+            if let Some(inner) = type_expr.strip_suffix('?') {
+                if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
+                    let factory = self.ctx.types.factory();
+                    return Some(factory.union(vec![inner_type, TypeId::NULL]));
+                }
+            } else if let Some(inner) = type_expr.strip_suffix('=') {
+                if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
+                    let factory = self.ctx.types.factory();
+                    return Some(factory.union(vec![inner_type, TypeId::UNDEFINED]));
+                }
+            } else if let Some(inner) = type_expr.strip_suffix('!') {
+                return self.resolve_jsdoc_type_str(inner);
+            }
+        }
+
         // Handle array suffix: "T[]" → Array<T>, "T[][]" → Array<Array<T>>
         // Must come after union/intersection split so "string | number[]" parses
         // as "string | (number[])" not "(string | number)[]".
@@ -636,9 +644,20 @@ impl<'a> CheckerState<'a> {
                         use tsz_solver::{FunctionShape, ParamInfo};
                         let mut params = Vec::new();
                         let mut ok = true;
+                        let mut is_constructor = false;
+                        let mut constructor_return = None;
                         if !params_inner.is_empty() {
+                            let mut arg_index = 0u32;
                             for p in params_inner.split(',') {
                                 let p = p.trim();
+                                // Handle constructor syntax: function(new: ReturnType, ...)
+                                if let Some(new_ret) = p.strip_prefix("new:") {
+                                    is_constructor = true;
+                                    let ret_str = new_ret.trim();
+                                    constructor_return = self.jsdoc_type_from_expression(ret_str);
+                                    arg_index += 1; // TSC skips arg0 for 'new:'
+                                    continue;
+                                }
                                 // Handle rest params: function(...Type):void
                                 let is_rest = p.starts_with("...");
                                 let effective_p = if is_rest { &p[3..] } else { p };
@@ -649,8 +668,11 @@ impl<'a> CheckerState<'a> {
                                     } else {
                                         p_type
                                     };
+                                    let name =
+                                        self.ctx.types.intern_string(&format!("arg{arg_index}"));
+                                    arg_index += 1;
                                     params.push(ParamInfo {
-                                        name: None,
+                                        name: Some(name),
                                         type_id,
                                         optional: false,
                                         rest: is_rest,
@@ -662,13 +684,18 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         if ok {
+                            let final_return = if is_constructor {
+                                constructor_return.unwrap_or(return_type)
+                            } else {
+                                return_type
+                            };
                             let shape = FunctionShape {
                                 type_params: Vec::new(),
                                 params,
                                 this_type: None,
-                                return_type,
+                                return_type: final_return,
                                 type_predicate: None,
-                                is_constructor: false,
+                                is_constructor,
                                 is_method: false,
                             };
                             return Some(factory.function(shape));
