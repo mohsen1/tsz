@@ -1453,8 +1453,49 @@ impl ParserState {
                 diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
             );
             let name = self.parse_template_literal();
-            let initializer = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_assignment_expression()
+            // tsc emits cascading errors when a template literal is used
+            // as a property name with `: value` following:
+            //   TS1136 on the template, TS1005 "',' expected" at `:`,
+            //   TS1134 "Variable declaration expected." at the value.
+            // We emit these inline to match tsc's diagnostic output.
+            let initializer = if self.is_token(SyntaxKind::ColonToken) {
+                let colon_pos = self.token_pos();
+                let colon_len = self.token_end() - colon_pos;
+                self.parse_error_at(
+                    colon_pos,
+                    colon_len,
+                    "',' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.next_token(); // consume `:`
+                // Emit TS1134 at the value position
+                if !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    let val_pos = self.token_pos();
+                    let val_len = self.token_end() - val_pos;
+                    self.parse_error_at(
+                        val_pos,
+                        val_len,
+                        "Variable declaration expected.",
+                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                    );
+                }
+                let expr = self.parse_assignment_expression();
+                // Emit TS1128 at the next token (typically `}` or next line)
+                // tsc sees the closing `}` in statement context, not as
+                // the object literal closer.
+                if !self.is_token(SyntaxKind::EndOfFileToken) {
+                    let next_pos = self.token_pos();
+                    let next_len = self.token_end() - next_pos;
+                    self.parse_error_at(
+                        next_pos,
+                        next_len,
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                }
+                expr
             } else {
                 name
             };
