@@ -208,6 +208,63 @@ impl<'a> CheckerState<'a> {
         let mut has_late_bound_members = false;
         let mut merged_interface_type_for_class: Option<TypeId> = None;
 
+        // Phase 0: Pre-scan annotated properties to build a preliminary partial `this` type.
+        // Property initializers like `n = this.s` need `this` to resolve during Phase 1.
+        // The type builder is called from `build_type_environment` BEFORE `enclosing_class`
+        // is set, so `this` in property initializers would otherwise resolve to `any`.
+        // By pushing a partial type onto `this_type_stack`, initializer expressions that
+        // reference `this.annotatedProp` can resolve correctly.
+        let mut pushed_prescan_this = false;
+        {
+            let mut prescan_props: Vec<PropertyInfo> = Vec::new();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                if self.has_static_modifier(&prop.modifiers) {
+                    continue;
+                }
+                let Some(declared_type) =
+                    self.effective_class_property_declared_type(member_idx, prop)
+                else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name_resolved(prop.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+                let is_readonly = self.has_readonly_modifier(&prop.modifiers)
+                    || self.jsdoc_has_readonly_tag(member_idx);
+                let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                prescan_props.push(PropertyInfo {
+                    name: name_atom,
+                    type_id: declared_type,
+                    write_type: declared_type,
+                    optional: prop.question_token,
+                    readonly: is_readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility,
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                });
+            }
+            if !prescan_props.is_empty() {
+                let prescan_type = factory.object(prescan_props);
+                self.ctx
+                    .class_instance_type_cache
+                    .insert(class_idx, prescan_type);
+                self.ctx.this_type_stack.push(prescan_type);
+                pushed_prescan_this = true;
+            }
+        }
+
         // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
         // Methods are deferred to phase 2 so that a partial instance type (with property types)
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
@@ -513,6 +570,11 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // Pop the prescan `this` type — Phase 2 will push its own partial type.
+        if pushed_prescan_this {
+            self.ctx.this_type_stack.pop();
         }
 
         // Phase 2: Process deferred methods with a partial `this` type so that
