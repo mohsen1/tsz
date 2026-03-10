@@ -853,20 +853,20 @@ impl<'a> CheckerState<'a> {
                         if tsz_solver::is_enum_type(self.ctx.types, expr_type)
                             && let Some(sym_id) =
                                 self.resolve_value_symbol_for_lowering(type_query.expr_name)
+                        {
+                            if let Some(&ns_type) = self
+                                .ctx
+                                .enum_namespace_types
+                                .get(&tsz_binder::SymbolId(sym_id))
                             {
-                                if let Some(&ns_type) = self
-                                    .ctx
-                                    .enum_namespace_types
-                                    .get(&tsz_binder::SymbolId(sym_id))
-                                {
-                                    return ns_type;
-                                }
-                                // Fallback: compute on-demand
-                                return self.merge_namespace_exports_into_object(
-                                    tsz_binder::SymbolId(sym_id),
-                                    expr_type,
-                                );
+                                return ns_type;
                             }
+                            // Fallback: compute on-demand
+                            return self.merge_namespace_exports_into_object(
+                                tsz_binder::SymbolId(sym_id),
+                                expr_type,
+                            );
+                        }
                         return expr_type;
                     }
                 }
