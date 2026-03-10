@@ -820,6 +820,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     }
                 }
 
+                // TS1284/TS1285: export default VMS checks
+                if export_decl.is_default_export {
+                    self.check_verbatim_module_syntax_export_default(clause_idx);
+                }
+
                 if self
                     .ctx
                     .arena
@@ -837,6 +842,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             || self.is_inside_global_augmentation(export_idx))
                     {
                         self.check_local_named_exports(clause_idx);
+                    }
+
+                    // TS1205: Re-exporting a type under verbatimModuleSyntax
+                    if !export_decl.is_type_only {
+                        self.check_verbatim_module_syntax_named_exports(
+                            clause_idx,
+                            export_decl.module_specifier,
+                        );
                     }
                 }
             }

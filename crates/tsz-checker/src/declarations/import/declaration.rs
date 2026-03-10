@@ -749,6 +749,9 @@ impl<'a> CheckerState<'a> {
                 self.check_imported_members(import, module_name);
             }
 
+            // TS1484/TS1485: verbatimModuleSyntax import checks
+            self.check_verbatim_module_syntax_imports(import, module_name);
+
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
                 for source_module in source_modules {
@@ -763,6 +766,9 @@ impl<'a> CheckerState<'a> {
         if self.ctx.binder.module_exports.contains_key(module_name) {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
             self.check_imported_members(import, module_name);
+
+            // TS1484/TS1485: verbatimModuleSyntax import checks
+            self.check_verbatim_module_syntax_imports(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();

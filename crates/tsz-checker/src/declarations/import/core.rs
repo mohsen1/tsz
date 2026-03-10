@@ -1490,4 +1490,142 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    // =========================================================================
+    // verbatimModuleSyntax Import Checks (TS1484, TS1485)
+    // =========================================================================
+
+    /// Check named import specifiers under `verbatimModuleSyntax`.
+    pub(crate) fn check_verbatim_module_syntax_imports(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        module_name: &str,
+    ) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if !self.ctx.compiler_options.verbatim_module_syntax {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        if clause.is_type_only {
+            return;
+        }
+
+        let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+            return;
+        };
+        if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            return;
+        }
+        let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+            return;
+        };
+
+        for element_idx in &named_imports.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                continue;
+            };
+            if specifier.is_type_only {
+                continue;
+            }
+
+            let imported_name_idx = if specifier.property_name.is_some() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx) else {
+                continue;
+            };
+            let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node) else {
+                continue;
+            };
+            let import_name = imported_ident.escaped_text.clone();
+
+            let local_name_idx = specifier.name;
+            let local_name = if let Some(local_node) = self.ctx.arena.get(local_name_idx)
+                && let Some(local_ident) = self.ctx.arena.get_identifier(local_node)
+            {
+                local_ident.escaped_text.clone()
+            } else {
+                import_name.clone()
+            };
+
+            // TS1485: type-only export chain
+            if self.is_export_type_only_across_binders(module_name, &import_name) {
+                let message = format_message(
+                    diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
+                    &[&local_name],
+                );
+                self.error_at_node(
+                    local_name_idx,
+                    &message,
+                    diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
+                );
+                continue;
+            }
+
+            // TS1484: inherently a type
+            if self.is_import_specifier_type_only(module_name, &import_name) {
+                let message = format_message(
+                    diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                    &[&local_name],
+                );
+                self.error_at_node(
+                    local_name_idx,
+                    &message,
+                    diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                );
+            }
+        }
+    }
+
+    /// Check if a named import refers to a purely type-only entity.
+    pub(crate) fn is_import_specifier_type_only(
+        &self,
+        module_name: &str,
+        import_name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+
+        if let Some(target_idx) = self.ctx.resolve_import_target(normalized)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            && let Some(sym_id) = target_binder.file_locals.get(import_name)
+            && let Some(sym) = target_binder.get_symbol(sym_id)
+        {
+            let flags = sym.flags;
+            return (flags & PURE_TYPE) != 0 && (flags & VALUE) == 0;
+        }
+
+        for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
+            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+                && let Some(sym_id) = exports.get(import_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let flags = sym.flags;
+                return (flags & PURE_TYPE) != 0 && (flags & VALUE) == 0;
+            }
+        }
+
+        false
+    }
 }

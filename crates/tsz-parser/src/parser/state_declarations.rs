@@ -1311,6 +1311,12 @@ impl ParserState {
                 );
                 let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
                 match self.token() {
+                    SyntaxKind::AsKeyword => {
+                        // `declare export as namespace Foo;` — parse as namespace export declaration.
+                        // TSC treats `declare` as a modifier on the export-as-namespace statement
+                        // and produces no error for this form.
+                        self.parse_namespace_export_declaration(start_pos)
+                    }
                     SyntaxKind::FunctionKeyword => {
                         self.parse_function_declaration_with_async(false, Some(modifiers))
                     }
