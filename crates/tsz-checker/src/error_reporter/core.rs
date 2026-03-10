@@ -45,6 +45,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if ty == TypeId::BOOLEAN_TRUE || ty == TypeId::BOOLEAN_FALSE {
+            return false;
+        }
+
+        if tsz_solver::literal_value(self.ctx.types, ty).is_some() {
+            return false;
+        }
+
         if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
             || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, evaluated)
         {
@@ -55,6 +63,14 @@ impl<'a> CheckerState<'a> {
             || tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
         {
             return true;
+        }
+
+        if !tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+            && !tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
+            && !tsz_solver::type_queries::is_conditional_type(self.ctx.types, ty)
+            && !tsz_solver::is_generic_application(self.ctx.types, ty)
+        {
+            return false;
         }
 
         matches!(
@@ -473,6 +489,13 @@ impl<'a> CheckerState<'a> {
 
         if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
             return enum_name;
+        }
+
+        if ty == TypeId::BOOLEAN_TRUE {
+            return "true".to_string();
+        }
+        if ty == TypeId::BOOLEAN_FALSE {
+            return "false".to_string();
         }
 
         let evaluated = self.evaluate_type_for_assignability(ty);
