@@ -1446,6 +1446,7 @@ impl ParserState {
             // treat the expression as the initializer for recovery.
             let init_saved_flags = self.context_flags;
             self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER;
 
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
                 self.parse_assignment_expression()
@@ -1472,6 +1473,14 @@ impl ParserState {
             };
 
             self.context_flags = init_saved_flags;
+
+            if initializer != NodeIndex::NONE
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && self.scanner.has_preceding_line_break()
+                && self.class_member_initializer_continues_on_next_line()
+            {
+                self.report_missing_semicolon_after_class_field_initializer();
+            }
 
             // Match tsc's parseSemicolonAfterPropertyName: when a property has
             // no type annotation and no initializer and no semicolon follows,
@@ -1501,6 +1510,59 @@ impl ParserState {
                 },
             )
         }
+    }
+
+    const fn class_member_initializer_continues_on_next_line(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::OpenParenToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::DotToken
+                | SyntaxKind::QuestionDotToken
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+        )
+    }
+
+    fn report_missing_semicolon_after_class_field_initializer(&mut self) {
+        if let Some((pos, len)) = self.class_field_initializer_continuation_anchor() {
+            self.parse_error_at(pos, len, "';' expected.", diagnostic_codes::EXPECTED);
+        } else {
+            self.error_token_expected(";");
+        }
+    }
+
+    fn class_field_initializer_continuation_anchor(&mut self) -> Option<(u32, u32)> {
+        let (open, close) = match self.token() {
+            SyntaxKind::OpenBracketToken => {
+                (SyntaxKind::OpenBracketToken, SyntaxKind::CloseBracketToken)
+            }
+            SyntaxKind::OpenParenToken => (SyntaxKind::OpenParenToken, SyntaxKind::CloseParenToken),
+            _ => return None,
+        };
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        let mut depth = 0u32;
+        let mut anchor = None;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_token(open) {
+                depth += 1;
+            } else if self.is_token(close) {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let pos = self.token_end();
+                    anchor = Some((pos, 1));
+                    break;
+                }
+            }
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        anchor
     }
 
     /// Look ahead to check if the current string/numeric literal token is actually
