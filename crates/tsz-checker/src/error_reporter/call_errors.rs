@@ -9,6 +9,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Try to elaborate a generic assignability mismatch when the source expression is
+    /// a literal that can be decomposed into more precise element/property errors.
+    pub(crate) fn try_elaborate_assignment_source_error(
+        &mut self,
+        source_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        self.try_elaborate_object_literal_arg_error(expr_idx, target_type)
+    }
+
     /// Try to elaborate an argument type mismatch for object/array literal arguments.
     ///
     /// When an object literal argument has a property whose value type doesn't match
@@ -214,6 +225,11 @@ impl<'a> CheckerState<'a> {
 
             // Check if the property value type is assignable to the target property type
             if !self.is_assignable_to(source_prop_type, target_prop_type) {
+                if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
+                    elaborated = true;
+                    continue;
+                }
+
                 let source_prop_type_for_diagnostic =
                     if self.is_fresh_literal_expression(prop_value_idx) {
                         self.widen_literal_type(source_prop_type)
@@ -297,6 +313,11 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_assignable_to(elem_type, target_element_type) {
+                if self.try_elaborate_assignment_source_error(elem_idx, target_element_type) {
+                    elaborated = true;
+                    continue;
+                }
+
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
                     elem_type,

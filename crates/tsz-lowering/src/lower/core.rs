@@ -71,6 +71,10 @@ pub(super) struct InterfaceParts {
     pub(super) construct_signatures: Vec<CallSignature>,
     pub(super) string_index: Option<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    /// Base `declaration_order` for the current property merge pass.
+    current_pass_base: u32,
+    /// Counter within the current property merge pass.
+    pass_local_counter: u32,
 }
 
 pub(super) enum PropertyMerge {
@@ -83,6 +87,8 @@ pub(super) struct MethodOverloads {
     pub(super) signatures: Vec<CallSignature>,
     pub(super) optional: bool,
     pub(super) readonly: bool,
+    /// Declaration order of the first occurrence of this method, for diagnostic ordering.
+    pub(super) declaration_order: u32,
 }
 
 impl InterfaceParts {
@@ -93,14 +99,28 @@ impl InterfaceParts {
             construct_signatures: Vec::new(),
             string_index: None,
             number_index: None,
+            current_pass_base: 0,
+            pass_local_counter: 0,
         }
+    }
+
+    /// Get the next `declaration_order` value for a property being added in
+    /// the current property merge pass.
+    pub(super) const fn next_declaration_order(&mut self) -> u32 {
+        let order = self.current_pass_base + self.pass_local_counter;
+        self.pass_local_counter += 1;
+        order
     }
 
     pub(super) fn merge_property(&mut self, prop: PropertyInfo) {
         use indexmap::map::Entry;
 
+        let next_order = self.current_pass_base + self.pass_local_counter;
         match self.properties.entry(prop.name) {
             Entry::Vacant(entry) => {
+                self.pass_local_counter += 1;
+                let mut prop = prop;
+                prop.declaration_order = next_order;
                 entry.insert(PropertyMerge::Property(prop));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
@@ -113,6 +133,7 @@ impl InterfaceParts {
                     {
                         return;
                     }
+                    let order = existing.declaration_order;
                     let conflict = PropertyInfo {
                         name: prop.name,
                         type_id: TypeId::ERROR,
@@ -123,11 +144,12 @@ impl InterfaceParts {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
+                        declaration_order: order,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
                 PropertyMerge::Method(methods) => {
+                    let order = methods.declaration_order;
                     let conflict = PropertyInfo {
                         name: prop.name,
                         type_id: TypeId::ERROR,
@@ -138,7 +160,7 @@ impl InterfaceParts {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
+                        declaration_order: order,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -156,12 +178,15 @@ impl InterfaceParts {
     ) {
         use indexmap::map::Entry;
 
+        let next_order = self.current_pass_base + self.pass_local_counter;
         match self.properties.entry(name) {
             Entry::Vacant(entry) => {
+                self.pass_local_counter += 1;
                 entry.insert(PropertyMerge::Method(MethodOverloads {
                     signatures: vec![signature],
                     optional,
                     readonly,
+                    declaration_order: next_order,
                 }));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
@@ -171,6 +196,7 @@ impl InterfaceParts {
                     methods.readonly &= readonly;
                 }
                 PropertyMerge::Property(prop) => {
+                    let order = prop.declaration_order;
                     let conflict = PropertyInfo {
                         name,
                         type_id: TypeId::ERROR,
@@ -181,7 +207,7 @@ impl InterfaceParts {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
+                        declaration_order: order,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -1548,6 +1574,7 @@ impl<'a> TypeLowering<'a> {
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = self.lower_type(accessor.type_annotation);
+                    let order = parts.next_declaration_order();
                     // Merge with existing accessor entry or create new one
                     match parts.properties.entry(name) {
                         indexmap::map::Entry::Occupied(mut entry) => {
@@ -1567,7 +1594,7 @@ impl<'a> TypeLowering<'a> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: 0,
+                                declaration_order: order,
                             }));
                         }
                     }
@@ -1582,6 +1609,7 @@ impl<'a> TypeLowering<'a> {
                         .map_or(TypeId::UNKNOWN, |param| {
                             self.lower_type(param.type_annotation)
                         });
+                    let order = parts.next_declaration_order();
                     match parts.properties.entry(name) {
                         indexmap::map::Entry::Occupied(mut entry) => {
                             // Update existing property with setter type as write type
@@ -1601,7 +1629,7 @@ impl<'a> TypeLowering<'a> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: 0,
+                                declaration_order: order,
                             }));
                         }
                     }
@@ -1634,7 +1662,7 @@ impl<'a> TypeLowering<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: 0,
+                    declaration_order: methods.declaration_order,
                 });
             } else if let PropertyMerge::Property(prop) = entry {
                 properties.push(prop);
