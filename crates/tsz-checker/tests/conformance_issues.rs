@@ -7629,3 +7629,28 @@ function get123<K extends keyof Type>(): Type[K] {
         "Expected literal-preserving TS2322 for generic indexed return.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_assignment_diagnostic_widens_literal_for_keyof_target() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f4<T extends { [K in keyof T]: string }>(k: keyof T) {
+    k = 42;
+    k = "hello";
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type 'keyof T'")
+        }),
+        "Expected widened numeric literal display for keyof target TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'keyof T'")
+        }),
+        "Expected widened string literal display for keyof target TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
