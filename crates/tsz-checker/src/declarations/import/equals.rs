@@ -199,7 +199,6 @@ impl<'a> CheckerState<'a> {
             // Check if we're inside a MODULE_DECLARATION (namespace/module)
             let mut current = stmt_idx;
             let mut inside_namespace = false;
-            let mut namespace_is_exported = false;
             let mut containing_module_name: Option<String> = None;
 
             while current.is_some() {
@@ -217,8 +216,6 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 // This is a namespace: namespace Foo
                                 inside_namespace = true;
-                                // Check if this namespace is exported
-                                namespace_is_exported = self.has_export_modifier(current);
                             }
                         }
                         break;
@@ -237,15 +234,10 @@ impl<'a> CheckerState<'a> {
             // TS1147: Only emit for namespaces (not ambient modules)
             if inside_namespace {
                 self.error_at_node(
-                        import.module_specifier,
-                        diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
-                        diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
-                    );
-                // Only return early for non-exported namespaces
-                // TypeScript emits both TS1147 and TS2307 for exported namespaces
-                if !namespace_is_exported {
-                    return;
-                }
+                    import.module_specifier,
+                    diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                    diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                );
                 force_module_not_found = true;
             }
 
