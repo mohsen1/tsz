@@ -455,6 +455,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // constraint walker evaluates the applications (e.g. Kind<F, ...> into its
             // conditional/object form). Without this, intermediate higher-order values
             // only infer through contextual return types and lose generic arguments.
+            //
+            // SKIP when either application evaluates to a Function/Callable type.
+            // Function types have variance-sensitive parameters, and direct arg matching
+            // would add covariant candidates where contravariant ones are needed.
+            // The structural constraint walker (Function-Function arm) handles variance
+            // correctly via constrain_parameter_types.
             if let (
                 Some(TypeData::Application(arg_app_id)),
                 Some(TypeData::Application(target_app_id)),
@@ -465,15 +471,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
                 if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
-                    for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
-                    {
-                        self.constrain_types(
-                            &mut infer_ctx,
-                            &var_map,
-                            *arg_inner,
-                            *target_inner,
-                            crate::types::InferencePriority::NakedTypeVariable,
-                        );
+                    // Check if evaluation produces function types (variance-sensitive).
+                    // This includes unions that contain functions (e.g., Func2<T> = ((x: T) => void) | undefined).
+                    // Function types have variance-sensitive parameters, and direct arg matching
+                    // would add covariant candidates where contravariant ones are needed.
+                    let evaluated_target = self.checker.evaluate_type(contextual_target_type);
+                    let evaluates_to_function = self.type_evaluates_to_function(evaluated_target);
+                    if !evaluates_to_function {
+                        for (arg_inner, target_inner) in
+                            arg_app.args.iter().zip(target_app.args.iter())
+                        {
+                            self.constrain_types(
+                                &mut infer_ctx,
+                                &var_map,
+                                *arg_inner,
+                                *target_inner,
+                                crate::types::InferencePriority::NakedTypeVariable,
+                            );
+                        }
                     }
                 }
             }
@@ -728,7 +743,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut infer_subst_cache: Option<TypeSubstitution> = None;
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
-            let has_constraints = matches!(&constraints, Some(c) if !c.is_empty());
+            // Check both ConstraintSet (covariant candidates + upper bounds) and
+            // concrete contra_candidates. Contra-candidates are NOT in
+            // ConstraintSet.lower_bounds to avoid polluting the resolved_direct path,
+            // but they still represent valid inference that should trigger resolution.
+            // Only count contra_candidates with concrete (non-TypeParameter) types —
+            // raw TypeParameter placeholders from source inference vars should not
+            // drive the resolution gate.
+            let has_constraints = matches!(&constraints, Some(c) if !c.is_empty())
+                || infer_ctx.has_concrete_contra_candidates(var, self.interner.as_type_database());
             let lower_bounds = constraints
                 .as_ref()
                 .map(|c| c.lower_bounds.clone())

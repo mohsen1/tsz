@@ -607,6 +607,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         ))
     }
 
+    /// Check if a type evaluates to or contains a function type.
+    /// This includes:
+    /// - Direct Function or Callable types
+    /// - Union types where any member is a Function or Callable
+    pub(crate) fn type_evaluates_to_function(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
+            Some(TypeData::Union(members)) => {
+                let members = self.interner.type_list(members);
+                members.iter().any(|&m| {
+                    matches!(
+                        self.interner.lookup(m),
+                        Some(TypeData::Function(_) | TypeData::Callable(_))
+                    )
+                })
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn type_contains_placeholder(
         &self,
         ty: TypeId,
