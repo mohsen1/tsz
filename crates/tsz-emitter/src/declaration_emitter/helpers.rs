@@ -4014,6 +4014,24 @@ impl<'a> DeclarationEmitter<'a> {
         if slice.is_empty() { None } else { Some(slice) }
     }
 
+    /// Like `get_source_slice` but also strips a trailing `;` if present.
+    /// Use this when extracting type/value text from source that will be
+    /// embedded in a statement where the caller adds its own `;`.
+    pub(crate) fn get_source_slice_no_semi(&self, start: u32, end: u32) -> Option<String> {
+        let mut s = self.get_source_slice(start, end)?;
+        if s.ends_with(';') {
+            s.pop();
+            let trimmed = s.trim_end().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        } else {
+            Some(s)
+        }
+    }
+
     pub(crate) fn write_raw(&mut self, s: &str) {
         self.writer.write(s);
     }
@@ -4238,9 +4256,9 @@ impl<'a> DeclarationEmitter<'a> {
             let decl_node = self.arena.get(decl_idx)?;
             if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
                 let type_node = self.arena.get(var_decl.type_annotation)?;
-                if let Some(type_text) = self.get_source_slice(type_node.pos, type_node.end) {
+                if let Some(type_text) = self.get_source_slice_no_semi(type_node.pos, type_node.end)
+                {
                     let trimmed = type_text.trim_end();
-                    let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
                     let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
                     return Some(trimmed.to_string());
                 }
@@ -7241,7 +7259,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 && self.is_negative_literal(expr_node) =>
             {
-                self.get_source_slice(expr_node.pos, expr_node.end)
+                self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
             }
             _ => None,
         }
@@ -7269,7 +7287,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 && self.is_negative_literal(expr_node) =>
             {
-                self.get_source_slice(expr_node.pos, expr_node.end)
+                self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
             }
             _ => self.simple_enum_access_member_text(expr_idx),
         }

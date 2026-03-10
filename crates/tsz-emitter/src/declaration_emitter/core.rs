@@ -3442,20 +3442,20 @@ impl<'a> DeclarationEmitter<'a> {
 
         match init_node.kind {
             k if k == SyntaxKind::StringLiteral as u16 => {
-                return self.get_source_slice(init_node.pos, init_node.end);
+                return self.get_source_slice_no_semi(init_node.pos, init_node.end);
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
-                return self.get_source_slice(init_node.pos, init_node.end);
+                return self.get_source_slice_no_semi(init_node.pos, init_node.end);
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
-                return self.get_source_slice(init_node.pos, init_node.end);
+                return self.get_source_slice_no_semi(init_node.pos, init_node.end);
             }
             k if k == SyntaxKind::TrueKeyword as u16 => return Some("true".to_string()),
             k if k == SyntaxKind::FalseKeyword as u16 => return Some("false".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => return Some("null".to_string()),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 if self.is_negative_literal(init_node) {
-                    return self.get_source_slice(init_node.pos, init_node.end);
+                    return self.get_source_slice_no_semi(init_node.pos, init_node.end);
                 }
             }
             _ => {}
