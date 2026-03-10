@@ -287,6 +287,7 @@ impl<'a> CheckerState<'a> {
 
         // TS5097: Check for .ts/.tsx/.mts/.cts extensions in dynamic imports
         if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && let Some(ext) = super::import::declaration::ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
