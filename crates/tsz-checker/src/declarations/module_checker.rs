@@ -1154,15 +1154,16 @@ impl<'a> CheckerState<'a> {
             }
 
             let mut current_binder = self.ctx.binder;
+            let mut current_file_idx = self.ctx.current_file_idx;
             let mut current_sym_id = sym_id;
             let mut visited = Vec::new();
             let mut visited_sym_ids = Vec::new();
             let mut cycle_detected = false;
 
             for _ in 0..128 {
-                let key = (current_binder as *const _ as usize, current_sym_id.0);
+                let key = (current_file_idx, current_sym_id.0 as usize);
                 if visited.contains(&key) {
-                    if key.0 == self.ctx.binder as *const _ as usize && key.1 == sym_id.0 {
+                    if key.0 == self.ctx.current_file_idx && key.1 == sym_id.0 as usize {
                         cycle_detected = true;
                     }
                     break;
@@ -1179,46 +1180,87 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
-                if let Some(resolved_id) = current_binder.resolve_import_symbol(current_sym_id) {
-                    current_sym_id = resolved_id;
-                    continue;
-                }
-
                 let mut found = false;
+
+                // For import aliases with import_module, use cross-file resolution
+                // to properly track which file we're resolving from.
                 if let Some(ref module_name) = curr_sym.import_module {
                     let export_name = curr_sym
                         .import_name
                         .as_deref()
                         .unwrap_or(&curr_sym.escaped_name);
 
-                    // Try current binder's module_exports first
-                    if let Some(exports) = current_binder.module_exports.get(module_name)
-                        && let Some(target_sym_id) = exports.get(export_name)
+                    // Use checker's cross-file module resolution first.
+                    // This correctly resolves relative specifiers from the
+                    // current file's perspective and switches to the target
+                    // file's binder for subsequent resolution.
+                    if let Some(target_idx) = self
+                        .ctx
+                        .resolve_import_target_from_file(current_file_idx, module_name)
+                        && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
                     {
-                        current_sym_id = target_sym_id;
-                        found = true;
+                        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                        if let Some(sf) = target_arena.source_files.first()
+                            && let Some(exports) = target_binder.module_exports.get(&sf.file_name) {
+                                if let Some(target_sym_id) = exports.get(export_name) {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                } else if let Some(target_sym_id) = exports.get("export=") {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                }
+                            }
                     }
-                    // Also try "export=" key as fallback
+
+                    // Fall back to binder-level resolution (same-file or merged binder)
+                    if !found
+                        && let Some(resolved_id) =
+                            current_binder.resolve_import_symbol(current_sym_id)
+                        {
+                            current_sym_id = resolved_id;
+                            found = true;
+                        }
+
+                    // Try current binder's module_exports directly
                     if !found
                         && let Some(exports) = current_binder.module_exports.get(module_name)
-                        && let Some(target_sym_id) = exports.get("export=")
-                    {
-                        current_sym_id = target_sym_id;
-                        found = true;
-                    }
+                            && let Some(target_sym_id) = exports.get(export_name)
+                        {
+                            current_sym_id = target_sym_id;
+                            found = true;
+                        }
+                    if !found
+                        && let Some(exports) = current_binder.module_exports.get(module_name)
+                            && let Some(target_sym_id) = exports.get("export=")
+                        {
+                            current_sym_id = target_sym_id;
+                            found = true;
+                        }
+
                     // Fall back to all_binders for cross-file resolution
                     if !found && let Some(binders) = &self.ctx.all_binders {
-                        for b in binders.iter() {
+                        for (idx, b) in binders.iter().enumerate() {
                             if let Some(exports) = b.module_exports.get(module_name)
                                 && let Some(target_sym_id) = exports.get(export_name)
                             {
                                 current_binder = &**b;
+                                current_file_idx = idx;
                                 current_sym_id = target_sym_id;
                                 found = true;
                                 break;
                             }
                         }
                     }
+                } else if let Some(resolved_id) =
+                    current_binder.resolve_import_symbol(current_sym_id)
+                {
+                    // Non-import alias (e.g., import = require(...)) — use binder resolution
+                    current_sym_id = resolved_id;
+                    found = true;
                 }
 
                 if !found
@@ -1256,8 +1298,8 @@ impl<'a> CheckerState<'a> {
                 // For cross-file cycles, use max SymbolId heuristic to deduplicate:
                 // only report the cycle from the file containing the highest SymbolId.
                 // For same-file cycles, report on the first symbol encountered (no dedup needed).
-                let binder_addr = self.ctx.binder as *const _ as usize;
-                let is_cross_file = visited.iter().any(|key| key.0 != binder_addr);
+                let this_file_idx = self.ctx.current_file_idx;
+                let is_cross_file = visited.iter().any(|key| key.0 != this_file_idx);
                 if is_cross_file {
                     let max_sym_in_cycle = visited_sym_ids
                         .iter()
@@ -1270,8 +1312,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 for key in &visited {
-                    if key.0 == binder_addr {
-                        reported_cycle_symbols.insert(tsz_binder::SymbolId(key.1));
+                    if key.0 == this_file_idx {
+                        reported_cycle_symbols.insert(tsz_binder::SymbolId(key.1 as u32));
                     }
                 }
 
