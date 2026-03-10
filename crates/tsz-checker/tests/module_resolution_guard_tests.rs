@@ -157,6 +157,88 @@ var x: foo.A = foo.bar("hello");
 }
 
 #[test]
+fn import_equals_alias_is_valid_qualified_type_anchor_across_ambient_modules() {
+    let src0 = r#"
+declare module "a" {
+    export type T = number;
+}
+"#;
+    let src1 = r#"
+declare module "b" {
+    export import a = require("a");
+    export const x: a.T;
+}
+"#;
+    let src2 = r#"
+declare module "c" {
+    import b = require("b");
+    const x: b.a.T;
+}
+"#;
+
+    let mut parser0 = ParserState::new("defA.ts".to_string(), src0.to_string());
+    let root0 = parser0.parse_source_file();
+    let mut binder0 = BinderState::new();
+    binder0.bind_source_file(parser0.get_arena(), root0);
+
+    let mut parser1 = ParserState::new("defB.ts".to_string(), src1.to_string());
+    let root1 = parser1.parse_source_file();
+    let mut binder1 = BinderState::new();
+    binder1.bind_source_file(parser1.get_arena(), root1);
+
+    let mut parser2 = ParserState::new("defC.ts".to_string(), src2.to_string());
+    let root2 = parser2.parse_source_file();
+    let mut binder2 = BinderState::new();
+    binder2.bind_source_file(parser2.get_arena(), root2);
+
+    let arena0 = Arc::new(parser0.get_arena().clone());
+    let arena1 = Arc::new(parser1.get_arena().clone());
+    let arena2 = Arc::new(parser2.get_arena().clone());
+    let binder0 = Arc::new(binder0);
+    let binder1 = Arc::new(binder1);
+    let binder2 = Arc::new(binder2);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena2.as_ref(),
+        binder2.as_ref(),
+        &types,
+        "defC.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&arena0),
+        Arc::clone(&arena1),
+        Arc::clone(&arena2),
+    ]));
+    checker.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&binder0),
+        Arc::clone(&binder1),
+        Arc::clone(&binder2),
+    ]));
+    checker.ctx.set_current_file_idx(2);
+    let mut resolved_modules = FxHashSet::default();
+    resolved_modules.insert("a".to_string());
+    resolved_modules.insert("b".to_string());
+    resolved_modules.insert("c".to_string());
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root2);
+
+    let relevant: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, &d.message_text))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no non-TS2318 diagnostics for qualified ambient import-equals type anchor, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn import_type_emits_ts2307_for_unresolved_non_relative_module() {
     // import("fo") where "fo" is a typo for ambient module "foo"
     let source = r#"

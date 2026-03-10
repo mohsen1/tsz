@@ -200,6 +200,30 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let got = type_args_list.nodes.len();
+        let type_arg_error_anchor = self
+            .ctx
+            .arena
+            .get(type_ref_idx)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            .map(|type_ref| type_ref.type_name)
+            .unwrap_or(type_ref_idx);
+        let max_expected = type_params.len();
+        let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+        if got < min_required || got > max_expected {
+            let expected_str = if min_required == max_expected {
+                max_expected.to_string()
+            } else {
+                format!("{min_required}-{max_expected}")
+            };
+            self.error_at_node_msg(
+                type_arg_error_anchor,
+                crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                &[&expected_str, &got.to_string()],
+            );
+            return;
+        }
+
         if self.type_args_reference_resolving_alias(type_args_list) {
             let lib_binders = self.get_lib_binders();
             let name = self

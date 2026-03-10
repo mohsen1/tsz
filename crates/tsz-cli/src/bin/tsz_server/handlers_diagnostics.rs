@@ -20,6 +20,14 @@ pub(crate) struct DiagnosticFormatInput<'a> {
 }
 
 impl Server {
+    fn should_omit_per_file_semantic_diagnostic(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+    ) -> bool {
+        diag.code == tsz::checker::diagnostics::diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE
+            && diag.start == 0
+            && diag.length == 0
+    }
+
     pub(super) fn extract_auto_import_file_exclude_patterns(
         request: &TsServerRequest,
     ) -> Option<Vec<String>> {
@@ -123,6 +131,7 @@ impl Server {
             if let Some(content) = get_content(file_path, &self.open_files) {
                 let line_map = LineMap::build(&content);
                 let mut full_diags = self.get_semantic_diagnostics_full(file_path, &content);
+                full_diags.retain(|diag| !Self::should_omit_per_file_semantic_diagnostic(diag));
                 let has_module_none_diagnostic = full_diags.iter().any(|d| {
                     d.code
                         == tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
