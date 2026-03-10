@@ -759,7 +759,11 @@ impl ParserState {
             && !self.scanner.has_preceding_line_break())
         .then(|| self.parse_type_arguments());
 
-        let end_pos = self.token_end();
+        // Use token_full_start (start of current token's trivia) to get the
+        // position right after the last consumed token. token_end() would
+        // incorrectly include the next unconsumed token (e.g. `=` in
+        // `typeof B = ...`), causing node_text() to return `typeof B =`.
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_query(
             syntax_kind_ext::TYPE_QUERY,
