@@ -71,9 +71,9 @@ pub(super) struct InterfaceParts {
     pub(super) construct_signatures: Vec<CallSignature>,
     pub(super) string_index: Option<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
-    /// Base `declaration_order` for the current property merge pass.
+    /// Base `declaration_order` for the current declaration pass.
     current_pass_base: u32,
-    /// Counter within the current property merge pass.
+    /// Counter within the current declaration pass.
     pass_local_counter: u32,
 }
 
@@ -92,6 +92,10 @@ pub(super) struct MethodOverloads {
 }
 
 impl InterfaceParts {
+    /// Stride between declaration passes. Must be larger than the maximum number
+    /// of properties any single interface declaration contributes.
+    const DECL_ORDER_STRIDE: u32 = 10_000;
+
     pub(super) fn new() -> Self {
         Self {
             properties: IndexMap::new(),
@@ -104,8 +108,17 @@ impl InterfaceParts {
         }
     }
 
+    /// Set the declaration pass base for the next batch of properties.
+    ///
+    /// `forward_decl_index` is the 0-based index of the declaration in
+    /// forward (source) order, so the earliest declaration gets index 0.
+    pub(super) const fn set_declaration_pass(&mut self, forward_decl_index: usize) {
+        self.current_pass_base = (forward_decl_index as u32) * Self::DECL_ORDER_STRIDE;
+        self.pass_local_counter = 0;
+    }
+
     /// Get the next `declaration_order` value for a property being added in
-    /// the current property merge pass.
+    /// the current declaration pass.
     pub(super) const fn next_declaration_order(&mut self) -> u32 {
         let order = self.current_pass_base + self.pass_local_counter;
         self.pass_local_counter += 1;
@@ -386,7 +399,15 @@ impl<'a> TypeLowering<'a> {
 
         // Process declarations in reverse order: TypeScript's interface merging
         // rule puts later declarations' members first for overload resolution.
-        for (decl_idx, decl_arena) in declarations.iter().rev() {
+        let num_declarations = declarations.len();
+        for (rev_i, (decl_idx, decl_arena)) in declarations.iter().rev().enumerate() {
+            // Set the declaration pass base so that properties from earlier
+            // (forward) declarations get lower declaration_order values.
+            // rev_i=0 processes the last declaration (forward index = num-1),
+            // rev_i=num-1 processes the first declaration (forward index = 0).
+            let forward_decl_index = num_declarations - 1 - rev_i;
+            parts.set_declaration_pass(forward_decl_index);
+
             // Create a lowering context for this specific arena
             let lowerer = self.with_arena(decl_arena);
 
@@ -1378,7 +1399,11 @@ impl<'a> TypeLowering<'a> {
         // rule puts later declarations' members first for overload resolution.
         // E.g., PromiseConstructor from es2015.iterable (earlier) and es2015.promise
         // (later) — the tuple overload from es2015.promise should be tried first.
-        for &decl_idx in declarations.iter().rev() {
+        let num_declarations = declarations.len();
+        for (rev_i, &decl_idx) in declarations.iter().rev().enumerate() {
+            let forward_decl_index = num_declarations - 1 - rev_i;
+            parts.set_declaration_pass(forward_decl_index);
+
             let Some(node) = self.arena.get(decl_idx) else {
                 continue;
             };
