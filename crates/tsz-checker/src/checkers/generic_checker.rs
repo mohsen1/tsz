@@ -47,6 +47,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let callee_type_orig = callee_type;
         let callee_type = self.evaluate_application_type(callee_type);
         // Resolve Lazy types so the classifier can see callable/function signatures.
         let callee_type = {
@@ -60,6 +61,19 @@ impl<'a> CheckerState<'a> {
 
         let got = type_args_list.nodes.len();
         let type_arg_error_anchor = type_args_list.nodes.first().copied().unwrap_or(call_idx);
+
+        if got > 0
+            && callee_type != TypeId::ANY
+            && self.replace_function_type_for_call(callee_type_orig, callee_type) == TypeId::ANY
+        {
+            self.error_at_node(
+                call_idx,
+                crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+            );
+            return;
+        }
+
         // Get the type parameters from the callee type. For callables with overloads,
         // prefer a signature whose type parameter arity matches the provided type args.
         let type_params =

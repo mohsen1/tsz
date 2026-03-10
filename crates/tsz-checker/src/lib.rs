@@ -170,6 +170,9 @@ mod ts2322_tests;
 #[path = "../tests/ts2323_tests.rs"]
 mod ts2323_tests;
 #[cfg(test)]
+#[path = "../tests/ts2347_tests.rs"]
+mod ts2347_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
