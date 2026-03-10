@@ -2263,10 +2263,9 @@ fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
         .as_object()
         .and_then(|o| o.get("extends"))
         .and_then(|v| v.as_str())
+        && let Ok(base_path) = resolve_extends_path(path, extends)
     {
-        if let Ok(base_path) = resolve_extends_path(path, extends) {
-            collect_removed_options_from_config(&base_path, removed);
-        }
+        collect_removed_options_from_config(&base_path, removed);
     }
 }
 
