@@ -430,10 +430,15 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                if self.should_widen_enum_member_assignment_source(expr_type, target) {
-                    self.widen_enum_member_type(expr_type)
+                let widened_expr_type = if self.literal_expression_display(expr_idx).is_some() {
+                    self.widen_literal_type(expr_type)
                 } else {
                     expr_type
+                };
+                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
+                    self.widen_enum_member_type(widened_expr_type)
+                } else {
+                    widened_expr_type
                 }
             } else {
                 source
