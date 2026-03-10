@@ -1414,6 +1414,29 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5105: Option 'verbatimModuleSyntax' cannot be used when 'module' is set to 'UMD', 'AMD', or 'System'.
+        if option_is_truthy(compiler_opts.get("verbatimModuleSyntax")) {
+            let module_bad =
+                if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+                    let mod_normalized =
+                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    matches!(mod_normalized.as_str(), "umd" | "amd" | "system")
+                } else {
+                    false
+                };
+            if module_bad {
+                let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
+                let key_len = "verbatimModuleSyntax".len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    diagnostic_messages::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST.to_string(),
+                    diagnostic_codes::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST,
+                ));
+            }
+        }
+
         // TS5069: Option '{0}' cannot be specified without specifying option '{1}' or option '{2}'.
         let requires_decl_or_composite: &[&str] = &[
             "emitDeclarationOnly",
@@ -2159,8 +2182,13 @@ fn load_tsconfig_inner_with_diagnostics(
             ExtendsValue::Array(arr) => arr,
         };
         let mut accumulated: Option<TsConfig> = None;
+        let mut base_removed_options: Vec<String> = Vec::new();
         for extends_path_str in &extends_paths {
             let base_path = resolve_extends_path(path, extends_path_str)?;
+            // Collect removed options from base configs for TS5102 diagnostics.
+            // TSC checks the merged result and emits TS5102 at the child's key position
+            // when removed options come from base configs via extends.
+            collect_removed_options_from_config(&base_path, &mut base_removed_options);
             let base_config = load_tsconfig_inner(&base_path, visited)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
@@ -2170,10 +2198,76 @@ fn load_tsconfig_inner_with_diagnostics(
         if let Some(base) = accumulated {
             parsed.config = merge_configs(base, parsed.config);
         }
+
+        // TS5102: When verbatimModuleSyntax is set in the child config and base configs
+        // contain removed options that it replaces, TSC emits TS5102 at the child's
+        // verbatimModuleSyntax key position for each replaced option.
+        let stripped = strip_jsonc(&source);
+        let child_has_vms = stripped.contains("\"verbatimModuleSyntax\"");
+        if child_has_vms && !base_removed_options.is_empty() {
+            let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
+            let key_len = "verbatimModuleSyntax".len() as u32 + 2;
+            for opt_name in &base_removed_options {
+                let msg = format_message(
+                    diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                    &[opt_name],
+                );
+                parsed.diagnostics.push(Diagnostic::error(
+                    &file_display,
+                    start,
+                    key_len,
+                    msg,
+                    diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                ));
+            }
+        }
     }
 
     visited.remove(&canonical);
     Ok(parsed)
+}
+
+/// Collect removed compiler option names from a config file (and its base configs).
+/// Used to detect removed options inherited via `extends` for TS5102 diagnostics.
+fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let stripped = strip_jsonc(&source);
+    let normalized = remove_trailing_commas(&stripped);
+    let Ok(raw) = serde_json::from_str::<serde_json::Value>(&normalized) else {
+        return;
+    };
+    if let Some(compiler_opts) = raw
+        .as_object()
+        .and_then(|o| o.get("compilerOptions"))
+        .and_then(|v| v.as_object())
+    {
+        for key in compiler_opts.keys() {
+            if removed_compiler_option(key).is_some() {
+                // Only include if the value is actually set (non-null, non-false)
+                let is_set = match compiler_opts.get(key) {
+                    Some(serde_json::Value::Bool(b)) => *b,
+                    Some(serde_json::Value::String(s)) => !s.is_empty(),
+                    Some(serde_json::Value::Null) | None => false,
+                    Some(_) => true,
+                };
+                if is_set {
+                    removed.push(key.clone());
+                }
+            }
+        }
+    }
+    // Also check base configs recursively
+    if let Some(extends) = raw
+        .as_object()
+        .and_then(|o| o.get("extends"))
+        .and_then(|v| v.as_str())
+    {
+        if let Ok(base_path) = resolve_extends_path(path, extends) {
+            collect_removed_options_from_config(&base_path, removed);
+        }
+    }
 }
 
 fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
