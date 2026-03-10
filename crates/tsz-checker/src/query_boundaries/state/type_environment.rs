@@ -1,3 +1,4 @@
+use crate::state::CheckerState;
 use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
@@ -51,6 +52,43 @@ pub(crate) fn get_conditional_type(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<tsz_solver::ConditionalType>> {
     tsz_solver::type_queries::get_conditional_type(db, type_id)
+}
+
+struct CheckerDeclarationCycleHost<'a, 'b> {
+    state: &'a mut CheckerState<'b>,
+}
+
+impl tsz_solver::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
+    fn resolve_ref(
+        &self,
+        symbol: tsz_solver::SymbolRef,
+        interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        self.state.ctx.resolve_ref(symbol, interner)
+    }
+
+    fn resolve_lazy(
+        &self,
+        def_id: tsz_solver::DefId,
+        interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        self.state.ctx.resolve_lazy(def_id, interner)
+    }
+}
+
+impl tsz_solver::type_queries::DeclarationTypeCycleHost for CheckerDeclarationCycleHost<'_, '_> {
+    fn evaluate_application_for_serialization(&mut self, type_id: TypeId) -> TypeId {
+        self.state.evaluate_application_type(type_id)
+    }
+}
+
+pub(crate) fn declaration_type_references_cyclic_structure(
+    state: &mut CheckerState<'_>,
+    type_id: TypeId,
+) -> bool {
+    let db = state.ctx.types;
+    let mut host = CheckerDeclarationCycleHost { state };
+    tsz_solver::type_queries::declaration_type_references_cyclic_structure(db, &mut host, type_id)
 }
 
 #[cfg(test)]

@@ -619,6 +619,7 @@ impl CompilerOptions {
             allow_js: false,
             no_resolve: false,
             isolated_declarations: false,
+            emit_declarations: false,
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,

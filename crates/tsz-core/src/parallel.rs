@@ -786,7 +786,7 @@ pub struct MergedProgram {
     pub type_interner: TypeInterner,
     /// Alias partners: maps TYPE_ALIAS SymbolId → ALIAS SymbolId for merged type+namespace exports.
     /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
-    /// holds the TYPE_ALIAS symbol and this map links it to the ALIAS symbol for value resolution.
+    /// holds the `TYPE_ALIAS` symbol and this map links it to the ALIAS symbol for value resolution.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 

@@ -98,6 +98,7 @@ impl TsCompilerOptions {
             no_implicit_this: self.no_implicit_this.unwrap_or(strict),
             use_unknown_in_catch_variables: self.strict_null_checks.unwrap_or(strict),
             isolated_modules: false,
+            emit_declarations: false,
             no_unchecked_indexed_access: false,
             no_unchecked_side_effect_imports: false,
             strict_bind_call_apply: false,

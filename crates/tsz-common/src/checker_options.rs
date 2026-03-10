@@ -89,6 +89,9 @@ pub struct CheckerOptions {
     /// When true, declaration emit must be computable per-file without cross-file inference.
     /// This corresponds to the --isolatedDeclarations compiler flag.
     pub isolated_declarations: bool,
+    /// When true, declarations will be emitted for this program.
+    /// Used by checker diagnostics that only matter when `.d.ts` serialization is required.
+    pub emit_declarations: bool,
     /// When true, check side-effect imports for module resolution errors (TS2882).
     pub no_unchecked_side_effect_imports: bool,
     /// When true, require 'override' modifier on members that override base class members (TS4114).
@@ -196,6 +199,7 @@ impl Default for CheckerOptions {
             allow_js: false,
             no_resolve: false,
             isolated_declarations: false,
+            emit_declarations: false,
             no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),

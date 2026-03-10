@@ -144,6 +144,11 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.isolated_declarations
     }
 
+    /// Check if declaration emit is enabled.
+    pub const fn emit_declarations(&self) -> bool {
+        self.compiler_options.emit_declarations
+    }
+
     /// Check if noUncheckedIndexedAccess is enabled.
     /// When enabled, index signature access adds `| undefined` to the result type.
     pub const fn no_unchecked_indexed_access(&self) -> bool {
