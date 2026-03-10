@@ -292,7 +292,10 @@ impl<'a> CheckerState<'a> {
                 || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
                 && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
             {
-                self.error_value_only_type_at(&right_name, qn.right);
+                let full_name = self
+                    .entity_name_text(idx)
+                    .unwrap_or_else(|| right_name.clone());
+                self.error_value_only_type_at(&full_name, idx);
                 return TypeId::ERROR;
             }
             let mut member_type = self.type_reference_symbol_type(member_sym_id);
@@ -356,7 +359,10 @@ impl<'a> CheckerState<'a> {
                             || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
                         && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
                     {
-                        self.error_value_only_type_at(&right_name, qn.right);
+                        let full_name = self
+                            .entity_name_text(idx)
+                            .unwrap_or_else(|| right_name.clone());
+                        self.error_value_only_type_at(&full_name, idx);
                         return TypeId::ERROR;
                     }
                 }
