@@ -108,6 +108,27 @@ c();
     );
 }
 
+/// Inferred tuple rest elements that are all void-like can also be omitted.
+#[test]
+fn test_generic_rest_tuple_with_trailing_void_elements() {
+    let codes = get_error_codes(
+        r#"
+declare function call<TS extends unknown[]>(
+    handler: (...args: TS) => unknown,
+    ...args: TS): void;
+
+call((x: number, y: void) => x, 4);
+call((x: void, y: void) => 42);
+call((x: number | void, y: number | void) => 42);
+call((x: number | void, y: number | void) => 42, 4);
+"#,
+    );
+    assert!(
+        !codes.contains(&2554),
+        "Should not emit TS2554 when inferred rest tuple has trailing void-like elements, got: {codes:?}"
+    );
+}
+
 /// Union containing void also counts — `number | void` is effectively optional.
 #[test]
 fn test_union_with_void_param_optional() {
